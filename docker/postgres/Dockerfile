@@ -67,6 +67,10 @@ RUN chmod +x /usr/local/bin/pg-llm-batch-entrypoint.sh
 ENTRYPOINT ["pg-llm-batch-entrypoint.sh"]
 CMD ["postgres"]
 
+# Liveness probe (trivy DS-0026); compose adds a richer pg_tiktoken-aware check.
+HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=10 \
+    CMD pg_isready -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" || exit 1
+
 # Init order: extensions -> schema -> cron retrieval. init/02_schema.sql is a
 # build-context mirror of pg_llm_batch/schema.sql (see that file's header).
 COPY init/01_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
