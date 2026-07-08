@@ -1,0 +1,54 @@
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,10 +1,7 @@
+ use pgrx::prelude::*;
+ 
+-use tiktoken_rs::encoding_for_model;
+-use tiktoken_rs::r50k_base;
+-use tiktoken_rs::cl100k_base;
+-use tiktoken_rs::p50k_base;
+-use tiktoken_rs::p50k_edit;
++use tiktoken_rs::{cl100k_base, o200k_base, p50k_base, p50k_edit, r50k_base};
++use tiktoken_rs::get_bpe_from_model;
+ 
+ pgrx::pg_module_magic!();
+ 
+@@ -13,26 +10,28 @@
+ // encoding_selector could be the name of the encoding
+ // (cl100k_base, p50k_base, ...)
+ // or designated model (text-davinci-003, gpt-3.5-turbo, ...)
+-fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<usize> {
+-    let encoder_name = encoding_for_model(encoding_selector)
+-        .unwrap_or(encoding_selector);
+-
+-    let encoder = match encoder_name {
++fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<u32> {
++    let bpe_result = match encoding_selector {
++        "o200k_base" => o200k_base(),
+         "cl100k_base" => cl100k_base(),
+         "r50k_base" | "gpt2" => r50k_base(),
+         "p50k_base" => p50k_base(),
+         "p50k_edit" => p50k_edit(),
+-        _ => error!("'{encoding_selector}': unknown model or encoder")
+-    }.unwrap();
++        _ => get_bpe_from_model(encoding_selector),
++    };
+ 
+-    encoder.encode_with_special_tokens(text)
++    let bpe = bpe_result.unwrap_or_else(|_| {
++        error!("'{encoding_selector}': unknown model or encoder")
++    });
++
++    bpe.encode_with_special_tokens(text)
+ }
+ 
+ #[pg_extern]
+ fn tiktoken_encode(encoding_selector: &str, text: &str) -> Vec<i64> {
+     encode_with_model(encoding_selector, text)
+-        .iter()
+-        .map(|&x| x.try_into().unwrap())
++        .into_iter()
++        .map(|x| i64::from(x))
+         .collect()
+ }
+ 
