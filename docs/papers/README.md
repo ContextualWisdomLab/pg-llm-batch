@@ -31,6 +31,20 @@ Why it is relevant: its Dynamic SplitFuse batching strategy shows how composing
 requests into token-budgeted batches raises throughput — mirroring this
 component's token/byte/record-bounded `BatchAccumulator`.
 
+## 3. Coverage-guided Tracing — `coverage-guided-tracing-2209.03441.pdf`
+
+> Nagy, S., Nguyen-Tuong, A., Hiser, J. D., Davidson, J. W., & Hicks, M. (2022).
+> *Same Coverage, Less Bloat: Accelerating Binary-only Fuzzing with
+> Coverage-preserving Coverage-guided Tracing.* arXiv:2209.03441. CC BY 4.0.
+> <https://arxiv.org/abs/2209.03441>
+
+Why it is relevant: motivates the **fuzzing** harness added under `fuzz/`. It
+explains coverage-guided fuzzing — the technique behind Atheris/libFuzzer — and
+why keeping the coverage signal cheap lets a fuzzer explore more input space per
+second. `pg-llm-batch` fuzzes its untrusted-input surfaces (the JSONL request
+assembler, the Batch API result decoder, and the config (de)serialiser); see
+[`fuzz/README.md`](../../fuzz/README.md).
+
 ## Tokenization note
 
 Token accounting here is delegated to the `pg_tiktoken` PostgreSQL extension

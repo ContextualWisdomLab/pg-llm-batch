@@ -28,6 +28,20 @@ logger = logging.getLogger(__name__)
 DEFAULT_USER_AGENT = "pg-llm-batch"
 
 
+def parse_results_jsonl(content: str) -> list:
+    """Parse a Batch API result payload (JSONL text) into a list of records.
+
+    The payload is untrusted input downloaded from an OpenAI-compatible
+    gateway. Each non-empty line is expected to be a JSON document. Blank
+    lines (including trailing newlines) are ignored. A malformed line raises
+    ``json.JSONDecodeError`` — callers decide how to surface that.
+
+    Factored out of :meth:`BatchAPIClient.download_results` so the decode
+    surface can be exercised in isolation (unit + fuzz tests).
+    """
+    return [json.loads(line) for line in content.strip().split("\n") if line]
+
+
 @dataclass
 class GatewayCredentials:
     """Resolved endpoint credentials for a single batch backend."""
@@ -250,7 +264,7 @@ class BatchAPIClient:
                 )
             content = await response.text()
 
-        responses = [json.loads(line) for line in content.strip().split("\n") if line]
+        responses = parse_results_jsonl(content)
         return {
             "success": True,
             "batch_id": batch_id,

@@ -1,0 +1,70 @@
+name: fuzz
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Nightly longer campaign (03:17 UTC) — see the coverage-fuzz job budget.
+    - cron: "17 3 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Property-based fuzzing via Hypothesis — fast, runs everywhere, part of the
+  # normal test surface. This is the gate that must stay green.
+  property-fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install (test extra includes Hypothesis)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[test]"
+      - name: Run property + seed-corpus fuzz suite
+        run: pytest tests/fuzz/ -q
+
+  # Coverage-guided fuzzing via Atheris — bounded so it never blows CI cost.
+  # Atheris only ships wheels for CPython <= 3.12; if the install is unavailable
+  # the runner skips gracefully (the property-fuzz job already covers the same
+  # oracles), so this job cannot break the build.
+  coverage-fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install (fuzz extra; fall back to test if Atheris is unavailable)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[fuzz]" || pip install -e ".[test]"
+      - name: Pick per-target time budget
+        id: budget
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "seconds=600" >> "$GITHUB_OUTPUT"   # nightly: 10 min / target
+          else
+            echo "seconds=60" >> "$GITHUB_OUTPUT"     # PR / push: 60s / target
+          fi
+      - name: Run Atheris campaigns (bounded)
+        run: fuzz/run_atheris.sh "${{ steps.budget.outputs.seconds }}"
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: fuzz/crashes/
+          if-no-files-found: ignore

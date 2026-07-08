@@ -161,12 +161,24 @@ pytest                       # unit tests (fakes, no DB needed)
 docker compose up -d --build postgres
 PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
     pytest -m integration    # against the real pg_tiktoken + pg_cron container
+
+pytest tests/fuzz/           # property-based fuzzing (Hypothesis, part of [test])
 ```
+
+### Fuzzing
+
+The parsing/assembly boundaries — the JSONL request-line assembler, the Batch
+API result decoder, and the Postgres KV config (de)serialiser — are fuzzed with
+**Hypothesis** (MPL-2.0, every interpreter) and, where available,
+coverage-guided **Atheris** (Apache-2.0, CPython ≤ 3.12). Both share one oracle
+in `fuzz/targets.py`. Bounded campaigns run in CI ([`.github/workflows/fuzz.yml`](.github/workflows/fuzz.yml));
+see [`fuzz/README.md`](fuzz/README.md).
 
 ## Docs
 
 - [`docs/papers/`](docs/papers/) — CC BY 4.0 reference papers on LLM batching
-  (PagedAttention/vLLM, DeepSpeed-FastGen) with citations.
+  (PagedAttention/vLLM, DeepSpeed-FastGen) and coverage-guided fuzzing, with
+  citations.
 
 ## License
 
