@@ -3,8 +3,9 @@
 services:
   postgres:
     build:
-      context: .
-      dockerfile: docker/postgres/Dockerfile
+      # Self-contained context: the Dockerfile only COPYs files under docker/postgres.
+      context: docker/postgres
+      dockerfile: Dockerfile
       args:
         PG_MAJOR: "16"
         ENABLE_TIKTOKEN: "1"

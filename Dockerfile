@@ -9,7 +9,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY pyproject.toml README.md ./
 COPY pg_llm_batch ./pg_llm_batch
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . \
+    && adduser --system --no-create-home appuser
+
+# Run as a non-root user (trivy DS-0002).
+USER appuser
 
 # Bootstrap transport only: DSN + optional Fernet key are injected as env.
 ENV PG_LLM_BATCH_DSN="" \

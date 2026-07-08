@@ -5,7 +5,10 @@ FROM postgres:${PG_MAJOR}-bullseye
 
 ARG PG_TIKTOKEN_REPO=https://github.com/postgresml/pg_tiktoken.git
 ARG PG_TIKTOKEN_BRANCH=main
-ARG ENABLE_TIKTOKEN=1
+# Default off so a plain `docker build docker/postgres` (the context the central
+# coverage-evidence job uses for each changed Dockerfile) stays fast and offline;
+# docker-compose overrides ENABLE_TIKTOKEN=1 to build the tokenizer extension.
+ARG ENABLE_TIKTOKEN=0
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ENABLE_TIKTOKEN=${ENABLE_TIKTOKEN}
@@ -19,7 +22,9 @@ RUN apt-get update && \
       postgresql-${PG_MAJOR}-http && \
     rm -rf /var/lib/apt/lists/*
 
-COPY docker/postgres/patches/ /tmp/postgres_patches/
+# COPY sources are relative to this Dockerfile's directory so the image builds
+# with `docker/postgres` as the build context (compose sets context: docker/postgres).
+COPY patches/ /tmp/postgres_patches/
 
 # Build pg_tiktoken via cargo-pgrx (o200k patch applied). Failures are tolerated
 # so the image still boots for pg_cron/http-only smoke tests.
@@ -42,7 +47,7 @@ RUN bash -lc 'set -euo pipefail; \
     echo "ENABLE_TIKTOKEN=0: skipping pg_tiktoken build"; \
   fi'
 
-COPY docker/postgres/postgresql.conf.custom /etc/postgresql/postgresql.conf.custom
+COPY postgresql.conf.custom /etc/postgresql/postgresql.conf.custom
 
 # Preload shared libraries via a wrapper entrypoint.
 RUN cat <<'SCRIPT' > /usr/local/bin/pg-llm-batch-entrypoint.sh
@@ -62,7 +67,12 @@ RUN chmod +x /usr/local/bin/pg-llm-batch-entrypoint.sh
 ENTRYPOINT ["pg-llm-batch-entrypoint.sh"]
 CMD ["postgres"]
 
-# Init order: extensions -> schema -> cron retrieval.
-COPY docker/postgres/init/01_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
-COPY pg_llm_batch/schema.sql /docker-entrypoint-initdb.d/02_schema.sql
-COPY docker/postgres/init/03_cron_batch_retrieval.sql /docker-entrypoint-initdb.d/03_cron_batch_retrieval.sql
+# Init order: extensions -> schema -> cron retrieval. init/02_schema.sql is a
+# build-context mirror of pg_llm_batch/schema.sql (see that file's header).
+COPY init/01_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
+COPY init/02_schema.sql /docker-entrypoint-initdb.d/02_schema.sql
+COPY init/03_cron_batch_retrieval.sql /docker-entrypoint-initdb.d/03_cron_batch_retrieval.sql
+
+# Run as the unprivileged postgres user (uid 999) shipped by the base image
+# rather than root (trivy DS-0002). The official entrypoint supports non-root.
+USER postgres
