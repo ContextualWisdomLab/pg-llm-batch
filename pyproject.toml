@@ -7,7 +7,7 @@ name = "pg-llm-batch"
 version = "0.1.0"
 description = "Standalone + submodule Postgres LLM batch engine: pg_tiktoken token counting + batch submit/poll/retrieve"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "ContextualWisdomLab" }]
 keywords = ["postgres", "llm", "batch", "pg_tiktoken", "tokenization"]
@@ -17,11 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-secrets = ["cryptography>=41"]
+secrets = ["cryptography>=48.0.1"]
 test = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
-    "cryptography>=41",
+    "cryptography>=48.0.1",
     # Hypothesis (MPL-2.0) drives the property-based fuzz suite in tests/fuzz/.
     "hypothesis>=6.100",
 ]
@@ -31,6 +31,18 @@ test = [
 fuzz = [
     "hypothesis>=6.100",
     "atheris>=2.3.0; python_version < '3.13'",
+]
+
+# PEP 735 dependency groups. `uv run` installs the `dev` group by default, so the
+# central coverage-evidence job (`uv run --with coverage --with pytest coverage
+# run -m pytest tests`) gets pytest-asyncio (async client tests) and cryptography
+# (Fernet secret-store test) without needing an explicit `--extra test`.
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "cryptography>=48.0.1",
+    "hypothesis>=6.100",
 ]
 
 [project.scripts]
