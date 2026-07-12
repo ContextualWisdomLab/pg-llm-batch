@@ -52,10 +52,13 @@ def test_postgres_image_pins_and_verifies_every_executable_input() -> None:
 
 
 def test_o200k_patch_pins_transitive_git_dependency() -> None:
-    """Keep the patched tokenizer dependency at its audited commit."""
+    """Keep the patched tokenizer dependency and API at audited revisions."""
     patch = (
         ROOT / "docker" / "postgres" / "patches" / "pg_tiktoken_o200k.patch"
     ).read_text(encoding="utf-8")
 
     assert "o200k_base" in patch
-    assert "90e77bddf3ae2a1a637ba1c2ab69651fd127176e" in patch
+    assert "https://github.com/zurawiki/tiktoken-rs" in patch
+    assert "a79050e5a465592dc7e80f23ed69992bb1ac7f50" in patch
+    assert "o200k_base_singleton" in patch
+    assert "get_bpe_from_model" in patch

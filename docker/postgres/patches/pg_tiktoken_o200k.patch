@@ -1,41 +1,49 @@
 diff --git a/Cargo.toml b/Cargo.toml
-index ab459ba..39a243c 100644
+index ab459ba..ef2af60 100644
 --- a/Cargo.toml
 +++ b/Cargo.toml
 @@ -25 +25 @@ pgrx = { version = "=0.16.1", features = [ "unsafe-postgres" ] }
 -tiktoken-rs = { git = "https://github.com/kelvich/tiktoken-rs" }
-+tiktoken-rs = { git = "https://github.com/kelvich/tiktoken-rs", rev = "90e77bddf3ae2a1a637ba1c2ab69651fd127176e" }
++tiktoken-rs = { git = "https://github.com/zurawiki/tiktoken-rs", rev = "a79050e5a465592dc7e80f23ed69992bb1ac7f50", package = "tiktoken-rs" }
 diff --git a/src/lib.rs b/src/lib.rs
-index 4551d55..12b0046 100644
+index 4551d55..ca3e087 100644
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -3,5 +3,2 @@ use pgrx::prelude::*;
+@@ -3,5 +3,4 @@ use pgrx::prelude::*;
 -use tiktoken_rs::encoding_for_model;
 -use tiktoken_rs::r50k_base;
 -use tiktoken_rs::cl100k_base;
 -use tiktoken_rs::p50k_base;
 -use tiktoken_rs::p50k_edit;
-+use tiktoken_rs::get_bpe_from_model;
-+use tiktoken_rs::{cl100k_base, o200k_base, p50k_base, p50k_edit, r50k_base};
-@@ -16,5 +13,3 @@ pgrx::pg_module_magic!();
++use tiktoken_rs::{
++    cl100k_base_singleton, get_bpe_from_model, o200k_base_singleton,
++    p50k_base_singleton, p50k_edit_singleton, r50k_base_singleton,
++};
+@@ -16,13 +15,12 @@ pgrx::pg_module_magic!();
 -fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<usize> {
 -    let encoder_name = encoding_for_model(encoding_selector)
 -        .unwrap_or(encoding_selector);
 -
 -    let encoder = match encoder_name {
-+fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<u32> {
-+    let bpe_result = match encoding_selector {
-+        "o200k_base" => o200k_base(),
-@@ -25,2 +20,5 @@ fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<usize> {
+-        "cl100k_base" => cl100k_base(),
+-        "r50k_base" | "gpt2" => r50k_base(),
+-        "p50k_base" => p50k_base(),
+-        "p50k_edit" => p50k_edit(),
 -        _ => error!("'{encoding_selector}': unknown model or encoder")
 -    }.unwrap();
-+        _ => get_bpe_from_model(encoding_selector),
+-
+-    encoder.encode_with_special_tokens(text)
++fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<u32> {
++    let bpe = match encoding_selector {
++        "o200k_base" => o200k_base_singleton(),
++        "cl100k_base" => cl100k_base_singleton(),
++        "r50k_base" | "gpt2" => r50k_base_singleton(),
++        "p50k_base" => p50k_base_singleton(),
++        "p50k_edit" => p50k_edit_singleton(),
++        _ => get_bpe_from_model(encoding_selector)
++            .unwrap_or_else(|_| error!("'{encoding_selector}': unknown model or encoder")),
 +    };
 +
-+    let bpe = bpe_result
-+        .unwrap_or_else(|_| error!("'{encoding_selector}': unknown model or encoder"));
-@@ -28 +26 @@ fn encode_with_model(encoding_selector: &str, text: &str) -> Vec<usize> {
--    encoder.encode_with_special_tokens(text)
 +    bpe.encode_with_special_tokens(text)
 @@ -34,2 +32,2 @@ fn tiktoken_encode(encoding_selector: &str, text: &str) -> Vec<i64> {
 -        .iter()
