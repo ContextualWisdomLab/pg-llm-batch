@@ -234,7 +234,7 @@ class TokenCounter:
             else:
                 current.append(request)
                 current_tokens += request_tokens
-        if current:
+        if current:  # pragma: no branch - every non-empty input appends a request
             batches.append(current)
         return batches
 

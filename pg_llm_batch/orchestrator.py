@@ -115,7 +115,14 @@ class PostgresBatchOrchestrator:
             mode = str((metadata or {}).get("mode") or "").lower()
             system_for_tokens = system_prompt if mode != "embedding" else ""
 
-            if acc is None or current_model != model_name:
+            if acc is not None and current_model != model_name:
+                drained = acc.drain()
+                if drained:  # pragma: no branch - accumulator has the prior row
+                    payloads.append({"part_index": part_index, **drained})
+                    part_index += 1
+                acc = None
+
+            if acc is None:
                 acc = BatchAccumulator(counter, model_name)
                 current_model = model_name
 
@@ -130,7 +137,7 @@ class PostgresBatchOrchestrator:
 
             if acc.would_exceed(total_tokens, byte_size):
                 drained = acc.drain()
-                if drained:
+                if drained:  # pragma: no branch - would_exceed requires a prior row
                     payloads.append({"part_index": part_index, **drained})
                     part_index += 1
                     acc = BatchAccumulator(counter, model_name)
@@ -139,7 +146,7 @@ class PostgresBatchOrchestrator:
 
         if acc and acc.record_count > 0:
             drained = acc.drain()
-            if drained:
+            if drained:  # pragma: no branch - positive record_count implies entries
                 payloads.append({"part_index": part_index, **drained})
 
         return payloads

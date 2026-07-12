@@ -97,3 +97,186 @@ def test_batch_accumulator_would_exceed_and_drain(fake_pg):
     assert drained["record_count"] == 2
     assert drained["request_ids"] == ["r1", "r2"]
     assert acc.record_count == 0  # reset after drain
+
+
+def test_empty_batches_and_oversized_single_request(fake_pg):
+    counter = TokenCounter("postgresql://x")
+    assert counter.count_batch_tokens([]) == {
+        "total_tokens": 0,
+        "total_system_tokens": 0,
+        "total_user_tokens": 0,
+        "request_count": 0,
+        "average_tokens_per_request": 0,
+        "max_tokens_per_request": 0,
+        "min_tokens_per_request": 0,
+        "token_breakdown": [],
+    }
+    assert counter.split_oversized_batch([]) == []
+    counter.effective_limit = 1
+    with pytest.raises(TokenLimitExceededError, match="oversized_request"):
+        counter.split_oversized_batch([BatchRequest(user_prompt="two tokens", model="m")])
+
+
+def test_config_resolution_buffer_validation_and_encoder_cache(fake_pg, monkeypatch):
+    class Config:
+        def __init__(self, values=None, error=False):
+            self.values = values or {}
+            self.error = error
+
+        def get(self, category, key, default):
+            if self.error:
+                raise RuntimeError("config unavailable")
+            return self.values.get((category, key), default)
+
+    counter = TokenCounter(
+        "postgresql://x",
+        config=Config({("token_limits", "buffer_percentage"): None}),
+    )
+    assert counter.buffer_percentage == counter.DEFAULT_BUFFER_PERCENTAGE
+    assert counter._resolve_config_value("x", "y", 7) == 7
+    counter.config = Config(error=True)
+    assert counter._resolve_config_value("x", "y", 8) == 8
+
+    for invalid in (-1, 51):
+        with pytest.raises(ValidationError, match="between 0 and 50"):
+            TokenCounter("postgresql://x", buffer_percentage=invalid)
+
+    calls = []
+    monkeypatch.setattr(
+        counter,
+        "get_tiktoken_name",
+        lambda model: calls.append(model) or "o200k_base",
+    )
+    assert counter.get_encoder("deployment") is counter.get_encoder("deployment")
+    assert calls == ["deployment"]
+
+
+def test_count_tokens_fails_closed_when_extension_disappears(fake_pg, monkeypatch):
+    counter = TokenCounter("postgresql://x")
+    monkeypatch.setattr(
+        counter,
+        "_count_tokens_postgres",
+        lambda _text, _model: (_ for _ in ()).throw(fake_pg.errors.UndefinedFunction()),
+    )
+    with pytest.raises(RuntimeError, match="requires pg_tiktoken"):
+        counter.count_tokens("hello", "gpt-4o")
+    assert counter._pg_available is False
+
+    monkeypatch.setattr(tc_mod, "psycopg", None)
+    unavailable = TokenCounter("postgresql://x")
+    with pytest.raises(RuntimeError, match="requires pg_tiktoken"):
+        unavailable.count_tokens("hello", "gpt-4o")
+    with pytest.raises(RuntimeError, match="integration is unavailable"):
+        unavailable._count_tokens_postgres("hello", "gpt-4o")
+
+
+def test_pg_tiktoken_probe_failure_closes_connection(monkeypatch):
+    class Connection:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    counter = object.__new__(TokenCounter)
+    counter._pg_conn = Connection()
+    monkeypatch.setattr(tc_mod, "psycopg", object())
+    monkeypatch.setattr(
+        counter,
+        "_get_pg_conn",
+        lambda: (_ for _ in ()).throw(OSError("database unavailable")),
+    )
+    assert counter._ensure_pg_tiktoken() is False
+    assert counter._pg_conn is None
+    monkeypatch.setattr(tc_mod, "psycopg", None)
+    assert counter._ensure_pg_tiktoken() is False
+
+    monkeypatch.setattr(tc_mod, "psycopg", object())
+    counter._pg_conn = None
+    assert counter._ensure_pg_tiktoken() is False
+
+
+def test_postgres_count_falls_back_to_encode(fake_pg):
+    class Cursor:
+        def __init__(self):
+            self.calls = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def execute(self, sql, _params):
+            self.calls += 1
+            if "tiktoken_count" in sql:
+                raise fake_pg.errors.UndefinedFunction()
+
+        def fetchone(self):
+            return (4,)
+
+    cursor = Cursor()
+
+    class Connection:
+        closed = False
+
+        def cursor(self):
+            return cursor
+
+    counter = TokenCounter("postgresql://x")
+    counter._pg_conn = Connection()
+    assert counter._count_tokens_postgres("one two three four", "gpt-4o") == 4
+    assert cursor.calls == 2
+
+
+def test_postgres_count_handles_empty_driver_rows(fake_pg):
+    class Cursor:
+        def __init__(self, *, fallback):
+            self.fallback = fallback
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return None
+
+        def execute(self, sql, _params):
+            if self.fallback and "tiktoken_count" in sql:
+                raise fake_pg.errors.UndefinedFunction()
+
+        def fetchone(self):
+            return None
+
+    class Connection:
+        closed = False
+
+        def __init__(self, cursor):
+            self._cursor = cursor
+
+        def cursor(self):
+            return self._cursor
+
+    counter = TokenCounter("postgresql://x")
+    counter._pg_conn = Connection(Cursor(fallback=False))
+    assert counter._count_tokens_postgres("text", "model") == 0
+    counter._pg_conn = Connection(Cursor(fallback=True))
+    with pytest.raises(fake_pg.errors.UndefinedFunction):
+        counter._count_tokens_postgres("text", "model")
+
+
+def test_accumulator_all_limits_and_jsonl(fake_pg):
+    counter = TokenCounter("postgresql://x")
+    counter.effective_limit = 5
+    acc = BatchAccumulator(counter, "gpt-4o", max_records=2, max_bytes=10)
+    assert acc.compute_tokens("system", "two words") == (3, 1, 2)
+    assert BatchAccumulator.compute_byte_size("é") == 3
+    assert acc.drain() == {}
+    acc.add_entry("r1", '{"a":1}', tokens=4, byte_size=8)
+    assert acc.would_exceed(tokens=2, byte_size=1) is True
+    acc.token_limit = 100
+    assert acc.would_exceed(tokens=1, byte_size=3) is True
+    acc.max_bytes = 100
+    acc.max_records = 1
+    assert acc.would_exceed(tokens=1, byte_size=1) is True
+    acc.max_records = 2
+    assert acc.would_exceed(tokens=1, byte_size=1) is False
+    assert acc.to_jsonl() == '{"a":1}\n'

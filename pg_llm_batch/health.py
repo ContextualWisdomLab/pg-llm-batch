@@ -56,7 +56,20 @@ def check_health(dsn: str) -> Dict[str, Any]:
             ],
         }
 
-    ready = all(
+    observed = {c["component"] for c in components}
+    missing = sorted(REQUIRED_COMPONENTS - observed)
+    for component in missing:
+        components.append(
+            {
+                "component": component,
+                "is_ready": False,
+                "detail": "missing from pg_llm_batch_health_check() result",
+            }
+        )
+    if missing:
+        logger.warning("Health check omitted required components: %s", ", ".join(missing))
+
+    ready = not missing and all(
         c["is_ready"]
         for c in components
         if c["component"] in REQUIRED_COMPONENTS

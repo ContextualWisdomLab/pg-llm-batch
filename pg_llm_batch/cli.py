@@ -137,7 +137,7 @@ def _dispatch(argv: Optional[List[str]]) -> int:
             store = PostgresConfigStore(dsn)
             print(store.get(args.category, args.key))
             return 0
-        if args.config_command == "set-secret":
+        if args.config_command == "set-secret":  # pragma: no branch - exhaustive parser
             secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
             secrets.set_secret(args.secret_key, args.secret_value)
             print(f"Stored secret {args.secret_key}")

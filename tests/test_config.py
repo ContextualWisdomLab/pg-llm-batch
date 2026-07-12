@@ -69,3 +69,93 @@ def test_require_secret_raises_when_missing(fake_pg):
     store = SecretStore("postgresql://x")
     with pytest.raises(ConfigError):
         store.require_secret("does_not_exist")
+
+
+def test_serialization_and_typed_deserialization_fallbacks(monkeypatch):
+    assert cfg_mod._serialize_value({"a": 1}) == '{"a": 1}'
+    assert cfg_mod._serialize_value([1, 2]) == "[1, 2]"
+    assert cfg_mod._serialize_value(True) == "true"
+    assert cfg_mod._serialize_value(12) == "12"
+
+    assert cfg_mod._deserialize_value("optimization.smart_batching", "YES") is True
+    assert cfg_mod._deserialize_value("optimization.smart_batching", "off") is False
+    assert cfg_mod._deserialize_value("optimization.smart_batching", "maybe") is True
+    assert cfg_mod._deserialize_value("token_limits.per_batch", "invalid") == (
+        5_000_000_000
+    )
+
+    monkeypatch.setitem(
+        cfg_mod.DEFAULT_CONFIG_INDEX,
+        "custom.mapping",
+        {"type": dict, "value": {"safe": True}},
+    )
+    monkeypatch.setitem(
+        cfg_mod.DEFAULT_CONFIG_INDEX,
+        "custom.ratio",
+        {"type": float, "value": 0.5},
+    )
+    assert cfg_mod._deserialize_value("custom.mapping", "not-json") == {
+        "safe": True
+    }
+    assert cfg_mod._deserialize_value("custom.ratio", "1.25") == 1.25
+    assert cfg_mod._deserialize_value("custom.ratio", "invalid") == 0.5
+    assert cfg_mod._deserialize_value("custom.raw", "value") == "value"
+    assert cfg_mod._split_full_key("gateway.base_url") == ("gateway", "base_url")
+    assert cfg_mod._split_full_key("standalone") == ("global", "standalone")
+
+
+def test_config_missing_lookup_show_and_factory(fake_pg):
+    store = cfg_mod.get_config_store("postgresql://x")
+    assert store.get("unknown", "key", "fallback") == "fallback"
+    store.set("unknown", "key", {"nested": True})
+    store.cache.clear()
+    assert store.get("unknown", "key") == '{"nested": true}'
+    rows = list(store.show_config())
+    assert rows == sorted(rows)
+    assert ("unknown", "key", '{"nested": true}') in rows
+    connection = store._conn
+    store.close()
+    assert connection.closed is True
+    assert store._conn is None
+    store.close()
+
+
+def test_store_constructor_requires_dependency_and_dsn(monkeypatch, fake_pg):
+    monkeypatch.setattr(cfg_mod, "psycopg", None)
+    with pytest.raises(ConfigError, match="psycopg is required"):
+        PostgresConfigStore("postgresql://x")
+    with pytest.raises(ConfigError, match="psycopg is required"):
+        SecretStore("postgresql://x")
+
+    monkeypatch.setattr(cfg_mod, "psycopg", fake_pg)
+    with pytest.raises(ConfigError, match="DSN"):
+        PostgresConfigStore("")
+    with pytest.raises(ConfigError, match="DSN"):
+        SecretStore("")
+
+
+def test_encrypted_secret_requires_matching_key(fake_pg):
+    fake_pg.store.secrets["encrypted"] = ("opaque", True)
+    store = SecretStore("postgresql://x")
+    with pytest.raises(ConfigError, match="no Fernet key"):
+        store.get_secret("encrypted")
+    assert store.get_secret("absent", "default") == "default"
+    store.set_secret("present", "value")
+    assert store.require_secret("present") == "value"
+
+
+def test_close_swallows_driver_cleanup_errors(fake_pg):
+    class BrokenConnection:
+        def close(self):
+            raise OSError("driver shutdown failed")
+
+    config = PostgresConfigStore("postgresql://x")
+    config._conn = BrokenConnection()
+    config.close()
+    assert config._conn is None
+
+    secrets = SecretStore("postgresql://x")
+    secrets._conn = BrokenConnection()
+    secrets.close()
+    assert secrets._conn is None
+    secrets.close()
