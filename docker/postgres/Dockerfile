@@ -84,7 +84,8 @@ RUN bash -c 'set -euxo pipefail; \
   test "$(git rev-parse HEAD)" = "${PG_TIKTOKEN_COMMIT}"; \
   patch -p1 < /tmp/postgres_patches/pg_tiktoken_o200k.patch; \
   cargo generate-lockfile; \
-  cargo pgrx install --release --locked; \
+  cargo fetch --locked; \
+  cargo pgrx install --release; \
   rm -rf /tmp/pg_tiktoken /tmp/postgres_patches \
     /usr/local/cargo /usr/local/rustup; \
   apt-get purge -y --auto-remove \
