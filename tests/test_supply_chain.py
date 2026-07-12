@@ -37,6 +37,9 @@ def test_postgres_image_pins_and_verifies_every_executable_input() -> None:
     assert "RUSTUP_HOME=/usr/local/rustup" in dockerfile
     assert "RUN bash -c 'set -euxo pipefail" in dockerfile
     assert "bash -lc" not in dockerfile
+    assert "command -v cargo" in dockerfile
+    assert "cargo --version" in dockerfile
+    assert "rustc --version" in dockerfile
     assert "curl https://sh.rustup.rs" not in dockerfile
     assert "PG_TIKTOKEN_BRANCH" not in dockerfile
     assert "build failed; continuing" not in dockerfile

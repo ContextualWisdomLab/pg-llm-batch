@@ -71,6 +71,9 @@ COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 COPY patches/ /tmp/postgres_patches/
 
 RUN bash -c 'set -euxo pipefail; \
+  command -v cargo; \
+  cargo --version; \
+  rustc --version; \
   cargo install --locked cargo-pgrx --version 0.16.1; \
   cargo pgrx init --pg${PG_MAJOR} /usr/lib/postgresql/${PG_MAJOR}/bin/pg_config; \
   git init /tmp/pg_tiktoken; \
