@@ -140,7 +140,7 @@ def _dispatch(argv: Optional[List[str]]) -> int:
         if args.config_command == "set-secret":  # pragma: no branch - exhaustive parser
             secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
             secrets.set_secret(args.secret_key, args.secret_value)
-            print(f"Stored secret {args.secret_key}")
+            print("Stored secret.")
             return 0
 
     if args.command == "count-tokens":
