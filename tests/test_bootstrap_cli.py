@@ -92,6 +92,9 @@ def test_init_and_config_commands(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "Schema applied." in output
     assert "stored-value" in output
+    assert "Secret stored." in output
+    assert "gateway_api_key.default" not in output
+    assert "secret" not in output
 
 
 def test_count_health_and_server_commands(monkeypatch, capsys):
