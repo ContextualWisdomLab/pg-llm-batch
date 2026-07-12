@@ -44,6 +44,7 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser and all supported subcommands."""
     parser = argparse.ArgumentParser(
         prog="pg_llm_batch",
         description="Standalone Postgres LLM batch engine",
@@ -109,6 +110,7 @@ def _make_client(dsn: str) -> BatchAPIClient:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    """Run the command-line entry point and map domain errors to exit code 2."""
     try:
         return _dispatch(argv)
     except PgLlmBatchError as exc:

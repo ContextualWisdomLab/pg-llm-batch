@@ -1,51 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
-# PostgreSQL image with pg_tiktoken + pg_cron + http for pg-llm-batch.
+# PostgreSQL image with pg_cron + http, plus an opt-in pg_tiktoken target.
 ARG PG_MAJOR=16
-FROM postgres:${PG_MAJOR}-bullseye
+FROM postgres:${PG_MAJOR}-bookworm@sha256:da788743d2060767375896de4d646f7576f5911461444b372616f19ea61db2ec AS postgres-base
 
-ARG PG_TIKTOKEN_REPO=https://github.com/postgresml/pg_tiktoken.git
-ARG PG_TIKTOKEN_BRANCH=main
-# Default off so a plain `docker build docker/postgres` (the context the central
-# coverage-evidence job uses for each changed Dockerfile) stays fast and offline;
-# docker-compose overrides ENABLE_TIKTOKEN=1 to build the tokenizer extension.
-ARG ENABLE_TIKTOKEN=0
-
+ARG PG_MAJOR=16
 ENV DEBIAN_FRONTEND=noninteractive
-ENV ENABLE_TIKTOKEN=${ENABLE_TIKTOKEN}
 
+# Patch the base OS and remove gosu: this image always runs as the official
+# postgres user, so gosu is unreachable runtime code and its stale Go stdlib
+# would otherwise leave Medium+ vulnerabilities in the final filesystem.
 RUN apt-get update && \
+    apt-get upgrade -y && \
     apt-get install -y --no-install-recommends \
-      build-essential ca-certificates clang libclang-dev cmake curl git \
-      libssl-dev zlib1g-dev make pkg-config \
-      postgresql-server-dev-${PG_MAJOR} \
       postgresql-${PG_MAJOR}-cron \
       postgresql-${PG_MAJOR}-http && \
-    rm -rf /var/lib/apt/lists/*
-
-# COPY sources are relative to this Dockerfile's directory so the image builds
-# with `docker/postgres` as the build context (compose sets context: docker/postgres).
-COPY patches/ /tmp/postgres_patches/
-
-# Build pg_tiktoken via cargo-pgrx (o200k patch applied). Failures are tolerated
-# so the image still boots for pg_cron/http-only smoke tests.
-RUN bash -lc 'set -euo pipefail; \
-  if [ "${ENABLE_TIKTOKEN}" = "1" ]; then \
-    curl https://sh.rustup.rs -sSf | bash -s -- -y --profile minimal; \
-    source "$HOME/.cargo/env"; \
-    cargo install --locked cargo-pgrx --version 0.16.0; \
-    cargo pgrx init --pg${PG_MAJOR} /usr/lib/postgresql/${PG_MAJOR}/bin/pg_config; \
-    if git clone --depth 1 --branch ${PG_TIKTOKEN_BRANCH} ${PG_TIKTOKEN_REPO} /tmp/pg_tiktoken; then \
-      cd /tmp/pg_tiktoken && \
-      patch -p1 < /tmp/postgres_patches/pg_tiktoken_o200k.patch && \
-      cargo update -p tiktoken-rs || true && \
-      (cargo pgrx install --release || echo "WARNING: pg_tiktoken build failed; continuing") && \
-      rm -rf /tmp/pg_tiktoken; \
-    else \
-      echo "WARNING: pg_tiktoken repo unreachable; skipping"; \
-    fi; \
-  else \
-    echo "ENABLE_TIKTOKEN=0: skipping pg_tiktoken build"; \
-  fi'
+    rm -rf /var/lib/apt/lists/* /usr/local/bin/gosu
 
 COPY postgresql.conf.custom /etc/postgresql/postgresql.conf.custom
 
@@ -54,7 +23,7 @@ RUN cat <<'SCRIPT' > /usr/local/bin/pg-llm-batch-entrypoint.sh
 #!/bin/bash
 set -e
 preload="pg_cron"
-if [ "${ENABLE_TIKTOKEN:-1}" = "1" ]; then
+if [ "${ENABLE_TIKTOKEN:-0}" = "1" ]; then
     preload="${preload},pg_tiktoken"
 fi
 if [ "${1:-}" = "postgres" ]; then
@@ -77,6 +46,52 @@ COPY init/01_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
 COPY init/02_schema.sql /docker-entrypoint-initdb.d/02_schema.sql
 COPY init/03_cron_batch_retrieval.sql /docker-entrypoint-initdb.d/03_cron_batch_retrieval.sql
 
-# Run as the unprivileged postgres user (uid 999) shipped by the base image
-# rather than root (trivy DS-0002). The official entrypoint supports non-root.
+# Compose selects this target. Every executable input is immutable and an
+# enabled tokenizer build is fail-closed, leaving the failing command visible.
+FROM rust:1.88-slim-bookworm@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS rust-toolchain
+
+FROM postgres-base AS with-tiktoken
+
+ARG PG_MAJOR=16
+ARG PG_TIKTOKEN_COMMIT=0baf8d46620c9fa21acf4dc5f167e25f693aa932
+ENV ENABLE_TIKTOKEN=1
+ENV PATH="/usr/local/cargo/bin:${PATH}"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      build-essential ca-certificates clang libclang-dev cmake git \
+      libssl-dev zlib1g-dev make pkg-config \
+      postgresql-server-dev-${PG_MAJOR} && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
+COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
+COPY patches/ /tmp/postgres_patches/
+
+RUN bash -lc 'set -euxo pipefail; \
+  cargo install --locked cargo-pgrx --version 0.16.1; \
+  cargo pgrx init --pg${PG_MAJOR} /usr/lib/postgresql/${PG_MAJOR}/bin/pg_config; \
+  git init /tmp/pg_tiktoken; \
+  cd /tmp/pg_tiktoken; \
+  git remote add origin https://github.com/kelvich/pg_tiktoken.git; \
+  git fetch --depth 1 origin "${PG_TIKTOKEN_COMMIT}"; \
+  git checkout --detach FETCH_HEAD; \
+  test "$(git rev-parse HEAD)" = "${PG_TIKTOKEN_COMMIT}"; \
+  patch -p1 < /tmp/postgres_patches/pg_tiktoken_o200k.patch; \
+  cargo generate-lockfile; \
+  cargo pgrx install --release --locked; \
+  rm -rf /tmp/pg_tiktoken /tmp/postgres_patches \
+    /usr/local/cargo /usr/local/rustup; \
+  apt-get purge -y --auto-remove \
+    build-essential clang libclang-dev cmake git libssl-dev zlib1g-dev make \
+    pkg-config postgresql-server-dev-${PG_MAJOR}; \
+  rm -rf /var/lib/apt/lists/*'
+
+USER postgres
+
+# Default/central-check target: no Rust toolchain is pulled and the log-visible
+# environment makes the deliberate tokenizer omission explicit.
+FROM postgres-base AS runtime
+
+ENV ENABLE_TIKTOKEN=0
 USER postgres

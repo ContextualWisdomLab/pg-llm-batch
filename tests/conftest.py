@@ -8,7 +8,6 @@ integration test (``-m integration``) uses a real container instead.
 
 from __future__ import annotations
 
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 

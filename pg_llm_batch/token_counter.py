@@ -56,6 +56,7 @@ class TokenCounter:
         config: Optional[Any] = None,
         buffer_percentage: Optional[int] = None,
     ) -> None:
+        """Initialize PostgreSQL token counting and configured batch limits."""
         if not postgres_dsn:
             raise ValidationError(
                 field="postgres_dsn",
@@ -123,6 +124,7 @@ class TokenCounter:
         return model
 
     def get_encoder(self, model: str) -> _EncoderInfo:
+        """Return and cache the tokenizer metadata for a model."""
         cached = self._encoder_cache.get(model)
         if cached:
             return cached
@@ -134,6 +136,7 @@ class TokenCounter:
     # Counting
     # ------------------------------------------------------------------
     def count_tokens(self, text: str, model: str) -> int:
+        """Count tokens through pg_tiktoken or fail when it is unavailable."""
         if not text:
             return 0
         if self._pg_available:
@@ -150,11 +153,13 @@ class TokenCounter:
         )
 
     def count_request_tokens(self, request: BatchRequest) -> Tuple[int, int, int]:
+        """Return system, user, and total token counts for one request."""
         system_tokens = self.count_tokens(request.system_prompt or "", request.model)
         user_tokens = self.count_tokens(request.user_prompt, request.model)
         return system_tokens, user_tokens, system_tokens + user_tokens
 
     def count_batch_tokens(self, requests: List[BatchRequest]) -> Dict[str, Any]:
+        """Aggregate token statistics and enforce the effective batch limit."""
         if not requests:
             return {
                 "total_tokens": 0,
@@ -313,6 +318,7 @@ class BatchAccumulator:
         max_records: Optional[int] = None,
         max_bytes: Optional[int] = None,
     ) -> None:
+        """Initialize an accumulator with token, byte, and record limits."""
         self.token_counter = token_counter
         self.model = model
         self.token_limit = token_counter.effective_limit
@@ -321,6 +327,7 @@ class BatchAccumulator:
         self.reset()
 
     def reset(self) -> None:
+        """Clear all accumulated lines and counters."""
         self.entries: List[Tuple[str, str, int]] = []
         self.total_tokens = 0
         self.record_count = 0
@@ -329,15 +336,18 @@ class BatchAccumulator:
     def compute_tokens(
         self, system_prompt: str, user_prompt: str
     ) -> Tuple[int, int, int]:
+        """Return total, system, and user token counts for one prompt pair."""
         system_tokens = self.token_counter.count_tokens(system_prompt or "", self.model)
         user_tokens = self.token_counter.count_tokens(user_prompt or "", self.model)
         return system_tokens + user_tokens, system_tokens, user_tokens
 
     @staticmethod
     def compute_byte_size(json_line: str) -> int:
+        """Return the UTF-8 byte size including the JSONL newline."""
         return len(json_line.encode("utf-8")) + 1  # include newline
 
     def would_exceed(self, tokens: int, byte_size: int) -> bool:
+        """Report whether adding a line would exceed any active limit."""
         if self.record_count == 0:
             return False
         if self.total_tokens + tokens > self.token_limit:
@@ -351,12 +361,14 @@ class BatchAccumulator:
     def add_entry(
         self, request_id: str, json_line: str, tokens: int, byte_size: int
     ) -> None:
+        """Append a prepared line and update aggregate counters."""
         self.entries.append((request_id, json_line, tokens))
         self.total_tokens += tokens
         self.record_count += 1
         self.byte_size += byte_size
 
     def drain(self) -> Dict[str, Any]:
+        """Return accumulated metadata and reset the accumulator."""
         if not self.entries:
             return {}
         metadata = {

@@ -31,6 +31,8 @@ except ImportError:  # pragma: no cover
 
 @dataclass
 class BatchPayload:
+    """Describe one prepared in-memory JSONL payload."""
+
     file_path: str
     request_count: int
     total_tokens: int
@@ -40,6 +42,7 @@ class PostgresBatchOrchestrator:
     """Assemble and persist JSONL batch payloads from queued requests."""
 
     def __init__(self, dsn: str) -> None:
+        """Initialize the orchestrator with an explicit PostgreSQL DSN."""
         if not dsn or psycopg is None:
             raise RuntimeError("A Postgres DSN and psycopg are required")
         self.dsn = dsn

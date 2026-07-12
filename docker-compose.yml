@@ -6,9 +6,9 @@ services:
       # Self-contained context: the Dockerfile only COPYs files under docker/postgres.
       context: docker/postgres
       dockerfile: Dockerfile
+      target: with-tiktoken
       args:
         PG_MAJOR: "16"
-        ENABLE_TIKTOKEN: "1"
     environment:
       POSTGRES_USER: pgllm
       POSTGRES_PASSWORD: pgllm

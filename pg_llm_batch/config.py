@@ -138,6 +138,7 @@ class PostgresConfigStore:
     TABLE_NAME = "com_config"
 
     def __init__(self, dsn: str) -> None:
+        """Connect to PostgreSQL and initialize the configuration cache."""
         if psycopg is None:
             raise ConfigError("psycopg is required for PostgresConfigStore")
         if not dsn:
@@ -192,6 +193,7 @@ class PostgresConfigStore:
                 self.cache.setdefault(category, {})[key] = value
 
     def get(self, category: str, key: str, default: Any = None) -> Any:
+        """Return a typed configuration value, falling back to its default."""
         if category in self.cache and key in self.cache[category]:
             return self.cache[category][key]
         full_key = f"{category}.{key}"
@@ -208,6 +210,7 @@ class PostgresConfigStore:
         return _default_value(category, key, default)
 
     def set(self, category: str, key: str, value: Any) -> None:
+        """Persist and cache a typed configuration value."""
         full_key = f"{category}.{key}"
         serialized = _serialize_value(value)
         item = DEFAULT_CONFIG_INDEX.get(full_key)
@@ -228,6 +231,7 @@ class PostgresConfigStore:
         self.cache.setdefault(category, {})[key] = value
 
     def show_config(self) -> Iterable[Tuple[str, str, Any]]:
+        """Yield all configuration entries in stable key order."""
         with self._conn.cursor() as cur:
             cur.execute(
                 f"SELECT config_key, config_value FROM {self.TABLE_NAME} "
@@ -239,6 +243,7 @@ class PostgresConfigStore:
             yield category, key, _deserialize_value(config_key, config_value)
 
     def close(self) -> None:
+        """Close the backing PostgreSQL connection if it is open."""
         conn = getattr(self, "_conn", None)
         if conn is not None:
             try:
@@ -259,6 +264,7 @@ class SecretStore:
     TABLE_NAME = "com_secrets"
 
     def __init__(self, dsn: str, fernet_key: Optional[str] = None) -> None:
+        """Connect to PostgreSQL and configure optional Fernet encryption."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
@@ -308,6 +314,7 @@ class SecretStore:
         return base64.b64decode(stored.encode("utf-8")).decode("utf-8")
 
     def set_secret(self, key: str, value: str) -> None:
+        """Encrypt or obfuscate and persist a secret value."""
         encoded, is_encrypted = self._encode(value)
         with self._conn.cursor() as cur:
             cur.execute(
@@ -323,6 +330,7 @@ class SecretStore:
             )
 
     def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        """Return a decoded secret or the supplied default when absent."""
         with self._conn.cursor() as cur:
             cur.execute(
                 f"SELECT secret_value, is_encrypted FROM {self.TABLE_NAME} "
@@ -335,6 +343,7 @@ class SecretStore:
         return self._decode(row[0], bool(row[1]))
 
     def require_secret(self, key: str) -> str:
+        """Return a decoded secret or raise when the key is absent."""
         value = self.get_secret(key)
         if value is None:
             raise ConfigError(
@@ -344,6 +353,7 @@ class SecretStore:
         return value
 
     def close(self) -> None:
+        """Close the backing PostgreSQL connection if it is open."""
         conn = getattr(self, "_conn", None)
         if conn is not None:
             try:

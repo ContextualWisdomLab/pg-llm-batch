@@ -72,6 +72,7 @@ class BatchAPIClient:
         postgres_dsn: str,
         credentials: CredentialsProvider,
     ) -> None:
+        """Initialize the client with a PostgreSQL payload store and credentials."""
         if not postgres_dsn:
             raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
         self.postgres_dsn = postgres_dsn
@@ -79,10 +80,12 @@ class BatchAPIClient:
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self) -> "BatchAPIClient":
+        """Open and return the asynchronous HTTP client context."""
         self._session = aiohttp.ClientSession()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Close the HTTP session when leaving the asynchronous context."""
         if self._session:
             await self._session.close()
             self._session = None
