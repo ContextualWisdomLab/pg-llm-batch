@@ -54,8 +54,10 @@ FROM postgres-base AS with-tiktoken
 
 ARG PG_MAJOR=16
 ARG PG_TIKTOKEN_COMMIT=0baf8d46620c9fa21acf4dc5f167e25f693aa932
-ENV ENABLE_TIKTOKEN=1
-ENV PATH="/usr/local/cargo/bin:${PATH}"
+ENV ENABLE_TIKTOKEN=1 \
+    CARGO_HOME=/usr/local/cargo \
+    RUSTUP_HOME=/usr/local/rustup \
+    PATH="/usr/local/cargo/bin:${PATH}"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -68,7 +70,7 @@ COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo
 COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup
 COPY patches/ /tmp/postgres_patches/
 
-RUN bash -lc 'set -euxo pipefail; \
+RUN bash -c 'set -euxo pipefail; \
   cargo install --locked cargo-pgrx --version 0.16.1; \
   cargo pgrx init --pg${PG_MAJOR} /usr/lib/postgresql/${PG_MAJOR}/bin/pg_config; \
   git init /tmp/pg_tiktoken; \

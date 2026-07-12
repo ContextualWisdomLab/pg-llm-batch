@@ -33,6 +33,10 @@ def test_postgres_image_pins_and_verifies_every_executable_input() -> None:
     assert 'test "$(git rev-parse HEAD)" = "${PG_TIKTOKEN_COMMIT}"' in dockerfile
     assert "cargo install --locked cargo-pgrx --version 0.16.1" in dockerfile
     assert "cargo pgrx install --release --locked" in dockerfile
+    assert "CARGO_HOME=/usr/local/cargo" in dockerfile
+    assert "RUSTUP_HOME=/usr/local/rustup" in dockerfile
+    assert "RUN bash -c 'set -euxo pipefail" in dockerfile
+    assert "bash -lc" not in dockerfile
     assert "curl https://sh.rustup.rs" not in dockerfile
     assert "PG_TIKTOKEN_BRANCH" not in dockerfile
     assert "build failed; continuing" not in dockerfile
