@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pg-llm-batch"
+version = "0.1.0"
+description = "Standalone + submodule Postgres LLM batch engine: pg_tiktoken token counting + batch submit/poll/retrieve"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "ContextualWisdomLab" }]
+keywords = ["postgres", "llm", "batch", "pg_tiktoken", "tokenization"]
+dependencies = [
+    "psycopg[binary]>=3.1",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+secrets = ["cryptography>=48.0.1"]
+test = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "cryptography>=48.0.1",
+]
+
+# PEP 735 dependency groups. `uv run` installs the `dev` group by default, so the
+# central coverage-evidence job (`uv run --with coverage --with pytest coverage
+# run -m pytest tests`) gets pytest-asyncio (async client tests) and cryptography
+# (Fernet secret-store test) without needing an explicit `--extra test`.
+[dependency-groups]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "cryptography>=48.0.1",
+    "ruff==0.15.20",
+]
+
+[project.scripts]
+pg-llm-batch = "pg_llm_batch.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/ContextualWisdomLab/pg-llm-batch"
+
+[tool.setuptools]
+packages = ["pg_llm_batch"]
+
+[tool.setuptools.package-data]
+pg_llm_batch = ["schema.sql"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires a live pg_tiktoken + pg_cron Postgres container",
+]
+asyncio_mode = "auto"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "D100", "D101", "D102", "D103", "D104", "D105", "D106", "D107"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D101", "D102", "D103", "D105", "D106", "D107"]

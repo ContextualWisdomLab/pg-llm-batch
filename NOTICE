@@ -1,0 +1,23 @@
+pg-llm-batch
+Copyright (c) ContextualWisdomLab.
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Provenance
+----------
+The batch core (token counting, batch assembly/orchestration, and the
+OpenAI-compatible Batch API client) was extracted from the internal
+ContextualWisdomLab project "xtrmLLMBatchPython" and relicensed to Apache-2.0.
+ContextualWisdomLab owns the source; the extracted subset depends only on
+permissively-licensed components and is redistributable under Apache-2.0.
+
+Third-party components used at runtime (not vendored here):
+  - pg_tiktoken           Apache-2.0
+  - tiktoken-rs           MIT
+  - pgrx                  MIT / Apache-2.0
+  - pg_cron               PostgreSQL License
+  - pgvector              PostgreSQL License
+  - pgsql-http            MIT
+  - psycopg (v3)          LGPL-3.0 (dynamically linked; not modified)
+  - aiohttp               Apache-2.0
+  - cryptography          Apache-2.0 / BSD (optional, for secret encryption)

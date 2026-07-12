@@ -1,0 +1,49 @@
+# SPDX-License-Identifier: Apache-2.0
+# Standalone stack: pg_tiktoken-enabled Postgres + the pg-llm-batch component.
+services:
+  postgres:
+    build:
+      # Self-contained context: the Dockerfile only COPYs files under docker/postgres.
+      context: docker/postgres
+      dockerfile: Dockerfile
+      target: with-tiktoken
+      args:
+        PG_MAJOR: "16"
+    environment:
+      POSTGRES_USER: pgllm
+      POSTGRES_PASSWORD: pgllm
+      POSTGRES_DB: pgllm
+    ports:
+      - "5432:5432"
+    healthcheck:
+      # Readiness = DB up AND pg_tiktoken present (mirrors /healthz gate).
+      test:
+        - CMD-SHELL
+        - >-
+          pg_isready -U pgllm -d pgllm &&
+          psql -U pgllm -d pgllm -tAc
+          "SELECT bool_and(is_ready) FROM pg_llm_batch_health_check()
+           WHERE component IN ('database','pg_tiktoken','com_config')" | grep -q t
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  component:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Bootstrap transport only.
+      PG_LLM_BATCH_DSN: "postgresql://pgllm:pgllm@postgres:5432/pgllm"
+      PG_LLM_BATCH_HEALTH_PORT: "8080"
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:

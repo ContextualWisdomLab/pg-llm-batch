@@ -1,0 +1,183 @@
+# =============================================================================
+# Custom PostgreSQL Configuration for Production Monitoring
+# =============================================================================
+# This file extends the base PostgreSQL configuration with enhanced monitoring
+# and performance tracking capabilities across ALL databases in the cluster.
+#
+# Apply these settings via:
+# 1. Include in main postgresql.conf: include = 'postgresql.conf.custom'
+# 2. Or copy contents to main postgresql.conf
+# 3. Or apply via ALTER SYSTEM commands
+# =============================================================================
+
+# =============================================================================
+# SHARED LIBRARIES (requires restart)
+# =============================================================================
+shared_preload_libraries = 'pg_stat_statements,pg_cron'
+
+# =============================================================================
+# QUERY TEXT SIZE LIMITS
+# =============================================================================
+# Increase from default 1024 to 32KB to capture full query text
+track_activity_query_size = 32768
+
+# =============================================================================
+# PG_STAT_STATEMENTS CONFIGURATION
+# =============================================================================
+# Track query statistics across ALL databases in the cluster
+pg_stat_statements.max = 10000                # Track up to 10000 unique statements
+pg_stat_statements.track = 'all'              # Track all statements (not just top-level)
+pg_stat_statements.track_utility = on         # Include DDL, VACUUM, ANALYZE, etc.
+pg_stat_statements.track_planning = on        # Track planning time (PG 13+)
+pg_stat_statements.save = on                  # Persist stats across restarts
+
+# =============================================================================
+# LOGGING CONFIGURATION
+# =============================================================================
+# Log all slow queries to PostgreSQL log files
+log_min_duration_statement = 1000             # Log queries taking > 1 second
+log_min_duration_sample = 500                 # Sample queries 500ms-1s for performance analysis
+log_statement_sample_rate = 0.01              # Additional 1% sampling for performance metrics (NOT for audit)
+log_transaction_sample_rate = 0.01            # Transaction-level sampling for workload analysis
+
+# IMPORTANT: These sample rates DO NOT affect audit logging!
+# With log_statement = 'all', 100% of queries are logged regardless of sample rates
+# Sample rates only control ADDITIONAL performance statistics collection
+
+# Statement logging for comprehensive audit trail
+log_statement = 'all'                         # Log EVERYTHING for complete audit trail
+                                              # 'none' = no logging (security risk!)
+                                              # 'ddl' = CREATE, ALTER, DROP only (insufficient!)
+                                              # 'mod' = DDL + INSERT, UPDATE, DELETE (minimum for compliance)
+                                              # 'all' = DDL + DML + SELECT (required for data security)
+
+# Enhanced log format with full context
+log_line_prefix = '%t [%p]: user=%u,db=%d,app=%a,client=%h,query_id=%Q '
+log_checkpoints = on                          # Log checkpoint activity
+log_connections = on                          # Log new connections
+log_disconnections = on                       # Log disconnections
+log_lock_waits = on                          # Log lock wait events
+log_temp_files = 0                           # Log all temp file usage
+log_autovacuum_min_duration = 0              # Log all autovacuum runs
+
+# =============================================================================
+# PERFORMANCE TRACKING
+# =============================================================================
+track_io_timing = on                         # Track I/O timing for queries
+track_wal_io_timing = on                     # Track WAL I/O timing (PG 14+)
+track_functions = 'all'                      # Track function call counts and time
+track_commit_timestamp = on                  # Track transaction commit times
+
+# =============================================================================
+# STATISTICS COLLECTION
+# =============================================================================
+# Query Monitoring Statistics (NOT Cost-Based Optimizer)
+stats_fetch_consistency = 'cache'            # Use cached stats for consistency
+compute_query_id = 'on'                      # Generate query IDs for tracking
+
+# =============================================================================
+# COST-BASED OPTIMIZER CONFIGURATION (Separate from logging)
+# =============================================================================
+# These settings affect query planning, NOT audit logging
+default_statistics_target = 100              # Default histogram buckets (10-10000)
+# random_page_cost = 1.1                     # SSD: 1.1, HDD: 4.0
+# effective_cache_size = '4GB'               # Total memory available for caching
+# work_mem = '4MB'                           # Memory per sort/hash operation
+
+# Auto-ANALYZE for CBO statistics updates
+# autovacuum_analyze_threshold = 50          # Min rows before analyze
+# autovacuum_analyze_scale_factor = 0.1      # 10% of table size change triggers analyze
+
+# =============================================================================
+# AUDIT AND COMPLIANCE CONFIGURATION (Enterprise-grade)
+# =============================================================================
+# Comprehensive audit logging for compliance (SOC2, ISO27001, PCI-DSS)
+log_replication_commands = on                # Log replication commands
+log_rotation_age = 1h                        # Rotate logs hourly for high-volume systems
+log_rotation_size = 1GB                      # Stay within PostgreSQL 16's per-file limit
+log_truncate_on_rotation = off               # Never truncate (audit trail preservation)
+log_file_mode = 0600                        # Secure file permissions
+log_destination = 'csvlog'                  # CSV format for structured analysis
+
+# Archive and compression strategy (requires external tools)
+# archive_mode = on                          # Enable archiving
+# archive_command = 'gzip < %p > /archive/%f.gz && aws s3 cp /archive/%f.gz s3://audit-logs/%f.gz'
+
+# Row-level security auditing (when applicable)
+row_security = on                            # Enable row security policies
+
+# Additional audit trail for sensitive operations
+log_error_verbosity = 'verbose'             # Include SQLSTATE in logs
+log_hostname = on                            # Log hostname for multi-server tracking
+log_timezone = 'UTC'                        # Use UTC for consistency
+
+# =============================================================================
+# MEMORY AND RESOURCE TRACKING
+# =============================================================================
+log_executor_stats = off                     # Don't log per-query (too verbose)
+log_parser_stats = off                       # Don't log parser stats
+log_planner_stats = off                      # Don't log planner stats
+log_statement_stats = off                    # Don't log statement stats
+
+# But DO track these at system level:
+track_counts = on                            # Track table/index access counts
+track_activities = on                        # Track current query activity
+
+# =============================================================================
+# PG_CRON CONFIGURATION (for scheduled monitoring tasks)
+# =============================================================================
+cron.database_name = 'postgres'              # Database where pg_cron metadata is stored
+cron.use_background_workers = on             # Use background workers for jobs
+cron.max_running_jobs = 10                   # Max concurrent cron jobs
+
+# =============================================================================
+# LOG RETENTION AND COMPLIANCE STRATEGY
+# =============================================================================
+# Enterprise audit log retention requirements:
+# - Financial: 7 years (SOX, SEC Rule 17a-4)
+# - Healthcare: 6 years (HIPAA)
+# - Payment Card: 3 years (PCI-DSS)
+# - EU Data: 6 years (GDPR for financial data)
+# - General Business: 3-7 years depending on jurisdiction
+
+# Recommended retention strategy:
+# 1. HOT storage (local SSD): Last 7 days - immediate access
+# 2. WARM storage (NAS/SAN): 7-90 days - quick retrieval
+# 3. COLD storage (S3 Glacier): 90 days - 1 year - compliance retrieval
+# 4. ARCHIVE (S3 Deep Archive): 1-7 years - legal hold
+
+# Estimated storage requirements (with log_statement = 'all'):
+# - 1,000 queries/second = ~86M queries/day
+# - Average log entry: ~500 bytes
+# - Daily raw logs: ~43GB
+# - Daily compressed (gzip -9): ~4.3GB
+# - Yearly compressed: ~1.5TB
+# - 7-year archive: ~10.5TB compressed
+
+# Log shipping and archival commands:
+# log_directory = '/var/log/postgresql/audit'    # Separate audit directory
+# log_filename = 'audit_%Y%m%d_%H%M%S.csv'      # Timestamp in filename
+
+# External archival script example (run via cron):
+# #!/bin/bash
+# find /var/log/postgresql/audit -name "*.csv" -mmin +60 | while read file; do
+#   gzip -9 "$file"
+#   aws s3 cp "$file.gz" s3://audit-logs/$(date +%Y/%m/%d)/
+#   # Or use rsync for network storage:
+#   # rsync -av "$file.gz" backup-server:/audit-archive/$(date +%Y/%m/%d)/
+# done
+
+# =============================================================================
+# NOTES FOR CLUSTER-WIDE MONITORING
+# =============================================================================
+# 1. pg_stat_statements is automatically available in ALL databases once loaded
+# 2. Query the pg_stat_statements view from any database to see cluster-wide stats
+# 3. Use dbid::regclass to identify which database each query belongs to
+# 4. For true multi-database monitoring, consider:
+#    - Creating monitoring objects in 'postgres' database as central location
+#    - Using foreign data wrappers (postgres_fdw) to aggregate from all DBs
+#    - Setting up a dedicated monitoring database with cross-DB views
+#
+# CRITICAL: With log_statement = 'all', ensure adequate storage provisioning
+# Monitor disk usage with: SELECT pg_size_pretty(pg_database_size('postgres'));
+# Set up alerts for disk usage > 80% to prevent audit log loss
