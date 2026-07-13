@@ -15,7 +15,6 @@ updates:
     directory: "/docker/postgres"
     schedule:
       interval: "weekly"
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
+  # github-actions ecosystem intentionally omitted: this repo has no
+  # .github/workflows/ or action.yml, so Dependabot fails with
+  # dependency_file_not_found. Re-add when workflow files exist.
