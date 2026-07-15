@@ -48,7 +48,7 @@ COPY init/03_cron_batch_retrieval.sql /docker-entrypoint-initdb.d/03_cron_batch_
 
 # Compose selects this target. Every executable input is immutable and an
 # enabled tokenizer build is fail-closed, leaving the failing command visible.
-FROM rust:1.97-slim-bookworm@sha256:cfbb0e0ef7a73e736386bfa346f1cb0503c6d162969dc9426fb37834f3f64c25 AS rust-toolchain
+FROM rust:1.97-slim-bookworm@sha256:6d220bf85c74e842a79da63997af8d2e74455c0b8847d8bb3a5888572334991d AS rust-toolchain
 
 FROM postgres-base AS with-tiktoken
 
