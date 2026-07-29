@@ -116,7 +116,7 @@ class TokenCounter:
         tokenizer_name = self._get_tokenizer_from_db(model)
         if tokenizer_name:
             return tokenizer_name
-        logger.debug(
+        logger.debug(  # nosemgrep -- python-logger-credential-disclosure FP: the only logged argument is the model name, not a credential; nothing sensitive is logged.
             "No DB tokenizer mapping for '%s'; using model name with pg_tiktoken "
             "built-in mapping",
             model,
@@ -146,7 +146,7 @@ class TokenCounter:
                 self._pg_available = False
                 logger.warning("pg_tiktoken extension/functions unavailable")
             except Exception as exc:  # pragma: no cover - runtime DB variance
-                logger.debug("PostgreSQL token counting failed: %s", exc)
+                logger.debug("PostgreSQL token counting failed: %s", exc)  # nosemgrep -- python-logger-credential-disclosure FP: logs a generic pg_tiktoken query exception at debug level; no credential or secret value is logged.
         raise RuntimeError(
             "Token counting requires pg_tiktoken. Enable the extension and pass a "
             "valid DSN."
