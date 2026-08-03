@@ -137,6 +137,7 @@ class PostgresBatchOrchestrator:
     def _assemble_payloads(
         self, counter: TokenCounter, rows: List[Tuple]
     ) -> List[Dict[str, Any]]:
+        """Group request rows by model into token/byte-bounded JSONL payload parts."""
         part_index = 0
         current_model: Optional[str] = None
         acc: Optional[BatchAccumulator] = None
@@ -191,6 +192,7 @@ class PostgresBatchOrchestrator:
         system_for_tokens: str,
         user_prompt: Optional[str],
     ) -> Dict[str, Any]:
+        """Build one Batch API JSONL entry for a chat-completion or embedding request."""
         if mode == "embedding":
             return {
                 "custom_id": request_id,
@@ -237,6 +239,7 @@ class PostgresBatchOrchestrator:
         batch_uuid: str,
         immediate_limit: int,
     ) -> Optional[Dict[str, List[BatchPayload]]]:
+        """Return already-persisted payloads for a batch split into ready/overflow, or None."""
         cur.execute(
             """
             SELECT file_path, request_count, total_tokens, part_index
@@ -257,6 +260,7 @@ class PostgresBatchOrchestrator:
         batch_uuid: str,
         counter: TokenCounter,
     ) -> Dict[str, List[BatchPayload]]:
+        """Persist assembled payloads under an advisory lock, returning ready/overflow lists."""
         ready: List[BatchPayload] = []
         overflow: List[BatchPayload] = []
         immediate_limit = counter.azure_max_files_per_job

@@ -23,6 +23,7 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
 
 def _require_psycopg() -> None:
+    """Raise a clear error when the optional psycopg dependency is unavailable."""
     if psycopg is None:  # pragma: no cover
         raise RuntimeError("psycopg is required for database access")
 

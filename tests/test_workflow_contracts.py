@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Contract tests asserting CI workflow governance invariants (SHA pinning, gates)."""
+
 from __future__ import annotations
 
 import re
