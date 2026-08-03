@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from ipaddress import ip_address
@@ -33,6 +34,7 @@ DEFAULT_USER_AGENT = "pg-llm-batch"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
+REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 
 
 @dataclass
@@ -45,6 +47,21 @@ class GatewayCredentials:
 
 # A credentials provider returns GatewayCredentials for a given endpoint alias.
 CredentialsProvider = Callable[[str], GatewayCredentials]
+
+
+def _validate_resource_id(value: Any, field: str) -> str:
+    """Validate one provider resource identifier used in a URL path segment."""
+    if not isinstance(value, str) or REMOTE_RESOURCE_ID_PATTERN.fullmatch(value) is None:
+        raise ValidationError(
+            field=field,
+            value=value,
+            reason=(
+                "must be 1-256 ASCII characters beginning with an alphanumeric "
+                "character and containing only letters, digits, dot, underscore, "
+                "colon, or hyphen"
+            ),
+        )
+    return value
 
 
 def _is_loopback_host(hostname: str) -> bool:
@@ -106,7 +123,6 @@ def config_credentials_provider(
     def _provider(endpoint_alias: str) -> GatewayCredentials:
         url = config_store.get("gateway", endpoint_alias, None)
         if not url:
-            # fall back to a single default gateway url
             url = config_store.get("gateway", "base_url", None)
         if not url:
             raise GatewayError(
@@ -228,14 +244,11 @@ class BatchAPIClient:
             headers["Content-Type"] = "application/json"
         return headers
 
-    # ------------------------------------------------------------------
-    # Files
-    # ------------------------------------------------------------------
     def _resolve_memory_identifier(self, file_path: str) -> str:
         if file_path.startswith("memory://"):
             file_id = file_path.split("memory://", 1)[1]
             if file_id:
-                return file_id
+                return _validate_resource_id(file_id, "file_id")
         raise RuntimeError(
             "JSONL payloads must be memory:// references (PostgreSQL-backed)."
         )
@@ -257,8 +270,8 @@ class BatchAPIClient:
         purpose: str = "batch",
     ) -> Dict[str, Any]:
         """Upload a memory-backed JSONL payload to the Files API."""
-        creds = self._credentials(endpoint_alias)
         file_id = self._resolve_memory_identifier(file_path)
+        creds = self._credentials(endpoint_alias)
         payload_bytes = await self._load_payload_bytes(file_id)
 
         data = aiohttp.FormData()
@@ -286,9 +299,6 @@ class BatchAPIClient:
             logger.info("Uploaded JSONL file: %s", result.get("id"))
             return result
 
-    # ------------------------------------------------------------------
-    # Batches
-    # ------------------------------------------------------------------
     async def create_batch_job(
         self,
         input_file_id: str,
@@ -297,9 +307,10 @@ class BatchAPIClient:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Create a batch job from an uploaded input file id."""
+        validated_file_id = _validate_resource_id(input_file_id, "input_file_id")
         creds = self._credentials(endpoint_alias)
         payload: Dict[str, Any] = {
-            "input_file_id": input_file_id,
+            "input_file_id": validated_file_id,
             "endpoint": endpoint,
             "completion_window": "24h",
         }
@@ -326,10 +337,11 @@ class BatchAPIClient:
         self, batch_id: str, endpoint_alias: str
     ) -> Dict[str, Any]:
         """Poll a batch job and annotate progress/completion."""
+        validated_batch_id = _validate_resource_id(batch_id, "batch_id")
         creds = self._credentials(endpoint_alias)
         async with self._request(
             "get",
-            f"{creds.url}/batches/{batch_id}",
+            f"{creds.url}/batches/{validated_batch_id}",
             operation="Batch status",
             headers=self._headers(creds.api_key),
         ) as response:
@@ -425,17 +437,18 @@ class BatchAPIClient:
 
     async def _download_jsonl_file(
         self,
-        file_id: str,
+        file_id: Any,
         endpoint_alias: str,
         *,
         batch_id: str,
         file_kind: str,
     ) -> List[Dict[str, Any]]:
+        validated_file_id = _validate_resource_id(file_id, f"{file_kind}_file_id")
         creds = self._credentials(endpoint_alias)
         operation = f"{file_kind.capitalize()} file download"
         async with self._request(
             "get",
-            f"{creds.url}/files/{file_id}/content",
+            f"{creds.url}/files/{validated_file_id}/content",
             operation=operation,
             headers=self._headers(creds.api_key),
         ) as response:
@@ -471,7 +484,7 @@ class BatchAPIClient:
 
         responses = (
             await self._download_jsonl_file(
-                str(output_file_id),
+                output_file_id,
                 endpoint_alias,
                 batch_id=batch_id,
                 file_kind="result",
@@ -481,7 +494,7 @@ class BatchAPIClient:
         )
         errors = (
             await self._download_jsonl_file(
-                str(error_file_id),
+                error_file_id,
                 endpoint_alias,
                 batch_id=batch_id,
                 file_kind="error",
@@ -508,10 +521,11 @@ class BatchAPIClient:
         self, batch_id: str, endpoint_alias: str
     ) -> Dict[str, Any]:
         """Cancel an in-flight batch job."""
+        validated_batch_id = _validate_resource_id(batch_id, "batch_id")
         creds = self._credentials(endpoint_alias)
         async with self._request(
             "post",
-            f"{creds.url}/batches/{batch_id}/cancel",
+            f"{creds.url}/batches/{validated_batch_id}/cancel",
             operation="Batch cancellation",
             headers=self._headers(creds.api_key),
         ) as response:
@@ -526,6 +540,6 @@ class BatchAPIClient:
                 return {"success": False, "reason": reason}
             return {
                 "success": True,
-                "batch_id": batch_id,
+                "batch_id": validated_batch_id,
                 "status": result.get("status", "cancelling"),
             }
