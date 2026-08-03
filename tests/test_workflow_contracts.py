@@ -12,15 +12,12 @@ def _read(relative_path: str) -> str:
 
 
 def _assert_external_actions_are_pinned(workflow: str) -> None:
-    """Require immutable SHAs except for trusted central reusable workflows."""
+    """Require every action and reusable workflow to use an immutable SHA."""
     for raw_line in workflow.splitlines():
         line = raw_line.strip()
         if not line.startswith("uses:"):
             continue
         target = line.removeprefix("uses:").strip()
-        if target.startswith("ContextualWisdomLab/.github/.github/workflows/"):
-            assert target.endswith("@main")
-            continue
         assert re.search(r"@[0-9a-f]{40}(?:\s|$)", target), target
 
 
@@ -35,7 +32,7 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     assert "interrogate --fail-under 100 pg_llm_batch" in workflow
     assert "--cov-fail-under=100" in workflow
     assert "uv lock --check" in workflow
-    assert "uv build" in workflow
+    assert "uv build --no-sources" in workflow
     assert "docker build --tag pg-llm-batch:ci ." in workflow
     assert "docker build --tag pg-llm-batch-postgres:ci docker/postgres" in workflow
     _assert_external_actions_are_pinned(workflow)
@@ -48,19 +45,28 @@ def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
     assert "workflow_dispatch:" in workflow
     assert (
         "uses: ContextualWisdomLab/.github/.github/workflows/"
-        "pr-review-fix-scheduler.yml@main"
+        "pr-review-fix-scheduler.yml@"
     ) in workflow
     assert "target_repository: ContextualWisdomLab/pg-llm-batch" in workflow
     assert 'retry_hours: "1"' in workflow
     assert (
         "uses: ContextualWisdomLab/.github/.github/workflows/"
-        "pr-review-merge-scheduler.yml@main"
+        "pr-review-merge-scheduler.yml@"
     ) in workflow
     assert "merge_mode: direct_or_auto" in workflow
     assert "trigger_reviews: true" in workflow
     assert "enable_auto_merge: true" in workflow
     assert "update_branches: true" in workflow
     _assert_external_actions_are_pinned(workflow)
+
+
+def test_dependabot_tracks_the_new_github_actions_manifests() -> None:
+    configuration = _read(".github/dependabot.yml")
+
+    assert 'package-ecosystem: "github-actions"' in configuration
+    assert 'directory: "/"' in configuration
+    assert 'interval: "weekly"' in configuration
+    assert "dependency_file_not_found" not in configuration
 
 
 def test_pyproject_declares_hard_quality_thresholds() -> None:
