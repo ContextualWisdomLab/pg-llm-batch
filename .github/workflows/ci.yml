@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: Unit tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.12", "3.14"]
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Run unit tests
+        run: uv run pytest -q -m "not integration"
+
+  quality-gates:
+    name: Coverage, docstrings, lint, and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Compile source
+        run: uv run python -m compileall -q pg_llm_batch
+      - name: Lint
+        run: uv run ruff check pg_llm_batch tests
+      - name: Enforce docstring coverage
+        run: uvx --from interrogate==1.7.0 interrogate --fail-under 100 pg_llm_batch
+      - name: Enforce line coverage
+        run: >-
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration"
+          --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+      - name: Verify lockfile freshness
+        run: uv lock --check
+      - name: Build distribution artifacts
+        run: uv build
+
+  container-builds:
+    name: Container builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Validate Compose configuration
+        run: docker compose config >/dev/null
+      - name: Build component image
+        run: docker build --tag pg-llm-batch:ci .
+      - name: Build PostgreSQL image
+        run: docker build --tag pg-llm-batch-postgres:ci docker/postgres
