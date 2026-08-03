@@ -99,6 +99,29 @@ def test_batch_accumulator_would_exceed_and_drain(fake_pg):
     assert acc.record_count == 0  # reset after drain
 
 
+def test_batch_accumulator_rejects_oversized_first_record(fake_pg):
+    counter = TokenCounter("postgresql://x")
+    counter.effective_limit = 5
+    acc = BatchAccumulator(counter, "gpt-4o", max_bytes=10)
+
+    with pytest.raises(TokenLimitExceededError, match="request-token") as token_error:
+        acc.add_entry("request-token", "{}", tokens=6, byte_size=3)
+    assert token_error.value.details["current_tokens"] == 6
+    assert token_error.value.details["limit_tokens"] == 5
+    assert acc.entries == []
+    assert acc.record_count == 0
+
+    with pytest.raises(ValidationError, match="max_bytes=10") as byte_error:
+        acc.add_entry("request-bytes", "{}", tokens=1, byte_size=11)
+    assert byte_error.value.details == {
+        "field": "byte_size",
+        "value": 11,
+        "reason": "single JSONL record exceeds max_bytes=10",
+    }
+    assert acc.entries == []
+    assert acc.record_count == 0
+
+
 def test_empty_batches_and_oversized_single_request(fake_pg):
     counter = TokenCounter("postgresql://x")
     assert counter.count_batch_tokens([]) == {
