@@ -57,12 +57,19 @@ def _is_loopback_host(hostname: str) -> bool:
 def _normalize_gateway_url(value: Any) -> str:
     """Validate and normalize a credential-bearing gateway base URL."""
     raw = str(value).strip()
-    if not raw or any(character.isspace() for character in raw):
-        raise GatewayError("Gateway base_url must be a valid URL without whitespace")
+    if (
+        not raw
+        or "\\" in raw
+        or any(character.isspace() or ord(character) < 32 for character in raw)
+    ):
+        raise GatewayError(
+            "Gateway base_url must be a valid URL without whitespace, controls, "
+            "or backslashes"
+        )
 
     try:
         parsed = urlsplit(raw)
-        parsed.port  # validate a numeric, in-range port when one is present
+        port = parsed.port
     except ValueError as exc:
         raise GatewayError("Gateway base_url contains an invalid host or port") from exc
 
@@ -70,6 +77,8 @@ def _normalize_gateway_url(value: Any) -> str:
     hostname = (parsed.hostname or "").lower()
     if scheme not in {"http", "https"} or not hostname:
         raise GatewayError("Gateway base_url must use http or https with a hostname")
+    if port == 0:
+        raise GatewayError("Gateway base_url port must be between 1 and 65535")
     if parsed.username is not None or parsed.password is not None:
         raise GatewayError("Gateway base_url must not contain user information")
     if parsed.query or parsed.fragment:
