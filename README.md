@@ -49,7 +49,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 
 - PostgreSQL with `pg_tiktoken`, `pg_cron`, and `http` (pgsql-http). The bundled
   image (`docker/postgres/Dockerfile`) builds all three.
-- Python 3.9+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
+- Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
 
 ---
 
