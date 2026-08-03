@@ -30,6 +30,19 @@ except ImportError:  # pragma: no cover
     Jsonb = None  # type: ignore
 
 
+def _validate_effective_token_limit(value: Optional[int]) -> Optional[int]:
+    """Validate an optional stricter runtime token limit."""
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValidationError(
+            field="effective_token_limit",
+            value=value,
+            reason="must be a positive integer when provided",
+        )
+    return value
+
+
 @dataclass
 class BatchPayload:
     """Describe one prepared in-memory JSONL payload."""
@@ -77,6 +90,9 @@ class PostgresBatchOrchestrator:
         Repeated calls return the existing preparation. Additional unassigned
         requests cannot be appended after files have been prepared.
         """
+        validated_token_limit = _validate_effective_token_limit(
+            effective_token_limit
+        )
         resolved_uuid = self._resolve_batch_uuid(batch_uuid)
         if resolved_uuid is None:
             raise ValidationError(
@@ -105,9 +121,9 @@ class PostgresBatchOrchestrator:
 
         config = PostgresConfigStore(self.dsn)
         counter = TokenCounter(self.dsn, config=config)
-        if effective_token_limit is not None:
+        if validated_token_limit is not None:
             counter.effective_limit = min(
-                counter.effective_limit, int(effective_token_limit)
+                counter.effective_limit, validated_token_limit
             )
 
         payloads = self._assemble_payloads(counter, rows)
