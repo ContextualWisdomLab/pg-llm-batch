@@ -9,7 +9,8 @@ Subcommands:
     config set-secret   store a secret (Fernet-encrypted when a key is present)
     count-tokens   count tokens for text via pg_tiktoken
     submit         upload a prepared batch payload and create a batch job
-    poll           poll a batch job's status
+    poll           poll a batch job's status once
+    wait           poll until a batch reaches a terminal state
     retrieve       download completed batch results
     health         print the readiness report (exit 0 ready / 1 not)
     serve-healthz  serve GET /healthz
@@ -81,10 +82,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_submit.add_argument("--file-path", required=True, help="memory://<file_id>")
     p_submit.add_argument("--batch-endpoint", default="/v1/chat/completions")
 
-    p_poll = sub.add_parser("poll", help="Poll a batch job status")
+    p_poll = sub.add_parser("poll", help="Poll a batch job status once")
     _add_common(p_poll)
     p_poll.add_argument("--endpoint", required=True)
     p_poll.add_argument("--batch-id", required=True)
+
+    p_wait = sub.add_parser("wait", help="Wait for a terminal batch status")
+    _add_common(p_wait)
+    p_wait.add_argument("--endpoint", required=True)
+    p_wait.add_argument("--batch-id", required=True)
+    p_wait.add_argument("--poll-interval", type=float, default=5.0)
+    p_wait.add_argument("--timeout", type=float, default=3600.0)
 
     p_retrieve = sub.add_parser("retrieve", help="Download batch results")
     _add_common(p_retrieve)
@@ -155,6 +163,17 @@ def _dispatch(argv: Optional[List[str]]) -> int:
     if args.command == "poll":
         return _run_async_report(
             dsn, lambda c: c.get_batch_status(args.batch_id, args.endpoint)
+        )
+
+    if args.command == "wait":
+        return _run_async_report(
+            dsn,
+            lambda c: c.wait_for_batch(
+                args.batch_id,
+                args.endpoint,
+                poll_interval_seconds=args.poll_interval,
+                timeout_seconds=args.timeout,
+            ),
         )
 
     if args.command == "retrieve":
