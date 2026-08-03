@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS llm_batch_file_payloads (
 CREATE TABLE IF NOT EXISTS llm_batch_files (
     file_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     batch_uuid UUID NOT NULL REFERENCES llm_batches(batch_uuid) ON DELETE CASCADE,
-    queue_uuid UUID NOT NULL DEFAULT uuid_generate_v4(),
+    queue_uuid UUID NOT NULL,
     file_path TEXT NOT NULL,
     payload_file_id TEXT REFERENCES llm_batch_file_payloads(file_id),
     storage_ref TEXT,
@@ -87,8 +87,45 @@ CREATE TABLE IF NOT EXISTS llm_batch_files (
     request_count INTEGER NOT NULL DEFAULT 0,
     total_tokens BIGINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    uploaded_at TIMESTAMPTZ NULL
+    uploaded_at TIMESTAMPTZ NULL,
+    CONSTRAINT fk_llm_batch_files_queue
+        FOREIGN KEY (queue_uuid)
+        REFERENCES llm_queues(queue_uuid) ON DELETE CASCADE
 );
+
+-- Migrate legacy installations where queue_uuid had an unrelated random default
+-- and no foreign key. Do not delete or silently re-parent orphaned data.
+ALTER TABLE llm_batch_files ALTER COLUMN queue_uuid DROP DEFAULT;
+DO $$
+DECLARE
+    orphan_count BIGINT;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'fk_llm_batch_files_queue'
+          AND conrelid = 'llm_batch_files'::regclass
+    ) THEN
+        SELECT COUNT(*)
+        INTO orphan_count
+        FROM llm_batch_files AS batch_file
+        LEFT JOIN llm_queues AS queue_row
+          ON queue_row.queue_uuid = batch_file.queue_uuid
+        WHERE queue_row.queue_uuid IS NULL;
+
+        IF orphan_count > 0 THEN
+            RAISE EXCEPTION
+                'Cannot add fk_llm_batch_files_queue: % orphaned llm_batch_files rows',
+                orphan_count
+                USING ERRCODE = '23503';
+        END IF;
+
+        ALTER TABLE llm_batch_files
+            ADD CONSTRAINT fk_llm_batch_files_queue
+            FOREIGN KEY (queue_uuid)
+            REFERENCES llm_queues(queue_uuid) ON DELETE CASCADE;
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS llm_requests (
     request_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -125,10 +162,34 @@ CREATE TABLE IF NOT EXISTS llm_jsonl_lines (
     line_text TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX IF NOT EXISTS idx_llm_jsonl_lines_payload
-    ON llm_jsonl_lines(payload_file_id);
+
+-- Stable identities used by preparation, replay, and JOIN-only reconstruction.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_batches_input_file_path
+    ON llm_batches(input_file_path)
+    WHERE input_file_path IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_batch_files_batch_part
+    ON llm_batch_files(batch_uuid, part_index);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_batch_files_file_path
+    ON llm_batch_files(file_path);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_batch_files_payload_file
+    ON llm_batch_files(payload_file_id)
+    WHERE payload_file_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_jsonl_lines_payload_request
+    ON llm_jsonl_lines(payload_file_id, request_uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_jsonl_lines_payload_sequence
+    ON llm_jsonl_lines(payload_file_id, sequence_no);
 CREATE INDEX IF NOT EXISTS idx_llm_jsonl_lines_req
     ON llm_jsonl_lines(request_uuid);
+
+-- Preparation scans only queued, unassigned requests for one batch.
+CREATE INDEX IF NOT EXISTS idx_llm_requests_batch_prepare
+    ON llm_requests(batch_uuid, created_at)
+    WHERE request_status = 'queued' AND batch_file_uuid IS NULL;
+CREATE INDEX IF NOT EXISTS idx_llm_batches_status_updated
+    ON llm_batches(batch_status, updated_at);
+
+-- Superseded by the unique (payload, sequence) index above.
+DROP INDEX IF EXISTS idx_llm_jsonl_lines_payload;
 
 -- =============================================================================
 -- Endpoint <-> model <-> tokenizer mapping (populated by the pg_cron sync job)
