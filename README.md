@@ -30,7 +30,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
    llm_batch_file_payloads (JSONB)  +  llm_batch_files  +  llm_jsonl_lines
                      │
                      ▼
-        BatchAPIClient.upload_jsonl → create_batch_job → get_batch_status → download_results
+        BatchAPIClient.upload_jsonl → create_batch_job → wait_for_batch → download_results
                      │
    (or) pg_cron job  cron_fetch_batch_results()  polls + imports results via pgsql-http
 ```
@@ -39,7 +39,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 | --- | --- |
 | Token counting + accumulation | `pg_llm_batch/token_counter.py` |
 | Batch assembly + persistence | `pg_llm_batch/orchestrator.py` |
-| Submit / poll / retrieve | `pg_llm_batch/batch_api_client.py` |
+| Submit / poll / wait / retrieve | `pg_llm_batch/batch_api_client.py` |
 | KV config + encrypted secrets | `pg_llm_batch/config.py` |
 | DDL subset | `pg_llm_batch/schema.sql` |
 | Readiness (`/healthz`) | `pg_llm_batch/health.py` |
@@ -80,17 +80,23 @@ export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fern
 python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
 ```
 
-### 3. Count, submit, poll, retrieve
+### 3. Count, submit, wait, retrieve
 
 ```bash
 python -m pg_llm_batch count-tokens --model gpt-4o --text "hello world"
 # {"model": "gpt-4o", "tokens": 2}
 
 # after prepare_batches() has produced a memory://<file_id> payload:
-python -m pg_llm_batch submit  --endpoint default --file-path memory://<file_id>
-python -m pg_llm_batch poll     --endpoint default --batch-id  <batch_id>
-python -m pg_llm_batch retrieve --endpoint default --batch-id  <batch_id>
+python -m pg_llm_batch submit   --endpoint default --file-path memory://<file_id>
+python -m pg_llm_batch poll     --endpoint default --batch-id <batch_id>
+python -m pg_llm_batch wait     --endpoint default --batch-id <batch_id> \
+    --poll-interval 5 --timeout 3600
+python -m pg_llm_batch retrieve --endpoint default --batch-id <batch_id>
 ```
+
+`wait` returns when the remote status is `completed`, `failed`, `expired`, or
+`cancelled`. It raises a structured gateway error when the configured timeout
+expires, including the last observed remote status.
 
 Assemble a batch programmatically:
 
