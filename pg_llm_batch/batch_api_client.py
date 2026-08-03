@@ -211,7 +211,10 @@ class BatchAPIClient:
                     status_code=response.status,
                     response_data=result,
                 )
-            counts = result.get("request_counts", {})
+            # A gateway returns request_counts as null (present, but None) while
+            # a batch is still validating; `or {}` treats null like absent so the
+            # progress math below never dereferences None.
+            counts = result.get("request_counts") or {}
             total = counts.get("total", 0)
             done = counts.get("completed", 0) + counts.get("failed", 0)
             result["progress_percentage"] = (
@@ -253,7 +256,17 @@ class BatchAPIClient:
                 )
             content = await response.text()
 
-        responses = [json.loads(line) for line in content.strip().split("\n") if line]
+        responses = []
+        for line_number, line in enumerate(content.strip().split("\n"), start=1):
+            if not line:
+                continue
+            try:
+                responses.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                raise GatewayError(
+                    f"Malformed result line {line_number} for batch {batch_id}",
+                    response_data={"line_number": line_number},
+                ) from exc
         return {
             "success": True,
             "batch_id": batch_id,
