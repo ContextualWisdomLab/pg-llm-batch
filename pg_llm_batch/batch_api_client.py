@@ -35,6 +35,9 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
+BATCH_ENDPOINT_PATTERN = re.compile(
+    r"/[A-Za-z0-9_~-]+(?:/[A-Za-z0-9._~-]+){0,15}\Z"
+)
 
 
 @dataclass
@@ -59,6 +62,27 @@ def _validate_resource_id(value: Any, field: str) -> str:
                 "must be 1-256 ASCII characters beginning with an alphanumeric "
                 "character and containing only letters, digits, dot, underscore, "
                 "colon, or hyphen"
+            ),
+        )
+    return value
+
+
+def _validate_batch_endpoint(value: Any) -> str:
+    """Validate the relative provider endpoint submitted with a batch job."""
+    if (
+        not isinstance(value, str)
+        or len(value) > 256
+        or BATCH_ENDPOINT_PATTERN.fullmatch(value) is None
+        or any(segment in {".", ".."} for segment in value.split("/")[1:])
+    ):
+        raise ValidationError(
+            field="endpoint",
+            value=value,
+            reason=(
+                "must be an absolute 1-256 character API path with 1-16 "
+                "non-empty ASCII segments using only letters, digits, dot, "
+                "underscore, tilde, or hyphen; traversal, queries, fragments, "
+                "percent escapes, and trailing slashes are not allowed"
             ),
         )
     return value
@@ -308,10 +332,11 @@ class BatchAPIClient:
     ) -> Dict[str, Any]:
         """Create a batch job from an uploaded input file id."""
         validated_file_id = _validate_resource_id(input_file_id, "input_file_id")
+        validated_endpoint = _validate_batch_endpoint(endpoint)
         creds = self._credentials(endpoint_alias)
         payload: Dict[str, Any] = {
             "input_file_id": validated_file_id,
-            "endpoint": endpoint,
+            "endpoint": validated_endpoint,
             "completion_window": "24h",
         }
         if metadata:
