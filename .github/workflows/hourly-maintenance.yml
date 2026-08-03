@@ -28,7 +28,7 @@ jobs:
       max_prs: "100"
       max_dispatches: "1"
       retry_hours: "1"
-      canonical_ref: main
+      canonical_ref: 5983b41ace75040c1d81818171ca7d0f3653254e
     secrets: inherit
 
   review-merge:
