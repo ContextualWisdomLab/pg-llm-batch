@@ -13,7 +13,7 @@ from pg_llm_batch.batch_api_client import (
     GatewayCredentials,
     config_credentials_provider,
 )
-from pg_llm_batch.exceptions import GatewayError
+from pg_llm_batch.exceptions import GatewayError, ValidationError
 
 
 class FakeResponse:
@@ -58,6 +58,21 @@ class FakeSession:
 
     async def close(self):
         return None
+
+
+class SequenceSession:
+    """Return an ordered sequence of batch status responses."""
+
+    def __init__(self, responses) -> None:
+        self.responses = list(responses)
+        self.calls = []
+
+    def get(self, url, **kwargs):
+        self.calls.append(("GET", url, kwargs))
+        if not self.responses:
+            raise AssertionError(f"no response left for GET {url}")
+        return self.responses.pop(0)
+
 
 
 def _creds(_alias: str) -> GatewayCredentials:
@@ -134,6 +149,74 @@ async def test_poll_handles_null_request_counts_without_crashing():
     status = await client.get_batch_status("pending", "default")
     assert status["progress_percentage"] == 0
     assert status["is_complete"] is False
+
+
+async def test_wait_for_batch_returns_cancelled_terminal_state(monkeypatch):
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", no_sleep)
+    session = SequenceSession(
+        [
+            FakeResponse(
+                200,
+                {
+                    "id": "batch-1",
+                    "status": "in_progress",
+                    "request_counts": {"total": 2, "completed": 1, "failed": 0},
+                },
+            ),
+            FakeResponse(
+                200,
+                {
+                    "id": "batch-1",
+                    "status": "cancelled",
+                    "request_counts": {"total": 2, "completed": 1, "failed": 1},
+                },
+            ),
+        ]
+    )
+    client = BatchAPIClient("postgresql://x", _creds)
+    client._session = session
+
+    status = await client.wait_for_batch(
+        "batch-1",
+        "default",
+        poll_interval_seconds=0.01,
+        timeout_seconds=1,
+    )
+
+    assert status["status"] == "cancelled"
+    assert status["is_complete"] is True
+    assert len(session.calls) == 2
+
+
+async def test_wait_for_batch_validates_limits_and_reports_timeout():
+    client = BatchAPIClient("postgresql://x", _creds)
+    with pytest.raises(ValidationError, match="poll_interval_seconds"):
+        await client.wait_for_batch(
+            "batch-1", "default", poll_interval_seconds=0, timeout_seconds=1
+        )
+    with pytest.raises(ValidationError, match="timeout_seconds"):
+        await client.wait_for_batch(
+            "batch-1", "default", poll_interval_seconds=1, timeout_seconds=0
+        )
+
+    client._session = SequenceSession(
+        [FakeResponse(200, {"status": "in_progress", "request_counts": {}})]
+    )
+    with pytest.raises(GatewayError, match="Timed out waiting") as exc_info:
+        await client.wait_for_batch(
+            "batch-1",
+            "default",
+            poll_interval_seconds=0.01,
+            timeout_seconds=1e-9,
+        )
+    assert exc_info.value.response_data == {
+        "batch_id": "batch-1",
+        "last_status": "in_progress",
+        "timeout_seconds": 1e-9,
+    }
 
 
 async def test_retrieve_raises_gateway_error_on_malformed_result_line():
