@@ -16,7 +16,9 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass
+from ipaddress import ip_address
 from typing import Any, Callable, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_USER_AGENT = "pg-llm-batch"
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
+LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 
 
 @dataclass
@@ -39,6 +42,44 @@ class GatewayCredentials:
 
 # A credentials provider returns GatewayCredentials for a given endpoint alias.
 CredentialsProvider = Callable[[str], GatewayCredentials]
+
+
+def _is_loopback_host(hostname: str) -> bool:
+    """Return whether a hostname is an explicit local-loopback destination."""
+    if hostname.lower() in LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ip_address(hostname).is_loopback
+    except ValueError:
+        return False
+
+
+def _normalize_gateway_url(value: Any) -> str:
+    """Validate and normalize a credential-bearing gateway base URL."""
+    raw = str(value).strip()
+    if not raw or any(character.isspace() for character in raw):
+        raise GatewayError("Gateway base_url must be a valid URL without whitespace")
+
+    try:
+        parsed = urlsplit(raw)
+        parsed.port  # validate a numeric, in-range port when one is present
+    except ValueError as exc:
+        raise GatewayError("Gateway base_url contains an invalid host or port") from exc
+
+    scheme = parsed.scheme.lower()
+    hostname = (parsed.hostname or "").lower()
+    if scheme not in {"http", "https"} or not hostname:
+        raise GatewayError("Gateway base_url must use http or https with a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise GatewayError("Gateway base_url must not contain user information")
+    if parsed.query or parsed.fragment:
+        raise GatewayError("Gateway base_url must not contain a query or fragment")
+    if scheme == "http" and not _is_loopback_host(hostname):
+        raise GatewayError(
+            "Gateway base_url must use HTTPS except for explicit loopback endpoints"
+        )
+
+    return urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
 
 
 def config_credentials_provider(
@@ -59,8 +100,9 @@ def config_credentials_provider(
             raise GatewayError(
                 f"No gateway base_url configured for alias '{endpoint_alias}'"
             )
+        normalized_url = _normalize_gateway_url(url)
         api_key = secret_store.require_secret(f"gateway_api_key.{endpoint_alias}")
-        return GatewayCredentials(url=str(url).rstrip("/"), api_key=api_key)
+        return GatewayCredentials(url=normalized_url, api_key=api_key)
 
     return _provider
 
