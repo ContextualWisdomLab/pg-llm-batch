@@ -34,6 +34,8 @@ except ImportError:  # pragma: no cover
 
 @dataclass(frozen=True)
 class _EncoderInfo:
+    """Cached tokenizer metadata for a single model."""
+
     tokenizer_name: str
 
 
@@ -242,6 +244,7 @@ class TokenCounter:
     # Config helpers
     # ------------------------------------------------------------------
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
+        """Read a config value from the KV store, falling back to a default."""
         if self.config is not None:
             try:
                 value = self.config.get(category, key, default)
@@ -254,6 +257,7 @@ class TokenCounter:
     # pg_tiktoken plumbing
     # ------------------------------------------------------------------
     def _ensure_pg_tiktoken(self) -> bool:
+        """Ensure the ``pg_tiktoken`` extension exists and report availability."""
         if psycopg is None:
             return False
         try:
@@ -272,6 +276,7 @@ class TokenCounter:
             return False
 
     def _get_pg_conn(self) -> "psycopg.Connection":
+        """Return the cached PostgreSQL connection, reconnecting if needed."""
         assert psycopg is not None
         if self._pg_conn is None or self._pg_conn.closed:
             self._pg_conn = psycopg.connect(self.postgres_dsn)
@@ -279,6 +284,7 @@ class TokenCounter:
         return self._pg_conn
 
     def _count_tokens_postgres(self, text: str, model: str) -> int:
+        """Count tokens for text using the ``pg_tiktoken`` database functions."""
         if psycopg is None:
             raise RuntimeError("PostgreSQL integration is unavailable")
         conn = self._get_pg_conn()
@@ -301,6 +307,7 @@ class TokenCounter:
         return 0
 
     def _get_tokenizer_from_db(self, model: str) -> Optional[str]:
+        """Return the DB-mapped tokenizer name for a model, if recorded."""
         metadata = get_model_metadata(self.postgres_dsn, model)
         if metadata and metadata.get("tokenizer_model"):
             return str(metadata["tokenizer_model"])

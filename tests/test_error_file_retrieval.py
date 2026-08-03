@@ -174,3 +174,37 @@ async def test_error_files_require_valid_json_objects(content, message, details)
         await client.download_results("failed", "default")
 
     assert exc_info.value.response_data == details
+
+
+async def test_blank_lines_in_provider_files_are_skipped():
+    """Blank lines inside a provider JSONL file are skipped, not parsed as records."""
+    session = Session(
+        [
+            (
+                "/batches/failed",
+                Response(
+                    200,
+                    {
+                        "status": "failed",
+                        "error_file_id": "errors-1",
+                        "request_counts": {"total": 2, "completed": 0, "failed": 2},
+                    },
+                ),
+            ),
+            (
+                "/files/errors-1/content",
+                Response(
+                    200,
+                    text='{"custom_id": "r1", "error": {"code": "invalid"}}\n\n'
+                    '{"custom_id": "r2", "error": {"code": "rejected"}}',
+                ),
+            ),
+        ]
+    )
+    client = BatchAPIClient("postgresql://x", _credentials)
+    client._session = session
+
+    result = await client.download_results("failed", "default")
+
+    assert result["error_count"] == 2
+    assert [record["custom_id"] for record in result["errors"]] == ["r1", "r2"]

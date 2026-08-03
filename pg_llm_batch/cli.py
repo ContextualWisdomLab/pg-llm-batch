@@ -37,6 +37,7 @@ from .token_counter import TokenCounter
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
+    """Add the shared ``--dsn`` option to a subcommand parser."""
     parser.add_argument(
         "--dsn",
         default=None,
@@ -111,6 +112,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _make_client(dsn: str) -> BatchAPIClient:
+    """Build a ``BatchAPIClient`` wired to the KV config and secret stores."""
     config = PostgresConfigStore(dsn)
     secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
     provider = config_credentials_provider(config, secrets)
@@ -127,6 +129,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
 
 def _dispatch(argv: Optional[List[str]]) -> int:
+    """Parse arguments and execute the selected subcommand."""
     args = build_parser().parse_args(argv)
     dsn = resolve_dsn(getattr(args, "dsn", None))
 
@@ -194,7 +197,9 @@ def _dispatch(argv: Optional[List[str]]) -> int:
 
 
 def _run_submit(dsn: str, args: argparse.Namespace) -> int:
+    """Upload the prepared payload and create a batch job."""
     async def _go() -> int:
+        """Run the upload-and-create flow within an async client context."""
         async with _make_client(dsn) as client:
             uploaded = await client.upload_jsonl(args.file_path, args.endpoint)
             job = await client.create_batch_job(
@@ -207,7 +212,9 @@ def _run_submit(dsn: str, args: argparse.Namespace) -> int:
 
 
 def _run_async_report(dsn: str, coro_factory) -> int:
+    """Run an async client operation and print its JSON result."""
     async def _go() -> int:
+        """Execute the coroutine factory and print its JSON result."""
         async with _make_client(dsn) as client:
             result = await coro_factory(client)
             print(json.dumps(result, indent=2, default=str))

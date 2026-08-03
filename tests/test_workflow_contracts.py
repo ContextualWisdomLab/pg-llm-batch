@@ -1,3 +1,5 @@
+"""Contract tests pinning the CI and hourly-maintenance workflow definitions."""
+
 from __future__ import annotations
 
 import re

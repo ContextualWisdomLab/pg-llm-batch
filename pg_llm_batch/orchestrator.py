@@ -137,6 +137,7 @@ class PostgresBatchOrchestrator:
     def _assemble_payloads(
         self, counter: TokenCounter, rows: List[Tuple]
     ) -> List[Dict[str, Any]]:
+        """Group queued requests into per-model JSONL payloads within limits."""
         part_index = 0
         current_model: Optional[str] = None
         acc: Optional[BatchAccumulator] = None
@@ -191,6 +192,7 @@ class PostgresBatchOrchestrator:
         system_for_tokens: str,
         user_prompt: Optional[str],
     ) -> Dict[str, Any]:
+        """Build one OpenAI-compatible JSONL request entry for a queued request."""
         if mode == "embedding":
             return {
                 "custom_id": request_id,
@@ -237,6 +239,7 @@ class PostgresBatchOrchestrator:
         batch_uuid: str,
         immediate_limit: int,
     ) -> Optional[Dict[str, List[BatchPayload]]]:
+        """Load previously prepared payload rows, or ``None`` when none exist."""
         cur.execute(
             """
             SELECT file_path, request_count, total_tokens, part_index
@@ -257,6 +260,7 @@ class PostgresBatchOrchestrator:
         batch_uuid: str,
         counter: TokenCounter,
     ) -> Dict[str, List[BatchPayload]]:
+        """Persist assembled payloads and assign requests under an advisory lock."""
         ready: List[BatchPayload] = []
         overflow: List[BatchPayload] = []
         immediate_limit = counter.azure_max_files_per_job
