@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import db
 from .config import PostgresConfigStore
+from .exceptions import ValidationError
 from .token_counter import BatchAccumulator, TokenCounter
 
 try:  # pragma: no cover - optional dependency
@@ -74,7 +75,16 @@ class PostgresBatchOrchestrator:
 
         Returns a dict with ``ready`` and ``overflow`` lists of BatchPayload.
         """
-        resolved_uuid = self._resolve_batch_uuid(batch_uuid) or batch_uuid
+        resolved_uuid = self._resolve_batch_uuid(batch_uuid)
+        if resolved_uuid is None:
+            raise ValidationError(
+                field="batch_uuid",
+                value=batch_uuid,
+                reason=(
+                    "must be a UUID or match an existing "
+                    "llm_batches.input_file_path"
+                ),
+            )
 
         with psycopg.connect(self.dsn) as conn:
             with conn.cursor() as cur:
@@ -82,13 +92,10 @@ class PostgresBatchOrchestrator:
                     """
                     SELECT request_uuid, system_prompt, user_prompt, model_name
                     FROM llm_requests
-                    WHERE request_status = 'queued' AND batch_uuid = (
-                        SELECT COALESCE(%s::uuid, batch_uuid) FROM llm_batches
-                        WHERE input_file_path = %s OR batch_uuid::text = %s LIMIT 1
-                    )
+                    WHERE request_status = 'queued' AND batch_uuid = %s::uuid
                     ORDER BY created_at ASC
                     """,
-                    (resolved_uuid, batch_uuid, batch_uuid),
+                    (resolved_uuid,),
                 )
                 rows: List[Tuple] = cur.fetchall()
 
