@@ -33,7 +33,9 @@ exec docker-entrypoint.sh "$@"
 SCRIPT
 RUN chmod +x /usr/local/bin/pg-llm-batch-entrypoint.sh
 
+# nosemgrep -- missing-user-entrypoint FP: postgres-base is a shared intermediate build stage that is never run directly; both deployable targets below (with-tiktoken, runtime) end with an explicit `USER postgres`. Inline nosemgrep is impossible on exec-form ENTRYPOINT, so it is placed on the preceding line.
 ENTRYPOINT ["pg-llm-batch-entrypoint.sh"]
+# nosemgrep -- missing-user FP: postgres-base is an intermediate stage only; the concrete images (with-tiktoken, runtime) drop to `USER postgres` before running. Inline nosemgrep is impossible on exec-form CMD, so it is placed on the preceding line.
 CMD ["postgres"]
 
 # Liveness probe (trivy DS-0026); compose adds a richer pg_tiktoken-aware check.
