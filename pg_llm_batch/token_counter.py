@@ -361,7 +361,19 @@ class BatchAccumulator:
     def add_entry(
         self, request_id: str, json_line: str, tokens: int, byte_size: int
     ) -> None:
-        """Append a prepared line and update aggregate counters."""
+        """Append one valid record and update aggregate counters."""
+        if tokens > self.token_limit:
+            raise TokenLimitExceededError(
+                current_tokens=tokens,
+                limit_tokens=self.token_limit,
+                batch_id=request_id,
+            )
+        if byte_size > self.max_bytes:
+            raise ValidationError(
+                field="byte_size",
+                value=byte_size,
+                reason=f"single JSONL record exceeds max_bytes={self.max_bytes}",
+            )
         self.entries.append((request_id, json_line, tokens))
         self.total_tokens += tokens
         self.record_count += 1
