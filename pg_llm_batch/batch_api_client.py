@@ -21,11 +21,12 @@ from typing import Any, Callable, Dict, Optional
 import aiohttp
 
 from .db import load_virtual_payload
-from .exceptions import GatewayError
+from .exceptions import GatewayError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_USER_AGENT = "pg-llm-batch"
+TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 
 
 @dataclass
@@ -220,12 +221,49 @@ class BatchAPIClient:
             result["progress_percentage"] = (
                 round((done / total) * 100, 2) if total else 0
             )
-            result["is_complete"] = result.get("status") in (
-                "completed",
-                "failed",
-                "expired",
-            )
+            result["is_complete"] = result.get("status") in TERMINAL_BATCH_STATUSES
             return result
+
+    async def wait_for_batch(
+        self,
+        batch_id: str,
+        endpoint_alias: str,
+        *,
+        poll_interval_seconds: float = 5.0,
+        timeout_seconds: float = 3600.0,
+    ) -> Dict[str, Any]:
+        """Wait until a batch reaches a terminal state or the timeout expires."""
+        if poll_interval_seconds <= 0:
+            raise ValidationError(
+                field="poll_interval_seconds",
+                value=poll_interval_seconds,
+                reason="must be greater than zero",
+            )
+        if timeout_seconds <= 0:
+            raise ValidationError(
+                field="timeout_seconds",
+                value=timeout_seconds,
+                reason="must be greater than zero",
+            )
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds
+        while True:
+            status = await self.get_batch_status(batch_id, endpoint_alias)
+            if status.get("is_complete"):
+                return status
+
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                raise GatewayError(
+                    f"Timed out waiting for batch {batch_id}",
+                    response_data={
+                        "batch_id": batch_id,
+                        "last_status": status.get("status"),
+                        "timeout_seconds": timeout_seconds,
+                    },
+                )
+            await asyncio.sleep(min(poll_interval_seconds, remaining))
 
     async def download_results(
         self, batch_id: str, endpoint_alias: str
