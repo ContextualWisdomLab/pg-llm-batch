@@ -5,7 +5,10 @@ from __future__ import annotations
 
 import pytest
 
-from pg_llm_batch.batch_api_client import GatewayCredentials, config_credentials_provider
+from pg_llm_batch.batch_api_client import (
+    GatewayCredentials,
+    config_credentials_provider,
+)
 from pg_llm_batch.exceptions import GatewayError
 
 
@@ -58,7 +61,9 @@ def test_credentials_provider_normalizes_https_and_allows_loopback_http():
         "https://api.example/v1#fragment",
         "https:///missing-host",
         "https://api.example:99999/v1",
+        "https://api.example:0/v1",
         "https://api.example/bad path",
+        r"https://api.example\@evil.example/v1",
     ],
 )
 def test_credentials_provider_rejects_untrusted_destinations_before_secret_read(url):
