@@ -43,6 +43,11 @@ def _validate_effective_token_limit(value: Optional[int]) -> Optional[int]:
     return value
 
 
+def _new_payload_file_id() -> str:
+    """Return a namespaced payload identifier with 128 bits of entropy."""
+    return f"file_{uuid.uuid4().hex}"
+
+
 @dataclass
 class BatchPayload:
     """Describe one prepared in-memory JSONL payload."""
@@ -305,7 +310,7 @@ class PostgresBatchOrchestrator:
                     return existing
 
                 for idx, meta in enumerate(payloads):
-                    file_id = f"file_{uuid.uuid4().hex[:12]}"
+                    file_id = _new_payload_file_id()
                     lines = meta.get("lines", [])
                     request_ids = [str(item) for item in meta.get("request_ids", [])]
                     content = "\n".join(lines) + ("\n" if lines else "")
