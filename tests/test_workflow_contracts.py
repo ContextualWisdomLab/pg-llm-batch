@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -65,10 +64,8 @@ def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
 
 
 def test_pyproject_declares_hard_quality_thresholds() -> None:
-    config = tomllib.loads(_read("pyproject.toml"))
+    config = _read("pyproject.toml")
 
-    assert config["tool"]["coverage"]["run"]["source"] == ["pg_llm_batch"]
-    assert config["tool"]["coverage"]["report"]["fail_under"] == 100
-    assert config["tool"]["coverage"]["report"]["show_missing"] is True
-    assert config["tool"]["interrogate"]["fail-under"] == 100
-    assert config["tool"]["interrogate"]["exclude"] == ["tests"]
+    assert '[tool.coverage.run]\nsource = ["pg_llm_batch"]' in config
+    assert '[tool.coverage.report]\nfail_under = 100\nshow_missing = true' in config
+    assert '[tool.interrogate]\nexclude = ["tests"]\nfail-under = 100' in config
