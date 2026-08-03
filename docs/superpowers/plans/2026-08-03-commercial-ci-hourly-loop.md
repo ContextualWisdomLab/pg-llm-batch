@@ -46,7 +46,7 @@ Expected: three failures because the two workflows and threshold tables do not y
 
 - [x] **Step 3: Keep the contract dependency-free**
 
-Use only `pathlib`, `re`, and Python 3.11+ `tomllib`, so the contract runs inside the normal locked project environment without adding a runtime package.
+Use only Python 3.10 standard-library modules such as `pathlib` and `re`; assert the small TOML contract text directly instead of importing a version-specific TOML parser.
 
 - [x] **Step 4: Commit the red contract**
 
