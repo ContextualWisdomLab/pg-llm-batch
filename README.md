@@ -73,6 +73,11 @@ python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
 python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
 ```
 
+Production gateway destinations must use HTTPS. Plain HTTP is accepted only for
+explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`).
+URLs containing user information, query parameters, fragments, whitespace, or
+invalid ports are rejected before the API key is read from `com_secrets`.
+
 Encrypt secrets at rest by exporting a Fernet key as bootstrap transport:
 
 ```bash
