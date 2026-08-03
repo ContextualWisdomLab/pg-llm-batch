@@ -8,7 +8,8 @@ payload reconstruction.
 - Every `llm_batch_files.queue_uuid` references an existing `llm_queues` row.
 - A batch has at most one file for each `part_index`.
 - `file_path` and non-null `payload_file_id` identify one batch file each.
-- A request appears in at most one `llm_jsonl_lines` row.
+- A request appears at most once inside a given payload, while a later retry may
+  place the same request in a different payload.
 - A payload has at most one line for each `sequence_no`.
 - Non-null `llm_batches.input_file_path` values are unique because the value is
   accepted as an alternate batch lookup key.
@@ -37,13 +38,14 @@ FROM llm_batch_files
 GROUP BY batch_uuid, part_index
 HAVING COUNT(*) > 1;
 
-SELECT request_uuid, COUNT(*)
+SELECT payload_file_id, request_uuid, COUNT(*)
 FROM llm_jsonl_lines
-GROUP BY request_uuid
+GROUP BY payload_file_id, request_uuid
 HAVING COUNT(*) > 1;
 ```
 
 The partial preparation index targets queued requests whose
 `batch_file_uuid IS NULL`. The status index supports operational scans by state
-and last update time. Redundant legacy JSONL indexes are removed after their
-unique replacements are created to reduce write amplification.
+and last update time. The global request lookup index remains available for
+retry history queries; only the redundant payload-only index is removed because
+the unique `(payload_file_id, sequence_no)` index already covers that prefix.
