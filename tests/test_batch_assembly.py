@@ -10,6 +10,7 @@ import pytest
 from pg_llm_batch import db as db_mod
 from pg_llm_batch import orchestrator as orch_mod
 from pg_llm_batch import token_counter as tc_mod
+from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.orchestrator import BatchPayload, PostgresBatchOrchestrator
 from pg_llm_batch.token_counter import TokenCounter
 from tests.conftest import FakePsycopg
@@ -125,6 +126,22 @@ def test_resolve_batch_uuid_direct_and_lookup(monkeypatch, fake_pg):
     assert orch._resolve_batch_uuid("input.jsonl") is None
 
 
+def test_prepare_batches_rejects_unknown_lookup_key(monkeypatch, fake_pg):
+    orch = PostgresBatchOrchestrator("postgresql://x")
+    connect_calls = []
+    monkeypatch.setattr(orch, "_resolve_batch_uuid", lambda _key: None)
+    monkeypatch.setattr(fake_pg, "connect", lambda dsn: connect_calls.append(dsn))
+
+    with pytest.raises(
+        ValidationError, match=r"existing llm_batches\.input_file_path"
+    ) as exc_info:
+        orch.prepare_batches(batch_uuid="missing-input.jsonl")
+
+    assert exc_info.value.details["field"] == "batch_uuid"
+    assert exc_info.value.details["value"] == "missing-input.jsonl"
+    assert connect_calls == []
+
+
 def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     rows = [("r1", "system", "prompt", "gpt-4o")]
 
@@ -135,8 +152,9 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
         def __exit__(self, *exc):
             return None
 
-        def execute(self, _sql, params):
-            assert params == ("resolved", "source-key", "source-key")
+        def execute(self, sql, params):
+            assert "batch_uuid = %s::uuid" in sql
+            assert params == ("resolved",)
 
         def fetchall(self):
             return rows
