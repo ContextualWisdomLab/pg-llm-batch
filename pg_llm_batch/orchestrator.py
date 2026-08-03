@@ -71,9 +71,11 @@ class PostgresBatchOrchestrator:
         batch_uuid: str,
         effective_token_limit: Optional[int] = None,
     ) -> Dict[str, List[BatchPayload]]:
-        """Create JSONL payloads for a batch and register their metadata.
+        """Create JSONL payloads once and return the persisted preparation.
 
         Returns a dict with ``ready`` and ``overflow`` lists of BatchPayload.
+        Repeated calls return the existing preparation. Additional unassigned
+        requests cannot be appended after files have been prepared.
         """
         resolved_uuid = self._resolve_batch_uuid(batch_uuid)
         if resolved_uuid is None:
@@ -92,7 +94,9 @@ class PostgresBatchOrchestrator:
                     """
                     SELECT request_uuid, system_prompt, user_prompt, model_name
                     FROM llm_requests
-                    WHERE request_status = 'queued' AND batch_uuid = %s::uuid
+                    WHERE request_status = 'queued'
+                      AND batch_file_uuid IS NULL
+                      AND batch_uuid = %s::uuid
                     ORDER BY created_at ASC
                     """,
                     (resolved_uuid,),
@@ -107,7 +111,7 @@ class PostgresBatchOrchestrator:
             )
 
         payloads = self._assemble_payloads(counter, rows)
-        return self._persist_payloads(payloads, batch_uuid, counter)
+        return self._persist_payloads(payloads, resolved_uuid, counter)
 
     def _assemble_payloads(
         self, counter: TokenCounter, rows: List[Tuple]
@@ -184,6 +188,48 @@ class PostgresBatchOrchestrator:
             "body": {"model": model_name, "messages": messages},
         }
 
+    @staticmethod
+    def _batch_lock_key(batch_uuid: str) -> int:
+        """Derive a stable positive advisory-lock key from a batch UUID."""
+        return uuid.UUID(batch_uuid).int & 0x7FFF_FFFF_FFFF_FFFF
+
+    @staticmethod
+    def _categorize_existing_payloads(
+        rows: List[Tuple], immediate_limit: int
+    ) -> Dict[str, List[BatchPayload]]:
+        """Convert persisted file rows into ready and overflow payload lists."""
+        ready: List[BatchPayload] = []
+        overflow: List[BatchPayload] = []
+        for file_path, request_count, total_tokens, part_index in rows:
+            payload = BatchPayload(
+                file_path=str(file_path),
+                request_count=int(request_count),
+                total_tokens=int(total_tokens),
+            )
+            target = ready if int(part_index) < immediate_limit else overflow
+            target.append(payload)
+        return {"ready": ready, "overflow": overflow}
+
+    def _load_existing_payloads(
+        self,
+        cur: Any,
+        batch_uuid: str,
+        immediate_limit: int,
+    ) -> Optional[Dict[str, List[BatchPayload]]]:
+        cur.execute(
+            """
+            SELECT file_path, request_count, total_tokens, part_index
+            FROM llm_batch_files
+            WHERE batch_uuid = %s::uuid
+            ORDER BY part_index ASC, created_at ASC
+            """,
+            (batch_uuid,),
+        )
+        rows = cur.fetchall()
+        if not rows:
+            return None
+        return self._categorize_existing_payloads(rows, immediate_limit)
+
     def _persist_payloads(
         self,
         payloads: List[Dict[str, Any]],
@@ -193,13 +239,59 @@ class PostgresBatchOrchestrator:
         ready: List[BatchPayload] = []
         overflow: List[BatchPayload] = []
         immediate_limit = counter.azure_max_files_per_job
+        lock_key = self._batch_lock_key(batch_uuid)
 
         with psycopg.connect(self.dsn) as conn:
             conn.autocommit = False
             with conn.cursor() as cur:
+                cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
+                cur.execute(
+                    "SELECT queue_uuid FROM llm_batches "
+                    "WHERE batch_uuid = %s::uuid FOR UPDATE",
+                    (batch_uuid,),
+                )
+                batch_row = cur.fetchone()
+                if batch_row is None:
+                    raise ValidationError(
+                        field="batch_uuid",
+                        value=batch_uuid,
+                        reason="batch disappeared before preparation could be persisted",
+                    )
+                queue_uuid = batch_row[0]
+
+                existing = self._load_existing_payloads(
+                    cur, batch_uuid, immediate_limit
+                )
+                if existing is not None:
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM llm_requests
+                            WHERE batch_uuid = %s::uuid
+                              AND request_status = 'queued'
+                              AND batch_file_uuid IS NULL
+                        )
+                        """,
+                        (batch_uuid,),
+                    )
+                    queued_row = cur.fetchone()
+                    has_unassigned = bool(queued_row and queued_row[0])
+                    if has_unassigned:
+                        raise ValidationError(
+                            field="batch_uuid",
+                            value=batch_uuid,
+                            reason=(
+                                "batch already has prepared files; additional "
+                                "queued requests require a new batch"
+                            ),
+                        )
+                    conn.commit()
+                    return existing
+
                 for idx, meta in enumerate(payloads):
                     file_id = f"file_{uuid.uuid4().hex[:12]}"
                     lines = meta.get("lines", [])
+                    request_ids = [str(item) for item in meta.get("request_ids", [])]
                     content = "\n".join(lines) + ("\n" if lines else "")
                     payload_doc = {"text": content, "line_count": len(lines)}
                     adapted = (
@@ -224,20 +316,13 @@ class PostgresBatchOrchestrator:
                             batch_uuid, queue_uuid, file_path, storage_ref,
                             part_index, request_count, total_tokens, payload_file_id
                         ) VALUES (
-                            (SELECT batch_uuid FROM llm_batches
-                             WHERE input_file_path = %s OR batch_uuid::text = %s
-                             LIMIT 1),
-                            (SELECT queue_uuid FROM llm_batches
-                             WHERE input_file_path = %s OR batch_uuid::text = %s
-                             LIMIT 1),
-                            %s, NULL, %s, %s, %s, %s
+                            %s::uuid, %s, %s, NULL, %s, %s, %s, %s
                         )
+                        RETURNING file_uuid
                         """,
                         (
                             batch_uuid,
-                            batch_uuid,
-                            batch_uuid,
-                            batch_uuid,
+                            queue_uuid,
                             file_path,
                             int(meta["part_index"]),
                             int(meta["record_count"]),
@@ -245,10 +330,15 @@ class PostgresBatchOrchestrator:
                             file_id,
                         ),
                     )
+                    file_row = cur.fetchone()
+                    if file_row is None:
+                        raise RuntimeError("Persisted batch file did not return file_uuid")
+                    file_uuid = str(file_row[0])
+
                     batch_params = [
                         (rid, file_id, int(seq_no), line_txt)
                         for seq_no, (rid, line_txt) in enumerate(
-                            zip(meta.get("request_ids", []), lines), start=1
+                            zip(request_ids, lines), start=1
                         )
                     ]
                     if batch_params:
@@ -261,12 +351,48 @@ class PostgresBatchOrchestrator:
                             """,
                             batch_params,
                         )
+                        cur.execute(
+                            """
+                            UPDATE llm_requests
+                            SET batch_file_uuid = %s::uuid
+                            WHERE batch_uuid = %s::uuid
+                              AND request_uuid = ANY(%s::uuid[])
+                              AND request_status = 'queued'
+                              AND batch_file_uuid IS NULL
+                            """,
+                            (file_uuid, batch_uuid, request_ids),
+                        )
+                        if cur.rowcount != len(request_ids):
+                            raise ValidationError(
+                                field="request_ids",
+                                value=request_ids,
+                                reason=(
+                                    "queued request assignment changed during "
+                                    "batch preparation"
+                                ),
+                            )
+
                     payload = BatchPayload(
                         file_path=file_path,
                         request_count=int(meta["record_count"]),
                         total_tokens=int(meta["total_tokens"]),
                     )
                     (ready if idx < immediate_limit else overflow).append(payload)
+
+                cur.execute(
+                    """
+                    UPDATE llm_batches
+                    SET total_requests = %s,
+                        total_tokens = %s,
+                        updated_at = NOW()
+                    WHERE batch_uuid = %s::uuid
+                    """,
+                    (
+                        sum(item.request_count for item in ready + overflow),
+                        sum(item.total_tokens for item in ready + overflow),
+                        batch_uuid,
+                    ),
+                )
             conn.commit()
 
         return {"ready": ready, "overflow": overflow}
