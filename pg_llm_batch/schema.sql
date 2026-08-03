@@ -174,10 +174,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_batch_files_file_path
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_batch_files_payload_file
     ON llm_batch_files(payload_file_id)
     WHERE payload_file_id IS NOT NULL;
-CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_jsonl_lines_request
-    ON llm_jsonl_lines(request_uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_jsonl_lines_payload_request
+    ON llm_jsonl_lines(payload_file_id, request_uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS uq_llm_jsonl_lines_payload_sequence
     ON llm_jsonl_lines(payload_file_id, sequence_no);
+CREATE INDEX IF NOT EXISTS idx_llm_jsonl_lines_req
+    ON llm_jsonl_lines(request_uuid);
 
 -- Preparation scans only queued, unassigned requests for one batch.
 CREATE INDEX IF NOT EXISTS idx_llm_requests_batch_prepare
@@ -186,9 +188,8 @@ CREATE INDEX IF NOT EXISTS idx_llm_requests_batch_prepare
 CREATE INDEX IF NOT EXISTS idx_llm_batches_status_updated
     ON llm_batches(batch_status, updated_at);
 
--- Superseded by the unique request and (payload, sequence) indexes above.
+-- Superseded by the unique (payload, sequence) index above.
 DROP INDEX IF EXISTS idx_llm_jsonl_lines_payload;
-DROP INDEX IF EXISTS idx_llm_jsonl_lines_req;
 
 -- =============================================================================
 -- Endpoint <-> model <-> tokenizer mapping (populated by the pg_cron sync job)
