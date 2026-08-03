@@ -15,9 +15,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from ipaddress import ip_address
-from typing import Any, Callable, Dict, Optional
+from math import isfinite
+from typing import Any, AsyncIterator, Callable, Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -28,6 +30,7 @@ from .exceptions import GatewayError, ValidationError
 logger = logging.getLogger(__name__)
 
 DEFAULT_USER_AGENT = "pg-llm-batch"
+DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 
@@ -123,12 +126,34 @@ class BatchAPIClient:
         self,
         postgres_dsn: str,
         credentials: CredentialsProvider,
+        *,
+        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
     ) -> None:
-        """Initialize the client with a PostgreSQL payload store and credentials."""
+        """Initialize the client with a payload store and bounded HTTP timeout."""
         if not postgres_dsn:
             raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
+        try:
+            normalized_timeout = float(request_timeout_seconds)
+        except (TypeError, ValueError) as exc:
+            raise ValidationError(
+                field="request_timeout_seconds",
+                value=request_timeout_seconds,
+                reason="must be a finite number greater than zero",
+            ) from exc
+        if (
+            isinstance(request_timeout_seconds, bool)
+            or not isfinite(normalized_timeout)
+            or normalized_timeout <= 0
+        ):
+            raise ValidationError(
+                field="request_timeout_seconds",
+                value=request_timeout_seconds,
+                reason="must be a finite number greater than zero",
+            )
         self.postgres_dsn = postgres_dsn
         self._credentials = credentials
+        self.request_timeout_seconds = normalized_timeout
+        self._request_timeout = aiohttp.ClientTimeout(total=normalized_timeout)
         self._session: Optional[aiohttp.ClientSession] = None
 
     async def __aenter__(self) -> "BatchAPIClient":
@@ -146,6 +171,53 @@ class BatchAPIClient:
         if not self._session:
             self._session = aiohttp.ClientSession()
         return self._session
+
+    @asynccontextmanager
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        operation: str,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
+        session = self._get_session()
+        request = getattr(session, method.lower())
+        try:
+            async with request(
+                url,
+                timeout=self._request_timeout,
+                allow_redirects=False,
+                **kwargs,
+            ) as response:
+                yield response
+        except GatewayError:
+            raise
+        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+            raise GatewayError(
+                f"{operation} transport failed",
+                response_data={
+                    "error_type": type(exc).__name__,
+                    "timeout_seconds": self.request_timeout_seconds,
+                },
+            ) from exc
+
+    async def _read_json_object(self, response: Any, operation: str) -> Dict[str, Any]:
+        try:
+            result = await response.json()
+        except (aiohttp.ClientError, ValueError, UnicodeError) as exc:
+            raise GatewayError(
+                f"{operation} returned invalid JSON",
+                status_code=getattr(response, "status", None),
+                response_data={"error_type": type(exc).__name__},
+            ) from exc
+        if not isinstance(result, dict):
+            raise GatewayError(
+                f"{operation} returned a non-object JSON response",
+                status_code=getattr(response, "status", None),
+                response_data={"response_type": type(result).__name__},
+            )
+        return result
 
     def _headers(self, api_key: str, *, json_body: bool = False) -> Dict[str, str]:
         headers = {
@@ -186,7 +258,6 @@ class BatchAPIClient:
     ) -> Dict[str, Any]:
         """Upload a memory-backed JSONL payload to the Files API."""
         creds = self._credentials(endpoint_alias)
-        session = self._get_session()
         file_id = self._resolve_memory_identifier(file_path)
         payload_bytes = await self._load_payload_bytes(file_id)
 
@@ -198,10 +269,14 @@ class BatchAPIClient:
             filename=f"{file_id}.jsonl",
             content_type="application/jsonl",
         )
-        async with session.post(
-            f"{creds.url}/files", data=data, headers=self._headers(creds.api_key)
+        async with self._request(
+            "post",
+            f"{creds.url}/files",
+            operation="Files API upload",
+            data=data,
+            headers=self._headers(creds.api_key),
         ) as response:
-            result = await response.json()
+            result = await self._read_json_object(response, "Files API upload")
             if response.status != 200:
                 raise GatewayError(
                     f"Files API upload failed: {response.status}",
@@ -223,7 +298,6 @@ class BatchAPIClient:
     ) -> Dict[str, Any]:
         """Create a batch job from an uploaded input file id."""
         creds = self._credentials(endpoint_alias)
-        session = self._get_session()
         payload: Dict[str, Any] = {
             "input_file_id": input_file_id,
             "endpoint": endpoint,
@@ -231,12 +305,14 @@ class BatchAPIClient:
         }
         if metadata:
             payload["metadata"] = metadata
-        async with session.post(
+        async with self._request(
+            "post",
             f"{creds.url}/batches",
+            operation="Batch creation",
             json=payload,
             headers=self._headers(creds.api_key, json_body=True),
         ) as response:
-            result = await response.json()
+            result = await self._read_json_object(response, "Batch creation")
             if response.status not in (200, 201, 202):
                 raise GatewayError(
                     f"Batch creation failed: {response.status}",
@@ -251,12 +327,13 @@ class BatchAPIClient:
     ) -> Dict[str, Any]:
         """Poll a batch job and annotate progress/completion."""
         creds = self._credentials(endpoint_alias)
-        session = self._get_session()
-        async with session.get(
+        async with self._request(
+            "get",
             f"{creds.url}/batches/{batch_id}",
+            operation="Batch status",
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await response.json()
+            result = await self._read_json_object(response, "Batch status")
             if response.status != 200:
                 raise GatewayError(
                     f"Batch status failed: {response.status}",
@@ -331,9 +408,10 @@ class BatchAPIClient:
             return {"success": False, "reason": "No output_file_id on batch"}
 
         creds = self._credentials(endpoint_alias)
-        session = self._get_session()
-        async with session.get(
+        async with self._request(
+            "get",
             f"{creds.url}/files/{output_file_id}/content",
+            operation="Result download",
             headers=self._headers(creds.api_key),
         ) as response:
             if response.status != 200:
@@ -369,17 +447,21 @@ class BatchAPIClient:
     ) -> Dict[str, Any]:
         """Cancel an in-flight batch job."""
         creds = self._credentials(endpoint_alias)
-        session = self._get_session()
-        async with session.post(
+        async with self._request(
+            "post",
             f"{creds.url}/batches/{batch_id}/cancel",
+            operation="Batch cancellation",
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await response.json()
+            result = await self._read_json_object(response, "Batch cancellation")
             if response.status not in (200, 202):
-                return {
-                    "success": False,
-                    "reason": result.get("error", {}).get("message", "Unknown error"),
-                }
+                error = result.get("error")
+                reason = (
+                    error.get("message", "Unknown error")
+                    if isinstance(error, dict)
+                    else "Unknown error"
+                )
+                return {"success": False, "reason": reason}
             return {
                 "success": True,
                 "batch_id": batch_id,
