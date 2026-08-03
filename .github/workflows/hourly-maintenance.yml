@@ -21,7 +21,7 @@ jobs:
       issues: write
       pull-requests: read
       statuses: read
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@main
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@5983b41ace75040c1d81818171ca7d0f3653254e # main
     with:
       target_repository: ContextualWisdomLab/pg-llm-batch
       base_branch: main
@@ -41,7 +41,7 @@ jobs:
       contents: write
       id-token: write
       pull-requests: write
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-merge-scheduler.yml@main
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-merge-scheduler.yml@5983b41ace75040c1d81818171ca7d0f3653254e # main
     with:
       base_branch: main
       max_prs: "100"
