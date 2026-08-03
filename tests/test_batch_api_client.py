@@ -115,6 +115,52 @@ async def test_poll_computes_progress():
     assert status["is_complete"] is False
 
 
+async def test_poll_handles_null_request_counts_without_crashing():
+    # A gateway legitimately returns request_counts as JSON null while a batch is
+    # still validating/queued (the counts do not exist yet). The key is present,
+    # so `result.get("request_counts", {})` yields None, and calling `.get(...)`
+    # on None raised AttributeError, crashing every poll of such a batch. Null
+    # must be treated like absent: 0% progress, not a crash.
+    session = FakeSession(
+        {
+            ("GET", "/batches/pending"): FakeResponse(
+                200,
+                {"id": "pending", "status": "validating", "request_counts": None},
+            ),
+        }
+    )
+    client = BatchAPIClient("postgresql://x", _creds)
+    client._session = session
+    status = await client.get_batch_status("pending", "default")
+    assert status["progress_percentage"] == 0
+    assert status["is_complete"] is False
+
+
+async def test_retrieve_raises_gateway_error_on_malformed_result_line():
+    # A truncated/corrupt output file (untrusted gateway content) must surface as
+    # a typed GatewayError at the boundary, not leak a raw json.JSONDecodeError.
+    session = FakeSession(
+        {
+            ("GET", "/batches/done"): FakeResponse(
+                200,
+                {
+                    "id": "done",
+                    "status": "completed",
+                    "output_file_id": "out-1",
+                    "request_counts": {"total": 1, "completed": 1, "failed": 0},
+                },
+            ),
+            ("GET", "/files/out-1/content"): FakeResponse(
+                200, text='{"custom_id": "r0", "response": {}}\n{ not valid json'
+            ),
+        }
+    )
+    client = BatchAPIClient("postgresql://x", _creds)
+    client._session = session
+    with pytest.raises(GatewayError):
+        await client.download_results("done", "default")
+
+
 async def test_retrieve_downloads_and_parses():
     output_lines = "\n".join(
         json.dumps({"custom_id": f"r{i}", "response": {"body": {}}}) for i in range(3)
