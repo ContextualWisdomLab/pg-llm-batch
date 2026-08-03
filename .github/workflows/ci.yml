@@ -68,15 +68,15 @@ jobs:
       - name: Lint
         run: uv run ruff check pg_llm_batch tests
       - name: Enforce docstring coverage
-        run: uvx --from interrogate==1.7.0 interrogate --fail-under 100 pg_llm_batch
+        run: uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
       - name: Enforce line coverage
         run: >-
           uv run --with pytest-cov==7.1.0 pytest -q -m "not integration"
           --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
       - name: Verify lockfile freshness
         run: uv lock --check
-      - name: Build distribution artifacts
-        run: uv build
+      - name: Build distribution artifacts without workspace sources
+        run: uv build --no-sources
 
   container-builds:
     name: Container builds
