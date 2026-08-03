@@ -19,7 +19,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from ipaddress import ip_address
 from math import isfinite
-from typing import Any, AsyncIterator, Callable, Dict, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
@@ -340,9 +340,6 @@ class BatchAPIClient:
                     status_code=response.status,
                     response_data=result,
                 )
-            # A gateway returns request_counts as null (present, but None) while
-            # a batch is still validating; `or {}` treats null like absent so the
-            # progress math below never dereferences None.
             counts = result.get("request_counts") or {}
             total = counts.get("total", 0)
             done = counts.get("completed", 0) + counts.get("failed", 0)
@@ -393,53 +390,118 @@ class BatchAPIClient:
                 )
             await asyncio.sleep(min(poll_interval_seconds, remaining))
 
+    @staticmethod
+    def _parse_jsonl_content(
+        content: str,
+        *,
+        batch_id: str,
+        file_kind: str,
+    ) -> List[Dict[str, Any]]:
+        parsed_lines: List[Dict[str, Any]] = []
+        for line_number, line in enumerate(content.strip().split("\n"), start=1):
+            if not line:
+                continue
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise GatewayError(
+                    f"Malformed {file_kind} line {line_number} for batch {batch_id}",
+                    response_data={
+                        "file_kind": file_kind,
+                        "line_number": line_number,
+                    },
+                ) from exc
+            if not isinstance(parsed, dict):
+                raise GatewayError(
+                    f"Non-object {file_kind} line {line_number} for batch {batch_id}",
+                    response_data={
+                        "file_kind": file_kind,
+                        "line_number": line_number,
+                        "response_type": type(parsed).__name__,
+                    },
+                )
+            parsed_lines.append(parsed)
+        return parsed_lines
+
+    async def _download_jsonl_file(
+        self,
+        file_id: str,
+        endpoint_alias: str,
+        *,
+        batch_id: str,
+        file_kind: str,
+    ) -> List[Dict[str, Any]]:
+        creds = self._credentials(endpoint_alias)
+        operation = f"{file_kind.capitalize()} file download"
+        async with self._request(
+            "get",
+            f"{creds.url}/files/{file_id}/content",
+            operation=operation,
+            headers=self._headers(creds.api_key),
+        ) as response:
+            if response.status != 200:
+                error_text = await response.text()
+                raise GatewayError(
+                    f"{operation} failed: {response.status}",
+                    status_code=response.status,
+                    response_data={"body": error_text},
+                )
+            content = await response.text()
+        return self._parse_jsonl_content(
+            content,
+            batch_id=batch_id,
+            file_kind=file_kind,
+        )
+
     async def download_results(
         self, batch_id: str, endpoint_alias: str
     ) -> Dict[str, Any]:
-        """Download and parse batch results into memory (no disk writes)."""
+        """Download output and provider error files into memory."""
         status = await self.get_batch_status(batch_id, endpoint_alias)
         if not status.get("is_complete"):
             return {
                 "success": False,
                 "reason": f"Batch not complete: {status.get('status')}",
             }
+
         output_file_id = status.get("output_file_id")
-        if not output_file_id:
+        error_file_id = status.get("error_file_id")
+        if not output_file_id and not error_file_id:
             return {"success": False, "reason": "No output_file_id on batch"}
 
-        creds = self._credentials(endpoint_alias)
-        async with self._request(
-            "get",
-            f"{creds.url}/files/{output_file_id}/content",
-            operation="Result download",
-            headers=self._headers(creds.api_key),
-        ) as response:
-            if response.status != 200:
-                error_text = await response.text()
-                raise GatewayError(
-                    f"Result download failed: {response.status}",
-                    status_code=response.status,
-                    response_data={"body": error_text},
-                )
-            content = await response.text()
-
-        responses = []
-        for line_number, line in enumerate(content.strip().split("\n"), start=1):
-            if not line:
-                continue
-            try:
-                responses.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise GatewayError(
-                    f"Malformed result line {line_number} for batch {batch_id}",
-                    response_data={"line_number": line_number},
-                ) from exc
+        responses = (
+            await self._download_jsonl_file(
+                str(output_file_id),
+                endpoint_alias,
+                batch_id=batch_id,
+                file_kind="result",
+            )
+            if output_file_id
+            else []
+        )
+        errors = (
+            await self._download_jsonl_file(
+                str(error_file_id),
+                endpoint_alias,
+                batch_id=batch_id,
+                file_kind="error",
+            )
+            if error_file_id
+            else []
+        )
+        batch_status = str(status.get("status") or "")
         return {
             "success": True,
+            "batch_succeeded": batch_status == "completed",
             "batch_id": batch_id,
+            "batch_status": batch_status,
             "output_file_id": output_file_id,
+            "error_file_id": error_file_id,
             "response_count": len(responses),
+            "error_count": len(errors),
+            "has_errors": bool(errors),
             "responses": responses,
+            "errors": errors,
         }
 
     async def cancel_batch(
