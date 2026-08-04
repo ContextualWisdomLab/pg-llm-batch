@@ -23,6 +23,8 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
+MAX_PROVIDER_METADATA_BYTES = 64 * 1024
+REMOTE_BATCH_OBSERVATION_SEQUENCE = "llm_remote_batch_observation_sequence"
 REMOTE_TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 
 
@@ -81,37 +83,89 @@ def _provider_count(value: Any) -> int:
     return value if type(value) is int and value >= 0 else 0
 
 
+def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
+    """Return bounded canonical JSON metadata or the deterministic empty object."""
+    if not isinstance(value, Mapping):
+        return {}, "{}"
+    try:
+        provider_metadata = dict(value)
+        metadata_json = json.dumps(
+            provider_metadata,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        metadata_bytes = metadata_json.encode("utf-8")
+    except Exception:
+        return {}, "{}"
+    if len(metadata_bytes) > MAX_PROVIDER_METADATA_BYTES:
+        return {}, "{}"
+    return provider_metadata, metadata_json
+
+
+def reserve_remote_batch_observation_order(dsn: str) -> int:
+    """Reserve and return one positive database-owned lifecycle order."""
+    _require_psycopg()
+    sql = f"SELECT nextval('{REMOTE_BATCH_OBSERVATION_SEQUENCE}')"
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute(sql)
+            row = cur.fetchone()
+    if (
+        not row
+        or isinstance(row[0], bool)
+        or not isinstance(row[0], int)
+        or row[0] <= 0
+    ):
+        raise RuntimeError(
+            "remote batch observation sequence returned an invalid order"
+        )
+    return row[0]
+
+
 def persist_remote_batch_state(
     dsn: str,
     endpoint_alias: str,
     provider_batch: Mapping[str, Any],
+    observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Atomically insert or update one curated provider batch observation.
+    """Submit one curated provider batch observation to an atomic upsert.
 
     The unique ``(endpoint_alias, remote_batch_id)`` identity makes repeated
-    polling idempotent. A stale observation cannot overwrite a newer one because
-    the upsert updates only when its ``last_observed_at`` is at least as recent
-    as the stored value. Only operational fields and provider metadata are
-    persisted; arbitrary response fields are deliberately discarded.
+    polling idempotent. The upsert accepts only a strictly newer database-owned
+    ``observation_order``. Once a terminal status is stored, a later observation
+    may enrich it only when the terminal status itself is unchanged. Arbitrary
+    provider fields are discarded, and metadata is canonicalized within a
+    bounded JSON trust boundary.
 
     Args:
         dsn: PostgreSQL connection string for the lifecycle store.
         endpoint_alias: Stable local alias for the remote Batch API endpoint.
         provider_batch: Provider batch object containing at minimum an ``id``.
+        observation_order: Positive order reserved before the provider request.
         observed_at: Optional timezone-aware observation timestamp. Current UTC
             is used when omitted.
 
     Returns:
-        The normalized lifecycle snapshot written to PostgreSQL.
+        The normalized lifecycle snapshot submitted to PostgreSQL. PostgreSQL
+        may ignore the update when a newer order or incompatible terminal state
+        is already stored.
 
     Raises:
-        ValueError: If the endpoint alias, provider object, remote identifier,
-            or observation timestamp is invalid.
+        ValueError: If the observation order, endpoint alias, provider object,
+            remote identifier, or observation timestamp is invalid.
         RuntimeError: If psycopg is unavailable.
     """
     _require_psycopg()
+    if (
+        isinstance(observation_order, bool)
+        or not isinstance(observation_order, int)
+        or observation_order <= 0
+    ):
+        raise ValueError("observation_order must be a positive integer")
     if not isinstance(endpoint_alias, str) or not endpoint_alias.strip():
         raise ValueError("endpoint_alias must be a non-empty string")
     normalized_alias = endpoint_alias.strip()
@@ -131,16 +185,22 @@ def persist_remote_batch_state(
         raise ValueError("observed_at must be a timezone-aware datetime")
 
     status_value = provider_batch.get("status")
-    batch_status = status_value if isinstance(status_value, str) and status_value else "unknown"
+    batch_status = (
+        status_value
+        if isinstance(status_value, str) and status_value
+        else "unknown"
+    )
     counts_value = provider_batch.get("request_counts")
     request_counts = counts_value if isinstance(counts_value, Mapping) else {}
-    metadata_value = provider_batch.get("metadata")
-    provider_metadata = dict(metadata_value) if isinstance(metadata_value, Mapping) else {}
+    provider_metadata, metadata_json = _provider_metadata(
+        provider_batch.get("metadata")
+    )
     terminal_at = observed if batch_status in REMOTE_TERMINAL_STATUSES else None
 
     snapshot: Dict[str, Any] = {
         "endpoint_alias": normalized_alias,
         "remote_batch_id": remote_batch_id,
+        "observation_order": observation_order,
         "input_file_id": _provider_text(provider_batch.get("input_file_id")),
         "batch_endpoint": _provider_text(provider_batch.get("endpoint")),
         "batch_status": batch_status,
@@ -153,17 +213,12 @@ def persist_remote_batch_state(
         "observed_at": observed,
         "terminal_at": terminal_at,
     }
-    metadata_json = json.dumps(
-        provider_metadata,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    )
 
     sql = """
         INSERT INTO llm_remote_batch_jobs (
             endpoint_alias,
             remote_batch_id,
+            observation_order,
             input_file_id,
             batch_endpoint,
             batch_status,
@@ -179,11 +234,12 @@ def persist_remote_batch_state(
             updated_at
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s::jsonb, %s, %s, %s, %s
         )
         ON CONFLICT (endpoint_alias, remote_batch_id) DO UPDATE
-        SET input_file_id = COALESCE(
+        SET observation_order = EXCLUDED.observation_order,
+            input_file_id = COALESCE(
                 EXCLUDED.input_file_id,
                 llm_remote_batch_jobs.input_file_id
             ),
@@ -214,11 +270,18 @@ def persist_remote_batch_state(
                 EXCLUDED.terminal_at
             ),
             updated_at = EXCLUDED.updated_at
-        WHERE EXCLUDED.last_observed_at >= llm_remote_batch_jobs.last_observed_at
+        WHERE EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order
+          AND (
+              llm_remote_batch_jobs.batch_status NOT IN (
+                  'completed', 'failed', 'expired', 'cancelled'
+              )
+              OR EXCLUDED.batch_status = llm_remote_batch_jobs.batch_status
+          )
     """
     params = (
         snapshot["endpoint_alias"],
         snapshot["remote_batch_id"],
+        snapshot["observation_order"],
         snapshot["input_file_id"],
         snapshot["batch_endpoint"],
         snapshot["batch_status"],
