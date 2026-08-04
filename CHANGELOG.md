@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevented sparse newer remote lifecycle observations from reducing previously
+  persisted request counters, and documented that lifecycle rows are mutable
+  current-state projections while provider metadata is not a tenant
+  authorization boundary.
 - Synchronized the deployable PostgreSQL image initialization schema with the
   packaged canonical schema and added an exact-mirror regression gate, so
   container deployments cannot silently omit lifecycle or integrity migrations.
