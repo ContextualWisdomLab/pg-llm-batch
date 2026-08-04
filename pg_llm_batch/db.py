@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 MAX_PROVIDER_METADATA_BYTES = 64 * 1024
-REMOTE_BATCH_OBSERVATION_SEQUENCE = "llm_remote_batch_observation_sequence"
 REMOTE_TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 
 
@@ -107,10 +106,9 @@ def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
 def reserve_remote_batch_observation_order(dsn: str) -> int:
     """Reserve and return one positive database-owned lifecycle order."""
     _require_psycopg()
-    sql = f"SELECT nextval('{REMOTE_BATCH_OBSERVATION_SEQUENCE}')"
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            cur.execute("SELECT nextval('llm_remote_batch_observation_sequence')")
             row = cur.fetchone()
     if (
         not row
