@@ -68,6 +68,37 @@ CREATE TABLE IF NOT EXISTS llm_batches (
     completed_at TIMESTAMPTZ NULL
 );
 
+-- Curated, provider-facing lifecycle state. The compound identity makes repeated
+-- polling idempotent without assuming remote identifiers are globally unique.
+CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
+    remote_job_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    endpoint_alias TEXT NOT NULL
+        CHECK (LENGTH(endpoint_alias) BETWEEN 1 AND 128),
+    remote_batch_id TEXT NOT NULL
+        CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256),
+    input_file_id TEXT,
+    batch_endpoint TEXT,
+    batch_status TEXT NOT NULL,
+    output_file_id TEXT,
+    error_file_id TEXT,
+    total_requests INTEGER NOT NULL DEFAULT 0
+        CHECK (total_requests >= 0),
+    completed_requests INTEGER NOT NULL DEFAULT 0
+        CHECK (completed_requests >= 0),
+    failed_requests INTEGER NOT NULL DEFAULT 0
+        CHECK (failed_requests >= 0),
+    provider_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+    first_seen_at TIMESTAMPTZ NOT NULL,
+    last_observed_at TIMESTAMPTZ NOT NULL,
+    terminal_at TIMESTAMPTZ NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id
+        UNIQUE (endpoint_alias, remote_batch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_status_observed
+    ON llm_remote_batch_jobs(batch_status, last_observed_at);
+
 CREATE TABLE IF NOT EXISTS llm_batch_file_payloads (
     file_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     file_id TEXT UNIQUE NOT NULL,
