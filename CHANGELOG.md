@@ -16,9 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RFC Retry-After support and equal-jitter exponential fallback; side-effecting
   POST operations remain single-attempt.
 - Durable remote batch lifecycle persistence through `DurableBatchAPIClient`
-  and the idempotent `llm_remote_batch_jobs` table, including stale-observation
-  protection, curated provider fields, terminal timestamps, and structured
-  recovery evidence when remote success cannot be persisted locally.
+  and `llm_remote_batch_jobs`, with database-owned pre-request observation
+  ordering, immutable terminal status identity, bounded curated metadata, and
+  structured reservation/persistence recovery evidence.
 
 ### Fixed
 
@@ -28,7 +28,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff patch updates; setup-uv cache pruning is explicit to preserve the previous bounded cache-cost policy.
+- Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
+  explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
+  floor so built artifacts expose normalized legal metadata without warnings.
+- Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff
+  patch updates; setup-uv cache pruning is explicit to preserve the previous
+  bounded cache-cost policy.
 
 ## [0.1.0] - 2026-07-12
 
