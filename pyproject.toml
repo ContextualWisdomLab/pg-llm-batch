@@ -17,11 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-secrets = ["cryptography>=48.0.1"]
+secrets = ["cryptography>=50.0.0"]
 test = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.0",
 ]
 
 # PEP 735 dependency groups. `uv run` installs the `dev` group by default, so the
@@ -32,7 +32,7 @@ test = [
 dev = [
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
-    "cryptography>=48.0.1",
+    "cryptography>=50.0.0",
     "ruff==0.16.0",
 ]
 
