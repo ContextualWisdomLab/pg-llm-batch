@@ -429,8 +429,17 @@ def test_remote_field_contract_normalizes_nul_optional_text(
 
 def test_remote_field_contract_adds_database_checks() -> None:
     """The canonical schema constrains every stored remote resource identifier."""
-    schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
-    pattern = "~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'"
+    schema = _compact_sql(Path(db.SCHEMA_PATH).read_text(encoding="utf-8"))
+    identifier_pattern = "'^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'"
 
-    assert schema.count(pattern) == 4
-
+    assert (
+        "remote_batch_id TEXT NOT NULL "
+        "CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND "
+        f"{db.MAX_REMOTE_RESOURCE_ID_CHARACTERS}) "
+        f"CHECK (remote_batch_id ~ {identifier_pattern})"
+    ) in schema
+    for field_name in ("input_file_id", "output_file_id", "error_file_id"):
+        assert (
+            f"{field_name} TEXT CHECK ( {field_name} IS NULL OR "
+            f"{field_name} ~ {identifier_pattern} )"
+        ) in schema, f"missing identifier CHECK for {field_name}"
