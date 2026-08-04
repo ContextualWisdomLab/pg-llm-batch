@@ -404,3 +404,68 @@ async def test_zero_fallback_delay_retries_without_random_jitter(monkeypatch) ->
 
     assert result["status"] == "completed"
     assert sleeps == [0.0]
+
+
+
+@pytest.mark.parametrize("value", ["٠", "１２", "２"])
+def test_retry_after_parser_rejects_non_ascii_decimal_digits(value: str) -> None:
+    """HTTP delay-seconds accept RFC ASCII DIGIT tokens only."""
+    now = datetime(2026, 8, 4, tzinfo=timezone.utc)
+    assert client_mod._parse_retry_after(value, now) is None
+
+
+async def test_extreme_ascii_retry_after_is_refused_without_exception(
+    monkeypatch,
+) -> None:
+    """An extreme RFC-valid delay cannot escape or force an untrusted wait."""
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)
+    response = Response(
+        429,
+        {"error": "rate-limited"},
+        headers={"Retry-After": "9" * 10_000},
+    )
+    session = SequenceSession([response])
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        retry_max_delay_seconds=30,
+    )
+    client._session = session
+
+    with pytest.raises(GatewayError, match="Batch status failed") as exc_info:
+        await client.get_batch_status("batch-1", "default")
+
+    assert exc_info.value.status_code == 429
+    assert response.exit_count == 1
+    assert sleeps == []
+    assert len(session.calls) == 1
+
+
+async def test_non_ascii_retry_after_uses_bounded_fallback(monkeypatch) -> None:
+    """Non-RFC decimal lookalikes select bounded fallback, not exact delay."""
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(client_mod.random, "uniform", lambda _low, high: high)
+    session = SequenceSession(
+        [
+            Response(503, {"error": "busy"}, headers={"Retry-After": "２"}),
+            Response(200, {"status": "completed", "request_counts": {}}),
+        ]
+    )
+    client = BatchAPIClient("postgresql://x", credentials)
+    client._session = session
+
+    result = await client.get_batch_status("batch-1", "default")
+
+    assert result["status"] == "completed"
+    assert sleeps == [0.5]
+    assert len(session.calls) == 2
