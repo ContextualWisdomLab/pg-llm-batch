@@ -34,7 +34,7 @@ class StreamResponse:
         self,
         chunks: list[bytes],
         *,
-        content_length: int | None,
+        content_length: Any,
         status: int = 200,
     ) -> None:
         self.status = status
@@ -51,15 +51,17 @@ class StreamResponse:
 
 
 class TextResponse:
-    """Response adapter without a streaming ``content`` attribute."""
+    """Response adapter that deliberately lacks a bounded byte stream."""
 
     def __init__(self, text: str, *, status: int = 200) -> None:
         self.status = status
         self.content_length = None
         self._text = text
+        self.text_called = False
 
     async def text(self) -> str:
-        """Return the configured compatibility response body."""
+        """Record any unsafe whole-body fallback attempt."""
+        self.text_called = True
         return self._text
 
     async def __aenter__(self):
@@ -84,10 +86,12 @@ class Session:
         return self.response
 
 
-
 def credentials(_alias: str) -> GatewayCredentials:
     """Return deterministic credentials for download tests."""
-    return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
+    return GatewayCredentials(
+        url="https://gateway.example/v1",
+        api_key="secret",
+    )
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, 1.5, "1024"])
@@ -99,6 +103,12 @@ def test_client_rejects_invalid_max_download_bytes(value: Any) -> None:
             credentials,
             max_download_bytes=value,
         )
+
+
+def test_client_uses_documented_default_download_limit() -> None:
+    """The public default remains the documented 128 MiB safety boundary."""
+    client = BatchAPIClient("postgresql://x", credentials)
+    assert client.max_download_bytes == 128 * 1024 * 1024
 
 
 async def test_declared_oversize_is_rejected_before_streaming() -> None:
@@ -125,6 +135,32 @@ async def test_declared_oversize_is_rejected_before_streaming() -> None:
         "declared_bytes": 10,
         "bytes_read": 0,
     }
+
+
+@pytest.mark.parametrize("declared_length", [True, -1, "9"])
+async def test_invalid_declared_lengths_do_not_override_actual_bytes(
+    declared_length: Any,
+) -> None:
+    """Malformed length metadata is ignored while actual bytes stay bounded."""
+    response = StreamResponse(
+        [b'{"ok":1}\n'],
+        content_length=declared_length,
+    )
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        max_download_bytes=9,
+    )
+    client._session = Session(response)
+
+    result = await client._download_jsonl_file(
+        "output-1",
+        "default",
+        batch_id="batch-1",
+        file_kind="result",
+    )
+
+    assert result == [{"ok": 1}]
 
 
 async def test_streamed_body_exactly_at_limit_is_accepted() -> None:
@@ -198,43 +234,9 @@ async def test_streamed_body_rejects_invalid_utf8_without_content_leakage() -> N
     assert "xff" not in repr(exc_info.value.response_data).lower()
 
 
-async def test_text_compatibility_path_is_also_bounded() -> None:
-    """Non-aiohttp response adapters cannot bypass the configured byte limit."""
-    client = BatchAPIClient(
-        "postgresql://x",
-        credentials,
-        max_download_bytes=8,
-    )
-    client._session = Session(TextResponse('{"ok":1}\n'))
-
-    with pytest.raises(GatewayError, match="exceeded download limit") as exc_info:
-        await client._download_jsonl_file(
-            "output-1",
-            "default",
-            batch_id="batch-1",
-            file_kind="result",
-        )
-
-    assert exc_info.value.response_data == {
-        "limit_bytes": 8,
-        "declared_bytes": None,
-        "bytes_read": 0,
-    }
-
-
-def test_client_uses_documented_default_download_limit() -> None:
-    """The public default remains the documented 128 MiB safety boundary."""
-    client = BatchAPIClient("postgresql://x", credentials)
-    assert client.max_download_bytes == 128 * 1024 * 1024
-
-
-@pytest.mark.parametrize("declared_length", [True, -1, "9"])
-async def test_invalid_declared_lengths_do_not_override_actual_bytes(
-    declared_length: Any,
-) -> None:
-    """Malformed length metadata is ignored while actual streamed bytes stay bounded."""
-    response = StreamResponse([b'{"ok":1}\n'], content_length=None)
-    response.content_length = declared_length
+async def test_response_without_stream_fails_closed_before_text_buffering() -> None:
+    """Adapters without a byte stream fail before whole-body buffering."""
+    response = TextResponse('{"ok":1}\n')
     client = BatchAPIClient(
         "postgresql://x",
         credentials,
@@ -242,45 +244,7 @@ async def test_invalid_declared_lengths_do_not_override_actual_bytes(
     )
     client._session = Session(response)
 
-    result = await client._download_jsonl_file(
-        "output-1",
-        "default",
-        batch_id="batch-1",
-        file_kind="result",
-    )
-
-    assert result == [{"ok": 1}]
-
-
-async def test_text_compatibility_path_accepts_a_bounded_body() -> None:
-    """A small response adapter body remains compatible with the bounded reader."""
-    client = BatchAPIClient(
-        "postgresql://x",
-        credentials,
-        max_download_bytes=9,
-    )
-    client._session = Session(TextResponse('{"ok":1}\n'))
-
-    result = await client._download_jsonl_file(
-        "output-1",
-        "default",
-        batch_id="batch-1",
-        file_kind="result",
-    )
-
-    assert result == [{"ok": 1}]
-
-
-async def test_text_compatibility_path_rejects_unencodable_surrogates() -> None:
-    """Lone surrogates cannot escape the strict UTF-8 provider boundary."""
-    client = BatchAPIClient(
-        "postgresql://x",
-        credentials,
-        max_download_bytes=32,
-    )
-    client._session = Session(TextResponse('bad\ud800'))
-
-    with pytest.raises(GatewayError, match="invalid UTF-8") as exc_info:
+    with pytest.raises(GatewayError, match="bounded byte stream") as exc_info:
         await client._download_jsonl_file(
             "output-1",
             "default",
@@ -288,7 +252,7 @@ async def test_text_compatibility_path_rejects_unencodable_surrogates() -> None:
             file_kind="result",
         )
 
+    assert response.text_called is False
     assert exc_info.value.response_data == {
-        "error_type": "UnicodeEncodeError",
-        "byte_offset": 3,
+        "error_type": "MissingBoundedStream",
     }
