@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded retries for transient idempotent provider GET failures, including
   RFC Retry-After support and equal-jitter exponential fallback; side-effecting
   POST operations remain single-attempt.
+- Durable remote batch lifecycle persistence through `DurableBatchAPIClient`
+  and the idempotent `llm_remote_batch_jobs` table, including stale-observation
+  protection, curated provider fields, terminal timestamps, and structured
+  recovery evidence when remote success cannot be persisted locally.
 
 ### Fixed
 
