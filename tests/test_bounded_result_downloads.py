@@ -220,3 +220,75 @@ async def test_text_compatibility_path_is_also_bounded() -> None:
         "declared_bytes": None,
         "bytes_read": 0,
     }
+
+
+def test_client_uses_documented_default_download_limit() -> None:
+    """The public default remains the documented 128 MiB safety boundary."""
+    client = BatchAPIClient("postgresql://x", credentials)
+    assert client.max_download_bytes == 128 * 1024 * 1024
+
+
+@pytest.mark.parametrize("declared_length", [True, -1, "9"])
+async def test_invalid_declared_lengths_do_not_override_actual_bytes(
+    declared_length: Any,
+) -> None:
+    """Malformed length metadata is ignored while actual streamed bytes stay bounded."""
+    response = StreamResponse([b'{"ok":1}\n'], content_length=None)
+    response.content_length = declared_length
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        max_download_bytes=9,
+    )
+    client._session = Session(response)
+
+    result = await client._download_jsonl_file(
+        "output-1",
+        "default",
+        batch_id="batch-1",
+        file_kind="result",
+    )
+
+    assert result == [{"ok": 1}]
+
+
+async def test_text_compatibility_path_accepts_a_bounded_body() -> None:
+    """A small response adapter body remains compatible with the bounded reader."""
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        max_download_bytes=9,
+    )
+    client._session = Session(TextResponse('{"ok":1}\n'))
+
+    result = await client._download_jsonl_file(
+        "output-1",
+        "default",
+        batch_id="batch-1",
+        file_kind="result",
+    )
+
+    assert result == [{"ok": 1}]
+
+
+async def test_text_compatibility_path_rejects_unencodable_surrogates() -> None:
+    """Lone surrogates cannot escape the strict UTF-8 provider boundary."""
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        max_download_bytes=32,
+    )
+    client._session = Session(TextResponse('bad\ud800'))
+
+    with pytest.raises(GatewayError, match="invalid UTF-8") as exc_info:
+        await client._download_jsonl_file(
+            "output-1",
+            "default",
+            batch_id="batch-1",
+            file_kind="result",
+        )
+
+    assert exc_info.value.response_data == {
+        "error_type": "UnicodeEncodeError",
+        "byte_offset": 3,
+    }

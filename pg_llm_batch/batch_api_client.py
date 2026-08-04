@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_USER_AGENT = "pg-llm-batch"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
+DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
+DOWNLOAD_CHUNK_BYTES = 64 * 1024
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
@@ -169,8 +171,9 @@ class BatchAPIClient:
         credentials: CredentialsProvider,
         *,
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+        max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
     ) -> None:
-        """Initialize the client with a payload store and bounded HTTP timeout."""
+        """Initialize the client with bounded HTTP time and download resources."""
         if not postgres_dsn:
             raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
         try:
@@ -191,9 +194,20 @@ class BatchAPIClient:
                 value=request_timeout_seconds,
                 reason="must be a finite number greater than zero",
             )
+        if (
+            isinstance(max_download_bytes, bool)
+            or not isinstance(max_download_bytes, int)
+            or max_download_bytes <= 0
+        ):
+            raise ValidationError(
+                field="max_download_bytes",
+                value=max_download_bytes,
+                reason="must be a positive integer number of bytes",
+            )
         self.postgres_dsn = postgres_dsn
         self._credentials = credentials
         self.request_timeout_seconds = normalized_timeout
+        self.max_download_bytes = max_download_bytes
         self._request_timeout = aiohttp.ClientTimeout(total=normalized_timeout)
         self._session: Optional[aiohttp.ClientSession] = None
 
@@ -262,6 +276,92 @@ class BatchAPIClient:
                 response_data={"response_type": type(result).__name__},
             )
         return result
+
+    def _download_limit_error(
+        self,
+        response: Any,
+        operation: str,
+        *,
+        declared_bytes: Optional[int],
+        bytes_read: int,
+    ) -> GatewayError:
+        """Build a body-free error describing one provider download limit breach."""
+        return GatewayError(
+            f"{operation} exceeded download limit",
+            status_code=getattr(response, "status", None),
+            response_data={
+                "limit_bytes": self.max_download_bytes,
+                "declared_bytes": declared_bytes,
+                "bytes_read": bytes_read,
+            },
+        )
+
+    async def _read_bounded_utf8(self, response: Any, operation: str) -> str:
+        """Read one response body within the configured decoded-byte limit."""
+        declared_value = getattr(response, "content_length", None)
+        declared_bytes = (
+            declared_value
+            if isinstance(declared_value, int)
+            and not isinstance(declared_value, bool)
+            and declared_value >= 0
+            else None
+        )
+        if (
+            declared_bytes is not None
+            and declared_bytes > self.max_download_bytes
+        ):
+            raise self._download_limit_error(
+                response,
+                operation,
+                declared_bytes=declared_bytes,
+                bytes_read=0,
+            )
+
+        stream = getattr(response, "content", None)
+        if stream is None:
+            text = await response.text()
+            try:
+                encoded_size = len(text.encode("utf-8"))
+            except UnicodeEncodeError as exc:
+                raise GatewayError(
+                    f"{operation} returned invalid UTF-8",
+                    status_code=getattr(response, "status", None),
+                    response_data={
+                        "error_type": type(exc).__name__,
+                        "byte_offset": exc.start,
+                    },
+                ) from exc
+            if encoded_size > self.max_download_bytes:
+                raise self._download_limit_error(
+                    response,
+                    operation,
+                    declared_bytes=declared_bytes,
+                    bytes_read=0,
+                )
+            return text
+
+        payload = bytearray()
+        async for chunk in stream.iter_chunked(DOWNLOAD_CHUNK_BYTES):
+            if len(payload) + len(chunk) > self.max_download_bytes:
+                raise self._download_limit_error(
+                    response,
+                    operation,
+                    declared_bytes=declared_bytes,
+                    bytes_read=len(payload),
+                )
+            payload.extend(chunk)
+
+        try:
+            return payload.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise GatewayError(
+                f"{operation} returned invalid UTF-8",
+                status_code=getattr(response, "status", None),
+                response_data={
+                    "error_type": type(exc).__name__,
+                    "byte_offset": exc.start,
+                },
+            ) from exc
 
     def _headers(self, api_key: str, *, json_body: bool = False) -> Dict[str, str]:
         """Build request headers with bearer auth, optionally declaring a JSON body."""
@@ -486,14 +586,13 @@ class BatchAPIClient:
             operation=operation,
             headers=self._headers(creds.api_key),
         ) as response:
+            content = await self._read_bounded_utf8(response, operation)
             if response.status != 200:
-                error_text = await response.text()
                 raise GatewayError(
                     f"{operation} failed: {response.status}",
                     status_code=response.status,
-                    response_data={"body": error_text},
+                    response_data={"body": content},
                 )
-            content = await response.text()
         return self._parse_jsonl_content(
             content,
             batch_id=batch_id,
@@ -503,7 +602,7 @@ class BatchAPIClient:
     async def download_results(
         self, batch_id: str, endpoint_alias: str
     ) -> Dict[str, Any]:
-        """Download output and provider error files into memory."""
+        """Download output and provider error files into bounded memory."""
         status = await self.get_batch_status(batch_id, endpoint_alias)
         if not status.get("is_complete"):
             return {
