@@ -15,16 +15,16 @@ The packaged schema creates `llm_remote_batch_jobs`. Every row is uniquely
 identified by `(endpoint_alias, remote_batch_id)`, so remote identifiers do not
 need to be globally unique across configured gateway aliases.
 
-Endpoint aliases are trimmed, must be NUL-free, and are limited to at most 128
-characters before an observation order is reserved, credentials are resolved,
-or provider I/O starts. Remote file and batch identifiers follow the supported
-gateway path contract: at most 256 ASCII characters, beginning with an
-alphanumeric character and then using only letters, digits, dot, underscore,
-colon, or hyphen. Caller-provided batch identifiers are validated before
-reservation. Provider-returned batch identifiers are validated before any
-lifecycle recorder receives them. These application checks align with the
-PostgreSQL storage constraints and prevent avoidable
-remote-success/local-persistence split-brain failures.
+Endpoint aliases are trimmed, must be NUL-free, and are limited to at most 128 characters
+before an observation order is reserved, credentials are resolved, or provider
+I/O starts. Remote file and batch identifiers follow the supported gateway path
+contract: at most 256 ASCII characters, beginning with an alphanumeric character
+and then using only letters, digits, dot, underscore, colon, or hyphen.
+Caller-provided batch identifiers are validated before reservation.
+Provider-returned batch identifiers are validated before any lifecycle recorder
+receives them. These application checks align with the PostgreSQL storage
+constraints and prevent avoidable remote-success/local-persistence split-brain
+failures.
 
 Only curated operational fields are persisted:
 
