@@ -1,0 +1,214 @@
+name: One-shot lifecycle hardening red verification
+
+on:
+  push:
+    branches: [agent/persist-remote-batch-lifecycle]
+    paths:
+      - .github/workflows/one-shot-lifecycle-hardening-red.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-lifecycle-hardening-red
+  cancel-in-progress: true
+
+jobs:
+  verify-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout lifecycle branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/persist-remote-batch-lifecycle
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+      - name: Add focused hardening tests
+        run: |
+          cat >> tests/test_remote_batch_lifecycle.py <<'PY'
+
+
+          def test_lifecycle_schema_and_upsert_require_global_order_and_terminal_guard():
+              """Durable ordering is database-owned and terminal identity is immutable."""
+              schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
+              source = Path(db.__file__).read_text(encoding="utf-8")
+              assert "CREATE SEQUENCE IF NOT EXISTS llm_remote_batch_observation_sequence" in schema
+              assert "observation_order BIGINT NOT NULL" in schema
+              assert "EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order" in source
+              assert "llm_remote_batch_jobs.batch_status NOT IN" in source
+              assert "EXCLUDED.batch_status = llm_remote_batch_jobs.batch_status" in source
+
+
+          async def test_durable_client_reserves_order_before_provider_request():
+              """The global order ticket is acquired before any provider I/O begins."""
+              events = []
+
+              class OrderedResponse(_Response):
+                  async def __aenter__(self):
+                      events.append("provider")
+                      return await super().__aenter__()
+
+              def reserver(dsn):
+                  events.append(("reserve", dsn))
+                  return 7
+
+              def recorder(dsn, alias, payload, observation_order):
+                  events.append(("persist", dsn, alias, payload["id"], observation_order))
+
+              client = DurableBatchAPIClient(
+                  "postgresql://x",
+                  _credentials,
+                  lifecycle_recorder=recorder,
+                  observation_reserver=reserver,
+              )
+              client._session = _Session(
+                  {
+                      ("GET", "https://gateway.example/v1/batches/batch-1"): OrderedResponse(
+                          200,
+                          {"id": "batch-1", "status": "in_progress", "request_counts": {}},
+                      )
+                  }
+              )
+
+              await client.get_batch_status("batch-1", "primary")
+
+              assert events == [
+                  ("reserve", "postgresql://x"),
+                  "provider",
+                  ("persist", "postgresql://x", "primary", "batch-1", 7),
+              ]
+
+
+          async def test_reservation_failure_prevents_remote_creation():
+              """A missing durability ticket blocks a side-effecting provider POST."""
+              calls = []
+
+              class RecordingSession:
+                  def post(self, url, **kwargs):
+                      calls.append((url, kwargs))
+                      raise AssertionError("provider POST must not occur")
+
+              def failing_reserver(_dsn):
+                  raise OSError("database unavailable")
+
+              client = DurableBatchAPIClient(
+                  "postgresql://x",
+                  _credentials,
+                  observation_reserver=failing_reserver,
+              )
+              client._session = RecordingSession()
+
+              with pytest.raises(GatewayError, match="reservation failed") as exc_info:
+                  await client.create_batch_job("file-1", "primary")
+
+              assert calls == []
+              assert exc_info.value.response_data == {
+                  "operation": "Batch creation",
+                  "phase": "reservation",
+                  "endpoint_alias": "primary",
+                  "batch_id": None,
+                  "error_type": "OSError",
+              }
+
+
+          @pytest.mark.parametrize(
+              "metadata_value",
+              [
+                  {"unsupported": {1, 2}},
+                  {"not_finite": float("nan")},
+              ],
+          )
+          def test_persist_remote_batch_state_normalizes_non_json_metadata(
+              monkeypatch,
+              metadata_value,
+          ):
+              """Non-JSON provider metadata is reduced to the canonical empty object."""
+              driver = _Psycopg()
+              monkeypatch.setattr(db, "psycopg", driver)
+              snapshot = db.persist_remote_batch_state(
+                  "postgresql://x",
+                  "primary",
+                  {"id": "batch-1", "metadata": metadata_value},
+                  observation_order=11,
+              )
+              assert snapshot["provider_metadata"] == {}
+              assert driver.executions[-1][1][11] == "{}"
+
+
+          def test_persist_remote_batch_state_bounds_metadata_bytes(monkeypatch):
+              """Excessive canonical metadata is discarded before the database write."""
+              driver = _Psycopg()
+              monkeypatch.setattr(db, "psycopg", driver)
+              snapshot = db.persist_remote_batch_state(
+                  "postgresql://x",
+                  "primary",
+                  {"id": "batch-1", "metadata": {"value": "x" * (64 * 1024)}},
+                  observation_order=12,
+              )
+              assert snapshot["provider_metadata"] == {}
+              assert driver.executions[-1][1][11] == "{}"
+          PY
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Prove focused hardening contract is red
+        run: |
+          set -euo pipefail
+          set +e
+          uv run pytest -q \
+            tests/test_remote_batch_lifecycle.py::test_lifecycle_schema_and_upsert_require_global_order_and_terminal_guard \
+            tests/test_remote_batch_lifecycle.py::test_durable_client_reserves_order_before_provider_request \
+            tests/test_remote_batch_lifecycle.py::test_reservation_failure_prevents_remote_creation \
+            tests/test_remote_batch_lifecycle.py::test_persist_remote_batch_state_normalizes_non_json_metadata \
+            tests/test_remote_batch_lifecycle.py::test_persist_remote_batch_state_bounds_metadata_bytes \
+            2>&1 | tee /tmp/lifecycle-hardening-red.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "Expected durable lifecycle hardening tests to fail before implementation" >&2
+            exit 1
+          fi
+          grep -q "llm_remote_batch_observation_sequence" /tmp/lifecycle-hardening-red.log
+          grep -q "observation_reserver" /tmp/lifecycle-hardening-red.log
+          grep -q "observation_order" /tmp/lifecycle-hardening-red.log
+      - name: Record evidence and remove one-shot workflow
+        env:
+          BRANCH_NAME: agent/persist-remote-batch-lifecycle
+          RED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs/superpowers/evidence
+          cat > docs/superpowers/evidence/2026-08-04-remote-lifecycle-hardening-red.md <<EOF
+          # Durable Remote Lifecycle Hardening Red Evidence
+
+          Pre-hardening head: \`${RED_HEAD}\`
+
+          Focused tests were added without changing the lifecycle implementation. They returned a non-zero pytest status for the intended reasons:
+
+          - no PostgreSQL-owned observation sequence or persisted observation order existed;
+          - the durable client had no pre-request reservation seam;
+          - reservation failure could not block provider I/O with structured evidence;
+          - persistence did not accept an observation order;
+          - provider metadata serialization was neither finite-JSON-safe nor byte-bounded.
+
+          The one-shot workflow required failure signatures for schema ordering, client reservation, and persistence ordering before recording this evidence.
+          EOF
+          rm .github/workflows/one-shot-lifecycle-hardening-red.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_remote_batch_lifecycle.py \
+            docs/superpowers/evidence/2026-08-04-remote-lifecycle-hardening-red.md \
+            .github/workflows/one-shot-lifecycle-hardening-red.yml
+          git commit -m "test(lifecycle): define overlap-safe persistence contract"
+          git push origin "HEAD:${BRANCH_NAME}"
