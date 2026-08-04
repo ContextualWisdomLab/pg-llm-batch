@@ -329,3 +329,124 @@ async def test_durable_client_surfaces_persistence_failure_with_remote_id():
         "batch_id": "batch-9",
         "error_type": "OSError",
     }
+
+
+def test_lifecycle_schema_and_upsert_require_global_order_and_terminal_guard():
+    """Durable ordering is database-owned and terminal identity is immutable."""
+    schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
+    source = Path(db.__file__).read_text(encoding="utf-8")
+    assert "CREATE SEQUENCE IF NOT EXISTS llm_remote_batch_observation_sequence" in schema
+    assert "observation_order BIGINT NOT NULL" in schema
+    assert "EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order" in source
+    assert "llm_remote_batch_jobs.batch_status NOT IN" in source
+    assert "EXCLUDED.batch_status = llm_remote_batch_jobs.batch_status" in source
+
+
+async def test_durable_client_reserves_order_before_provider_request():
+    """The global order ticket is acquired before any provider I/O begins."""
+    events = []
+
+    class OrderedResponse(_Response):
+        async def __aenter__(self):
+            events.append("provider")
+            return await super().__aenter__()
+
+    def reserver(dsn):
+        events.append(("reserve", dsn))
+        return 7
+
+    def recorder(dsn, alias, payload, observation_order):
+        events.append(("persist", dsn, alias, payload["id"], observation_order))
+
+    client = DurableBatchAPIClient(
+        "postgresql://x",
+        _credentials,
+        lifecycle_recorder=recorder,
+        observation_reserver=reserver,
+    )
+    client._session = _Session(
+        {
+            ("GET", "https://gateway.example/v1/batches/batch-1"): OrderedResponse(
+                200,
+                {"id": "batch-1", "status": "in_progress", "request_counts": {}},
+            )
+        }
+    )
+
+    await client.get_batch_status("batch-1", "primary")
+
+    assert events == [
+        ("reserve", "postgresql://x"),
+        "provider",
+        ("persist", "postgresql://x", "primary", "batch-1", 7),
+    ]
+
+
+async def test_reservation_failure_prevents_remote_creation():
+    """A missing durability ticket blocks a side-effecting provider POST."""
+    calls = []
+
+    class RecordingSession:
+        def post(self, url, **kwargs):
+            calls.append((url, kwargs))
+            raise AssertionError("provider POST must not occur")
+
+    def failing_reserver(_dsn):
+        raise OSError("database unavailable")
+
+    client = DurableBatchAPIClient(
+        "postgresql://x",
+        _credentials,
+        observation_reserver=failing_reserver,
+    )
+    client._session = RecordingSession()
+
+    with pytest.raises(GatewayError, match="reservation failed") as exc_info:
+        await client.create_batch_job("file-1", "primary")
+
+    assert calls == []
+    assert exc_info.value.response_data == {
+        "operation": "Batch creation",
+        "phase": "reservation",
+        "endpoint_alias": "primary",
+        "batch_id": None,
+        "error_type": "OSError",
+    }
+
+
+@pytest.mark.parametrize(
+    "metadata_value",
+    [
+        {"unsupported": {1, 2}},
+        {"not_finite": float("nan")},
+    ],
+)
+def test_persist_remote_batch_state_normalizes_non_json_metadata(
+    monkeypatch,
+    metadata_value,
+):
+    """Non-JSON provider metadata is reduced to the canonical empty object."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+    snapshot = db.persist_remote_batch_state(
+        "postgresql://x",
+        "primary",
+        {"id": "batch-1", "metadata": metadata_value},
+        observation_order=11,
+    )
+    assert snapshot["provider_metadata"] == {}
+    assert driver.executions[-1][1][11] == "{}"
+
+
+def test_persist_remote_batch_state_bounds_metadata_bytes(monkeypatch):
+    """Excessive canonical metadata is discarded before the database write."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+    snapshot = db.persist_remote_batch_state(
+        "postgresql://x",
+        "primary",
+        {"id": "batch-1", "metadata": {"value": "x" * (64 * 1024)}},
+        observation_order=12,
+    )
+    assert snapshot["provider_metadata"] == {}
+    assert driver.executions[-1][1][11] == "{}"
