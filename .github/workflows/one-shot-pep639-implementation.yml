@@ -1,0 +1,160 @@
+name: One-shot PEP 639 implementation
+
+on:
+  push:
+    branches: [agent/modernize-license-metadata]
+    paths:
+      - .github/workflows/one-shot-pep639-implementation.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-pep639-implementation
+  cancel-in-progress: true
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout license branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/modernize-license-metadata
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+      - name: Apply PEP 639 source and changelog changes
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+
+          project_path = Path("pyproject.toml")
+          project = project_path.read_text(encoding="utf-8")
+          project = replace_once(
+              project,
+              'requires = ["setuptools>=68", "wheel"]',
+              'requires = ["setuptools>=77.0.3", "wheel"]',
+              "setuptools PEP 639 floor",
+          )
+          project = replace_once(
+              project,
+              'license = { text = "Apache-2.0" }',
+              'license = "Apache-2.0"\nlicense-files = ["LICENSE", "NOTICE"]',
+              "PEP 639 project license",
+          )
+          project_path.write_text(project, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          marker = "### Changed\n\n"
+          entry = (
+              "### Changed\n\n"
+              "- Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` "
+              "expression, explicit `LICENSE` and `NOTICE` files, and a compatible "
+              "setuptools backend floor so built artifacts expose normalized legal "
+              "metadata without warnings.\n"
+          )
+          changelog = replace_once(changelog, marker, entry, "CHANGELOG Changed section")
+          changelog_path.write_text(changelog, encoding="utf-8")
+          PY
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Verify focused packaging contract
+        run: uv run pytest -q tests/test_packaging_metadata.py
+      - name: Verify complete quality gates
+        run: |
+          set -euo pipefail
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          git diff --check
+      - name: Build warning-free distribution artifacts
+        run: |
+          set -euo pipefail
+          rm -rf dist
+          uv build --no-sources 2>&1 | tee /tmp/pep639-build.log
+          ! grep -q "project.license.*TOML table is deprecated" /tmp/pep639-build.log
+          ! grep -q "SetuptoolsDeprecationWarning.*license" /tmp/pep639-build.log
+      - name: Inspect wheel and source legal metadata
+        run: |
+          python - <<'PY'
+          from email.parser import Parser
+          from pathlib import Path
+          import tarfile
+          import zipfile
+
+          dist = Path("dist")
+          wheels = sorted(dist.glob("*.whl"))
+          source_archives = sorted(dist.glob("*.tar.gz"))
+          assert len(wheels) == 1, wheels
+          assert len(source_archives) == 1, source_archives
+
+          with zipfile.ZipFile(wheels[0]) as archive:
+              names = set(archive.namelist())
+              metadata_names = [name for name in names if name.endswith(".dist-info/METADATA")]
+              assert len(metadata_names) == 1, metadata_names
+              message = Parser().parsestr(
+                  archive.read(metadata_names[0]).decode("utf-8")
+              )
+              assert message["License-Expression"] == "Apache-2.0"
+              assert set(message.get_all("License-File") or ()) == {
+                  "LICENSE",
+                  "NOTICE",
+              }
+              license_root = metadata_names[0].removesuffix("METADATA") + "licenses/"
+              assert license_root + "LICENSE" in names
+              assert license_root + "NOTICE" in names
+
+          with tarfile.open(source_archives[0], mode="r:gz") as archive:
+              names = set(archive.getnames())
+              roots = {name.split("/", 1)[0] for name in names if "/" in name}
+              assert len(roots) == 1, roots
+              root = next(iter(roots))
+              assert f"{root}/LICENSE" in names
+              assert f"{root}/NOTICE" in names
+          PY
+      - name: Verify container definitions
+        run: |
+          set -euo pipefail
+          docker compose config >/dev/null
+          docker build --tag pg-llm-batch:pep639 .
+          docker build --tag pg-llm-batch-postgres:pep639 docker/postgres
+      - name: Publish verified metadata and remove one-shot workflow
+        env:
+          BRANCH_NAME: agent/modernize-license-metadata
+        run: |
+          set -euo pipefail
+          rm .github/workflows/one-shot-pep639-implementation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pyproject.toml \
+            tests/test_packaging_metadata.py \
+            CHANGELOG.md \
+            .github/workflows/one-shot-pep639-implementation.yml
+          git commit -m "chore(packaging): migrate license metadata to PEP 639"
+          git push origin "HEAD:${BRANCH_NAME}"
