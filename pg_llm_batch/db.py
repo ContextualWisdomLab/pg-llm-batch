@@ -95,8 +95,8 @@ def validate_endpoint_alias(value: Any) -> str:
 
     Endpoint aliases identify configured gateway credentials and participate in
     the durable lifecycle table's compound key. Whitespace surrounding an alias
-    is ignored, while empty, non-string, or overlong values fail before database
-    reservation, secret resolution, or provider network activity.
+    is ignored, while empty, NUL-containing, non-string, or overlong values fail
+    before database reservation, secret resolution, or provider network activity.
 
     Args:
         value: Candidate endpoint alias supplied by a caller or host service.
@@ -105,24 +105,29 @@ def validate_endpoint_alias(value: Any) -> str:
         The trimmed endpoint alias.
 
     Raises:
-        ValidationError: If the alias is not 1-128 characters after trimming.
+        ValidationError: If the alias is not a NUL-free 1-128 character string
+            after trimming.
     """
     if not isinstance(value, str):
         raise ValidationError(
             field="endpoint_alias",
             value=value,
             reason=(
-                "must be a non-empty string of at most "
+                "must be a non-empty NUL-free string of at most "
                 f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
             ),
         )
     normalized = value.strip()
-    if not normalized or len(normalized) > MAX_ENDPOINT_ALIAS_CHARACTERS:
+    if (
+        not normalized
+        or "\x00" in normalized
+        or len(normalized) > MAX_ENDPOINT_ALIAS_CHARACTERS
+    ):
         raise ValidationError(
             field="endpoint_alias",
             value=value,
             reason=(
-                "must be a non-empty string of at most "
+                "must be a non-empty NUL-free string of at most "
                 f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
             ),
         )
@@ -250,7 +255,7 @@ def persist_remote_batch_state(
         normalized_alias = validate_endpoint_alias(endpoint_alias)
     except ValidationError as exc:
         raise ValueError(
-            "endpoint_alias must be a non-empty string of at most "
+            "endpoint_alias must be a non-empty NUL-free string of at most "
             f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
         ) from exc
     if not isinstance(provider_batch, Mapping):
