@@ -318,30 +318,16 @@ class BatchAPIClient:
             )
 
         stream = getattr(response, "content", None)
-        if stream is None:
-            text = await response.text()
-            try:
-                encoded_size = len(text.encode("utf-8"))
-            except UnicodeEncodeError as exc:
-                raise GatewayError(
-                    f"{operation} returned invalid UTF-8",
-                    status_code=getattr(response, "status", None),
-                    response_data={
-                        "error_type": type(exc).__name__,
-                        "byte_offset": exc.start,
-                    },
-                ) from exc
-            if encoded_size > self.max_download_bytes:
-                raise self._download_limit_error(
-                    response,
-                    operation,
-                    declared_bytes=declared_bytes,
-                    bytes_read=0,
-                )
-            return text
+        iterator = getattr(stream, "iter_chunked", None)
+        if not callable(iterator):
+            raise GatewayError(
+                f"{operation} response does not expose a bounded byte stream",
+                status_code=getattr(response, "status", None),
+                response_data={"error_type": "MissingBoundedStream"},
+            )
 
         payload = bytearray()
-        async for chunk in stream.iter_chunked(DOWNLOAD_CHUNK_BYTES):
+        async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
             if len(payload) + len(chunk) > self.max_download_bytes:
                 raise self._download_limit_error(
                     response,
