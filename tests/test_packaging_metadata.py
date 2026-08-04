@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Contract tests for standardized package licensing metadata."""
+
+from __future__ import annotations
+
+from importlib.metadata import metadata
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_pyproject_uses_pep639_license_metadata() -> None:
+    """Source metadata uses the PEP 639 expression and legal-file fields."""
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'requires = ["setuptools>=77.0.3", "wheel"]' in project
+    assert 'license = "Apache-2.0"' in project
+    assert 'license-files = ["LICENSE", "NOTICE"]' in project
+    assert "license = {" not in project
+    assert "License ::" not in project
+
+
+def test_installed_distribution_exposes_normalized_license_metadata() -> None:
+    """Installed metadata exposes the SPDX expression and both legal files."""
+    package_metadata = metadata("pg-llm-batch")
+    assert package_metadata["License-Expression"] == "Apache-2.0"
+    assert set(package_metadata.get_all("License-File") or ()) == {
+        "LICENSE",
+        "NOTICE",
+    }
+    assert package_metadata.get("License") is None
