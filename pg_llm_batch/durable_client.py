@@ -10,9 +10,11 @@ from typing import Any, Dict, Optional
 
 from .batch_api_client import BatchAPIClient, CredentialsProvider
 from .db import (
+    normalize_optional_provider_text,
     persist_remote_batch_state,
     reserve_remote_batch_observation_order,
     validate_endpoint_alias,
+    validate_optional_remote_resource_id,
     validate_remote_resource_id,
 )
 from .exceptions import GatewayError
@@ -99,6 +101,24 @@ class DurableBatchAPIClient(BatchAPIClient):
             )
             normalized_snapshot = dict(provider_batch)
             normalized_snapshot["id"] = validated_batch_id
+            for resource_field in (
+                "input_file_id",
+                "output_file_id",
+                "error_file_id",
+            ):
+                normalized_snapshot[resource_field] = (
+                    validate_optional_remote_resource_id(
+                        normalized_snapshot.get(resource_field),
+                        resource_field,
+                    )
+                )
+            normalized_snapshot["endpoint"] = normalize_optional_provider_text(
+                normalized_snapshot.get("endpoint")
+            )
+            normalized_snapshot["status"] = (
+                normalize_optional_provider_text(normalized_snapshot.get("status"))
+                or "unknown"
+            )
             await asyncio.to_thread(
                 self._lifecycle_recorder,
                 self.postgres_dsn,

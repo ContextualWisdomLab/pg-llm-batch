@@ -293,3 +293,144 @@ def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> Non
     assert "append-only audit history" in documentation
     assert "at most 128 characters" in documentation
     assert "at most 256 ASCII characters" in documentation
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("input_file_id", "file\x00shadow"),
+        ("output_file_id", "o" * 257),
+        ("error_file_id", "é"),
+    ],
+)
+def test_remote_field_contract_rejects_invalid_optional_ids_before_database_access(
+    monkeypatch: Any,
+    field: str,
+    value: str,
+) -> None:
+    """Every present provider file identifier is validated before PostgreSQL."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+
+    with pytest.raises(ValueError, match=field):
+        db.persist_remote_batch_state(
+            "postgresql://example",
+            "primary",
+            {"id": "batch-1", field: value},
+            observation_order=5,
+        )
+
+    assert driver.connections == []
+    assert driver.executions == []
+
+
+async def test_remote_field_contract_blocks_invalid_optional_id_before_custom_recorder() -> None:
+    """A successful provider response cannot send an invalid file ID to a recorder."""
+    recorded: list[dict[str, Any]] = []
+    session = _ProviderSession(
+        _ProviderResponse(
+            {
+                "id": "batch-1",
+                "status": "completed",
+                "output_file_id": "o" * 257,
+            }
+        )
+    )
+
+    def recorder(
+        _dsn: str,
+        _alias: str,
+        provider_batch: Any,
+        _observation_order: int,
+    ) -> None:
+        recorded.append(dict(provider_batch))
+
+    client = DurableBatchAPIClient(
+        "postgresql://example",
+        lambda _alias: GatewayCredentials(
+            url="https://gateway.example/v1",
+            api_key="secret",
+        ),
+        lifecycle_recorder=recorder,
+        observation_reserver=lambda _dsn: 1,
+    )
+    client._session = session
+
+    with pytest.raises(GatewayError, match="persistence failed") as caught:
+        await client.create_batch_job("file-1", "primary")
+
+    assert caught.value.response_data["phase"] == "persistence"
+    assert caught.value.response_data["error_type"] == "ValidationError"
+    assert recorded == []
+    assert session.post_urls == ["https://gateway.example/v1/batches"]
+
+
+async def test_remote_field_contract_sanitizes_nul_text_before_custom_recorder() -> None:
+    """Custom recorders receive safe endpoint and status text after remote success."""
+    recorded: list[dict[str, Any]] = []
+    session = _ProviderSession(
+        _ProviderResponse(
+            {
+                "id": "batch-1",
+                "endpoint": "/v1/responses\x00shadow",
+                "status": "completed\x00shadow",
+            }
+        )
+    )
+
+    def recorder(
+        _dsn: str,
+        _alias: str,
+        provider_batch: Any,
+        _observation_order: int,
+    ) -> None:
+        recorded.append(dict(provider_batch))
+
+    client = DurableBatchAPIClient(
+        "postgresql://example",
+        lambda _alias: GatewayCredentials(
+            url="https://gateway.example/v1",
+            api_key="secret",
+        ),
+        lifecycle_recorder=recorder,
+        observation_reserver=lambda _dsn: 1,
+    )
+    client._session = session
+
+    await client.create_batch_job("file-1", "primary")
+
+    assert recorded[0]["endpoint"] is None
+    assert recorded[0]["status"] == "unknown"
+    assert "\x00" not in repr(recorded)
+
+
+def test_remote_field_contract_normalizes_nul_optional_text(
+    monkeypatch: Any,
+) -> None:
+    """NUL-bearing descriptive provider text cannot reach PostgreSQL columns."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+
+    snapshot = db.persist_remote_batch_state(
+        "postgresql://example",
+        "primary",
+        {
+            "id": "batch-1",
+            "endpoint": "/v1/responses\x00shadow",
+            "status": "completed\x00shadow",
+        },
+        observation_order=6,
+    )
+
+    assert snapshot["batch_endpoint"] is None
+    assert snapshot["batch_status"] == "unknown"
+    assert "\x00" not in repr(driver.executions[0][1])
+
+
+def test_remote_field_contract_adds_database_checks() -> None:
+    """The canonical schema constrains every stored remote resource identifier."""
+    schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
+    pattern = "~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'"
+
+    assert schema.count(pattern) == 4
+

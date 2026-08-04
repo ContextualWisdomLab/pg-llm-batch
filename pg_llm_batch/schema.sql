@@ -85,14 +85,27 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
     endpoint_alias TEXT NOT NULL
         CHECK (LENGTH(endpoint_alias) BETWEEN 1 AND 128),
     remote_batch_id TEXT NOT NULL
-        CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256),
+        CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256)
+        CHECK (remote_batch_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'),
     observation_order BIGINT NOT NULL
         CHECK (observation_order > 0),
-    input_file_id TEXT,
+    input_file_id TEXT
+        CHECK (
+            input_file_id IS NULL OR
+            input_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        ),
     batch_endpoint TEXT,
     batch_status TEXT NOT NULL,
-    output_file_id TEXT,
-    error_file_id TEXT,
+    output_file_id TEXT
+        CHECK (
+            output_file_id IS NULL OR
+            output_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        ),
+    error_file_id TEXT
+        CHECK (
+            error_file_id IS NULL OR
+            error_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        ),
     total_requests INTEGER NOT NULL DEFAULT 0
         CHECK (total_requests >= 0),
     completed_requests INTEGER NOT NULL DEFAULT 0

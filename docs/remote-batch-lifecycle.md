@@ -21,10 +21,14 @@ I/O starts. Remote file and batch identifiers follow the supported gateway path
 contract: at most 256 ASCII characters, beginning with an alphanumeric character
 and then using only letters, digits, dot, underscore, colon, or hyphen.
 Caller-provided batch identifiers are validated before reservation.
-Provider-returned batch identifiers are validated before any lifecycle recorder
-receives them. These application checks align with the PostgreSQL storage
-constraints and prevent avoidable remote-success/local-persistence split-brain
-failures.
+Provider-returned batch identifiers and every present string input, output, or
+error file identifier are validated before any lifecycle recorder or PostgreSQL
+write receives them. Non-string optional values retain the deterministic absent
+default. The lifecycle table repeats the same identifier syntax as database
+`CHECK` constraints. NUL-bearing optional endpoint text is discarded and a
+NUL-bearing status becomes `unknown`, because PostgreSQL text values cannot store
+the code-zero character. These boundaries prevent avoidable
+remote-success/local-persistence split-brain failures.
 
 Only curated operational fields are persisted:
 
@@ -179,6 +183,10 @@ path-segment contract require an adapter before durable lifecycle persistence.
 
 OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 4,
 2026, from https://platform.openai.com/docs/api-reference/batch/object
+
+PostgreSQL Global Development Group. (2026). *Character types*. In
+*PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/current/datatype-character.html
 
 PostgreSQL Global Development Group. (2026). *Conditional expressions*. In
 *PostgreSQL 18 documentation*.

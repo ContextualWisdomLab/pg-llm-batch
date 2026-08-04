@@ -80,9 +80,13 @@ def _normalize_payload_content(content: Any) -> str:
     return text
 
 
-def _provider_text(value: Any) -> Optional[str]:
-    """Return a non-empty provider string or ``None`` for untrusted values."""
-    return value if isinstance(value, str) and value else None
+def normalize_optional_provider_text(value: Any) -> Optional[str]:
+    """Return NUL-free provider text or ``None`` for unsafe optional values."""
+    return (
+        value
+        if isinstance(value, str) and value and "\x00" not in value
+        else None
+    )
 
 
 def _provider_count(value: Any) -> int:
@@ -167,6 +171,32 @@ def validate_remote_resource_id(value: Any, field: str) -> str:
             ),
         )
     return value
+
+
+def validate_optional_remote_resource_id(
+    value: Any,
+    field: str,
+) -> Optional[str]:
+    """Normalize non-string absence and validate every present string identifier.
+
+    Non-string values and the empty string retain the existing deterministic
+    safe-default behavior for optional provider fields. Every non-empty string
+    must satisfy the bounded ASCII path-segment contract used by required
+    remote batch identifiers.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    return validate_remote_resource_id(value, field)
+
+
+def _persisted_remote_resource_id(value: Any, field: str) -> Optional[str]:
+    """Map optional identifier validation to the persistence helper contract."""
+    try:
+        return validate_optional_remote_resource_id(value, field)
+    except ValidationError as exc:
+        raise ValueError(
+            f"{field} must be a supported optional remote resource identifier"
+        ) from exc
 
 
 def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
@@ -280,11 +310,21 @@ def persist_remote_batch_state(
     ):
         raise ValueError("observed_at must be a timezone-aware datetime")
 
-    status_value = provider_batch.get("status")
+    input_file_id = _persisted_remote_resource_id(
+        provider_batch.get("input_file_id"),
+        "input_file_id",
+    )
+    output_file_id = _persisted_remote_resource_id(
+        provider_batch.get("output_file_id"),
+        "output_file_id",
+    )
+    error_file_id = _persisted_remote_resource_id(
+        provider_batch.get("error_file_id"),
+        "error_file_id",
+    )
     batch_status = (
-        status_value
-        if isinstance(status_value, str) and status_value
-        else "unknown"
+        normalize_optional_provider_text(provider_batch.get("status"))
+        or "unknown"
     )
     counts_value = provider_batch.get("request_counts")
     request_counts = counts_value if isinstance(counts_value, Mapping) else {}
@@ -297,11 +337,13 @@ def persist_remote_batch_state(
         "endpoint_alias": normalized_alias,
         "remote_batch_id": remote_batch_id,
         "observation_order": observation_order,
-        "input_file_id": _provider_text(provider_batch.get("input_file_id")),
-        "batch_endpoint": _provider_text(provider_batch.get("endpoint")),
+        "input_file_id": input_file_id,
+        "batch_endpoint": normalize_optional_provider_text(
+            provider_batch.get("endpoint")
+        ),
         "batch_status": batch_status,
-        "output_file_id": _provider_text(provider_batch.get("output_file_id")),
-        "error_file_id": _provider_text(provider_batch.get("error_file_id")),
+        "output_file_id": output_file_id,
+        "error_file_id": error_file_id,
         "total_requests": _provider_count(request_counts.get("total")),
         "completed_requests": _provider_count(request_counts.get("completed")),
         "failed_requests": _provider_count(request_counts.get("failed")),
