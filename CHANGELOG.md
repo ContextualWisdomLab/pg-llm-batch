@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Synchronized the deployable PostgreSQL image initialization schema with the
+  packaged canonical schema and added an exact-mirror regression gate, so
+  container deployments cannot silently omit lifecycle or integrity migrations.
 - Hardened provider `Retry-After` delta parsing to accept RFC ASCII digits only
   and refuse extremely long numeric guidance without leaking Python integer
   conversion errors.
