@@ -45,114 +45,11 @@ jobs:
       - name: Prove optional provider field contracts are red
         run: |
           set -euo pipefail
-          cat >> tests/test_remote_batch_state_contracts.py <<'PY'
-
-
-          @pytest.mark.parametrize(
-              ("field", "value"),
-              [
-                  ("input_file_id", "file\x00shadow"),
-                  ("output_file_id", "o" * 257),
-                  ("error_file_id", "é"),
-              ],
-          )
-          def test_remote_field_contract_rejects_invalid_optional_ids_before_database_access(
-              monkeypatch: Any,
-              field: str,
-              value: str,
-          ) -> None:
-              """Every present provider file identifier is validated before PostgreSQL."""
-              driver = _Psycopg()
-              monkeypatch.setattr(db, "psycopg", driver)
-
-              with pytest.raises(ValueError, match=field):
-                  db.persist_remote_batch_state(
-                      "postgresql://example",
-                      "primary",
-                      {"id": "batch-1", field: value},
-                      observation_order=5,
-                  )
-
-              assert driver.connections == []
-              assert driver.executions == []
-
-
-          async def test_remote_field_contract_blocks_invalid_optional_id_before_custom_recorder() -> None:
-              """A successful provider response cannot send an invalid file ID to a recorder."""
-              recorded: list[dict[str, Any]] = []
-              session = _ProviderSession(
-                  _ProviderResponse(
-                      {
-                          "id": "batch-1",
-                          "status": "completed",
-                          "output_file_id": "o" * 257,
-                      }
-                  )
-              )
-
-              def recorder(
-                  _dsn: str,
-                  _alias: str,
-                  provider_batch: Any,
-                  _observation_order: int,
-              ) -> None:
-                  recorded.append(dict(provider_batch))
-
-              client = DurableBatchAPIClient(
-                  "postgresql://example",
-                  lambda _alias: GatewayCredentials(
-                      url="https://gateway.example/v1",
-                      api_key="secret",
-                  ),
-                  lifecycle_recorder=recorder,
-                  observation_reserver=lambda _dsn: 1,
-              )
-              client._session = session
-
-              with pytest.raises(GatewayError, match="persistence failed") as caught:
-                  await client.create_batch_job("file-1", "primary")
-
-              assert caught.value.response_data["phase"] == "persistence"
-              assert caught.value.response_data["error_type"] == "ValidationError"
-              assert recorded == []
-              assert session.post_urls == ["https://gateway.example/v1/batches"]
-
-
-          def test_remote_field_contract_normalizes_nul_optional_text(
-              monkeypatch: Any,
-          ) -> None:
-              """NUL-bearing descriptive provider text cannot reach PostgreSQL text columns."""
-              driver = _Psycopg()
-              monkeypatch.setattr(db, "psycopg", driver)
-
-              snapshot = db.persist_remote_batch_state(
-                  "postgresql://example",
-                  "primary",
-                  {
-                      "id": "batch-1",
-                      "endpoint": "/v1/responses\x00shadow",
-                      "status": "completed\x00shadow",
-                  },
-                  observation_order=6,
-              )
-
-              assert snapshot["batch_endpoint"] is None
-              assert snapshot["batch_status"] == "unknown"
-              assert "\x00" not in repr(driver.executions[0][1])
-
-
-          def test_remote_field_contract_adds_database_checks() -> None:
-              """The canonical schema constrains every stored remote resource identifier."""
-              schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
-              pattern = "~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'"
-
-              assert schema.count(pattern) == 4
-          PY
-
           pre_fix_head=$(git rev-parse HEAD)
+          python .github/scripts/one_shot_remote_field_contract.py prepare-tests
           set +e
-          uv run pytest -q tests/test_remote_batch_state_contracts.py -k remote_field_contract \
-            > /tmp/remote-field-red.log 2>&1
+          uv run pytest -q tests/test_remote_batch_state_contracts.py \
+            -k remote_field_contract > /tmp/remote-field-red.log 2>&1
           status=$?
           set -e
           cat /tmp/remote-field-red.log
@@ -161,266 +58,17 @@ jobs:
             exit 1
           fi
           grep -E "FAILED|AssertionError|DID NOT RAISE" /tmp/remote-field-red.log
-          mkdir -p docs/superpowers/evidence
-          cat > docs/superpowers/evidence/2026-08-04-remote-field-contract-red.md <<EOF
-          # Durable Remote Field Contract Red Evidence
-
-          - Pre-fix head: \`${pre_fix_head}\`
-          - Command: \`uv run pytest -q tests/test_remote_batch_state_contracts.py -k remote_field_contract\`
-          - Expected result: failure before implementation
-          - Observed boundary: optional provider file identifiers and NUL-bearing
-            descriptive text could reach custom recorders or PostgreSQL without the
-            documented durable gateway validation contract.
-          EOF
+          python .github/scripts/one_shot_remote_field_contract.py \
+            evidence --head "$pre_fix_head"
 
       - name: Apply shared remote field validation and schema defense
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-
-
-          def replace_once(text: str, old: str, new: str, label: str) -> str:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f"{label}: expected one match, found {count}")
-              return text.replace(old, new, 1)
-
-
-          db_path = Path("pg_llm_batch/db.py")
-          source = db_path.read_text(encoding="utf-8")
-          source = replace_once(
-              source,
-              '''def _provider_text(value: Any) -> Optional[str]:
-    """Return a non-empty provider string or ``None`` for untrusted values."""
-    return value if isinstance(value, str) and value else None
-''',
-              '''def _provider_text(value: Any) -> Optional[str]:
-    """Return NUL-free provider text or ``None`` for unsafe optional values."""
-    return (
-        value
-        if isinstance(value, str) and value and "\\x00" not in value
-        else None
-    )
-''',
-              "provider text NUL boundary",
-          )
-          validation_marker = '''def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
-'''
-          optional_validator = '''def validate_optional_remote_resource_id(
-    value: Any,
-    field: str,
-) -> Optional[str]:
-    """Validate a present optional provider identifier or preserve absence.
-
-    ``None`` and the empty string represent an omitted optional Batch object
-    field. Every other value must satisfy the same bounded ASCII path-segment
-    contract as required remote batch identifiers.
-    """
-    if value is None or value == "":
-        return None
-    return validate_remote_resource_id(value, field)
-
-
-def _persisted_remote_resource_id(value: Any, field: str) -> Optional[str]:
-    """Map optional identifier validation to the persistence helper contract."""
-    try:
-        return validate_optional_remote_resource_id(value, field)
-    except ValidationError as exc:
-        raise ValueError(
-            f"{field} must be a supported optional remote resource identifier"
-        ) from exc
-
-
-'''
-          source = replace_once(
-              source,
-              validation_marker,
-              optional_validator + validation_marker,
-              "optional remote identifier validator",
-          )
-          source = replace_once(
-              source,
-              '''    status_value = provider_batch.get("status")
-    batch_status = (
-        status_value
-        if isinstance(status_value, str) and status_value
-        else "unknown"
-    )
-''',
-              '''    input_file_id = _persisted_remote_resource_id(
-        provider_batch.get("input_file_id"),
-        "input_file_id",
-    )
-    output_file_id = _persisted_remote_resource_id(
-        provider_batch.get("output_file_id"),
-        "output_file_id",
-    )
-    error_file_id = _persisted_remote_resource_id(
-        provider_batch.get("error_file_id"),
-        "error_file_id",
-    )
-    batch_status = _provider_text(provider_batch.get("status")) or "unknown"
-''',
-              "provider resource field normalization",
-          )
-          source = replace_once(
-              source,
-              '''        "input_file_id": _provider_text(provider_batch.get("input_file_id")),
-        "batch_endpoint": _provider_text(provider_batch.get("endpoint")),
-        "batch_status": batch_status,
-        "output_file_id": _provider_text(provider_batch.get("output_file_id")),
-        "error_file_id": _provider_text(provider_batch.get("error_file_id")),
-''',
-              '''        "input_file_id": input_file_id,
-        "batch_endpoint": _provider_text(provider_batch.get("endpoint")),
-        "batch_status": batch_status,
-        "output_file_id": output_file_id,
-        "error_file_id": error_file_id,
-''',
-              "curated resource snapshot",
-          )
-          db_path.write_text(source, encoding="utf-8")
-
-          durable_path = Path("pg_llm_batch/durable_client.py")
-          durable = durable_path.read_text(encoding="utf-8")
-          durable = replace_once(
-              durable,
-              '''    validate_endpoint_alias,
-    validate_remote_resource_id,
-''',
-              '''    validate_endpoint_alias,
-    validate_optional_remote_resource_id,
-    validate_remote_resource_id,
-''',
-              "durable optional validator import",
-          )
-          durable = replace_once(
-              durable,
-              '''            normalized_snapshot = dict(provider_batch)
-            normalized_snapshot["id"] = validated_batch_id
-            await asyncio.to_thread(
-''',
-              '''            normalized_snapshot = dict(provider_batch)
-            normalized_snapshot["id"] = validated_batch_id
-            for resource_field in (
-                "input_file_id",
-                "output_file_id",
-                "error_file_id",
-            ):
-                normalized_snapshot[resource_field] = (
-                    validate_optional_remote_resource_id(
-                        normalized_snapshot.get(resource_field),
-                        resource_field,
-                    )
-                )
-            await asyncio.to_thread(
-''',
-              "durable recorder resource validation",
-          )
-          durable_path.write_text(durable, encoding="utf-8")
-
-          old_table = '''    remote_batch_id TEXT NOT NULL
-        CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256),
-    observation_order BIGINT NOT NULL
-        CHECK (observation_order > 0),
-    input_file_id TEXT,
-    batch_endpoint TEXT,
-    batch_status TEXT NOT NULL,
-    output_file_id TEXT,
-    error_file_id TEXT,
-'''
-          new_table = '''    remote_batch_id TEXT NOT NULL
-        CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256)
-        CHECK (remote_batch_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'),
-    observation_order BIGINT NOT NULL
-        CHECK (observation_order > 0),
-    input_file_id TEXT
-        CHECK (
-            input_file_id IS NULL OR
-            input_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
-        ),
-    batch_endpoint TEXT,
-    batch_status TEXT NOT NULL,
-    output_file_id TEXT
-        CHECK (
-            output_file_id IS NULL OR
-            output_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
-        ),
-    error_file_id TEXT
-        CHECK (
-            error_file_id IS NULL OR
-            error_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
-        ),
-'''
-          for schema_path in (
-              Path("pg_llm_batch/schema.sql"),
-              Path("docker/postgres/init/02_schema.sql"),
-          ):
-              schema = schema_path.read_text(encoding="utf-8")
-              schema = replace_once(
-                  schema,
-                  old_table,
-                  new_table,
-                  f"remote identifier constraints in {schema_path}",
-              )
-              schema_path.write_text(schema, encoding="utf-8")
-
-          docs_path = Path("docs/remote-batch-lifecycle.md")
-          docs = docs_path.read_text(encoding="utf-8")
-          docs = replace_once(
-              docs,
-              '''Caller-provided batch identifiers are validated before
-reservation. Provider-returned batch identifiers are validated before any
-lifecycle recorder receives them. These application checks align with the
-PostgreSQL storage constraints and prevent avoidable
-remote-success/local-persistence split-brain failures.
-''',
-              '''Caller-provided batch identifiers are validated before
-reservation. Provider-returned batch identifiers and every present input,
-output, or error file identifier are validated before any lifecycle recorder or
-PostgreSQL write receives them. The lifecycle table repeats the same identifier
-syntax as database `CHECK` constraints. NUL-bearing optional endpoint text is
-discarded and a NUL-bearing status becomes `unknown`, because PostgreSQL text
-values cannot store the code-zero character. These boundaries prevent avoidable
-remote-success/local-persistence split-brain failures.
-''',
-              "operator identifier contract",
-          )
-          reference = '''
-PostgreSQL Global Development Group. (2026). *Character types*. In
-*PostgreSQL 18 documentation*.
-https://www.postgresql.org/docs/current/datatype-character.html
-'''
-          if "*Character types*" not in docs:
-              docs = docs.replace(
-                  "\nPostgreSQL Global Development Group. (2026). *Conditional expressions*.",
-                  reference + "\nPostgreSQL Global Development Group. (2026). *Conditional expressions*.",
-                  1,
-              )
-          docs_path.write_text(docs, encoding="utf-8")
-
-          changelog_path = Path("CHANGELOG.md")
-          changelog = changelog_path.read_text(encoding="utf-8")
-          changelog = replace_once(
-              changelog,
-              '''- Enforced NUL-free, 128-character endpoint aliases and 256-character remote
-  resource identifiers before order reservation, credential resolution,
-  provider calls, custom lifecycle recorders, or PostgreSQL writes.
-''',
-              '''- Enforced NUL-free, 128-character endpoint aliases and 256-character remote
-  batch, input, output, and error file identifiers before order reservation,
-  credential resolution, provider calls, custom lifecycle recorders, or
-  PostgreSQL writes; NUL-bearing optional provider text is normalized safely.
-''',
-              "changelog remote field contract",
-          )
-          changelog_path.write_text(changelog, encoding="utf-8")
-          PY
+        run: python .github/scripts/one_shot_remote_field_contract.py apply
 
       - name: Verify hardened lifecycle product tree
         run: |
           set -euo pipefail
-          uv run pytest -q tests/test_remote_batch_state_contracts.py -k remote_field_contract
+          uv run pytest -q tests/test_remote_batch_state_contracts.py \
+            -k remote_field_contract
           uv run pytest -q \
             tests/test_remote_batch_lifecycle.py \
             tests/test_remote_batch_state_contracts.py \
@@ -428,7 +76,8 @@ https://www.postgresql.org/docs/current/datatype-character.html
           uv run pytest -q -m "not integration"
           uv run python -m compileall -q pg_llm_batch
           uv run ruff check pg_llm_batch tests
-          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uvx --from 'interrogate==1.7.0' interrogate \
+            --fail-under 100 pg_llm_batch
           uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
             --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
           uv lock --check
@@ -436,14 +85,16 @@ https://www.postgresql.org/docs/current/datatype-character.html
           uv build --no-sources
           docker compose config >/dev/null
           docker build --tag pg-llm-batch:remote-field-contract .
-          docker build --tag pg-llm-batch-postgres:remote-field-contract docker/postgres
+          docker build \
+            --tag pg-llm-batch-postgres:remote-field-contract docker/postgres
 
-      - name: Publish verified hardening and remove workflow
+      - name: Publish verified hardening and remove temporary files
         env:
           BRANCH_NAME: agent/persist-remote-batch-lifecycle
         run: |
           set -euo pipefail
           rm .github/workflows/one-shot-remote-field-contract-hardening.yml
+          rm .github/scripts/one_shot_remote_field_contract.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
@@ -455,7 +106,8 @@ https://www.postgresql.org/docs/current/datatype-character.html
             docs/remote-batch-lifecycle.md \
             docs/superpowers/evidence/2026-08-04-remote-field-contract-red.md \
             CHANGELOG.md \
-            .github/workflows/one-shot-remote-field-contract-hardening.yml
+            .github/workflows/one-shot-remote-field-contract-hardening.yml \
+            .github/scripts/one_shot_remote_field_contract.py
           git diff --cached --quiet && {
             echo "No durable remote field contract changes generated" >&2
             exit 1
