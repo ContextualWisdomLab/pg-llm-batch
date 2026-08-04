@@ -22,9 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Enforced the lifecycle schema's 128-character endpoint-alias and 256-character
-  remote-resource identifier boundaries before order reservation, credential
-  resolution, provider calls, custom lifecycle recorders, or PostgreSQL writes.
+- Enforced NUL-free, 128-character endpoint aliases and 256-character remote
+  resource identifiers before order reservation, credential resolution,
+  provider calls, custom lifecycle recorders, or PostgreSQL writes.
 - Prevented sparse newer remote lifecycle observations from reducing previously
   persisted request counters, and documented that lifecycle rows are mutable
   current-state projections while provider metadata is not a tenant
