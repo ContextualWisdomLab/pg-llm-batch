@@ -1,0 +1,58 @@
+name: One-shot security lock repair
+
+on:
+  push:
+    branches:
+      - fix/security-baseline-2026-08
+    paths:
+      - .github/workflows/security-lock-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: security-lock-repair-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repair-lock:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repair branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6.0.2
+        with:
+          ref: fix/security-baseline-2026-08
+          fetch-depth: 0
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Regenerate the locked security baseline
+        run: |
+          set -euo pipefail
+          uv lock --upgrade-package aiohttp --upgrade-package cryptography
+          uv lock --check
+          grep -F 'name = "aiohttp"' uv.lock >/dev/null
+          grep -F 'version = "3.14.3"' uv.lock >/dev/null
+          grep -F 'name = "cryptography"' uv.lock >/dev/null
+          grep -F 'version = "50.0.0"' uv.lock >/dev/null
+      - name: Verify the resolved environment
+        run: |
+          set -euo pipefail
+          uv sync --locked
+          uv run pytest -q
+          uv run ruff check pg_llm_batch tests
+      - name: Publish the repaired lock and remove this workflow
+        env:
+          BRANCH_NAME: fix/security-baseline-2026-08
+        run: |
+          set -euo pipefail
+          rm .github/workflows/security-lock-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pyproject.toml uv.lock .github/workflows/security-lock-repair.yml
+          if git diff --cached --quiet; then
+            echo "No lock repair changes were generated." >&2
+            exit 1
+          fi
+          git commit -m "fix(deps): consolidate security dependency updates"
+          git push origin "HEAD:${BRANCH_NAME}"
