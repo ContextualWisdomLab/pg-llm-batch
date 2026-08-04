@@ -48,6 +48,41 @@ async def test_retryable_response_without_header_mapping_uses_fallback(
     assert len(session.calls) == 2
 
 
+async def test_excessive_retry_after_passes_response_without_sleeping(
+    monkeypatch: Any,
+) -> None:
+    """Excessive guidance yields the response without retry-loop delay or replay."""
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)
+    response = Response(
+        429,
+        {"error": "rate-limited"},
+        headers={"Retry-After": "31"},
+    )
+    session = SequenceSession([response])
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        retry_max_delay_seconds=30,
+    )
+    client._session = session
+
+    async with client._request(
+        "get",
+        "https://gateway.example/v1/batches/batch-1",
+        operation="Batch status",
+    ) as returned:
+        assert returned is response
+
+    assert response.exit_count == 1
+    assert sleeps == []
+    assert len(session.calls) == 1
+
+
 async def test_persistent_get_transport_failure_raises_after_retry_budget(
     monkeypatch: Any,
 ) -> None:
