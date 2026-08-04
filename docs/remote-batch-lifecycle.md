@@ -15,6 +15,16 @@ The packaged schema creates `llm_remote_batch_jobs`. Every row is uniquely
 identified by `(endpoint_alias, remote_batch_id)`, so remote identifiers do not
 need to be globally unique across configured gateway aliases.
 
+Endpoint aliases are trimmed and limited to at most 128 characters before an
+observation order is reserved, credentials are resolved, or provider I/O starts.
+Remote file and batch identifiers follow the supported gateway path contract:
+at most 256 ASCII characters, beginning with an alphanumeric character and then
+using only letters, digits, dot, underscore, colon, or hyphen. Caller-provided
+batch identifiers are validated before reservation. Provider-returned batch
+identifiers are validated before any lifecycle recorder receives them. These
+application checks align with the PostgreSQL length constraints and prevent an
+avoidable remote-success/local-persistence split-brain failure.
+
 Only curated operational fields are persisted:
 
 - remote and input file identifiers;
@@ -99,6 +109,11 @@ client raises `GatewayError` with:
 - `observation_order`;
 - the persistence exception type.
 
+This recovery path also covers a successful provider response containing a
+batch identifier outside the supported gateway contract. The untrusted value is
+included as reconciliation evidence but is never passed to a custom lifecycle
+recorder or PostgreSQL.
+
 The remote batch identifier and order remain available for operator
 reconciliation. The client does not replay side-effecting provider POST
 operations and does not pretend that an unpersisted transition succeeded
@@ -156,7 +171,8 @@ The stored field set follows the core Batch object fields documented by OpenAI:
 `id`, `input_file_id`, `endpoint`, `status`, `output_file_id`, `error_file_id`,
 `request_counts`, and object-valued `metadata`. OpenAI-compatible gateways may
 omit optional fields; the normalization rules above preserve a stable local
-contract.
+contract. Gateways that emit resource identifiers outside the documented ASCII
+path-segment contract require an adapter before durable lifecycle persistence.
 
 ## References
 
