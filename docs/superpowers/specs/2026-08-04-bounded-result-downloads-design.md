@@ -84,6 +84,19 @@ Focused tests cover:
 
 The repository CI must continue to prove Python 3.10, 3.12, and 3.14 compatibility, Ruff cleanliness, 100% line and branch coverage, 100% docstring coverage, package construction, and both container builds.
 
+## Verification evidence
+
+The implementation was exercised on Python 3.14.6 before the final feature head was created:
+
+- 16 focused bounded-download tests passed;
+- 194 non-integration tests passed and 3 integration tests were deselected;
+- Ruff reported no findings;
+- Interrogate reported 100% docstring coverage;
+- all 1,105 production statements and all 300 measured branches were covered;
+- source and wheel distributions built successfully with `uv build --no-sources`.
+
+These results are implementation evidence, not a substitute for the required exact-head CI, SAST, Security Scan, and review gates.
+
 ## Documentation and release handling
 
 README documents the safety default and override. `CHANGELOG.md` records the feature under `Unreleased`. This slice does not publish a release by itself; release publication remains gated on the integrated exact head passing all review, CI, security, packaging, provenance, and release-acceptance requirements.
