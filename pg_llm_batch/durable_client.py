@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 from .batch_api_client import BatchAPIClient, CredentialsProvider
 from .db import (
     normalize_optional_provider_text,
+    normalize_provider_metadata,
     persist_remote_batch_state,
     reserve_remote_batch_observation_order,
     validate_endpoint_alias,
@@ -119,6 +120,10 @@ class DurableBatchAPIClient(BatchAPIClient):
                 normalize_optional_provider_text(normalized_snapshot.get("status"))
                 or "unknown"
             )
+            if "metadata" in provider_batch:
+                normalized_snapshot["metadata"] = normalize_provider_metadata(
+                    provider_batch.get("metadata")
+                )
             await asyncio.to_thread(
                 self._lifecycle_recorder,
                 self.postgres_dsn,

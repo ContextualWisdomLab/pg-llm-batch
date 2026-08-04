@@ -199,25 +199,71 @@ def _persisted_remote_resource_id(value: Any, field: str) -> Optional[str]:
         ) from exc
 
 
+def _metadata_contains_nul(value: Any) -> bool:
+    """Return whether decoded JSON contains PostgreSQL-incompatible NUL text.
+
+    The traversal is iterative so deeply nested untrusted metadata cannot spend
+    Python recursion depth after the canonical JSON representation has already
+    passed the 64-KiB size boundary.
+    """
+    pending_values = [value]
+    while pending_values:
+        current_value = pending_values.pop()
+        if isinstance(current_value, str):
+            if "\x00" in current_value:
+                return True
+            continue
+        if isinstance(current_value, list):
+            pending_values.extend(current_value)
+            continue
+        if isinstance(current_value, dict):
+            for metadata_key, nested_value in current_value.items():
+                if "\x00" in metadata_key:
+                    return True
+                pending_values.append(nested_value)
+    return False
+
+
 def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
-    """Return bounded canonical JSON metadata or the deterministic empty object."""
+    """Return bounded PostgreSQL-safe JSON metadata or the empty object."""
     if not isinstance(value, Mapping):
         return {}, "{}"
     try:
-        provider_metadata = dict(value)
         metadata_json = json.dumps(
-            provider_metadata,
+            dict(value),
             ensure_ascii=False,
             sort_keys=True,
             separators=(",", ":"),
             allow_nan=False,
         )
         metadata_bytes = metadata_json.encode("utf-8")
+        if len(metadata_bytes) > MAX_PROVIDER_METADATA_BYTES:
+            return {}, "{}"
+        provider_metadata: Dict[str, Any] = json.loads(metadata_json)
     except Exception:
         return {}, "{}"
-    if len(metadata_bytes) > MAX_PROVIDER_METADATA_BYTES:
+    if _metadata_contains_nul(provider_metadata):
         return {}, "{}"
     return provider_metadata, metadata_json
+
+
+def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
+    """Return canonical provider metadata safe for PostgreSQL ``jsonb``.
+
+    A provider metadata value is retained only when it is an object whose sorted
+    compact JSON encoding is finite, serializable, no larger than 64 KiB, and
+    free of U+0000 in every key and nested string. Invalid metadata becomes the
+    deterministic empty object so both the default PostgreSQL recorder and
+    injected host recorders observe the same fail-closed representation.
+
+    Args:
+        value: Untrusted provider metadata from a remote Batch API response.
+
+    Returns:
+        A JSON-decoded dictionary that exactly matches the canonical persisted
+        representation, or an empty dictionary when validation fails.
+    """
+    return _provider_metadata(value)[0]
 
 
 def reserve_remote_batch_observation_order(dsn: str) -> int:

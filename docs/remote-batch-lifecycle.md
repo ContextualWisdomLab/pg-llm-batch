@@ -16,19 +16,19 @@ identified by `(endpoint_alias, remote_batch_id)`, so remote identifiers do not
 need to be globally unique across configured gateway aliases.
 
 Endpoint aliases are trimmed, must be NUL-free, and are limited to at most 128 characters
-before an observation order is reserved, credentials are resolved, or provider
-I/O starts. Remote file and batch identifiers follow the supported gateway path
-contract: at most 256 ASCII characters, beginning with an alphanumeric character
-and then using only letters, digits, dot, underscore, colon, or hyphen.
-Caller-provided batch identifiers are validated before reservation.
-Provider-returned batch identifiers and every present string input, output, or
-error file identifier are validated before any lifecycle recorder or PostgreSQL
-write receives them. Non-string optional values retain the deterministic absent
-default. The lifecycle table repeats the same identifier syntax as database
-`CHECK` constraints. NUL-bearing optional endpoint text is discarded and a
-NUL-bearing status becomes `unknown`, because PostgreSQL text values cannot store
-the code-zero character. These boundaries prevent avoidable
-remote-success/local-persistence split-brain failures.
+before an observation order is reserved, credentials are resolved, or provider I/O
+starts. Remote file and batch identifiers follow the supported gateway path contract:
+at most 256 ASCII characters, beginning with an alphanumeric character and then using
+only letters, digits, dot, underscore, colon, or hyphen. This contract covers
+`input_file_id`, `output_file_id`, and `error_file_id` as well as batch identifiers.
+Caller-provided identifiers are validated before reservation. Provider-returned
+identifiers are validated before any lifecycle recorder receives them. Unsupported
+provider-generated values remain available only as structured reconciliation evidence;
+they never reach PostgreSQL or an injected recorder. Provider-returned `endpoint` and
+`status` text is also normalized before custom recorders and PostgreSQL: NUL-bearing,
+empty, or non-string endpoints become absent, while an unsafe status becomes
+`unknown`. These application checks align with the PostgreSQL storage constraints and
+prevent avoidable remote-success/local-persistence split-brain failures.
 
 Only curated operational fields are persisted:
 
@@ -57,9 +57,13 @@ failed counters are monotonic: the atomic update uses PostgreSQL `GREATEST`, so 
 newer sparse poll or cancellation response cannot erase known progress.
 
 Provider metadata is canonicalized as sorted compact JSON with non-finite
-numbers disabled. Cyclic, non-serializable, non-finite, or greater-than-64-KiB
-UTF-8 metadata is stored as the empty object. This limit applies to the
-canonical JSON representation, not the source Python object.
+numbers disabled. PostgreSQL `jsonb` rejects U+0000, so any NUL in an object key
+or nested string value is normalized to the empty object before PostgreSQL or an
+injected lifecycle recorder receives it. A literal six-character `\u0000`
+backslash escape is not a NUL and remains unchanged. Cyclic, non-serializable,
+non-finite, invalid-Unicode, or greater-than-64-KiB UTF-8 metadata is likewise
+stored as the empty object. This limit applies to the canonical JSON
+representation, not the source Python object.
 
 ## Global observation ordering
 
@@ -184,16 +188,15 @@ path-segment contract require an adapter before durable lifecycle persistence.
 OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 4,
 2026, from https://platform.openai.com/docs/api-reference/batch/object
 
-PostgreSQL Global Development Group. (2026). *Character types*. In
-*PostgreSQL 18 documentation*.
-https://www.postgresql.org/docs/current/datatype-character.html
-
 PostgreSQL Global Development Group. (2026). *Conditional expressions*. In
 *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/current/functions-conditional.html
 
 PostgreSQL Global Development Group. (2026). *INSERT*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/current/sql-insert.html
+
+PostgreSQL Global Development Group. (2026). *JSON types*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/current/datatype-json.html
 
 PostgreSQL Global Development Group. (2026). *Sequence manipulation functions*.
 In *PostgreSQL 18 documentation*.
