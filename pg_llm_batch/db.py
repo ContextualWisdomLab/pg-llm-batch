@@ -135,9 +135,10 @@ def persist_remote_batch_state(
     The unique ``(endpoint_alias, remote_batch_id)`` identity makes repeated
     polling idempotent. The upsert accepts only a strictly newer database-owned
     ``observation_order``. Once a terminal status is stored, a later observation
-    may enrich it only when the terminal status itself is unchanged. Arbitrary
-    provider fields are discarded, and metadata is canonicalized within a
-    bounded JSON trust boundary.
+    may enrich it only when the terminal status itself is unchanged. Request
+    counters never decrease, so a sparse provider response cannot erase known
+    progress. Arbitrary provider fields are discarded, and metadata is
+    canonicalized within a bounded JSON trust boundary.
 
     Args:
         dsn: PostgreSQL connection string for the lifecycle store.
@@ -254,9 +255,18 @@ def persist_remote_batch_state(
                 EXCLUDED.error_file_id,
                 llm_remote_batch_jobs.error_file_id
             ),
-            total_requests = EXCLUDED.total_requests,
-            completed_requests = EXCLUDED.completed_requests,
-            failed_requests = EXCLUDED.failed_requests,
+            total_requests = GREATEST(
+                llm_remote_batch_jobs.total_requests,
+                EXCLUDED.total_requests
+            ),
+            completed_requests = GREATEST(
+                llm_remote_batch_jobs.completed_requests,
+                EXCLUDED.completed_requests
+            ),
+            failed_requests = GREATEST(
+                llm_remote_batch_jobs.failed_requests,
+                EXCLUDED.failed_requests
+            ),
             provider_metadata = CASE
                 WHEN EXCLUDED.provider_metadata = '{}'::jsonb
                     THEN llm_remote_batch_jobs.provider_metadata
