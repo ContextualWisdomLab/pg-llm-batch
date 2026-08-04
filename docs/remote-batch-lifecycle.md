@@ -21,14 +21,16 @@ starts. Remote file and batch identifiers follow the supported gateway path cont
 at most 256 ASCII characters, beginning with an alphanumeric character and then using
 only letters, digits, dot, underscore, colon, or hyphen. This contract covers
 `input_file_id`, `output_file_id`, and `error_file_id` as well as batch identifiers.
-Caller-provided identifiers are validated before reservation. Provider-returned
-identifiers are validated before any lifecycle recorder receives them. Unsupported
-provider-generated values remain available only as structured reconciliation evidence;
-they never reach PostgreSQL or an injected recorder. Provider-returned `endpoint` and
-`status` text is also normalized before custom recorders and PostgreSQL: NUL-bearing,
-empty, or non-string endpoints become absent, while an unsafe status becomes
-`unknown`. These application checks align with the PostgreSQL storage constraints and
-prevent avoidable remote-success/local-persistence split-brain failures.
+All caller-provided remote resource identifiers, including input file and batch
+identifiers, are validated before observation reservation, credential resolution,
+or provider I/O. Provider-returned identifiers are validated before any lifecycle
+recorder receives them. Unsupported provider-generated values remain available only
+as structured reconciliation evidence; they never reach PostgreSQL or an injected
+recorder. Provider-returned `endpoint` and `status` text is also normalized before
+custom recorders and PostgreSQL: NUL-bearing, empty, or non-string endpoints become
+absent, while an unsafe status becomes `unknown`. These application checks align with
+the PostgreSQL storage constraints and prevent avoidable remote-success/local-
+persistence split-brain failures.
 
 Only curated operational fields are persisted:
 
