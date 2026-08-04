@@ -30,13 +30,13 @@
 - Create temporarily: `.github/workflows/one-shot-lifecycle-hardening-red.yml`
 - Create after execution: `docs/superpowers/evidence/2026-08-04-remote-lifecycle-hardening-red.md`
 
-- [ ] Add a source/schema test requiring `llm_remote_batch_observation_sequence`, `observation_order`, strict greater-than update ordering, and terminal-status equality protection.
-- [ ] Add a client test requiring an `observation_reserver` seam and verifying reservation occurs before provider request entry.
-- [ ] Add a reservation-failure test requiring zero provider calls and structured `phase: reservation` evidence.
-- [ ] Update the persistence-failure test to require `phase: persistence` and `observation_order`.
-- [ ] Add metadata tests for sets, cycles, NaN, and payloads beyond 64 KiB, all normalized to `{}`.
-- [ ] Run only the new tests against the current implementation and require the intended failures before recording red evidence.
-- [ ] Remove the temporary red workflow in the same evidence commit.
+- [x] Add a source/schema test requiring `llm_remote_batch_observation_sequence`, `observation_order`, strict greater-than update ordering, and terminal-status equality protection.
+- [x] Add a client test requiring an `observation_reserver` seam and verifying reservation occurs before provider request entry.
+- [x] Add a reservation-failure test requiring zero provider calls and structured `phase: reservation` evidence.
+- [x] Update the persistence-failure test to require `phase: persistence` and `observation_order`.
+- [x] Add metadata tests for sets, cycles, NaN, invalid Unicode, and payloads beyond 64 KiB, all normalized to `{}`.
+- [x] Run only the new tests against the original implementation and require the intended failures before recording red evidence.
+- [x] Remove the temporary red workflow in the same evidence commit.
 
 ### Task 2: Add database-owned observation ordering
 
@@ -45,12 +45,12 @@
 - Modify: `pg_llm_batch/db.py`
 - Test: `tests/test_remote_batch_lifecycle.py`
 
-- [ ] Add `llm_remote_batch_observation_sequence` as a positive, non-cycling BIGINT sequence.
-- [ ] Add `observation_order BIGINT NOT NULL CHECK (observation_order > 0)` to `llm_remote_batch_jobs`.
-- [ ] Implement `reserve_remote_batch_observation_order(dsn) -> int` with result validation.
-- [ ] Require a positive non-boolean `observation_order` in `persist_remote_batch_state`.
-- [ ] Insert and update the order and accept only `EXCLUDED.observation_order > stored.observation_order`.
-- [ ] When stored state is terminal, accept only an identical terminal status.
+- [x] Add `llm_remote_batch_observation_sequence` as a positive, non-cycling BIGINT sequence.
+- [x] Add `observation_order BIGINT NOT NULL CHECK (observation_order > 0)` to `llm_remote_batch_jobs`.
+- [x] Implement `reserve_remote_batch_observation_order(dsn) -> int` with result validation.
+- [x] Require a positive non-boolean `observation_order` in `persist_remote_batch_state`.
+- [x] Insert and update the order and accept only `EXCLUDED.observation_order > stored.observation_order`.
+- [x] When stored state is terminal, accept only an identical terminal status.
 
 ### Task 3: Harden the durable client and metadata boundary
 
@@ -59,13 +59,13 @@
 - Modify: `pg_llm_batch/db.py`
 - Test: `tests/test_remote_batch_lifecycle.py`
 
-- [ ] Add injectable `ObservationReserver` and four-argument `LifecycleRecorder` seams.
-- [ ] Reserve an order before create, poll, and cancellation provider calls.
-- [ ] Raise structured reservation errors before provider I/O.
-- [ ] Pass the order to persistence and include phase/order in post-success failures.
-- [ ] Canonicalize metadata with `allow_nan=False` and normalize serialization failures to `{}`.
-- [ ] Enforce `MAX_PROVIDER_METADATA_BYTES = 64 * 1024` against canonical UTF-8 bytes.
-- [ ] Verify overlapping request completion cannot regress a fake order-aware store.
+- [x] Add injectable `ObservationReserver` and four-argument `LifecycleRecorder` seams.
+- [x] Reserve an order before create, poll, and cancellation provider calls.
+- [x] Raise structured reservation errors before provider I/O.
+- [x] Pass the order to persistence and include phase/order in post-success failures.
+- [x] Canonicalize metadata with `allow_nan=False` and normalize serialization failures to `{}`.
+- [x] Enforce `MAX_PROVIDER_METADATA_BYTES = 64 * 1024` against canonical UTF-8 bytes.
+- [x] Verify overlapping request completion cannot regress a fake order-aware store.
 
 ### Task 4: Reconcile current main and documentation
 
@@ -74,17 +74,18 @@
 - Modify: `docs/remote-batch-lifecycle.md`
 - Modify: `docs/superpowers/specs/2026-08-04-remote-lifecycle-concurrency-hardening-design.md`
 
-- [ ] Preserve all current `main` changelog entries, including PEP 639 metadata migration.
-- [ ] Document sequence reservation cost and guarantees, terminal enrichment, metadata limits, and failure phases.
-- [ ] Correct living OpenAI documentation citation to APA 7th undated/retrieval-date form.
-- [ ] Record exact local-equivalent verification evidence without pre-claiming hosted success.
+- [x] Preserve all current `main` changelog entries, including PEP 639 metadata migration.
+- [x] Document sequence reservation cost and guarantees, terminal enrichment, metadata limits, and failure phases.
+- [x] Correct living OpenAI documentation citation to APA 7th undated/retrieval-date form.
+- [x] Record exact local-equivalent verification evidence without pre-claiming hosted success.
+- [x] Synchronize the branch with the current `main` head and remove the temporary synchronization workflow.
 
 ### Task 5: Verify, review, and merge
 
-- [ ] Run focused lifecycle tests.
-- [ ] Run the complete non-integration suite.
-- [ ] Run compile, Ruff, Interrogate, 100% statement/branch coverage, lock, package, Compose, and both container builds.
-- [ ] Inspect the exact final patch for unrelated files and removed temporary workflows.
-- [ ] Inspect human, CodeRabbit, security, and inline feedback; fix every valid current-head finding.
+- [x] Run focused lifecycle tests: `45 passed`.
+- [x] Run the complete non-integration suite: `283 passed, 3 deselected`.
+- [x] Run compile, Ruff, Interrogate, 100% statement/branch coverage (`1273/1273` statements and `352/352` branches), lock, package, Compose, and both container builds.
+- [x] Inspect the exact implementation patch for unrelated files and remove temporary workflows.
+- [ ] Inspect exact-head human, CodeRabbit, security, and inline feedback; fix every valid current-head finding.
 - [ ] Require exact-head CI, SAST Semgrep, and Security Scan success.
 - [ ] Merge with exact head binding and re-query the open PR queue.
