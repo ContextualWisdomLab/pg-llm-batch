@@ -10,7 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Bounded, streamed provider result and error downloads with a 128 MiB
-  decoded-byte default, strict UTF-8 validation, and body-free oversize errors.
+  decoded-byte default, strict UTF-8 validation, body-free oversize errors,
+  and fail-closed handling when a bounded byte stream is unavailable.
 
 ## [0.1.0] - 2026-07-12
 
