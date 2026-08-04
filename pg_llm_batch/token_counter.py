@@ -34,6 +34,8 @@ except ImportError:  # pragma: no cover
 
 @dataclass(frozen=True)
 class _EncoderInfo:
+    """Immutable record naming the tiktoken tokenizer used for a model."""
+
     tokenizer_name: str
 
 
@@ -242,6 +244,7 @@ class TokenCounter:
     # Config helpers
     # ------------------------------------------------------------------
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
+        """Read a config value from the KV store, returning the default on any failure."""
         if self.config is not None:
             try:
                 value = self.config.get(category, key, default)
@@ -254,6 +257,7 @@ class TokenCounter:
     # pg_tiktoken plumbing
     # ------------------------------------------------------------------
     def _ensure_pg_tiktoken(self) -> bool:
+        """Create the pg_tiktoken extension if possible, returning whether it is available."""
         if psycopg is None:
             return False
         try:
@@ -272,6 +276,7 @@ class TokenCounter:
             return False
 
     def _get_pg_conn(self) -> "psycopg.Connection":
+        """Return a cached autocommit PostgreSQL connection, reconnecting if closed."""
         assert psycopg is not None
         if self._pg_conn is None or self._pg_conn.closed:
             self._pg_conn = psycopg.connect(self.postgres_dsn)
@@ -279,6 +284,7 @@ class TokenCounter:
         return self._pg_conn
 
     def _count_tokens_postgres(self, text: str, model: str) -> int:
+        """Count tokens for text via pg_tiktoken, falling back to tiktoken_encode."""
         if psycopg is None:
             raise RuntimeError("PostgreSQL integration is unavailable")
         conn = self._get_pg_conn()
@@ -301,6 +307,7 @@ class TokenCounter:
         return 0
 
     def _get_tokenizer_from_db(self, model: str) -> Optional[str]:
+        """Return the tokenizer model recorded in model metadata, or None if unset."""
         metadata = get_model_metadata(self.postgres_dsn, model)
         if metadata and metadata.get("tokenizer_model"):
             return str(metadata["tokenizer_model"])

@@ -145,6 +145,7 @@ def config_credentials_provider(
     """
 
     def _provider(endpoint_alias: str) -> GatewayCredentials:
+        """Resolve the base URL and API key for one endpoint alias from the stores."""
         url = config_store.get("gateway", endpoint_alias, None)
         if not url:
             url = config_store.get("gateway", "base_url", None)
@@ -208,6 +209,7 @@ class BatchAPIClient:
             self._session = None
 
     def _get_session(self) -> aiohttp.ClientSession:
+        """Return the current HTTP session, creating one on first use."""
         if not self._session:
             self._session = aiohttp.ClientSession()
         return self._session
@@ -221,6 +223,7 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
+        """Yield a response for one HTTP request, mapping transport errors to GatewayError."""
         session = self._get_session()
         request = getattr(session, method.lower())
         try:
@@ -243,6 +246,7 @@ class BatchAPIClient:
             ) from exc
 
     async def _read_json_object(self, response: Any, operation: str) -> Dict[str, Any]:
+        """Decode a response body and require it to be a JSON object, else raise."""
         try:
             result = await response.json()
         except (aiohttp.ClientError, ValueError, UnicodeError) as exc:
@@ -260,6 +264,7 @@ class BatchAPIClient:
         return result
 
     def _headers(self, api_key: str, *, json_body: bool = False) -> Dict[str, str]:
+        """Build request headers with bearer auth, optionally declaring a JSON body."""
         headers = {
             "Authorization": f"Bearer {api_key}",
             "User-Agent": DEFAULT_USER_AGENT,
@@ -269,6 +274,7 @@ class BatchAPIClient:
         return headers
 
     def _resolve_memory_identifier(self, file_path: str) -> str:
+        """Extract and validate the file id from a ``memory://`` payload reference."""
         if file_path.startswith("memory://"):
             file_id = file_path.split("memory://", 1)[1]
             if file_id:
@@ -278,6 +284,7 @@ class BatchAPIClient:
         )
 
     async def _load_payload_bytes(self, file_id: str) -> bytes:
+        """Load a Postgres-backed virtual JSONL payload and return it as UTF-8 bytes."""
         payload = await asyncio.to_thread(
             load_virtual_payload, self.postgres_dsn, file_id
         )
@@ -434,6 +441,7 @@ class BatchAPIClient:
         batch_id: str,
         file_kind: str,
     ) -> List[Dict[str, Any]]:
+        """Parse JSONL text into a list of objects, rejecting malformed or non-object lines."""
         parsed_lines: List[Dict[str, Any]] = []
         for line_number, line in enumerate(content.strip().split("\n"), start=1):
             if not line:
@@ -468,6 +476,7 @@ class BatchAPIClient:
         batch_id: str,
         file_kind: str,
     ) -> List[Dict[str, Any]]:
+        """Download a batch output/error file by id and parse it into JSONL records."""
         validated_file_id = _validate_resource_id(file_id, f"{file_kind}_file_id")
         creds = self._credentials(endpoint_alias)
         operation = f"{file_kind.capitalize()} file download"

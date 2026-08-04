@@ -82,7 +82,10 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
+        """HTTP request handler that answers ``/healthz`` with the readiness report."""
+
         def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
+            """Return the readiness report for ``/healthz``, or 404 for other paths."""
             if self.path.rstrip("/") not in ("/healthz", ""):
                 self.send_response(404)
                 self.end_headers()
@@ -96,6 +99,7 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
             self.wfile.write(body)
 
         def log_message(self, *args: Any) -> None:  # silence access logs
+            """Suppress the default stderr access logging."""
             return
 
     server = HTTPServer((host, port), _Handler)

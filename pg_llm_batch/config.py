@@ -65,6 +65,7 @@ DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
 def _build_default_index(
     tree: Dict[str, Dict[str, Any]]
 ) -> Dict[str, Dict[str, Any]]:
+    """Flatten the default config tree into a ``category.key`` lookup with type metadata."""
     index: Dict[str, Dict[str, Any]] = {}
     for category, settings in tree.items():
         category_description = settings.get("description")
@@ -86,12 +87,14 @@ DEFAULT_CONFIG_INDEX = _build_default_index(DEFAULT_CONFIG_TREE)
 
 
 def _serialize_value(value: Any) -> str:
+    """Serialize a config value to text (JSON for dict/list/bool, else ``str``)."""
     if isinstance(value, (dict, list, bool)):
         return json.dumps(value)
     return str(value)
 
 
 def _deserialize_value(full_key: str, raw: str) -> Any:
+    """Coerce a stored text value back to the default's type, or fall back on error."""
     item = DEFAULT_CONFIG_INDEX.get(full_key)
     target_type: Optional[Type[Any]] = item["type"] if item else None
 
@@ -121,11 +124,13 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
 
 
 def _default_value(category: str, key: str, fallback: Any) -> Any:
+    """Return the built-in default for ``category.key`` or the caller's fallback."""
     item = DEFAULT_CONFIG_INDEX.get(f"{category}.{key}")
     return item["value"] if item else fallback
 
 
 def _split_full_key(full_key: str) -> Tuple[str, str]:
+    """Split a ``category.key`` string, defaulting the category to ``global``."""
     if "." in full_key:
         parts = full_key.split(".", 1)
         return parts[0], parts[1]
@@ -154,6 +159,7 @@ class PostgresConfigStore:
         self._load_cache()
 
     def _ensure_table(self) -> None:
+        """Create the ``com_config`` table if it does not already exist."""
         with self._conn.cursor() as cur:
             cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_config") is interpolated; every value is bound via %s placeholders.
                 f"""
@@ -167,6 +173,7 @@ class PostgresConfigStore:
             )
 
     def _ensure_defaults(self) -> None:
+        """Insert any missing default config rows without overwriting existing ones."""
         with self._conn.cursor() as cur:
             for item in DEFAULT_CONFIG_INDEX.values():
                 cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
@@ -184,6 +191,7 @@ class PostgresConfigStore:
                 )
 
     def _load_cache(self) -> None:
+        """Reload the in-memory cache from every row in the config table."""
         self.cache.clear()
         with self._conn.cursor() as cur:
             cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; no user input reaches the query.
@@ -283,6 +291,7 @@ class SecretStore:
         self._ensure_table()
 
     def _ensure_table(self) -> None:
+        """Create the ``com_secrets`` table if it does not already exist."""
         with self._conn.cursor() as cur:
             cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_secrets") is interpolated; every value is bound via %s placeholders.
                 f"""
@@ -296,6 +305,7 @@ class SecretStore:
             )
 
     def _encode(self, raw: str) -> Tuple[str, bool]:
+        """Encode a secret for storage, returning the text and whether it is encrypted."""
         if self._fernet is not None:
             return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
         logger.warning(  # nosemgrep -- python-logger-credential-disclosure FP: the message text contains the word "secret", but the only logged argument is the literal mask "***"; no secret value is ever logged.
@@ -305,6 +315,7 @@ class SecretStore:
         return base64.b64encode(raw.encode("utf-8")).decode("utf-8"), False
 
     def _decode(self, stored: str, is_encrypted: bool) -> str:
+        """Decrypt or de-obfuscate a stored secret back to its plaintext value."""
         if is_encrypted:
             if self._fernet is None:
                 raise ConfigError(
