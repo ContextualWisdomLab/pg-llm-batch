@@ -29,80 +29,35 @@
 
 **Files:**
 - Create: `tests/test_idempotent_get_retries.py`
+- Create: `tests/test_retry_edge_coverage.py`
 - Modify: `tests/test_http_transport.py`
 
 **Interfaces:**
 - Consumes: `BatchAPIClient`, `GatewayCredentials`, `GatewayError`, and `ValidationError`.
-- Produces: failing tests for retry configuration, RFC `Retry-After`, status retries, transport retries, final attempts, and non-retried POST operations.
+- Produces: tests for retry configuration, RFC `Retry-After`, status retries, transport retries, final attempts, response-context release, and non-retried POST operations.
 
-- [ ] **Step 1: Add response and sequence session doubles**
+- [x] **Step 1: Add response and sequence session doubles**
+- [x] **Step 2: Write constructor validation tests**
+- [x] **Step 3: Write Retry-After parsing and delay tests**
+- [x] **Step 4: Write GET status and transport retry tests**
+- [x] **Step 5: Write POST non-retry tests**
+- [x] **Step 6: Commit and execute the red contract**
 
-```python
-class Response:
-    def __init__(self, status: int, payload: dict, headers: dict[str, str] | None = None):
-        self.status = status
-        self.payload = payload
-        self.headers = headers or {}
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_exc):
-        return None
-
-    async def json(self):
-        return self.payload
-```
-
-A sequence session returns or raises configured outcomes and records method, URL, and kwargs.
-
-- [ ] **Step 2: Write failing constructor validation tests**
-
-Cover invalid attempt counts, invalid delay values, and `base > max`.
-
-- [ ] **Step 3: Write failing Retry-After tests**
-
-Cover:
-
-```text
-Retry-After: 2
-Retry-After: Wed, 21 Oct 2015 07:28:00 GMT
-Retry-After: malformed
-Retry-After: a date in the past
-Retry-After larger than retry_max_delay_seconds
-```
-
-- [ ] **Step 4: Write failing GET retry tests**
-
-Require:
-
-```text
-503 -> 200 retries once
-429 with Retry-After -> 200 sleeps exactly as directed
-transport error -> 200 retries
-three retryable responses stop at max attempts and return final status error
-```
-
-- [ ] **Step 5: Write failing POST non-retry tests**
-
-Verify both provider status and transport failures make exactly one POST attempt.
-
-- [ ] **Step 6: Commit the red contract and open a draft PR**
-
-The expected exact-head failure is missing retry constructor parameters and one-attempt behavior.
+The focused command failed on pre-implementation head `91077f0c58406542ab4b4f50f660babe499ef722` for the expected missing retry interface. The evidence is retained in `docs/superpowers/evidence/2026-08-04-idempotent-get-retries-red.md`.
 
 ### Task 2: Implement the bounded retry policy
 
 **Files:**
 - Modify: `pg_llm_batch/batch_api_client.py`
 - Test: `tests/test_idempotent_get_retries.py`
+- Test: `tests/test_retry_edge_coverage.py`
 - Modify: `tests/test_http_transport.py`
 
 **Interfaces:**
 - Consumes: aiohttp response-like contexts and existing request operations.
-- Produces: retry constants, constructor options, `_utc_now()`, `_parse_retry_after()`, `_fallback_retry_delay()`, `_retry_delay_for_response()`, and retry-aware `_request()`.
+- Produces: retry constants, constructor options, `_utc_now()`, `_parse_retry_after()`, `_normalize_retry_delay()`, `_fallback_retry_delay()`, `_retry_delay_for_response()`, and retry-aware `_request()`.
 
-- [ ] **Step 1: Add imports and constants**
+- [x] **Step 1: Add imports and constants**
 
 ```python
 import random
@@ -115,91 +70,41 @@ DEFAULT_RETRY_MAX_DELAY_SECONDS = 30.0
 RETRYABLE_GET_STATUSES = frozenset({408, 429, 502, 503, 504})
 ```
 
-- [ ] **Step 2: Add pure parsing helpers**
+- [x] **Step 2: Add pure parsing and normalization helpers**
+- [x] **Step 3: Validate constructor options**
+- [x] **Step 4: Add bounded equal-jitter fallback**
+- [x] **Step 5: Add response delay selection**
+- [x] **Step 6: Convert `_request()` into a finite GET-only retry loop**
+- [x] **Step 7: Verify focused and full gates before publishing the implementation commit**
 
-```python
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
+Verification on Python 3.14.6 produced:
 
-
-def _parse_retry_after(value: Any, now: datetime) -> Optional[float]:
-    if not isinstance(value, str):
-        return None
-    candidate = value.strip()
-    if candidate.isdecimal():
-        return float(int(candidate))
-    try:
-        parsed = parsedate_to_datetime(candidate)
-    except (TypeError, ValueError, OverflowError):
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    delay = (parsed.astimezone(timezone.utc) - now.astimezone(timezone.utc)).total_seconds()
-    return max(0.0, delay)
+```text
+45 focused retry/transport tests passed
+228 non-integration tests passed; 3 integration tests deselected
+Ruff: clean
+Interrogate: 100%
+Production statements: 1171/1171
+Production branches: 324/324
+Wheel and source distribution: built successfully
 ```
 
-- [ ] **Step 3: Validate constructor options**
-
-Normalize numeric delays to float and reject non-finite, boolean, negative, and inconsistent values with field-specific `ValidationError`.
-
-- [ ] **Step 4: Add bounded equal-jitter fallback**
-
-```python
-ceiling = min(
-    self.retry_base_delay_seconds * (2 ** (failed_attempt - 1)),
-    self.retry_max_delay_seconds,
-)
-return random.uniform(ceiling / 2, ceiling)
-```
-
-Zero ceilings return `0.0` without calling `random.uniform`.
-
-- [ ] **Step 5: Add response delay selection**
-
-Use a valid bounded `Retry-After` exactly. Return `None` when it exceeds the configured maximum. Use fallback for missing or malformed values.
-
-- [ ] **Step 6: Convert `_request()` into a finite loop**
-
-Retry only when `method.lower() == "get"`. Exit each response context before sleeping. Keep the final typed transport error metadata unchanged.
-
-- [ ] **Step 7: Verify focused and full gates**
-
-```bash
-uv sync --locked
-uv run pytest -q tests/test_idempotent_get_retries.py tests/test_http_transport.py
-uv run pytest -q -m "not integration"
-uv run python -m compileall -q pg_llm_batch
-uv run ruff check pg_llm_batch tests
-uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
-uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
-  --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
-uv build --no-sources
-```
-
-Expected: every command exits zero and production statement and branch coverage remain 100%.
+The temporary implementation workflow removed itself before committing the feature tree.
 
 ### Task 3: Document the retry boundary
 
 **Files:**
 - Modify: `README.md`
 - Modify: `CHANGELOG.md`
-- Modify: `docs/superpowers/specs/2026-08-04-idempotent-get-retries-design.md`
+- Create: `docs/superpowers/specs/2026-08-04-idempotent-get-retries-design.md`
 
 **Interfaces:**
 - Consumes: the implemented constructor and retry behavior.
 - Produces: operator examples, standards traceability, and release history.
 
-- [ ] **Step 1: Document defaults and safe-method scope**
-
-Show constructor overrides and state explicitly that POST operations are not retried.
-
-- [ ] **Step 2: Document Retry-After handling**
-
-Explain decimal seconds, HTTP-date, malformed fallback, and the maximum-delay refusal boundary.
-
-- [ ] **Step 3: Update `CHANGELOG.md`**
-
-Record bounded idempotent GET retries under `Unreleased / Added`.
+- [x] **Step 1: Document defaults and safe-method scope**
+- [x] **Step 2: Document Retry-After handling and the excessive-delay refusal boundary**
+- [x] **Step 3: Record bounded GET retries under `Unreleased / Added`**
 
 ### Task 4: Review, verify, and merge
 
@@ -207,8 +112,8 @@ Record bounded idempotent GET retries under `Unreleased / Added`.
 - No new paths.
 
 **Interfaces:**
-- Consumes: exact-head human/automated reviews, CI, SAST, Security Scan, and repository policy.
-- Produces: a merged reviewed head or a precise blocker.
+- Consumes: the exact PR head, human and automated reviews, CI, SAST, Security Scan, and repository policy.
+- Produces: a merged reviewed head or a precise unresolved blocker.
 
 - [ ] **Step 1: Address all valid current-head feedback**
 
@@ -216,7 +121,7 @@ Inspect human, CodeRabbit, GitHub security, and automated comments and threads. 
 
 - [ ] **Step 2: Require exact-head gates**
 
-Require successful CI, SAST Semgrep, Security Scan, package/container checks, Python compatibility, coverage, and docstrings. Pending or cancelled is not success.
+Require successful CI, SAST Semgrep, Security Scan, package/container checks, Python compatibility, coverage, and docstrings. Pending, action-required, skipped unexpectedly, or cancelled is not success.
 
 - [ ] **Step 3: Merge with exact head binding**
 
