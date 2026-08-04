@@ -16,11 +16,26 @@ from pg_llm_batch.batch_api_client import (
 from pg_llm_batch.exceptions import GatewayError, ValidationError
 
 
+class FakeContent:
+    """Expose deterministic response bytes through a bounded stream."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    async def iter_chunked(self, size: int):
+        """Yield the payload in chunks no larger than ``size``."""
+        for index in range(0, len(self.payload), size):
+            yield self.payload[index : index + size]
+
+
 class FakeResponse:
     def __init__(self, status: int, payload=None, text: str = "") -> None:
         self.status = status
         self._payload = payload
         self._text = text
+        encoded = text.encode("utf-8")
+        self.content_length = len(encoded)
+        self.content = FakeContent(encoded)
 
     async def json(self):
         return self._payload
@@ -72,7 +87,6 @@ class SequenceSession:
         if not self.responses:
             raise AssertionError(f"no response left for GET {url}")
         return self.responses.pop(0)
-
 
 
 def _creds(_alias: str) -> GatewayCredentials:
