@@ -1,0 +1,138 @@
+name: One-shot Retry-After green verification
+
+on:
+  push:
+    branches: [agent/harden-retry-after-parsing]
+    paths:
+      - .github/workflows/one-shot-retry-after-green.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-retry-after-green
+  cancel-in-progress: true
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/harden-retry-after-parsing
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Apply the minimal parser and documentation change
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+
+          client_path = Path("pg_llm_batch/batch_api_client.py")
+          client = client_path.read_text(encoding="utf-8")
+          client = replace_once(
+              client,
+              '''    if candidate.isdecimal():
+                  return float(int(candidate))
+          ''',
+              '''    if candidate.isascii() and candidate.isdigit():
+                  return float(candidate)
+          ''',
+              "Retry-After delta parser",
+          )
+          client_path.write_text(client, encoding="utf-8")
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          readme = replace_once(
+              readme,
+              '''transport failures. A bounded RFC `Retry-After` delta or HTTP-date is honored;
+          otherwise the client uses equal-jitter exponential delay from 0.5 seconds up to
+          30 seconds. Guidance above the configured maximum is refused rather than
+          shortening an untrusted wait. Upload, batch creation, and cancellation `POST`
+          ''',
+              '''transport failures. `Retry-After` delta-seconds accept the RFC ASCII digit
+          grammar only; bounded delta values and HTTP dates are honored. Syntactically valid
+          guidance above the configured maximum is refused, while malformed guidance uses
+          equal-jitter exponential fallback from 0.5 seconds up to 30 seconds. Upload, batch
+          creation, and cancellation `POST`
+          ''',
+              "README retry policy",
+          )
+          readme_path.write_text(readme, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          entry = '''
+          ### Fixed
+
+          - Hardened provider `Retry-After` delta parsing to accept RFC ASCII digits
+            only and refuse extremely long numeric guidance without leaking Python
+            integer-conversion errors.
+          '''
+          if "extremely long numeric guidance" not in changelog:
+              changelog = changelog.replace("\n## [0.1.0]", entry + "\n## [0.1.0]", 1)
+          changelog_path.write_text(changelog, encoding="utf-8")
+          PY
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Verify the complete hardened product tree
+        run: |
+          set -euo pipefail
+          uv run pytest -q tests/test_idempotent_get_retries.py
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          uv build --no-sources
+          docker compose config >/dev/null
+          docker build --tag pg-llm-batch:retry-after .
+          docker build --tag pg-llm-batch-postgres:retry-after docker/postgres
+
+      - name: Publish verified implementation and remove this workflow
+        env:
+          BRANCH_NAME: agent/harden-retry-after-parsing
+        run: |
+          rm .github/workflows/one-shot-retry-after-green.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pg_llm_batch/batch_api_client.py \
+            tests/test_idempotent_get_retries.py \
+            README.md \
+            CHANGELOG.md \
+            docs/superpowers/evidence/2026-08-04-retry-after-parser-red.md \
+            docs/superpowers/plans/2026-08-04-retry-after-parser-hardening.md \
+            docs/superpowers/specs/2026-08-04-retry-after-parser-hardening-design.md \
+            .github/workflows/one-shot-retry-after-green.yml
+          git commit -m "fix(gateway): harden Retry-After delta parsing"
+          git push origin "HEAD:${BRANCH_NAME}"
