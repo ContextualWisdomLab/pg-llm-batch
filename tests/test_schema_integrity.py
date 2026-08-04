@@ -56,3 +56,23 @@ def test_only_redundant_payload_index_is_removed():
     assert "DROP INDEX IF EXISTS idx_llm_jsonl_lines_req" not in SCHEMA_SQL
     assert "CREATE INDEX IF NOT EXISTS idx_llm_jsonl_lines_payload" not in SCHEMA_SQL
     assert "CREATE INDEX IF NOT EXISTS idx_llm_jsonl_lines_req" in SCHEMA_SQL
+
+
+def test_postgres_image_schema_is_an_exact_canonical_mirror():
+    """The deployable PostgreSQL image initializes the packaged canonical schema."""
+    root = Path(__file__).resolve().parents[1]
+    canonical = (root / "pg_llm_batch" / "schema.sql").read_text(
+        encoding="utf-8"
+    )
+    mirror = (
+        root / "docker" / "postgres" / "init" / "02_schema.sql"
+    ).read_text(encoding="utf-8")
+    mirror_header = (
+        "-- SPDX-License-Identifier: Apache-2.0\n"
+        "-- Build-context mirror of pg_llm_batch/schema.sql (canonical source read by\n"
+        "-- pg_llm_batch/db.py). Kept here so docker/postgres/Dockerfile builds with its\n"
+        "-- own directory as the build context (the central coverage-evidence job builds\n"
+        "-- each changed Dockerfile with context = its own directory). Keep in sync with\n"
+        "-- pg_llm_batch/schema.sql.\n"
+    )
+    assert mirror == mirror_header + canonical
