@@ -6,6 +6,9 @@ who need restart-safe reconciliation, acquisition-grade audit evidence, and a
 recoverable remote identifier when a provider operation succeeds but local
 persistence fails.
 
+The durable client is opt-in. `BatchAPIClient` remains available for hosts that
+already own lifecycle state, ordering, or transaction coordination.
+
 ## Data model
 
 The packaged schema creates `llm_remote_batch_jobs`. Every row is uniquely
@@ -18,39 +21,76 @@ Only curated operational fields are persisted:
 - endpoint and provider status;
 - output and error file identifiers;
 - total, completed, and failed request counts;
-- provider metadata when it is a JSON object;
+- bounded provider metadata when it is valid JSON;
+- a database-owned observation order;
 - first-seen, last-observed, terminal, and updated timestamps.
 
-Arbitrary provider response fields are discarded to reduce accidental storage
-of unreviewed content. Counts are normalized to non-negative integers. Invalid
-optional values become deterministic safe defaults rather than being written as
-ambiguous database values.
+Arbitrary provider response fields are discarded. Counts are normalized to
+non-negative integers. Invalid optional values become deterministic safe
+defaults rather than ambiguous database values.
 
-## Concurrency and stale observations
+Provider metadata is canonicalized as sorted compact JSON with non-finite
+numbers disabled. Cyclic, non-serializable, non-finite, or greater-than-64-KiB
+UTF-8 metadata is stored as the empty object. This limit applies to the
+canonical JSON representation, not the source Python object.
+
+## Global observation ordering
+
+Before every durable create, poll, or cancellation request, the client reserves
+a value from `llm_remote_batch_observation_sequence`. PostgreSQL sequence values
+are shared across client instances and are not reused after transaction rollback.
+A failed request may therefore leave a harmless gap.
+
+The reservation adds one PostgreSQL round trip before each durable provider
+operation. This is deliberate: it establishes request order before network
+latency can reorder responses. A poll that starts earlier but finishes later
+retains its lower order and cannot overwrite a later-started poll.
 
 Persistence uses one PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` statement.
-The conflict identity is the endpoint alias plus remote batch identifier. The
-update predicate accepts only observations whose `last_observed_at` is at least
-as recent as the stored observation, so a delayed poll cannot regress a newer
-status. The first terminal timestamp is retained.
+The conflict identity is the endpoint alias plus remote batch identifier, and an
+existing row is updated only when the incoming `observation_order` is strictly
+greater than the stored order. There is no read-before-write race.
 
-PostgreSQL documents `ON CONFLICT DO UPDATE` as the atomic alternative to a
-unique-constraint failure for the proposed row. This is the concurrency
-primitive used by the lifecycle store; no read-before-write race is introduced.
+## Terminal-state integrity
+
+The terminal statuses are `completed`, `failed`, `expired`, and `cancelled`.
+Once one is stored, a later observation may update the row only when it carries
+the same terminal status. This permits delayed output/error identifiers, final
+counts, or metadata to enrich the row while preventing a terminal job from
+returning to a non-terminal or different terminal state. The first terminal
+timestamp is retained.
 
 ## Fail-closed recovery behavior
 
-A successful remote operation followed by a local persistence failure raises a
-`GatewayError`. Its structured `response_data` includes:
+### Reservation failure
+
+If the database order cannot be reserved, the durable client raises
+`GatewayError` before provider I/O. Its structured `response_data` includes:
 
 - `operation`;
+- `phase` set to `reservation`;
+- `endpoint_alias`;
+- `batch_id` when it was known before the request;
+- the reservation exception type.
+
+No side-effecting provider request has occurred in this case.
+
+### Persistence failure after remote success
+
+If a remote operation succeeds but its observation cannot be persisted, the
+client raises `GatewayError` with:
+
+- `operation`;
+- `phase` set to `persistence`;
 - `endpoint_alias`;
 - `batch_id` when known;
+- `observation_order`;
 - the persistence exception type.
 
-The remote batch identifier is therefore available for operator reconciliation.
-The client does not retry side-effecting provider POST operations and does not
-pretend that an unpersisted transition succeeded locally.
+The remote batch identifier and order remain available for operator
+reconciliation. The client does not replay side-effecting provider POST
+operations and does not pretend that an unpersisted transition succeeded
+locally.
 
 ## Usage
 
@@ -84,22 +124,36 @@ async with DurableBatchAPIClient(dsn, provider) as client:
     current = await client.get_batch_status(created["id"], "default")
 ```
 
-Hosts that already own lifecycle persistence may continue using
-`BatchAPIClient`. Tests and embedded hosts can inject a compatible
-`lifecycle_recorder(dsn, endpoint_alias, provider_batch)` into
-`DurableBatchAPIClient`.
+Tests and embedded hosts can inject compatible seams:
+
+```python
+DurableBatchAPIClient(
+    dsn,
+    provider,
+    observation_reserver=lambda dsn: 42,
+    lifecycle_recorder=lambda dsn, alias, batch, order: None,
+)
+```
+
+A custom reserver must return a positive non-boolean integer. A custom recorder
+receives the exact order reserved before the corresponding provider operation.
 
 ## Provider compatibility
 
 The stored field set follows the core Batch object fields documented by OpenAI:
 `id`, `input_file_id`, `endpoint`, `status`, `output_file_id`, `error_file_id`,
-and `request_counts`. OpenAI-compatible gateways may omit optional fields; the
-normalization rules above preserve a stable local contract.
+`request_counts`, and object-valued `metadata`. OpenAI-compatible gateways may
+omit optional fields; the normalization rules above preserve a stable local
+contract.
 
 ## References
 
-OpenAI. (2026). *Batch API reference*. OpenAI Platform documentation.
-https://platform.openai.com/docs/api-reference/batch/object
+OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 4,
+2026, from https://platform.openai.com/docs/api-reference/batch/object
 
 PostgreSQL Global Development Group. (2026). *INSERT*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/current/sql-insert.html
+
+PostgreSQL Global Development Group. (2026). *Sequence manipulation functions*.
+In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/current/functions-sequence.html
