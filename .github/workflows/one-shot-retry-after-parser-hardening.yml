@@ -1,0 +1,198 @@
+name: One-shot Retry-After parser hardening
+
+on:
+  push:
+    branches: [agent/retry-after-parser-hardening]
+    paths:
+      - .github/workflows/one-shot-retry-after-parser-hardening.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-retry-after-parser-hardening
+  cancel-in-progress: true
+
+jobs:
+  harden-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout hardening branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/retry-after-parser-hardening
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Prove hostile Retry-After inputs are red
+        run: |
+          cat > tests/test_retry_after_parser_hardening.py <<'PY'
+          # SPDX-License-Identifier: Apache-2.0
+          """Regression tests for hostile and non-standard Retry-After values."""
+
+          from __future__ import annotations
+
+          from datetime import datetime, timezone
+
+          from pg_llm_batch import batch_api_client as client_mod
+
+
+          def test_oversized_ascii_delta_is_classified_as_excessive() -> None:
+              """A huge ASCII delta must not hit Python's bounded-int conversion error."""
+              now = datetime(2026, 8, 4, tzinfo=timezone.utc)
+              assert client_mod._parse_retry_after("9" * 5000, now) == float("inf")
+
+
+          def test_non_ascii_decimal_digits_are_not_rfc_delta_seconds() -> None:
+              """RFC delay-seconds use ASCII DIGIT, not arbitrary Unicode decimals."""
+              now = datetime(2026, 8, 4, tzinfo=timezone.utc)
+              assert client_mod._parse_retry_after("１２", now) is None
+          PY
+          pre_fix_head=$(git rev-parse HEAD)
+          set +e
+          uv run pytest -q tests/test_retry_after_parser_hardening.py > retry-after-red.log 2>&1
+          status=$?
+          set -e
+          cat retry-after-red.log
+          if [ "$status" -eq 0 ]; then
+            echo "::error::Hostile Retry-After regression unexpectedly passed before the fix."
+            exit 1
+          fi
+          if ! grep -Eq "ValueError|AssertionError" retry-after-red.log; then
+            echo "::error::The red test failed for an unexpected reason."
+            exit 1
+          fi
+          mkdir -p docs/superpowers/evidence
+          cat > docs/superpowers/evidence/2026-08-04-retry-after-parser-hardening-red.md <<EOF
+          # Retry-After Parser Hardening Red Evidence
+
+          - Pre-fix head: \`${pre_fix_head}\`
+          - Command: \`uv run pytest -q tests/test_retry_after_parser_hardening.py\`
+          - Expected result: failure before implementation
+          - Observed boundary failures: oversized ASCII decimal conversion and/or
+            acceptance of non-ASCII decimal digits
+
+          The workflow rejected unrelated setup failures and proceeded only after the
+          focused regression suite failed for a parser assertion or conversion error.
+          EOF
+
+      - name: Apply the minimal RFC-aligned fix and documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+
+          client_path = Path("pg_llm_batch/batch_api_client.py")
+          client = client_path.read_text(encoding="utf-8")
+          client = replace_once(
+              client,
+              '''    if candidate.isdecimal():
+                  return float(int(candidate))
+          ''',
+              '''    if candidate.isascii() and candidate.isdecimal():
+                  return float(candidate)
+          ''',
+              "Retry-After ASCII decimal parser",
+          )
+          client_path.write_text(client, encoding="utf-8")
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          readme = replace_once(
+              readme,
+              "A bounded RFC `Retry-After` delta or HTTP-date is honored;",
+              "A bounded RFC `Retry-After` ASCII delta or HTTP-date is honored;",
+              "README Retry-After grammar",
+          )
+          readme_path.write_text(readme, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          fixed_entry = '''
+          ### Fixed
+
+          - Retry-After parsing now rejects non-ASCII decimal digits and treats
+            oversized ASCII deltas as excessive guidance without triggering Python
+            integer-conversion limits.
+          '''
+          if "oversized ASCII deltas" not in changelog:
+              changelog = changelog.replace("\n## [0.1.0]", fixed_entry + "\n## [0.1.0]", 1)
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          plan_path = Path("docs/superpowers/plans/2026-08-04-retry-after-parser-hardening.md")
+          plan = plan_path.read_text(encoding="utf-8")
+          for step in (
+              "Write the focused failing tests",
+              "Run the focused tests and require a red result",
+              "Preserve red evidence",
+              "Replace the decimal branch",
+              "Run the focused tests",
+              "Run the complete retry boundary suite",
+              "Clarify README grammar",
+              "Add the changelog entry",
+              "Self-review documentation",
+          ):
+              plan = plan.replace(f"- [ ] **Step", "- [x] **Step", 1)
+          plan_path.write_text(plan, encoding="utf-8")
+          PY
+
+      - name: Verify the hardened product tree
+        run: |
+          set -euo pipefail
+          uv run pytest -q \
+            tests/test_retry_after_parser_hardening.py \
+            tests/test_idempotent_get_retries.py \
+            tests/test_retry_edge_coverage.py \
+            tests/test_http_transport.py
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          uv build --no-sources
+
+      - name: Publish verified hardening and remove this workflow
+        env:
+          BRANCH_NAME: agent/retry-after-parser-hardening
+        run: |
+          rm .github/workflows/one-shot-retry-after-parser-hardening.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pg_llm_batch/batch_api_client.py \
+            tests/test_retry_after_parser_hardening.py \
+            README.md \
+            CHANGELOG.md \
+            docs/superpowers/specs/2026-08-04-retry-after-parser-hardening-design.md \
+            docs/superpowers/plans/2026-08-04-retry-after-parser-hardening.md \
+            docs/superpowers/evidence/2026-08-04-retry-after-parser-hardening-red.md \
+            .github/workflows/one-shot-retry-after-parser-hardening.yml
+          git commit -m "fix(gateway): harden Retry-After decimal parsing"
+          git push origin "HEAD:${BRANCH_NAME}"
