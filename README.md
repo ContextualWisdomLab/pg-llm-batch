@@ -147,10 +147,10 @@ from pg_llm_batch.batch_api_client import config_credentials_provider
 dsn = my_app_dsn()               # your app already owns the DSN
 config, secrets = PostgresConfigStore(dsn), SecretStore(dsn)
 client = BatchAPIClient(
-        dsn,
-        config_credentials_provider(config, secrets),
-        max_download_bytes=256 * 1024 * 1024,
-    )
+    dsn,
+    config_credentials_provider(config, secrets),
+    max_download_bytes=256 * 1024 * 1024,
+)
 ```
 
 Apply just the DDL subset into an existing database (idempotent, all tables are
