@@ -1,0 +1,116 @@
+name: One-shot PEP 639 red verification
+
+on:
+  push:
+    branches: [agent/modernize-license-metadata]
+    paths:
+      - .github/workflows/one-shot-pep639-red.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-pep639-red
+  cancel-in-progress: true
+
+jobs:
+  verify-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout license branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/modernize-license-metadata
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+      - name: Add packaging metadata contract tests
+        run: |
+          cat > tests/test_packaging_metadata.py <<'PY'
+          # SPDX-License-Identifier: Apache-2.0
+          """Contract tests for standardized package licensing metadata."""
+
+          from __future__ import annotations
+
+          from importlib.metadata import metadata
+          from pathlib import Path
+
+
+          ROOT = Path(__file__).resolve().parents[1]
+
+
+          def test_pyproject_uses_pep639_license_metadata() -> None:
+              """Source metadata uses the PEP 639 expression and legal-file fields."""
+              project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+              assert 'requires = ["setuptools>=77.0.3", "wheel"]' in project
+              assert 'license = "Apache-2.0"' in project
+              assert 'license-files = ["LICENSE", "NOTICE"]' in project
+              assert "license = {" not in project
+              assert "License ::" not in project
+
+
+          def test_installed_distribution_exposes_normalized_license_metadata() -> None:
+              """Installed metadata exposes the SPDX expression and both legal files."""
+              package_metadata = metadata("pg-llm-batch")
+              assert package_metadata["License-Expression"] == "Apache-2.0"
+              assert set(package_metadata.get_all("License-File") or ()) == {
+                  "LICENSE",
+                  "NOTICE",
+              }
+              assert package_metadata.get("License") is None
+          PY
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Prove the new contract is red
+        run: |
+          set -euo pipefail
+          set +e
+          uv run pytest -q tests/test_packaging_metadata.py 2>&1 | tee /tmp/pep639-red.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -eq 0 ]; then
+            echo "Expected PEP 639 tests to fail before implementation" >&2
+            exit 1
+          fi
+          grep -q "setuptools>=77.0.3" /tmp/pep639-red.log
+          grep -q "License-Expression" /tmp/pep639-red.log
+      - name: Record evidence and remove one-shot workflow
+        env:
+          BRANCH_NAME: agent/modernize-license-metadata
+          RED_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p docs/superpowers/evidence
+          cat > docs/superpowers/evidence/2026-08-04-pep639-license-red.md <<EOF
+          # PEP 639 License Metadata Red Evidence
+
+          Pre-implementation head: \`${RED_HEAD}\`
+
+          The source and installed-distribution contract tests were added before changing production packaging metadata. The focused test command returned a non-zero status for the intended reasons:
+
+          - the build-backend floor was still \`setuptools>=68\`;
+          - \`project.license\` was still the deprecated table form;
+          - \`project.license-files\` was not declared explicitly;
+          - installed metadata did not expose \`License-Expression: Apache-2.0\`.
+
+          The one-shot workflow required both the source-floor and installed-metadata failure signatures before recording this evidence.
+          EOF
+          rm .github/workflows/one-shot-pep639-red.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add tests/test_packaging_metadata.py \
+            docs/superpowers/evidence/2026-08-04-pep639-license-red.md \
+            .github/workflows/one-shot-pep639-red.yml
+          git commit -m "test(packaging): define PEP 639 license contract"
+          git push origin "HEAD:${BRANCH_NAME}"
