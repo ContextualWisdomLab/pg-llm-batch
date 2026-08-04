@@ -1,0 +1,155 @@
+name: One-shot bounded download hardening
+
+on:
+  push:
+    branches:
+      - agent/bounded-result-downloads
+    paths:
+      - .github/workflows/bounded-download-hardening.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bounded-download-hardening-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  harden-download-boundary:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out product branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v6.0.2
+        with:
+          ref: agent/bounded-result-downloads
+          fetch-depth: 0
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Remove the unbounded compatibility fallback
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source_path = Path("pg_llm_batch/batch_api_client.py")
+          source = source_path.read_text(encoding="utf-8")
+          old_source = '''        stream = getattr(response, "content", None)
+                  if stream is None:
+                      text = await response.text()
+                      try:
+                          encoded_size = len(text.encode("utf-8"))
+                      except UnicodeEncodeError as exc:
+                          raise GatewayError(
+                              f"{operation} returned invalid UTF-8",
+                              status_code=getattr(response, "status", None),
+                              response_data={
+                                  "error_type": type(exc).__name__,
+                                  "byte_offset": exc.start,
+                              },
+                          ) from exc
+                      if encoded_size > self.max_download_bytes:
+                          raise self._download_limit_error(
+                              response,
+                              operation,
+                              declared_bytes=declared_bytes,
+                              bytes_read=0,
+                          )
+                      return text
+          '''.replace("          ", "")
+          new_source = '''        stream = getattr(response, "content", None)
+                  iterator = getattr(stream, "iter_chunked", None)
+                  if not callable(iterator):
+                      raise GatewayError(
+                          f"{operation} response does not expose a bounded byte stream",
+                          status_code=getattr(response, "status", None),
+                          response_data={"error_type": "MissingBoundedStream"},
+                      )
+          '''.replace("          ", "")
+          if source.count(old_source) != 1:
+              raise SystemExit("expected one unbounded response.text fallback")
+          source_path.write_text(source.replace(old_source, new_source), encoding="utf-8")
+
+          test_path = Path("tests/test_bounded_result_downloads.py")
+          tests = test_path.read_text(encoding="utf-8")
+          old_text_method = '''    def __init__(self, text: str, *, status: int = 200) -> None:
+                  self.status = status
+                  self.content_length = None
+                  self._text = text
+          
+              async def text(self) -> str:
+                  """Return the configured compatibility response body."""
+                  return self._text
+          '''.replace("          ", "")
+          new_text_method = '''    def __init__(self, text: str, *, status: int = 200) -> None:
+                  self.status = status
+                  self.content_length = None
+                  self._text = text
+                  self.text_called = False
+          
+              async def text(self) -> str:
+                  """Record any unsafe whole-body fallback attempt."""
+                  self.text_called = True
+                  return self._text
+          '''.replace("          ", "")
+          if tests.count(old_text_method) != 1:
+              raise SystemExit("expected one TextResponse implementation")
+          tests = tests.replace(old_text_method, new_text_method)
+
+          first_marker = "async def test_text_compatibility_path_is_also_bounded() -> None:\n"
+          next_marker = "def test_client_uses_documented_default_download_limit() -> None:\n"
+          if tests.count(first_marker) != 1 or tests.count(next_marker) != 1:
+              raise SystemExit("expected compatibility test boundaries")
+          prefix, remainder = tests.split(first_marker, 1)
+          _old_block, suffix = remainder.split(next_marker, 1)
+          replacement = '''async def test_response_without_stream_fails_closed_before_text_buffering() -> None:
+              """Adapters without a byte stream fail before whole-body buffering."""
+              response = TextResponse('{"ok":1}\\n')
+              client = BatchAPIClient(
+                  "postgresql://x",
+                  credentials,
+                  max_download_bytes=9,
+              )
+              client._session = Session(response)
+          
+              with pytest.raises(GatewayError, match="bounded byte stream") as exc_info:
+                  await client._download_jsonl_file(
+                      "output-1",
+                      "default",
+                      batch_id="batch-1",
+                      file_kind="result",
+                  )
+          
+              assert response.text_called is False
+              assert exc_info.value.response_data == {
+                  "error_type": "MissingBoundedStream",
+              }
+          
+          
+          '''
+          tests = prefix + replacement + next_marker + suffix
+
+          trailing_marker = "async def test_text_compatibility_path_accepts_a_bounded_body() -> None:\n"
+          if tests.count(trailing_marker) != 1:
+              raise SystemExit("expected obsolete trailing compatibility tests")
+          tests = tests.split(trailing_marker, 1)[0].rstrip() + "\n"
+          test_path.write_text(tests, encoding="utf-8")
+          PY
+      - name: Verify fail-closed bounded downloads
+        run: |
+          set -euo pipefail
+          uv sync --locked
+          uv run pytest -q tests/test_bounded_result_downloads.py
+          uv run pytest -q
+          uv run ruff check pg_llm_batch tests
+      - name: Publish hardening and remove this workflow
+        env:
+          BRANCH_NAME: agent/bounded-result-downloads
+        run: |
+          set -euo pipefail
+          rm .github/workflows/bounded-download-hardening.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pg_llm_batch/batch_api_client.py tests/test_bounded_result_downloads.py .github/workflows/bounded-download-hardening.yml
+          git diff --cached --quiet && { echo "No hardening changes generated" >&2; exit 1; }
+          git commit -m "fix(gateway): fail closed without a bounded response stream"
+          git push origin "HEAD:${BRANCH_NAME}"
