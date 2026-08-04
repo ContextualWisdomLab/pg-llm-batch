@@ -15,9 +15,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from ipaddress import ip_address
 from math import isfinite
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
@@ -34,12 +37,58 @@ DEFAULT_USER_AGENT = "pg-llm-batch"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
+DEFAULT_MAX_RETRY_ATTEMPTS = 3
+DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
+DEFAULT_RETRY_MAX_DELAY_SECONDS = 30.0
+RETRYABLE_GET_STATUSES = frozenset({408, 429, 502, 503, 504})
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 BATCH_ENDPOINT_PATTERN = re.compile(
     r"/[A-Za-z0-9_~-]+(?:/[A-Za-z0-9._~-]+){0,15}\Z"
 )
+
+
+def _utc_now() -> datetime:
+    """Return the current timezone-aware UTC time for retry calculations."""
+    return datetime.now(timezone.utc)
+
+
+def _parse_retry_after(value: Any, now: datetime) -> Optional[float]:
+    """Parse an RFC Retry-After delta or HTTP-date into a non-negative delay."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.isdecimal():
+        return float(int(candidate))
+    try:
+        parsed = parsedate_to_datetime(candidate)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    delay = (
+        parsed.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+    ).total_seconds()
+    return max(0.0, delay)
+
+
+def _normalize_retry_delay(field: str, value: Any) -> float:
+    """Validate and normalize one non-negative finite retry delay."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not isfinite(float(value))
+        or float(value) < 0
+    ):
+        raise ValidationError(
+            field=field,
+            value=value,
+            reason="must be a finite non-negative number of seconds",
+        )
+    return float(value)
 
 
 @dataclass
@@ -172,8 +221,11 @@ class BatchAPIClient:
         *,
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
+        max_retry_attempts: int = DEFAULT_MAX_RETRY_ATTEMPTS,
+        retry_base_delay_seconds: float = DEFAULT_RETRY_BASE_DELAY_SECONDS,
+        retry_max_delay_seconds: float = DEFAULT_RETRY_MAX_DELAY_SECONDS,
     ) -> None:
-        """Initialize the client with bounded HTTP time and download resources."""
+        """Initialize the client with bounded HTTP, download, and retry resources."""
         if not postgres_dsn:
             raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
         try:
@@ -204,10 +256,35 @@ class BatchAPIClient:
                 value=max_download_bytes,
                 reason="must be a positive integer number of bytes",
             )
+        if (
+            isinstance(max_retry_attempts, bool)
+            or not isinstance(max_retry_attempts, int)
+            or max_retry_attempts <= 0
+        ):
+            raise ValidationError(
+                field="max_retry_attempts",
+                value=max_retry_attempts,
+                reason="must be a positive integer total-attempt limit",
+            )
+        normalized_retry_base = _normalize_retry_delay(
+            "retry_base_delay_seconds", retry_base_delay_seconds
+        )
+        normalized_retry_max = _normalize_retry_delay(
+            "retry_max_delay_seconds", retry_max_delay_seconds
+        )
+        if normalized_retry_base > normalized_retry_max:
+            raise ValidationError(
+                field="retry_base_delay_seconds",
+                value=retry_base_delay_seconds,
+                reason="must not exceed retry_max_delay_seconds",
+            )
         self.postgres_dsn = postgres_dsn
         self._credentials = credentials
         self.request_timeout_seconds = normalized_timeout
         self.max_download_bytes = max_download_bytes
+        self.max_retry_attempts = max_retry_attempts
+        self.retry_base_delay_seconds = normalized_retry_base
+        self.retry_max_delay_seconds = normalized_retry_max
         self._request_timeout = aiohttp.ClientTimeout(total=normalized_timeout)
         self._session: Optional[aiohttp.ClientSession] = None
 
@@ -228,6 +305,34 @@ class BatchAPIClient:
             self._session = aiohttp.ClientSession()
         return self._session
 
+    def _fallback_retry_delay(self, failed_attempt: int) -> float:
+        """Return bounded equal-jitter exponential delay after one failed attempt."""
+        ceiling = min(
+            self.retry_base_delay_seconds * (2 ** (failed_attempt - 1)),
+            self.retry_max_delay_seconds,
+        )
+        if ceiling <= 0:
+            return 0.0
+        return random.uniform(ceiling / 2, ceiling)
+
+    def _retry_delay_for_response(
+        self,
+        response: Any,
+        failed_attempt: int,
+    ) -> Optional[float]:
+        """Choose a bounded response retry delay or refuse excessive guidance."""
+        headers = getattr(response, "headers", None)
+        header_get = getattr(headers, "get", None)
+        retry_after_value = (
+            header_get("Retry-After") if callable(header_get) else None
+        )
+        retry_after = _parse_retry_after(retry_after_value, _utc_now())
+        if retry_after is not None:
+            if retry_after > self.retry_max_delay_seconds:
+                return None
+            return retry_after
+        return self._fallback_retry_delay(failed_attempt)
+
     @asynccontextmanager
     async def _request(
         self,
@@ -237,27 +342,60 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        """Yield a response for one HTTP request, mapping transport errors to GatewayError."""
+        """Yield a response, retrying only bounded idempotent GET failures."""
         session = self._get_session()
-        request = getattr(session, method.lower())
-        try:
-            async with request(
-                url,
-                timeout=self._request_timeout,
-                allow_redirects=False,
-                **kwargs,
-            ) as response:
-                yield response
-        except GatewayError:
-            raise
-        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            raise GatewayError(
-                f"{operation} transport failed",
-                response_data={
-                    "error_type": type(exc).__name__,
-                    "timeout_seconds": self.request_timeout_seconds,
-                },
-            ) from exc
+        normalized_method = method.lower()
+        request = getattr(session, normalized_method)
+        retry_safe = normalized_method == "get"
+        attempt = 1
+        while True:
+            delay: Optional[float] = None
+            retry_reason = ""
+            try:
+                async with request(
+                    url,
+                    timeout=self._request_timeout,
+                    allow_redirects=False,
+                    **kwargs,
+                ) as response:
+                    if (
+                        retry_safe
+                        and attempt < self.max_retry_attempts
+                        and response.status in RETRYABLE_GET_STATUSES
+                    ):
+                        delay = self._retry_delay_for_response(response, attempt)
+                        if delay is None:
+                            yield response
+                            return
+                        retry_reason = f"HTTP {response.status}"
+                    else:
+                        yield response
+                        return
+            except GatewayError:
+                raise
+            except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                if not retry_safe or attempt >= self.max_retry_attempts:
+                    raise GatewayError(
+                        f"{operation} transport failed",
+                        response_data={
+                            "error_type": type(exc).__name__,
+                            "timeout_seconds": self.request_timeout_seconds,
+                        },
+                    ) from exc
+                delay = self._fallback_retry_delay(attempt)
+                retry_reason = type(exc).__name__
+
+            logger.warning(
+                "%s retrying idempotent GET after %s "
+                "(attempt %s/%s, delay %.3fs)",
+                operation,
+                retry_reason,
+                attempt,
+                self.max_retry_attempts,
+                delay,
+            )
+            await asyncio.sleep(delay)
+            attempt += 1
 
     async def _read_json_object(self, response: Any, operation: str) -> Dict[str, Any]:
         """Decode a response body and require it to be a JSON object, else raise."""

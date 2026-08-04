@@ -361,3 +361,46 @@ async def test_post_transport_failure_is_not_retried(monkeypatch) -> None:
 
     assert sleeps == []
     assert len(session.calls) == 1
+
+
+def test_retry_after_parser_treats_naive_http_date_as_utc(monkeypatch) -> None:
+    """A defensively parsed naive HTTP-date is interpreted as UTC."""
+    monkeypatch.setattr(
+        client_mod,
+        "parsedate_to_datetime",
+        lambda _value: datetime(2015, 10, 21, 7, 28, 0),
+    )
+    now = datetime(2015, 10, 21, 7, 27, 30, tzinfo=timezone.utc)
+    assert client_mod._parse_retry_after("ignored", now) == 30.0
+
+
+async def test_zero_fallback_delay_retries_without_random_jitter(monkeypatch) -> None:
+    """A deliberate zero-delay policy retries without consulting randomness."""
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    def fail_random(_lower: float, _upper: float) -> float:
+        raise AssertionError("zero ceiling must not request jitter")
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)
+    monkeypatch.setattr(client_mod.random, "uniform", fail_random)
+    session = SequenceSession(
+        [
+            Response(503, {"error": "busy"}),
+            Response(200, {"status": "completed", "request_counts": {}}),
+        ]
+    )
+    client = BatchAPIClient(
+        "postgresql://x",
+        credentials,
+        retry_base_delay_seconds=0,
+        retry_max_delay_seconds=0,
+    )
+    client._session = session
+
+    result = await client.get_batch_status("batch-1", "default")
+
+    assert result["status"] == "completed"
+    assert sleeps == [0.0]

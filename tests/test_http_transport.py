@@ -99,6 +99,7 @@ async def test_transport_errors_are_converted_to_structured_gateway_errors(error
         "postgresql://x",
         _credentials,
         request_timeout_seconds=7,
+        max_retry_attempts=1,
     )
     client._session = FailingSession()
 
