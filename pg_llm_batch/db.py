@@ -10,10 +10,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+from .exceptions import ValidationError
 
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
@@ -24,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 MAX_PROVIDER_METADATA_BYTES = 64 * 1024
+MAX_ENDPOINT_ALIAS_CHARACTERS = 128
+MAX_REMOTE_RESOURCE_ID_CHARACTERS = 256
+REMOTE_RESOURCE_ID_PATTERN = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_REMOTE_RESOURCE_ID_CHARACTERS - 1}}}\Z"
+)
 REMOTE_TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 
 
@@ -80,6 +88,80 @@ def _provider_text(value: Any) -> Optional[str]:
 def _provider_count(value: Any) -> int:
     """Return a non-negative integer provider count or the safe default zero."""
     return value if type(value) is int and value >= 0 else 0
+
+
+def validate_endpoint_alias(value: Any) -> str:
+    """Normalize one endpoint alias within the persisted schema contract.
+
+    Endpoint aliases identify configured gateway credentials and participate in
+    the durable lifecycle table's compound key. Whitespace surrounding an alias
+    is ignored, while empty, non-string, or overlong values fail before database
+    reservation, secret resolution, or provider network activity.
+
+    Args:
+        value: Candidate endpoint alias supplied by a caller or host service.
+
+    Returns:
+        The trimmed endpoint alias.
+
+    Raises:
+        ValidationError: If the alias is not 1-128 characters after trimming.
+    """
+    if not isinstance(value, str):
+        raise ValidationError(
+            field="endpoint_alias",
+            value=value,
+            reason=(
+                "must be a non-empty string of at most "
+                f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
+            ),
+        )
+    normalized = value.strip()
+    if not normalized or len(normalized) > MAX_ENDPOINT_ALIAS_CHARACTERS:
+        raise ValidationError(
+            field="endpoint_alias",
+            value=value,
+            reason=(
+                "must be a non-empty string of at most "
+                f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
+            ),
+        )
+    return normalized
+
+
+def validate_remote_resource_id(value: Any, field: str) -> str:
+    """Validate one provider identifier against the durable gateway contract.
+
+    The supported identifier syntax is safe for URL path segments and mirrors
+    the lifecycle schema's 256-character maximum. Keeping the same contract for
+    caller IDs and provider-returned IDs prevents a successful remote operation
+    from failing only when its durable state reaches PostgreSQL.
+
+    Args:
+        value: Candidate provider file or batch identifier.
+        field: Field name included in structured validation evidence.
+
+    Returns:
+        The validated identifier without modification.
+
+    Raises:
+        ValidationError: If the value is not a supported 1-256 character ASCII
+            resource identifier.
+    """
+    if (
+        not isinstance(value, str)
+        or REMOTE_RESOURCE_ID_PATTERN.fullmatch(value) is None
+    ):
+        raise ValidationError(
+            field=field,
+            value=value,
+            reason=(
+                "must be 1-256 ASCII characters beginning with an alphanumeric "
+                "character and containing only letters, digits, dot, underscore, "
+                "colon, or hyphen"
+            ),
+        )
+    return value
 
 
 def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
@@ -158,22 +240,32 @@ def persist_remote_batch_state(
             remote identifier, or observation timestamp is invalid.
         RuntimeError: If psycopg is unavailable.
     """
-    _require_psycopg()
     if (
         isinstance(observation_order, bool)
         or not isinstance(observation_order, int)
         or observation_order <= 0
     ):
         raise ValueError("observation_order must be a positive integer")
-    if not isinstance(endpoint_alias, str) or not endpoint_alias.strip():
-        raise ValueError("endpoint_alias must be a non-empty string")
-    normalized_alias = endpoint_alias.strip()
+    try:
+        normalized_alias = validate_endpoint_alias(endpoint_alias)
+    except ValidationError as exc:
+        raise ValueError(
+            "endpoint_alias must be a non-empty string of at most "
+            f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
+        ) from exc
     if not isinstance(provider_batch, Mapping):
         raise ValueError("provider_batch must be a mapping object")
 
-    remote_batch_id = provider_batch.get("id")
-    if not isinstance(remote_batch_id, str) or not remote_batch_id:
-        raise ValueError("provider batch id must be a non-empty string")
+    try:
+        remote_batch_id = validate_remote_resource_id(
+            provider_batch.get("id"),
+            "remote_batch_id",
+        )
+    except ValidationError as exc:
+        raise ValueError(
+            "remote_batch_id (provider batch id) must be a supported non-empty "
+            f"string of at most {MAX_REMOTE_RESOURCE_ID_CHARACTERS} characters"
+        ) from exc
 
     observed = observed_at or datetime.now(timezone.utc)
     if (
@@ -304,6 +396,7 @@ def persist_remote_batch_state(
         terminal_at,
         observed,
     )
+    _require_psycopg()
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(sql, params)
