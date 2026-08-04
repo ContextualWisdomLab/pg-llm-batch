@@ -1,0 +1,397 @@
+name: One-shot retry implementation
+
+on:
+  push:
+    branches: [agent/idempotent-get-retries]
+    paths:
+      - .github/workflows/one-shot-retry-implementation.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-retry-implementation
+  cancel-in-progress: true
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout retry branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: agent/idempotent-get-retries
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Apply retry implementation and documentation
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+
+          path = Path("pg_llm_batch/batch_api_client.py")
+          source = path.read_text(encoding="utf-8")
+          source = replace_once(
+              source,
+              '''import asyncio
+          import json
+          import logging
+          import re
+          from contextlib import asynccontextmanager
+          from dataclasses import dataclass
+          from ipaddress import ip_address
+          from math import isfinite
+          ''',
+              '''import asyncio
+          import json
+          import logging
+          import random
+          import re
+          from contextlib import asynccontextmanager
+          from dataclasses import dataclass
+          from datetime import datetime, timezone
+          from email.utils import parsedate_to_datetime
+          from ipaddress import ip_address
+          from math import isfinite
+          ''',
+              "retry imports",
+          )
+          source = replace_once(
+              source,
+              '''DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
+          DOWNLOAD_CHUNK_BYTES = 64 * 1024
+          TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
+          ''',
+              '''DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
+          DOWNLOAD_CHUNK_BYTES = 64 * 1024
+          DEFAULT_MAX_RETRY_ATTEMPTS = 3
+          DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
+          DEFAULT_RETRY_MAX_DELAY_SECONDS = 30.0
+          RETRYABLE_GET_STATUSES = frozenset({408, 429, 502, 503, 504})
+          TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
+          ''',
+              "retry constants",
+          )
+          helpers = '''def _utc_now() -> datetime:
+              """Return the current timezone-aware UTC time for retry calculations."""
+              return datetime.now(timezone.utc)
+
+
+          def _parse_retry_after(value: Any, now: datetime) -> Optional[float]:
+              """Parse an RFC Retry-After delta or HTTP-date into a non-negative delay."""
+              if not isinstance(value, str):
+                  return None
+              candidate = value.strip()
+              if not candidate:
+                  return None
+              if candidate.isdecimal():
+                  return float(int(candidate))
+              try:
+                  parsed = parsedate_to_datetime(candidate)
+              except (TypeError, ValueError, OverflowError):
+                  return None
+              if parsed.tzinfo is None:
+                  parsed = parsed.replace(tzinfo=timezone.utc)
+              delay = (
+                  parsed.astimezone(timezone.utc) - now.astimezone(timezone.utc)
+              ).total_seconds()
+              return max(0.0, delay)
+
+
+          def _normalize_retry_delay(field: str, value: Any) -> float:
+              """Validate and normalize one non-negative finite retry delay."""
+              if (
+                  isinstance(value, bool)
+                  or not isinstance(value, (int, float))
+                  or not isfinite(float(value))
+                  or float(value) < 0
+              ):
+                  raise ValidationError(
+                      field=field,
+                      value=value,
+                      reason="must be a finite non-negative number of seconds",
+                  )
+              return float(value)
+
+
+          '''
+          source = replace_once(
+              source,
+              "@dataclass\nclass GatewayCredentials:\n",
+              helpers + "@dataclass\nclass GatewayCredentials:\n",
+              "retry helpers",
+          )
+          source = replace_once(
+              source,
+              '''        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                  max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
+              ) -> None:
+                  """Initialize the client with bounded HTTP time and download resources."""
+          ''',
+              '''        request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
+                  max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
+                  max_retry_attempts: int = DEFAULT_MAX_RETRY_ATTEMPTS,
+                  retry_base_delay_seconds: float = DEFAULT_RETRY_BASE_DELAY_SECONDS,
+                  retry_max_delay_seconds: float = DEFAULT_RETRY_MAX_DELAY_SECONDS,
+              ) -> None:
+                  """Initialize the client with bounded HTTP, download, and retry resources."""
+          ''',
+              "constructor signature",
+          )
+          source = replace_once(
+              source,
+              '''        self.postgres_dsn = postgres_dsn
+                  self._credentials = credentials
+                  self.request_timeout_seconds = normalized_timeout
+                  self.max_download_bytes = max_download_bytes
+                  self._request_timeout = aiohttp.ClientTimeout(total=normalized_timeout)
+          ''',
+              '''        if (
+                      isinstance(max_retry_attempts, bool)
+                      or not isinstance(max_retry_attempts, int)
+                      or max_retry_attempts <= 0
+                  ):
+                      raise ValidationError(
+                          field="max_retry_attempts",
+                          value=max_retry_attempts,
+                          reason="must be a positive integer total-attempt limit",
+                      )
+                  normalized_retry_base = _normalize_retry_delay(
+                      "retry_base_delay_seconds", retry_base_delay_seconds
+                  )
+                  normalized_retry_max = _normalize_retry_delay(
+                      "retry_max_delay_seconds", retry_max_delay_seconds
+                  )
+                  if normalized_retry_base > normalized_retry_max:
+                      raise ValidationError(
+                          field="retry_base_delay_seconds",
+                          value=retry_base_delay_seconds,
+                          reason="must not exceed retry_max_delay_seconds",
+                      )
+                  self.postgres_dsn = postgres_dsn
+                  self._credentials = credentials
+                  self.request_timeout_seconds = normalized_timeout
+                  self.max_download_bytes = max_download_bytes
+                  self.max_retry_attempts = max_retry_attempts
+                  self.retry_base_delay_seconds = normalized_retry_base
+                  self.retry_max_delay_seconds = normalized_retry_max
+                  self._request_timeout = aiohttp.ClientTimeout(total=normalized_timeout)
+          ''',
+              "constructor retry validation",
+          )
+          retry_methods = '''    def _fallback_retry_delay(self, failed_attempt: int) -> float:
+                  """Return bounded equal-jitter exponential delay after one failed attempt."""
+                  ceiling = min(
+                      self.retry_base_delay_seconds * (2 ** (failed_attempt - 1)),
+                      self.retry_max_delay_seconds,
+                  )
+                  if ceiling <= 0:
+                      return 0.0
+                  return random.uniform(ceiling / 2, ceiling)
+
+              def _retry_delay_for_response(
+                  self,
+                  response: Any,
+                  failed_attempt: int,
+              ) -> Optional[float]:
+                  """Choose a bounded response retry delay or refuse excessive guidance."""
+                  headers = getattr(response, "headers", None)
+                  header_get = getattr(headers, "get", None)
+                  retry_after_value = (
+                      header_get("Retry-After") if callable(header_get) else None
+                  )
+                  retry_after = _parse_retry_after(retry_after_value, _utc_now())
+                  if retry_after is not None:
+                      if retry_after > self.retry_max_delay_seconds:
+                          return None
+                      return retry_after
+                  return self._fallback_retry_delay(failed_attempt)
+
+          '''
+          source = replace_once(
+              source,
+              "    @asynccontextmanager\n    async def _request(\n",
+              retry_methods + "    @asynccontextmanager\n    async def _request(\n",
+              "retry methods",
+          )
+          old_request = '''        """Yield a response for one HTTP request, mapping transport errors to GatewayError."""
+                  session = self._get_session()
+                  request = getattr(session, method.lower())
+                  try:
+                      async with request(
+                          url,
+                          timeout=self._request_timeout,
+                          allow_redirects=False,
+                          **kwargs,
+                      ) as response:
+                          yield response
+                  except GatewayError:
+                      raise
+                  except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                      raise GatewayError(
+                          f"{operation} transport failed",
+                          response_data={
+                              "error_type": type(exc).__name__,
+                              "timeout_seconds": self.request_timeout_seconds,
+                          },
+                      ) from exc
+          '''
+          new_request = '''        """Yield a response, retrying only bounded idempotent GET failures."""
+                  session = self._get_session()
+                  normalized_method = method.lower()
+                  request = getattr(session, normalized_method)
+                  retry_safe = normalized_method == "get"
+                  attempt = 1
+                  while True:
+                      delay: Optional[float] = None
+                      retry_reason = ""
+                      try:
+                          async with request(
+                              url,
+                              timeout=self._request_timeout,
+                              allow_redirects=False,
+                              **kwargs,
+                          ) as response:
+                              if (
+                                  retry_safe
+                                  and attempt < self.max_retry_attempts
+                                  and response.status in RETRYABLE_GET_STATUSES
+                              ):
+                                  delay = self._retry_delay_for_response(response, attempt)
+                                  if delay is None:
+                                      yield response
+                                      return
+                                  retry_reason = f"HTTP {response.status}"
+                              else:
+                                  yield response
+                                  return
+                      except GatewayError:
+                          raise
+                      except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                          if not retry_safe or attempt >= self.max_retry_attempts:
+                              raise GatewayError(
+                                  f"{operation} transport failed",
+                                  response_data={
+                                      "error_type": type(exc).__name__,
+                                      "timeout_seconds": self.request_timeout_seconds,
+                                  },
+                              ) from exc
+                          delay = self._fallback_retry_delay(attempt)
+                          retry_reason = type(exc).__name__
+
+                      logger.warning(
+                          "%s retrying idempotent GET after %s "
+                          "(attempt %s/%s, delay %.3fs)",
+                          operation,
+                          retry_reason,
+                          attempt,
+                          self.max_retry_attempts,
+                          delay,
+                      )
+                      await asyncio.sleep(delay)
+                      attempt += 1
+          '''
+          source = replace_once(source, old_request, new_request, "request retry loop")
+          path.write_text(source, encoding="utf-8")
+
+          tests_path = Path("tests/test_idempotent_get_retries.py")
+          tests = tests_path.read_text(encoding="utf-8")
+          appendix = '''\n\ndef test_retry_after_parser_treats_naive_http_date_as_utc(monkeypatch) -> None:\n    """A defensively parsed naive HTTP-date is interpreted as UTC."""\n    monkeypatch.setattr(\n        client_mod,\n        "parsedate_to_datetime",\n        lambda _value: datetime(2015, 10, 21, 7, 28, 0),\n    )\n    now = datetime(2015, 10, 21, 7, 27, 30, tzinfo=timezone.utc)\n    assert client_mod._parse_retry_after("ignored", now) == 30.0\n\n\nasync def test_zero_fallback_delay_retries_without_random_jitter(monkeypatch) -> None:\n    """A deliberate zero-delay policy retries without consulting randomness."""\n    sleeps: list[float] = []\n\n    async def record_sleep(delay: float) -> None:\n        sleeps.append(delay)\n\n    def fail_random(_lower: float, _upper: float) -> float:\n        raise AssertionError("zero ceiling must not request jitter")\n\n    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)\n    monkeypatch.setattr(client_mod.random, "uniform", fail_random)\n    session = SequenceSession(\n        [\n            Response(503, {"error": "busy"}),\n            Response(200, {"status": "completed", "request_counts": {}}),\n        ]\n    )\n    client = BatchAPIClient(\n        "postgresql://x",\n        credentials,\n        retry_base_delay_seconds=0,\n        retry_max_delay_seconds=0,\n    )\n    client._session = session\n\n    result = await client.get_batch_status("batch-1", "default")\n\n    assert result["status"] == "completed"\n    assert sleeps == [0.0]\n'''
+          if "test_retry_after_parser_treats_naive_http_date_as_utc" not in tests:
+              tests_path.write_text(tests + appendix, encoding="utf-8")
+
+          transport_path = Path("tests/test_http_transport.py")
+          transport = transport_path.read_text(encoding="utf-8")
+          transport = replace_once(
+              transport,
+              '''        request_timeout_seconds=7,
+              )
+          ''',
+              '''        request_timeout_seconds=7,
+                  max_retry_attempts=1,
+              )
+          ''',
+              "transport final-error attempts",
+          )
+          transport_path.write_text(transport, encoding="utf-8")
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          anchor = '''UTF-8 responses fail with structured errors that do not echo provider content.
+          '''
+          addition = '''UTF-8 responses fail with structured errors that do not echo provider content.
+
+          Idempotent provider `GET` operations use up to three total attempts by default
+          for transient `408`, `429`, `502`, `503`, and `504` responses and for aiohttp
+          transport failures. A bounded RFC `Retry-After` delta or HTTP-date is honored;
+          otherwise the client uses equal-jitter exponential delay from 0.5 seconds up to
+          30 seconds. Guidance above the configured maximum is refused rather than
+          shortening an untrusted wait. Upload, batch creation, and cancellation `POST`
+          operations are never retried automatically. Operators can override
+          `max_retry_attempts`, `retry_base_delay_seconds`, and
+          `retry_max_delay_seconds` in the `BatchAPIClient` constructor.
+          '''
+          readme = replace_once(readme, anchor, addition, "README retry policy")
+          readme_path.write_text(readme, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          marker = '''- Bounded, streamed provider result and error downloads with a 128 MiB
+            decoded-byte default, strict UTF-8 validation, body-free oversize errors,
+            and fail-closed handling when a bounded byte stream is unavailable.
+          '''
+          replacement = marker + '''- Bounded retries for transient idempotent provider GET failures, including
+            RFC Retry-After support and equal-jitter exponential fallback; side-effecting
+            POST operations remain single-attempt.
+          '''
+          changelog = replace_once(changelog, marker, replacement, "changelog retry entry")
+          changelog_path.write_text(changelog, encoding="utf-8")
+          PY
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Verify retry implementation
+        run: |
+          set -euo pipefail
+          uv run pytest -q tests/test_idempotent_get_retries.py tests/test_http_transport.py
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv build --no-sources
+
+      - name: Publish verified retry implementation
+        env:
+          BRANCH_NAME: agent/idempotent-get-retries
+        run: |
+          rm .github/workflows/one-shot-retry-implementation.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pg_llm_batch/batch_api_client.py \
+            tests/test_idempotent_get_retries.py \
+            tests/test_http_transport.py \
+            README.md \
+            CHANGELOG.md \
+            .github/workflows/one-shot-retry-implementation.yml
+          git commit -m "feat(gateway): retry transient idempotent GET failures"
+          git push origin "HEAD:${BRANCH_NAME}"
