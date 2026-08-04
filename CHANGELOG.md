@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RFC Retry-After support and equal-jitter exponential fallback; side-effecting
   POST operations remain single-attempt.
 
+### Fixed
+
+- Hardened provider `Retry-After` delta parsing to accept RFC ASCII digits only
+  and refuse extremely long numeric guidance without leaking Python integer
+  conversion errors.
+
 ### Changed
 
 - Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff patch updates; setup-uv cache pruning is explicit to preserve the previous bounded cache-cost policy.
