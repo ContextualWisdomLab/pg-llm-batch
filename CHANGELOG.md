@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff patch updates; setup-uv cache pruning is explicit to preserve the previous bounded cache-cost policy.
 
+### Fixed
+
+- Retry-After parsing now rejects non-ASCII decimal digits and treats
+  oversized ASCII deltas as excessive guidance without triggering Python
+  integer-conversion limits.
+
 ## [0.1.0] - 2026-07-12
 
 ### Added

@@ -61,8 +61,8 @@ def _parse_retry_after(value: Any, now: datetime) -> Optional[float]:
     candidate = value.strip()
     if not candidate:
         return None
-    if candidate.isdecimal():
-        return float(int(candidate))
+    if candidate.isascii() and candidate.isdecimal():
+        return float(candidate)
     try:
         parsed = parsedate_to_datetime(candidate)
     except (TypeError, ValueError, OverflowError):

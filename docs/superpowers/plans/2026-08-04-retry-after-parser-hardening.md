@@ -31,7 +31,7 @@
 - Consumes: `pg_llm_batch.batch_api_client._parse_retry_after(value, now)`.
 - Produces: focused failing tests for oversized ASCII and non-ASCII decimal values.
 
-- [ ] **Step 1: Write the focused failing tests**
+- [x] **Step 1: Write the focused failing tests**
 
 ```python
 # SPDX-License-Identifier: Apache-2.0
@@ -56,7 +56,7 @@ def test_non_ascii_decimal_digits_are_not_rfc_delta_seconds() -> None:
     assert client_mod._parse_retry_after("１２", now) is None
 ```
 
-- [ ] **Step 2: Run the focused tests and require a red result**
+- [x] **Step 2: Run the focused tests and require a red result**
 
 Run:
 
@@ -67,7 +67,7 @@ uv run pytest -q tests/test_retry_after_parser_hardening.py
 
 Expected: failure because the oversized value raises `ValueError` and fullwidth digits are currently accepted.
 
-- [ ] **Step 3: Preserve red evidence**
+- [x] **Step 3: Preserve red evidence**
 
 Record the failing command, exact pre-fix head, and failure reason in the PR description or a committed evidence note. Do not reinterpret an unrelated setup failure as TDD evidence.
 
@@ -83,7 +83,7 @@ Record the failing command, exact pre-fix head, and failure reason in the PR des
 - Consumes: stripped candidate header strings.
 - Produces: `_parse_retry_after(value: Any, now: datetime) -> Optional[float]` with ASCII-only decimal handling.
 
-- [ ] **Step 1: Replace the decimal branch**
+- [x] **Step 1: Replace the decimal branch**
 
 ```python
 if candidate.isascii() and candidate.isdecimal():
@@ -92,7 +92,7 @@ if candidate.isascii() and candidate.isdecimal():
 
 Do not add a second retry limit or alter HTTP-date parsing.
 
-- [ ] **Step 2: Run the focused tests**
+- [x] **Step 2: Run the focused tests**
 
 Run:
 
@@ -102,7 +102,7 @@ uv run pytest -q tests/test_retry_after_parser_hardening.py
 
 Expected: `2 passed`.
 
-- [ ] **Step 3: Run the complete retry boundary suite**
+- [x] **Step 3: Run the complete retry boundary suite**
 
 Run:
 
@@ -127,7 +127,7 @@ Expected: every test passes; excessive guidance still causes no retry sleep or r
 - Consumes: the implemented parser contract.
 - Produces: explicit wire grammar and release-history traceability.
 
-- [ ] **Step 1: Clarify README grammar**
+- [x] **Step 1: Clarify README grammar**
 
 Change:
 
@@ -141,7 +141,7 @@ to:
 A bounded RFC `Retry-After` ASCII delta or HTTP-date is honored;
 ```
 
-- [ ] **Step 2: Add the changelog entry**
+- [x] **Step 2: Add the changelog entry**
 
 Under `Unreleased`, add:
 
@@ -153,7 +153,7 @@ Under `Unreleased`, add:
   limits.
 ```
 
-- [ ] **Step 3: Self-review documentation**
+- [x] **Step 3: Self-review documentation**
 
 Confirm there are no placeholders, no claim that exact-head hosted checks have already passed, and no contradiction with the maximum-delay refusal policy.
 
