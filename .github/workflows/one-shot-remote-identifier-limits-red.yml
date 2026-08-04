@@ -1,0 +1,191 @@
+name: One-shot remote identifier limits red verification
+
+on:
+  push:
+    branches: [agent/persist-remote-batch-lifecycle]
+    paths:
+      - .github/workflows/one-shot-remote-identifier-limits-red.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-remote-identifier-limits-red
+  cancel-in-progress: true
+
+jobs:
+  verify-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout lifecycle branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/persist-remote-batch-lifecycle
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Prove schema length contract is red
+        run: |
+          set -euo pipefail
+          cat > /tmp/test_remote_identifier_limits_red.py <<'PY'
+          from typing import Any
+
+          import pytest
+
+          from pg_llm_batch import db
+          from pg_llm_batch.batch_api_client import GatewayCredentials
+          from pg_llm_batch.durable_client import DurableBatchAPIClient
+
+
+          class Cursor:
+              def __init__(self, driver: Any) -> None:
+                  self.driver = driver
+
+              def __enter__(self):
+                  return self
+
+              def __exit__(self, *_exc: Any):
+                  return None
+
+              def execute(self, sql: str, params: Any = None) -> None:
+                  self.driver.executions.append((sql, params))
+
+
+          class Connection:
+              def __init__(self, driver: Any) -> None:
+                  self.driver = driver
+
+              def __enter__(self):
+                  return self
+
+              def __exit__(self, *_exc: Any):
+                  return None
+
+              def cursor(self):
+                  return Cursor(self.driver)
+
+              def commit(self) -> None:
+                  return None
+
+
+          class Psycopg:
+              def __init__(self) -> None:
+                  self.executions = []
+
+              def connect(self, _dsn: str):
+                  return Connection(self)
+
+
+          class Response:
+              status = 201
+              headers = {}
+
+              async def json(self):
+                  return {"id": "batch-1", "status": "validating"}
+
+              async def __aenter__(self):
+                  return self
+
+              async def __aexit__(self, *_exc: Any):
+                  return None
+
+
+          class Session:
+              def __init__(self, calls: list[str]) -> None:
+                  self.calls = calls
+
+              def post(self, _url: str, **_kwargs: Any):
+                  self.calls.append("provider")
+                  return Response()
+
+
+          def credentials(_alias: str) -> GatewayCredentials:
+              return GatewayCredentials(
+                  url="https://gateway.example/v1",
+                  api_key="secret",
+              )
+
+
+          def test_persistence_rejects_overlong_schema_identifiers(monkeypatch):
+              monkeypatch.setattr(db, "psycopg", Psycopg())
+              with pytest.raises(ValueError, match="endpoint_alias"):
+                  db.persist_remote_batch_state(
+                      "postgresql://x",
+                      "a" * 129,
+                      {"id": "batch-1"},
+                      observation_order=1,
+                  )
+              with pytest.raises(ValueError, match="provider batch id"):
+                  db.persist_remote_batch_state(
+                      "postgresql://x",
+                      "primary",
+                      {"id": "b" * 257},
+                      observation_order=2,
+                  )
+
+
+          async def test_durable_client_rejects_overlong_alias_before_side_effects():
+              calls = []
+
+              def reserve(_dsn: str) -> int:
+                  calls.append("reserve")
+                  return 1
+
+              client = DurableBatchAPIClient(
+                  "postgresql://x",
+                  credentials,
+                  observation_reserver=reserve,
+                  lifecycle_recorder=lambda *_args: None,
+              )
+              client._session = Session(calls)
+
+              with pytest.raises(ValueError, match="endpoint_alias"):
+                  await client.create_batch_job("file-1", "a" * 129)
+
+              assert calls == []
+          PY
+          set +e
+          uv run pytest -q /tmp/test_remote_identifier_limits_red.py \
+            2>&1 | tee /tmp/remote-identifier-limits-red.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "${status}" -eq 0 ]; then
+            echo "Expected remote identifier length tests to fail before implementation" >&2
+            exit 1
+          fi
+          grep -Eq 'DID NOT RAISE|assert .* == \[\]' \
+            /tmp/remote-identifier-limits-red.log
+      - name: Record red evidence and remove one-shot workflow
+        env:
+          BRANCH_NAME: agent/persist-remote-batch-lifecycle
+          PRE_IMPLEMENTATION_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          cat > docs/superpowers/evidence/2026-08-04-remote-identifier-limits-red.md <<EOF
+          # Remote Identifier Length Red Evidence
+
+          Pre-implementation head: \`${PRE_IMPLEMENTATION_HEAD}\`.
+
+          Focused tests were written before production changes and failed for the intended reasons: persistence accepted endpoint aliases longer than 128 characters and provider batch identifiers longer than 256 characters, while the durable client reached reservation/provider seams before rejecting an overlong alias. These limits already existed in the PostgreSQL schema and therefore had to be enforced before avoidable remote/local split-brain behavior.
+          EOF
+          rm .github/workflows/one-shot-remote-identifier-limits-red.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            docs/superpowers/evidence/2026-08-04-remote-identifier-limits-red.md \
+            .github/workflows/one-shot-remote-identifier-limits-red.yml
+          git commit -m "docs(lifecycle): record identifier limit red evidence"
+          git push origin "HEAD:${BRANCH_NAME}"
