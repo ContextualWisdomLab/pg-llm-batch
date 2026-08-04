@@ -134,6 +134,41 @@ async def test_completed_batch_returns_output_and_error_records():
     assert result["errors"][0]["custom_id"] == "bad"
 
 
+async def test_blank_jsonl_lines_are_skipped():
+    """Empty lines between JSONL records are ignored, not parsed as records."""
+    session = Session(
+        [
+            (
+                "/batches/done",
+                Response(
+                    200,
+                    {
+                        "status": "completed",
+                        "output_file_id": "output-1",
+                        "request_counts": {"total": 2, "completed": 2, "failed": 0},
+                    },
+                ),
+            ),
+            (
+                "/files/output-1/content",
+                Response(
+                    200,
+                    text='{"custom_id": "a"}\n\n{"custom_id": "b"}\n',
+                ),
+            ),
+        ]
+    )
+    client = BatchAPIClient("postgresql://x", _credentials)
+    client._session = session
+
+    result = await client.download_results("done", "default")
+
+    assert result["batch_succeeded"] is True
+    assert result["response_count"] == 2
+    assert [record["custom_id"] for record in result["responses"]] == ["a", "b"]
+    assert result["error_count"] == 0
+
+
 @pytest.mark.parametrize(
     ("content", "message", "details"),
     [
