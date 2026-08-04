@@ -146,7 +146,11 @@ from pg_llm_batch.batch_api_client import config_credentials_provider
 
 dsn = my_app_dsn()               # your app already owns the DSN
 config, secrets = PostgresConfigStore(dsn), SecretStore(dsn)
-client = BatchAPIClient(dsn, config_credentials_provider(config, secrets))
+client = BatchAPIClient(
+    dsn,
+    config_credentials_provider(config, secrets),
+    max_download_bytes=256 * 1024 * 1024,
+)
 ```
 
 Apply just the DDL subset into an existing database (idempotent, all tables are
@@ -160,6 +164,12 @@ db.apply_schema(dsn)
 The `credentials` argument to `BatchAPIClient` is a seam: pass
 `config_credentials_provider(...)` to use the KV stores, or supply your own
 `Callable[[str], GatewayCredentials]` to source credentials from your host app.
+
+Provider result and error files are streamed in 64 KiB chunks and limited to
+128 MiB of decoded UTF-8 data by default. The limit is enforced after aiohttp
+decompression and before JSONL parsing. Set `max_download_bytes` explicitly when
+a reviewed deployment requires a larger bounded payload; oversized or invalid
+UTF-8 responses fail with structured errors that do not echo provider content.
 
 ---
 

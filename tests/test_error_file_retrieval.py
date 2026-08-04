@@ -15,6 +15,18 @@ def _credentials(_alias: str) -> GatewayCredentials:
     return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
 
 
+class ResponseContent:
+    """Expose response text as a deterministic bounded byte stream."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    async def iter_chunked(self, size: int):
+        """Yield the payload in chunks no larger than ``size``."""
+        for index in range(0, len(self.payload), size):
+            yield self.payload[index : index + size]
+
+
 class Response:
     """Minimal asynchronous response with JSON and text representations."""
 
@@ -22,6 +34,9 @@ class Response:
         self.status = status
         self.payload = payload
         self.text_value = text
+        encoded = text.encode("utf-8")
+        self.content_length = len(encoded)
+        self.content = ResponseContent(encoded)
 
     async def __aenter__(self):
         return self
