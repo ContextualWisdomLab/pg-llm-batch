@@ -181,6 +181,25 @@ def test_persistence_rejects_oversized_provider_id_before_database_access(
     assert driver.executions == []
 
 
+def test_persistence_rejects_nul_alias_before_database_access(
+    monkeypatch: Any,
+) -> None:
+    """PostgreSQL-incompatible NUL aliases fail before opening a connection."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+
+    with pytest.raises(ValueError, match="endpoint_alias"):
+        db.persist_remote_batch_state(
+            "postgresql://example",
+            "primary\x00shadow",
+            {"id": "batch-1", "status": "validating"},
+            observation_order=4,
+        )
+
+    assert driver.connections == []
+    assert driver.executions == []
+
+
 async def test_durable_client_rejects_oversized_alias_before_external_effects() -> None:
     """An invalid alias cannot reserve order, resolve secrets, or call a provider."""
     events: list[str] = []
