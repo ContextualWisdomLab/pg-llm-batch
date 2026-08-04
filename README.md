@@ -171,6 +171,16 @@ decompression and before JSONL parsing. Set `max_download_bytes` explicitly when
 a reviewed deployment requires a larger bounded payload; oversized or invalid
 UTF-8 responses fail with structured errors that do not echo provider content.
 
+Idempotent provider `GET` operations use up to three total attempts by default
+for transient `408`, `429`, `502`, `503`, and `504` responses and for aiohttp
+transport failures. A bounded RFC `Retry-After` delta or HTTP-date is honored;
+otherwise the client uses equal-jitter exponential delay from 0.5 seconds up to
+30 seconds. Guidance above the configured maximum is refused rather than
+shortening an untrusted wait. Upload, batch creation, and cancellation `POST`
+operations are never retried automatically. Operators can override
+`max_retry_attempts`, `retry_base_delay_seconds`, and
+`retry_max_delay_seconds` in the `BatchAPIClient` constructor.
+
 ---
 
 ## Tests
