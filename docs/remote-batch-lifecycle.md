@@ -2,7 +2,7 @@
 
 `DurableBatchAPIClient` records successful provider batch creation, polling, and
 accepted cancellation transitions in PostgreSQL. It is intended for operators
-who need restart-safe reconciliation, acquisition-grade audit evidence, and a
+who need restart-safe reconciliation, a durable current-state projection, and a
 recoverable remote identifier when a provider operation succeeds but local
 persistence fails.
 
@@ -12,8 +12,8 @@ already own lifecycle state, ordering, or transaction coordination.
 ## Data model
 
 The packaged schema creates `llm_remote_batch_jobs`. Every row is uniquely
-identified by `(endpoint_alias, remote_batch_id)` because provider identifiers
-must not be assumed globally unique across gateways or tenants.
+identified by `(endpoint_alias, remote_batch_id)`, so remote identifiers do not
+need to be globally unique across configured gateway aliases.
 
 Only curated operational fields are persisted:
 
@@ -25,9 +25,21 @@ Only curated operational fields are persisted:
 - a database-owned observation order;
 - first-seen, last-observed, terminal, and updated timestamps.
 
+The table is a mutable current-state projection, not append-only audit history.
+Hosts that require evidentiary transition history must also emit immutable,
+tenant-attributed audit events to their central audit service or event store.
+
+Provider metadata, including values such as `tenant_id`, is untrusted descriptive
+data and is not an authorization or tenant-isolation boundary. A multi-tenant
+host must select a tenant-scoped database, schema, endpoint alias, row-level
+policy, or surrounding service boundary before invoking this client. It must
+never authorize lifecycle reads or writes using provider-echoed metadata.
+
 Arbitrary provider response fields are discarded. Counts are normalized to
 non-negative integers. Invalid optional values become deterministic safe
-defaults rather than ambiguous database values.
+defaults rather than ambiguous database values. Persisted total, completed, and
+failed counters are monotonic: the atomic update uses PostgreSQL `GREATEST`, so a
+newer sparse poll or cancellation response cannot erase known progress.
 
 Provider metadata is canonicalized as sorted compact JSON with non-finite
 numbers disabled. Cyclic, non-serializable, non-finite, or greater-than-64-KiB
@@ -119,7 +131,7 @@ async with DurableBatchAPIClient(dsn, provider) as client:
         input_file_id="file-provider-id",
         endpoint_alias="default",
         endpoint="/v1/responses",
-        metadata={"tenant_id": "tenant-a"},
+        metadata={"batch_description": "nightly-evaluation"},
     )
     current = await client.get_batch_status(created["id"], "default")
 ```
@@ -150,6 +162,10 @@ contract.
 
 OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 4,
 2026, from https://platform.openai.com/docs/api-reference/batch/object
+
+PostgreSQL Global Development Group. (2026). *Conditional expressions*. In
+*PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/current/functions-conditional.html
 
 PostgreSQL Global Development Group. (2026). *INSERT*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/current/sql-insert.html
