@@ -4,7 +4,7 @@
 - Command: `uv run pytest -q tests/test_remote_batch_state_contracts.py -k remote_field_contract`
 - Expected result: failure before implementation
 - Actual pytest exit code: `1`
-- Actual result: `7 failed, 10 deselected`
+- Actual result: `7 failed, 9 deselected`
 - Failed contracts:
   - `test_remote_field_contract_rejects_invalid_optional_ids_before_database_access`
     failed in all three `input_file_id`, `output_file_id`, and `error_file_id`
