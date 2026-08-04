@@ -1,0 +1,73 @@
+name: One-shot retry red verification
+
+on:
+  push:
+    branches: [agent/idempotent-get-retries]
+    paths:
+      - .github/workflows/one-shot-retry-red.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-retry-red
+  cancel-in-progress: true
+
+jobs:
+  verify-red:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout retry branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: agent/idempotent-get-retries
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Prove focused retry contract is red
+        run: |
+          set +e
+          uv run pytest -q tests/test_idempotent_get_retries.py > /tmp/retry-red.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/retry-red.txt
+          if [ "$status" -eq 0 ]; then
+            echo "Retry contract unexpectedly passed before implementation" >&2
+            exit 1
+          fi
+          if ! grep -Eq "max_retry_attempts|_parse_retry_after" /tmp/retry-red.txt; then
+            echo "Retry contract failed for an unexpected reason" >&2
+            exit 1
+          fi
+
+      - name: Record red evidence and remove one-shot workflow
+        env:
+          BRANCH_NAME: agent/idempotent-get-retries
+        run: |
+          mkdir -p docs/superpowers/evidence
+          cat > docs/superpowers/evidence/2026-08-04-idempotent-get-retries-red.md <<EOF
+          # Idempotent GET retry TDD red evidence
+
+          The focused command
+
+          \`uv run pytest -q tests/test_idempotent_get_retries.py\`
+
+          failed on pre-implementation head \`${GITHUB_SHA}\` for the expected missing retry interface: \`BatchAPIClient\` did not accept \`max_retry_attempts\` and the module did not define \`_parse_retry_after\`.
+          EOF
+          rm .github/workflows/one-shot-retry-red.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/superpowers/evidence/2026-08-04-idempotent-get-retries-red.md .github/workflows/one-shot-retry-red.yml
+          git commit -m "test(retry): record pre-implementation red evidence"
+          git push origin "HEAD:${BRANCH_NAME}"
