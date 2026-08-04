@@ -293,6 +293,9 @@ def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> Non
     assert "append-only audit history" in documentation
     assert "at most 128 characters" in documentation
     assert "at most 256 ASCII characters" in documentation
+    assert (
+        "All caller-provided remote resource identifiers" in documentation
+    )
 
 
 @pytest.mark.parametrize(
