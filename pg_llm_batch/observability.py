@@ -23,6 +23,7 @@ OPERATION_OUTCOME_ATTRIBUTE = "pg_llm_batch.operation.outcome"
 ERROR_TYPE_ATTRIBUTE = "error.type"
 
 _Result = TypeVar("_Result")
+_TelemetryResult = TypeVar("_TelemetryResult")
 
 
 class OpenTelemetryBatchAPIClient(BatchAPIClient):
@@ -36,7 +37,9 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
     Telemetry intentionally contains only the bounded operation name, outcome,
     duration, and canonical exception class name. It never records caller or
     provider identifiers, URLs, credentials, metadata, request bodies, response
-    bodies, or exception messages.
+    bodies, or exception messages. Runtime failures raised by an injected
+    tracer, span, or metric instrument are isolated so observability cannot skip
+    a provider operation, replace its return value, or mask its exception.
     """
 
     def __init__(
@@ -91,6 +94,64 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
             **kwargs,
         )
 
+    @staticmethod
+    def _telemetry_or_default(
+        action: Callable[[], _TelemetryResult],
+        default: _TelemetryResult,
+    ) -> _TelemetryResult:
+        """Run one telemetry-only action and return a safe default on failure."""
+        try:
+            return action()
+        except Exception:
+            return default
+
+    def _use_span(self, span: Any, action: Callable[[Any], Any]) -> None:
+        """Apply a span mutation only when a usable span was created."""
+        if span is None:
+            return
+        self._telemetry_or_default(lambda: action(span), None)
+
+    def _emit_measurements(
+        self,
+        started_at: float,
+        attributes: Dict[str, str],
+    ) -> None:
+        """Emit count and duration independently so one failure cannot mask another."""
+        self._telemetry_or_default(
+            lambda: self._operation_count.add(1, attributes=attributes),
+            None,
+        )
+        self._telemetry_or_default(
+            lambda: self._operation_duration.record(
+                perf_counter() - started_at,
+                attributes=attributes,
+            ),
+            None,
+        )
+
+    def _close_span_context(
+        self,
+        span_context: Any,
+        error: Optional[BaseException],
+    ) -> None:
+        """Close an entered span context without changing operation semantics."""
+        if span_context is None:
+            return
+        if error is None:
+            exception_type = exception_value = exception_traceback = None
+        else:
+            exception_type = type(error)
+            exception_value = error
+            exception_traceback = error.__traceback__
+        self._telemetry_or_default(
+            lambda: span_context.__exit__(
+                exception_type,
+                exception_value,
+                exception_traceback,
+            ),
+            None,
+        )
+
     async def _run_observed(
         self,
         operation_name: str,
@@ -99,40 +160,55 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         """Execute one operation and emit bounded success or error telemetry."""
         started_at = perf_counter()
         span_name = f"{INSTRUMENTATION_SCOPE_NAME}.{operation_name}"
-        with self._tracer.start_as_current_span(
-            span_name,
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span:
-            span.set_attribute(OPERATION_NAME_ATTRIBUTE, operation_name)
-            try:
-                result = await operation()
-            except Exception as exc:
-                error_type = type(exc).__name__
-                span.set_attribute(ERROR_TYPE_ATTRIBUTE, error_type)
-                span.record_exception(exc)
-                attributes = {
-                    OPERATION_NAME_ATTRIBUTE: operation_name,
-                    OPERATION_OUTCOME_ATTRIBUTE: "error",
-                    ERROR_TYPE_ATTRIBUTE: error_type,
-                }
-                self._operation_count.add(1, attributes=attributes)
-                self._operation_duration.record(
-                    perf_counter() - started_at,
-                    attributes=attributes,
-                )
-                raise
-
+        span_context = self._telemetry_or_default(
+            lambda: self._tracer.start_as_current_span(
+                span_name,
+                record_exception=False,
+                set_status_on_exception=False,
+            ),
+            None,
+        )
+        span = None
+        if span_context is not None:
+            span = self._telemetry_or_default(span_context.__enter__, None)
+        self._use_span(
+            span,
+            lambda active_span: active_span.set_attribute(
+                OPERATION_NAME_ATTRIBUTE,
+                operation_name,
+            ),
+        )
+        try:
+            result = await operation()
+        except Exception as exc:
+            error_type = type(exc).__name__
+            self._use_span(
+                span,
+                lambda active_span: active_span.set_attribute(
+                    ERROR_TYPE_ATTRIBUTE,
+                    error_type,
+                ),
+            )
+            self._use_span(
+                span,
+                lambda active_span: active_span.record_exception(exc),
+            )
             attributes = {
                 OPERATION_NAME_ATTRIBUTE: operation_name,
-                OPERATION_OUTCOME_ATTRIBUTE: "success",
+                OPERATION_OUTCOME_ATTRIBUTE: "error",
+                ERROR_TYPE_ATTRIBUTE: error_type,
             }
-            self._operation_count.add(1, attributes=attributes)
-            self._operation_duration.record(
-                perf_counter() - started_at,
-                attributes=attributes,
-            )
-            return result
+            self._emit_measurements(started_at, attributes)
+            self._close_span_context(span_context, exc)
+            raise
+
+        attributes = {
+            OPERATION_NAME_ATTRIBUTE: operation_name,
+            OPERATION_OUTCOME_ATTRIBUTE: "success",
+        }
+        self._emit_measurements(started_at, attributes)
+        self._close_span_context(span_context, None)
+        return result
 
     async def upload_jsonl(
         self,
