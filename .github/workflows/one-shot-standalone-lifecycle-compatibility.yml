@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: e9d63ab24d01eb625256472fbf5aa275caac62a8
+          EXPECTED_PARENT: 85fc0ecf89dd101e40101a39ef2bec5fc4e27e56
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -65,6 +65,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: "0.12.1"
           prune-cache: true
 
       - name: Install exact locked dependencies
@@ -100,31 +101,31 @@ jobs:
                   )
               path.write_text(source.replace(old, new, 1), encoding="utf-8")
 
-          replace_once(
-              Path("pg_llm_batch/db.py"),
-              '''    """Persist one lifecycle projection in the explicit standalone scope."""
-              return _persist_remote_batch_state(
-                  dsn,
-                  DEFAULT_TENANT_SCOPE,
-                  endpoint_alias,
-                  provider_batch,
-                  observation_order,
-                  observed_at=observed_at,
-              )
-              '''.replace("\n              ", "\n"),
-              '''    """Persist one standalone projection without changing its return shape."""
-              snapshot = _persist_remote_batch_state(
-                  dsn,
-                  DEFAULT_TENANT_SCOPE,
-                  endpoint_alias,
-                  provider_batch,
-                  observation_order,
-                  observed_at=observed_at,
-              )
-              snapshot.pop("tenant_scope", None)
-              return snapshot
-              '''.replace("\n              ", "\n"),
+          old_wrapper = (
+              '    """Persist one lifecycle projection in the explicit standalone scope."""\n'
+              '    return _persist_remote_batch_state(\n'
+              '        dsn,\n'
+              '        DEFAULT_TENANT_SCOPE,\n'
+              '        endpoint_alias,\n'
+              '        provider_batch,\n'
+              '        observation_order,\n'
+              '        observed_at=observed_at,\n'
+              '    )\n'
           )
+          new_wrapper = (
+              '    """Persist one standalone projection without changing its return shape."""\n'
+              '    snapshot = _persist_remote_batch_state(\n'
+              '        dsn,\n'
+              '        DEFAULT_TENANT_SCOPE,\n'
+              '        endpoint_alias,\n'
+              '        provider_batch,\n'
+              '        observation_order,\n'
+              '        observed_at=observed_at,\n'
+              '    )\n'
+              '    snapshot.pop("tenant_scope", None)\n'
+              '    return snapshot\n'
+          )
+          replace_once(Path("pg_llm_batch/db.py"), old_wrapper, new_wrapper)
           replace_once(
               Path("tests/test_remote_batch_lifecycle.py"),
               '        "tenant_scope": "standalone",\n',
