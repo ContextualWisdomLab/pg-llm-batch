@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: f565707961d239cb1beac684d7a60147214632c4
+          EXPECTED_PARENT: d484b24a8c5db9f15cee85ccc9c7654c8f43bdfa
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -71,13 +71,18 @@ jobs:
       - name: Install exact locked dependencies
         run: uv sync --locked
 
-      - name: Prove standalone return-shape regression is RED
+      - name: Prove compatibility and contract regressions are RED
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           set +e
           red_output="$(
             uv run pytest -q \
               tests/test_standalone_lifecycle_compatibility.py::test_standalone_persistence_keeps_the_pre_tenant_return_shape \
+              tests/test_remote_batch_state_contracts.py::test_operator_docs_define_current_state_and_tenant_trust_boundaries \
+              tests/test_tenant_lifecycle_schema.py::test_legacy_lifecycle_rows_are_backfilled_without_deletion \
+              tests/test_tenant_lifecycle_schema.py::test_rls_owner_transition_is_atomic_for_psql_reapplication \
+              tests/test_tenant_operator_documentation.py::test_remote_lifecycle_guide_exposes_tenant_qualified_operations \
+              tests/test_tenant_operator_documentation.py::test_architecture_and_doctoring_bound_the_custom_guc_claim \
               2>&1
           )"
           red_status=$?
@@ -85,8 +90,9 @@ jobs:
           printf '%s\n' "$red_output"
           test "$red_status" -ne 0
           printf '%s\n' "$red_output" | grep -F 'assert "tenant_scope" not in snapshot'
+          printf '%s\n' "$red_output" | grep -F '5 failed'
 
-      - name: Restore the legacy helper return contract
+      - name: Restore compatibility and correct contract assertions
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           python3 -I - <<'PY'
@@ -141,16 +147,75 @@ jobs:
               '    assert snapshot["tenant_scope"] == "standalone"\n',
               '    assert "tenant_scope" not in snapshot\n',
           )
+
+          schema_tests = Path("tests/test_tenant_lifecycle_schema.py")
+          replace_once(
+              schema_tests,
+              '''    assert (
+                  "ALTER TABLE llm_remote_batch_jobs\\n"
+                  "    ADD COLUMN IF NOT EXISTS tenant_scope TEXT;"
+              ) in schema
+              assert (
+                  "UPDATE llm_remote_batch_jobs\\n"
+                  "SET tenant_scope = 'standalone'\\n"
+                  "WHERE tenant_scope IS NULL;"
+              ) in schema
+              '''.replace("\n              ", "\n"),
+              '''    migration_start = schema.index(
+                  "-- Reapplying the schema may occur after FORCE RLS was installed."
+              )
+              migration_end = schema.index(
+                  "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
+              )
+              migration = schema[migration_start:migration_end]
+              assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in migration
+              assert "SET tenant_scope = 'standalone'" in migration
+              '''.replace("\n              ", "\n"),
+          )
+          replace_once(
+              schema_tests,
+              '''    assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.index(
+                  "FORCE ROW LEVEL SECURITY"
+              )
+              '''.replace("\n              ", "\n"),
+              '''    force_statement = (
+                  "ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;"
+              )
+              assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.rindex(
+                  force_statement
+              )
+              '''.replace("\n              ", "\n"),
+          )
+
+          lifecycle_guide = Path("docs/remote-batch-lifecycle.md")
+          replace_once(
+              lifecycle_guide,
+              "The durable table is a mutable current-state\nprojection, not append-only audit history.",
+              "The durable table is a mutable\ncurrent-state projection, not append-only audit history.",
+          )
+          replace_once(
+              lifecycle_guide,
+              "can execute arbitrary SQL can call `set_config` with an arbitrary tenant\nscope.",
+              "can execute arbitrary SQL can call `set_config` with an arbitrary tenant scope.\n",
+          )
+          replace_once(
+              Path("docs/doctoring/tenant-scoped-lifecycle.md"),
+              "This design is a **trusted\napplication boundary** and is not a substitute",
+              "This design is a **trusted application boundary** and is not a substitute",
+          )
           PY
           git diff --check
 
-      - name: Verify compatibility and tenant-specific contracts
+      - name: Verify focused compatibility and documentation contracts
         run: |
           uv run pytest -q \
             tests/test_standalone_lifecycle_compatibility.py \
             tests/test_remote_batch_lifecycle.py \
             tests/test_tenant_lifecycle_persistence.py \
-            tests/test_tenant_durable_client.py
+            tests/test_tenant_durable_client.py \
+            tests/test_remote_batch_state_contracts.py \
+            tests/test_tenant_lifecycle_schema.py \
+            tests/test_tenant_operator_documentation.py
 
       - name: Verify complete deterministic and packaging gates
         shell: bash --noprofile --norc -e -o pipefail {0}
@@ -188,10 +253,15 @@ jobs:
             before returning to existing callers.
           - The explicit tenant-aware persistence helper retains and returns its
             trusted \`tenant_scope\`.
-          - Focused compatibility tests, the complete non-integration suite,
-            100% production statement/branch/docstring coverage, Ruff,
-            compilation, lock freshness, distributions, Compose validation,
-            and both container builds passed.
+          - Migration assertions inspect the atomic owner-transition block, and
+            the FORCE-order assertion distinguishes the final FORCE statement
+            from the earlier NO FORCE statement.
+          - Operator and doctoring prose now exposes the exact current-state and
+            trusted-boundary limitations required by the static contracts.
+          - Focused contracts, the complete non-integration suite, 100%
+            production statement/branch/docstring coverage, Ruff, compilation,
+            lock freshness, distributions, Compose validation, and both
+            container builds passed.
           - Temporary write-capable automation removed itself from the final tree.
           EOF
           test ! -e .github/workflows/one-shot-standalone-lifecycle-compatibility.yml
@@ -210,7 +280,7 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
           git diff --cached --quiet && { echo "No compatibility repair generated" >&2; exit 1; }
-          git commit -m "fix(tenant): preserve standalone lifecycle return shape"
+          git commit -m "fix(tenant): preserve standalone lifecycle contracts"
           auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
           echo "::add-mask::$auth_header"
           git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
