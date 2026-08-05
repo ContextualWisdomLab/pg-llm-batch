@@ -497,7 +497,8 @@ class BatchAPIClient:
                     status_code=getattr(response, "status", None),
                     response_data={"error_type": "InvalidByteChunk"},
                 )
-            if len(payload) + len(chunk) > max_bytes:
+            chunk_bytes = chunk.nbytes if isinstance(chunk, memoryview) else len(chunk)
+            if len(payload) + chunk_bytes > max_bytes:
                 raise self._download_limit_error(
                     response,
                     operation,
