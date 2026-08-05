@@ -12,6 +12,7 @@ identifiers, tenant metadata, provider URLs, API keys, or payloads.
 from __future__ import annotations
 
 from asyncio import CancelledError
+from contextvars import ContextVar
 from importlib import import_module
 from time import perf_counter
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
@@ -66,6 +67,10 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         """Initialize the base client and fail-open OpenTelemetry instruments."""
         super().__init__(*args, **kwargs)
         self._tracer = tracer
+        self._observation_depth: ContextVar[int] = ContextVar(
+            "pg_llm_batch_observation_depth",
+            default=0,
+        )
         self._operation_count = self._telemetry_or_default(
             lambda: meter.create_counter(
                 "pg_llm_batch.client.operation.count",
@@ -163,54 +168,61 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         operation_name: str,
         operation: Callable[[], Awaitable[_Result]],
     ) -> _Result:
-        """Execute one operation and emit bounded success or error telemetry."""
-        started_at = perf_counter()
-        span_name = f"{INSTRUMENTATION_SCOPE_NAME}.{operation_name}"
-        span_context = self._telemetry_or_default(
-            lambda: self._tracer.start_as_current_span(
-                span_name,
-                record_exception=False,
-                set_status_on_exception=False,
-            ),
-            None,
-        )
-        span = None
-        if span_context is not None:
-            span = self._telemetry_or_default(span_context.__enter__, None)
-        self._use_span(
-            span,
-            lambda active_span: active_span.set_attribute(
-                OPERATION_NAME_ATTRIBUTE,
-                operation_name,
-            ),
-        )
+        """Execute one outer operation and suppress its internal public dispatches."""
+        if self._observation_depth.get() > 0:
+            return await operation()
+
+        depth_token = self._observation_depth.set(1)
         try:
-            result = await operation()
-        except BaseException as exc:
-            error_type = type(exc).__name__
+            started_at = perf_counter()
+            span_name = f"{INSTRUMENTATION_SCOPE_NAME}.{operation_name}"
+            span_context = self._telemetry_or_default(
+                lambda: self._tracer.start_as_current_span(
+                    span_name,
+                    record_exception=False,
+                    set_status_on_exception=False,
+                ),
+                None,
+            )
+            span = None
+            if span_context is not None:
+                span = self._telemetry_or_default(span_context.__enter__, None)
             self._use_span(
                 span,
                 lambda active_span: active_span.set_attribute(
-                    ERROR_TYPE_ATTRIBUTE,
-                    error_type,
+                    OPERATION_NAME_ATTRIBUTE,
+                    operation_name,
                 ),
             )
+            try:
+                result = await operation()
+            except BaseException as exc:
+                error_type = type(exc).__name__
+                self._use_span(
+                    span,
+                    lambda active_span: active_span.set_attribute(
+                        ERROR_TYPE_ATTRIBUTE,
+                        error_type,
+                    ),
+                )
+                attributes = {
+                    OPERATION_NAME_ATTRIBUTE: operation_name,
+                    OPERATION_OUTCOME_ATTRIBUTE: "error",
+                    ERROR_TYPE_ATTRIBUTE: error_type,
+                }
+                self._emit_measurements(started_at, attributes)
+                self._close_span_context(span_context)
+                raise
+
             attributes = {
                 OPERATION_NAME_ATTRIBUTE: operation_name,
-                OPERATION_OUTCOME_ATTRIBUTE: "error",
-                ERROR_TYPE_ATTRIBUTE: error_type,
+                OPERATION_OUTCOME_ATTRIBUTE: "success",
             }
             self._emit_measurements(started_at, attributes)
             self._close_span_context(span_context)
-            raise
-
-        attributes = {
-            OPERATION_NAME_ATTRIBUTE: operation_name,
-            OPERATION_OUTCOME_ATTRIBUTE: "success",
-        }
-        self._emit_measurements(started_at, attributes)
-        self._close_span_context(span_context)
-        return result
+            return result
+        finally:
+            self._observation_depth.reset(depth_token)
 
     async def upload_jsonl(
         self,
