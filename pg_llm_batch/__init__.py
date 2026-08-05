@@ -3,9 +3,10 @@
 """pg-llm-batch: standalone + submodule Postgres LLM batch engine.
 
 Public API:
-    TokenCounter, BatchAccumulator  -- pg_tiktoken token counting
-    PostgresBatchOrchestrator       -- assemble/persist JSONL payloads
-    BatchAPIClient                  -- submit/poll/retrieve
+    TokenCounter, BatchAccumulator   -- pg_tiktoken token counting
+    PostgresBatchOrchestrator        -- assemble/persist JSONL payloads
+    BatchAPIClient                   -- submit/poll/retrieve
+    DurableBatchAPIClient            -- submit/poll/retrieve with lifecycle state
     PostgresConfigStore, SecretStore -- KV config + secrets (no os.getenv)
 """
 
@@ -17,6 +18,7 @@ from .batch_api_client import (
     config_credentials_provider,
 )
 from .config import PostgresConfigStore, SecretStore, get_config_store
+from .durable_client import DurableBatchAPIClient
 from .exceptions import (
     ConfigError,
     GatewayError,
@@ -32,6 +34,7 @@ __version__ = "0.1.0"
 
 __all__ = [
     "BatchAPIClient",
+    "DurableBatchAPIClient",
     "GatewayCredentials",
     "config_credentials_provider",
     "PostgresConfigStore",

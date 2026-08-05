@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded retries for transient idempotent provider GET failures, including
   RFC Retry-After support and equal-jitter exponential fallback; side-effecting
   POST operations remain single-attempt.
+- Durable remote batch lifecycle persistence through `DurableBatchAPIClient`
+  and `llm_remote_batch_jobs`, with database-owned pre-request observation
+  ordering, immutable terminal status identity, bounded curated metadata, and
+  structured reservation/persistence recovery evidence.
 
 ### Fixed
 
@@ -38,14 +42,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Prevented `wait_for_batch()` and `download_results()` from inflating public
   `get_batch_status` telemetry with their internal dynamic-dispatch status
   checks while preserving independent concurrent caller observations.
+- Rejected status-poll responses whose valid-looking provider batch identifier
+  differs from the requested identifier before lifecycle recorder or PostgreSQL
+  access; recovery metadata now retains only the trusted requested identifier.
+- Redacted unsupported provider-generated batch identifiers from durable
+  lifecycle recovery metadata and exception causes while retaining validated
+  identifiers, observation order, operation, phase, endpoint alias, and bounded
+  error type for reconciliation.
+- Enforced NUL-free, 128-character endpoint aliases and 256-character remote
+  batch, input, output, and error file string identifiers before order
+  reservation, credential resolution, provider calls, custom lifecycle
+  recorders, or PostgreSQL writes; unsafe optional text is normalized safely.
+- Normalized provider metadata containing U+0000 in any object key or nested
+  string to the deterministic empty object before injected lifecycle recorders
+  or PostgreSQL `jsonb`, while preserving literal `\u0000` escape text.
+- Prevented sparse newer remote lifecycle observations from reducing previously
+  persisted request counters, and documented that lifecycle rows are mutable
+  current-state projections while provider metadata is not a tenant
+  authorization boundary.
+- Synchronized the deployable PostgreSQL image initialization schema with the
+  packaged canonical schema and added an exact-mirror regression gate, so
+  container deployments cannot silently omit lifecycle or integrity migrations.
 - Hardened provider `Retry-After` delta parsing to accept RFC ASCII digits only
   and refuse extremely long numeric guidance without leaking Python integer
   conversion errors.
 
 ### Changed
 
-- Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression, explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend floor so built artifacts expose normalized legal metadata without warnings.
-- Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff patch updates; setup-uv cache pruning is explicit to preserve the previous bounded cache-cost policy.
+- Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
+  explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
+  floor so built artifacts expose normalized legal metadata without warnings.
+- Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff
+  patch updates; setup-uv cache pruning is explicit to preserve the previous
+  bounded cache-cost policy.
 
 ## [0.1.0] - 2026-07-12
 

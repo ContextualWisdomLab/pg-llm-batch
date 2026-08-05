@@ -5,6 +5,10 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
 .codegraph/
 .coverage
 .coverage.*

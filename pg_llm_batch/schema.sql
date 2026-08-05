@@ -68,6 +68,62 @@ CREATE TABLE IF NOT EXISTS llm_batches (
     completed_at TIMESTAMPTZ NULL
 );
 
+-- Database-owned ordering is reserved before remote provider I/O. Sequence
+-- values are intentionally not transactional, so failed requests leave harmless
+-- gaps rather than allowing a later request to reuse an older order.
+CREATE SEQUENCE IF NOT EXISTS llm_remote_batch_observation_sequence
+    AS BIGINT
+    INCREMENT BY 1
+    MINVALUE 1
+    START WITH 1
+    NO CYCLE;
+
+-- Curated, provider-facing lifecycle state. The compound identity makes repeated
+-- polling idempotent without assuming remote identifiers are globally unique.
+CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
+    remote_job_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    endpoint_alias TEXT NOT NULL
+        CHECK (LENGTH(endpoint_alias) BETWEEN 1 AND 128),
+    remote_batch_id TEXT NOT NULL
+        CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256)
+        CHECK (remote_batch_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'),
+    observation_order BIGINT NOT NULL
+        CHECK (observation_order > 0),
+    input_file_id TEXT
+        CHECK (
+            input_file_id IS NULL OR
+            input_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        ),
+    batch_endpoint TEXT,
+    batch_status TEXT NOT NULL,
+    output_file_id TEXT
+        CHECK (
+            output_file_id IS NULL OR
+            output_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        ),
+    error_file_id TEXT
+        CHECK (
+            error_file_id IS NULL OR
+            error_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+        ),
+    total_requests INTEGER NOT NULL DEFAULT 0
+        CHECK (total_requests >= 0),
+    completed_requests INTEGER NOT NULL DEFAULT 0
+        CHECK (completed_requests >= 0),
+    failed_requests INTEGER NOT NULL DEFAULT 0
+        CHECK (failed_requests >= 0),
+    provider_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+    first_seen_at TIMESTAMPTZ NOT NULL,
+    last_observed_at TIMESTAMPTZ NOT NULL,
+    terminal_at TIMESTAMPTZ NULL,
+    updated_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id
+        UNIQUE (endpoint_alias, remote_batch_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_status_observed
+    ON llm_remote_batch_jobs(batch_status, last_observed_at);
+
 CREATE TABLE IF NOT EXISTS llm_batch_file_payloads (
     file_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     file_id TEXT UNIQUE NOT NULL,
