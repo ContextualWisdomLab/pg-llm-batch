@@ -126,9 +126,9 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
 
 -- Reapplying the schema may occur after FORCE RLS was installed. psql can
 -- autocommit individual statements, so the owner transition, legacy-row
--- backfill, and constraint migration execute inside one anonymous block. If any
--- operation fails, PostgreSQL rolls the entire statement back and FORCE RLS is
--- never left disabled between committed statements.
+-- backfill, constraint migration, and RLS enable/force transition execute
+-- inside one anonymous block. If any operation fails, PostgreSQL rolls the
+-- statement back so no disabled, unforced, or partially migrated state commits.
 DO $$
 BEGIN
     ALTER TABLE llm_remote_batch_jobs NO FORCE ROW LEVEL SECURITY;
@@ -178,6 +178,7 @@ BEGIN
             UNIQUE (tenant_scope, endpoint_alias, remote_batch_id);
     END IF;
 
+    ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 END $$;
 
@@ -200,8 +201,6 @@ CREATE POLICY plc_llm_remote_batch_jobs_tenant_scope
     WITH CHECK (
         tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
     );
-ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
-ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 
 CREATE TABLE IF NOT EXISTS llm_batch_file_payloads (
     file_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
