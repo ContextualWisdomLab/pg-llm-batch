@@ -10,12 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
-  public Batch API client operations, with explicit tracer/meter injection,
-  lazy global-provider resolution, bounded error and cancellation
+  caller-invoked public Batch API client operations, with explicit tracer/meter
+  injection, lazy global-provider resolution, bounded error and cancellation
   classification, a strict no-identifiers/no-payload telemetry contract,
   fail-open isolation for ordinary telemetry failures and telemetry-originated
   cancellation, preservation of non-cancellation process-control exceptions,
-  and local no-op metric fallbacks when instruments cannot be created.
+  context-local suppression of internal status-poll telemetry, and local no-op
+  metric fallbacks when instruments cannot be created.
 - Bounded, streamed provider result and error downloads with a 128 MiB
   decoded-byte default, strict UTF-8 validation, body-free oversize errors,
   and fail-closed handling when a bounded byte stream is unavailable.
@@ -25,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Prevented `wait_for_batch()` and `download_results()` from inflating public
+  `get_batch_status` telemetry with their internal dynamic-dispatch status
+  checks while preserving independent concurrent caller observations.
 - Hardened provider `Retry-After` delta parsing to accept RFC ASCII digits only
   and refuse extremely long numeric guidance without leaking Python integer
   conversion errors.
