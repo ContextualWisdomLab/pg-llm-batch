@@ -36,8 +36,9 @@ consumers must migrate to package helpers or a separately reviewed
 identity-binding database interface.
 
 Legacy rows are backfilled to `standalone`. Owner enforcement may be relaxed
-only inside the same atomic SQL statement that performs the backfill and restores
-`FORCE ROW LEVEL SECURITY`.
+only inside the same atomic SQL statement that performs the backfill, enables
+row-level security for legacy tables, and restores `FORCE ROW LEVEL SECURITY`.
+Policy recreation follows under enabled and forced default-deny behavior.
 
 ## Consequences
 
