@@ -175,7 +175,7 @@ def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
         with psycopg.connect(role_dsn) as tenant_connection:
             with tenant_connection.cursor() as cursor:
                 cursor.execute(
-                    "SELECT set_config(" 
+                    "SELECT set_config("
                     "'pg_llm_batch.tenant_scope', %s, true)",
                     ("tenant-a",),
                 )
