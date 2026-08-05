@@ -26,6 +26,18 @@ _Result = TypeVar("_Result")
 _TelemetryResult = TypeVar("_TelemetryResult")
 
 
+class _NoOpInstrument:
+    """Accept metric calls when an injected meter cannot create an instrument."""
+
+    def add(self, _value: int, *, attributes: Dict[str, str]) -> None:
+        """Discard one unavailable counter measurement."""
+        del attributes
+
+    def record(self, _value: float, *, attributes: Dict[str, str]) -> None:
+        """Discard one unavailable histogram measurement."""
+        del attributes
+
+
 class OpenTelemetryBatchAPIClient(BatchAPIClient):
     """Add opt-in OpenTelemetry operation spans and metrics to the batch client.
 
@@ -38,9 +50,9 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
     duration, and canonical exception class name. It never records caller or
     provider identifiers, URLs, credentials, metadata, request bodies, response
     bodies, exception objects, stack traces, or exception messages. Runtime
-    failures raised by an injected tracer, span, or metric instrument are
-    isolated so observability cannot skip a provider operation, replace its
-    return value, or mask its exception.
+    failures raised while creating or using an injected tracer, span, or metric
+    instrument are isolated so observability cannot skip a provider operation,
+    replace its return value, or mask its exception or cancellation.
     """
 
     def __init__(
@@ -50,18 +62,24 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         meter: Any,
         **kwargs: Any,
     ) -> None:
-        """Initialize the base client and stable OpenTelemetry instruments."""
+        """Initialize the base client and fail-open OpenTelemetry instruments."""
         super().__init__(*args, **kwargs)
         self._tracer = tracer
-        self._operation_count = meter.create_counter(
-            "pg_llm_batch.client.operation.count",
-            unit="{operation}",
-            description="Number of completed pg-llm-batch client operations.",
+        self._operation_count = self._telemetry_or_default(
+            lambda: meter.create_counter(
+                "pg_llm_batch.client.operation.count",
+                unit="{operation}",
+                description="Number of completed pg-llm-batch client operations.",
+            ),
+            _NoOpInstrument(),
         )
-        self._operation_duration = meter.create_histogram(
-            "pg_llm_batch.client.operation.duration",
-            unit="s",
-            description="Duration of completed pg-llm-batch client operations.",
+        self._operation_duration = self._telemetry_or_default(
+            lambda: meter.create_histogram(
+                "pg_llm_batch.client.operation.duration",
+                unit="s",
+                description="Duration of completed pg-llm-batch client operations.",
+            ),
+            _NoOpInstrument(),
         )
 
     @classmethod
@@ -167,7 +185,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         )
         try:
             result = await operation()
-        except Exception as exc:
+        except BaseException as exc:
             error_type = type(exc).__name__
             self._use_span(
                 span,
