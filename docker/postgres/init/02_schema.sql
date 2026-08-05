@@ -124,23 +124,24 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
         UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)
 );
 
--- Reapplying the schema may occur after FORCE RLS was installed. DDL runs in one
--- transaction, so temporarily disabling owner enforcement is not externally
--- observable before the policy is recreated and the transaction commits.
-ALTER TABLE llm_remote_batch_jobs DISABLE ROW LEVEL SECURITY;
-ALTER TABLE llm_remote_batch_jobs NO FORCE ROW LEVEL SECURITY;
-ALTER TABLE llm_remote_batch_jobs
-    ADD COLUMN IF NOT EXISTS tenant_scope TEXT;
-UPDATE llm_remote_batch_jobs
-SET tenant_scope = 'standalone'
-WHERE tenant_scope IS NULL;
-ALTER TABLE llm_remote_batch_jobs
-    ALTER COLUMN tenant_scope SET DEFAULT 'standalone';
-ALTER TABLE llm_remote_batch_jobs
-    ALTER COLUMN tenant_scope SET NOT NULL;
-
+-- Reapplying the schema may occur after FORCE RLS was installed. psql can
+-- autocommit individual statements, so the owner transition, legacy-row
+-- backfill, and constraint migration execute inside one anonymous block. If any
+-- operation fails, PostgreSQL rolls the entire statement back and FORCE RLS is
+-- never left disabled between committed statements.
 DO $$
 BEGIN
+    ALTER TABLE llm_remote_batch_jobs NO FORCE ROW LEVEL SECURITY;
+    ALTER TABLE llm_remote_batch_jobs
+        ADD COLUMN IF NOT EXISTS tenant_scope TEXT;
+    UPDATE llm_remote_batch_jobs
+    SET tenant_scope = 'standalone'
+    WHERE tenant_scope IS NULL;
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN tenant_scope SET DEFAULT 'standalone';
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN tenant_scope SET NOT NULL;
+
     IF EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -150,10 +151,7 @@ BEGIN
         ALTER TABLE llm_remote_batch_jobs
             DROP CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id;
     END IF;
-END $$;
 
-DO $$
-BEGIN
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -166,12 +164,9 @@ BEGIN
                 tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
             ) NOT VALID;
     END IF;
-END $$;
-ALTER TABLE llm_remote_batch_jobs
-    VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope;
+    ALTER TABLE llm_remote_batch_jobs
+        VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope;
 
-DO $$
-BEGIN
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -182,6 +177,8 @@ BEGIN
             ADD CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id
             UNIQUE (tenant_scope, endpoint_alias, remote_batch_id);
     END IF;
+
+    ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 END $$;
 
 DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;
