@@ -164,7 +164,7 @@ async def test_tenant_client_propagates_scope_for_status_and_cancellation(
 
 
 async def test_existing_durable_client_keeps_four_argument_recorder_seam(
-    monkeypatch: pytest.MonPatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Tenant support does not silently change existing embedded recorders."""
     recorded: list[tuple[Any, ...]] = []
@@ -221,6 +221,7 @@ async def test_tenant_persistence_failure_exposes_no_provider_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Persistence recovery includes trusted scope but no provider metadata or body."""
+
     async def fake_status(
         _self: BatchAPIClient,
         _batch_id: str,
