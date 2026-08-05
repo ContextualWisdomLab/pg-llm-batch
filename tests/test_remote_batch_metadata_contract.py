@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
 from typing import Any
 
 import pytest
@@ -66,17 +66,30 @@ class _MetadataPsycopg:
         return _MetadataConnection(self)
 
 
+class _MetadataByteStream:
+    """Expose deterministic provider JSON through bounded byte streaming."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        """Yield response bytes using chunks no larger than the requested size."""
+        for offset in range(0, len(self.body), size):
+            yield self.body[offset : offset + size]
+
+
 class _MetadataResponse:
     """Return one successful provider payload through aiohttp's response seam."""
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self.status = 201
-        self.payload = payload
         self.headers: dict[str, str] = {}
+        self.content = _MetadataByteStream(payload)
+        self.content_length = len(self.content.body)
 
     async def json(self) -> dict[str, Any]:
-        """Return the configured provider response object."""
-        return self.payload
+        """Reject whole-body reads that bypass the bounded byte-stream contract."""
+        raise AssertionError("response.json() must not bypass bounded streaming")
 
     async def __aenter__(self) -> "_MetadataResponse":
         return self
@@ -104,9 +117,9 @@ def _metadata_credentials(_alias: str) -> GatewayCredentials:
 @pytest.mark.parametrize(
     "provider_metadata",
     [
-        {"metadata_value": "\x00"},
-        {"metadata\x00key": "value"},
-        {"nested_values": ["safe", "\x00"]},
+        {"metadata_value": chr(0)},
+        {f"metadata{chr(0)}key": "value"},
+        {"nested_values": ["safe", chr(0)]},
     ],
     ids=("nul-value", "nul-key", "nested-nul-value"),
 )
@@ -126,7 +139,11 @@ def test_postgresql_incompatible_nul_metadata_normalizes_to_empty_object(
     )
 
     assert snapshot["provider_metadata"] == {}
-    assert driver.executions[0][1][11] == "{}"
+    assert driver.executions[0] == (
+        "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+        ("standalone",),
+    )
+    assert driver.executions[1][1][12] == "{}"
     assert driver.connections == ["postgresql://example"]
     assert driver.commits == 1
 
@@ -140,7 +157,7 @@ def test_postgresql_safe_metadata_retains_json_scalars_and_literal_escape(
     provider_metadata = {
         "empty_object": {},
         "empty_values": [],
-        "literal_escape": r"\u0000",
+        "literal_escape": "\\u0000",
         "nested_values": [1, "safe"],
     }
 
@@ -152,7 +169,7 @@ def test_postgresql_safe_metadata_retains_json_scalars_and_literal_escape(
     )
 
     assert snapshot["provider_metadata"] == provider_metadata
-    assert driver.executions[0][1][11] == json.dumps(
+    assert driver.executions[1][1][12] == json.dumps(
         provider_metadata,
         ensure_ascii=False,
         sort_keys=True,
@@ -183,7 +200,7 @@ async def test_nul_metadata_normalizes_before_custom_lifecycle_recorder() -> Non
         {
             "id": "batch-3",
             "status": "validating",
-            "metadata": {"nested_values": ["safe", "\x00"]},
+            "metadata": {"nested_values": ["safe", chr(0)]},
         }
     )
 
