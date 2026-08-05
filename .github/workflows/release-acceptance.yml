@@ -48,6 +48,7 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: "0.12.0"
           prune-cache: true
 
       - name: Install locked verification dependencies
@@ -81,13 +82,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          uv build --no-sources --out-dir dist-first source-first
+          uv build --no-sources --out-dir dist-first --no-create-gitignore source-first
 
       - name: Build second distribution set
         shell: bash
         run: |
           set -euo pipefail
-          uv build --no-sources --out-dir dist-second source-second
+          uv build --no-sources --out-dir dist-second --no-create-gitignore source-second
 
       - name: Verify artifact identity and write bounded evidence
         shell: bash
