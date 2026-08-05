@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) ContextualWisdomLab.
-"""Durable Batch API client that records provider lifecycle observations."""
+"""Durable Batch API clients that record provider lifecycle observations."""
 
 from __future__ import annotations
 
@@ -13,25 +13,26 @@ from .db import (
     normalize_optional_provider_text,
     normalize_provider_metadata,
     persist_remote_batch_state,
+    persist_tenant_remote_batch_state,
     reserve_remote_batch_observation_order,
     validate_endpoint_alias,
     validate_optional_remote_resource_id,
     validate_remote_resource_id,
+    validate_tenant_scope,
 )
 from .exceptions import GatewayError, ValidationError
 
 LifecycleRecorder = Callable[[str, str, Mapping[str, Any], int], Any]
+TenantLifecycleRecorder = Callable[[str, str, str, Mapping[str, Any], int], Any]
 ObservationReserver = Callable[[str], int]
 
 
 class DurableBatchAPIClient(BatchAPIClient):
-    """Batch API client with fail-closed PostgreSQL lifecycle persistence.
+    """Batch API client with fail-closed standalone lifecycle persistence.
 
-    The base client remains available for hosts that already own lifecycle
-    persistence. This subclass validates durable identities, reserves a
-    database-owned observation order before every provider request, and records
-    successful create, poll, and accepted-cancel transitions through injectable
-    persistence seams.
+    This client preserves the original four-argument recorder seam. Successful
+    create, poll, and accepted-cancel transitions are stored under the explicit
+    ``standalone`` database scope by the default recorder.
     """
 
     def __init__(
@@ -49,6 +50,25 @@ class DurableBatchAPIClient(BatchAPIClient):
         super().__init__(postgres_dsn, credentials, **client_options)
         self._lifecycle_recorder = lifecycle_recorder
         self._observation_reserver = observation_reserver
+
+    def _lifecycle_recovery_context(self) -> Dict[str, Any]:
+        """Return trusted context safe to expose in recovery diagnostics."""
+        return {}
+
+    async def _record_lifecycle_snapshot(
+        self,
+        endpoint_alias: str,
+        provider_batch: Mapping[str, Any],
+        observation_order: int,
+    ) -> None:
+        """Dispatch one snapshot through the compatible recorder seam."""
+        await asyncio.to_thread(
+            self._lifecycle_recorder,
+            self.postgres_dsn,
+            endpoint_alias,
+            provider_batch,
+            observation_order,
+        )
 
     async def _reserve_observation_order(
         self,
@@ -73,15 +93,17 @@ class DurableBatchAPIClient(BatchAPIClient):
                 )
             return observation_order
         except Exception as exc:
+            response_data: Dict[str, Any] = {
+                "operation": operation,
+                "phase": "reservation",
+                "endpoint_alias": endpoint_alias,
+                "batch_id": batch_id,
+                "error_type": type(exc).__name__,
+            }
+            response_data.update(self._lifecycle_recovery_context())
             raise GatewayError(
                 f"{operation} lifecycle reservation failed",
-                response_data={
-                    "operation": operation,
-                    "phase": "reservation",
-                    "endpoint_alias": endpoint_alias,
-                    "batch_id": batch_id,
-                    "error_type": type(exc).__name__,
-                },
+                response_data=response_data,
             ) from exc
 
     async def _persist_snapshot(
@@ -93,14 +115,19 @@ class DurableBatchAPIClient(BatchAPIClient):
         operation: str,
         expected_batch_id: Optional[str] = None,
     ) -> None:
-        """Persist one ordered observation while enforcing any expected identity.
+        """Persist one ordered observation while enforcing expected identity.
 
-        Poll operations provide the already validated requested identifier as
-        ``expected_batch_id``. A provider response that carries another identity
-        is rejected before an injected recorder or PostgreSQL receives it, and
-        recovery evidence retains only the trusted requested identifier.
+        Args:
+            endpoint_alias: Validated local provider endpoint alias.
+            provider_batch: Untrusted provider lifecycle response object.
+            observation_order: Database-owned order reserved before provider I/O.
+            operation: Stable operation label for recovery evidence.
+            expected_batch_id: Optional trusted requested identifier for poll paths.
+
+        Raises:
+            GatewayError: If validation or lifecycle persistence fails after a
+                successful provider operation.
         """
-        validated_batch_id: Optional[str] = None
         recovery_batch_id: Optional[str] = None
         try:
             if expected_batch_id is not None:
@@ -145,36 +172,38 @@ class DurableBatchAPIClient(BatchAPIClient):
                 normalized_snapshot["metadata"] = normalize_provider_metadata(
                     provider_batch.get("metadata")
                 )
-            await asyncio.to_thread(
-                self._lifecycle_recorder,
-                self.postgres_dsn,
+            await self._record_lifecycle_snapshot(
                 endpoint_alias,
                 normalized_snapshot,
                 observation_order,
             )
         except ValidationError as exc:
+            response_data: Dict[str, Any] = {
+                "operation": operation,
+                "phase": "persistence",
+                "endpoint_alias": endpoint_alias,
+                "batch_id": recovery_batch_id,
+                "observation_order": observation_order,
+                "error_type": type(exc).__name__,
+            }
+            response_data.update(self._lifecycle_recovery_context())
             raise GatewayError(
                 f"{operation} succeeded but lifecycle persistence failed",
-                response_data={
-                    "operation": operation,
-                    "phase": "persistence",
-                    "endpoint_alias": endpoint_alias,
-                    "batch_id": recovery_batch_id,
-                    "observation_order": observation_order,
-                    "error_type": type(exc).__name__,
-                },
+                response_data=response_data,
             ) from None
         except Exception as exc:
+            response_data = {
+                "operation": operation,
+                "phase": "persistence",
+                "endpoint_alias": endpoint_alias,
+                "batch_id": recovery_batch_id,
+                "observation_order": observation_order,
+                "error_type": type(exc).__name__,
+            }
+            response_data.update(self._lifecycle_recovery_context())
             raise GatewayError(
                 f"{operation} succeeded but lifecycle persistence failed",
-                response_data={
-                    "operation": operation,
-                    "phase": "persistence",
-                    "endpoint_alias": endpoint_alias,
-                    "batch_id": recovery_batch_id,
-                    "observation_order": observation_order,
-                    "error_type": type(exc).__name__,
-                },
+                response_data=response_data,
             ) from exc
 
     async def create_batch_job(
@@ -184,7 +213,7 @@ class DurableBatchAPIClient(BatchAPIClient):
         endpoint: str = "/v1/chat/completions",
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Validate identities, create a remote job, and persist its initial state."""
+        """Validate identities, create a remote job, and persist initial state."""
         normalized_alias = validate_endpoint_alias(endpoint_alias)
         validated_input_file_id = validate_remote_resource_id(
             input_file_id,
@@ -267,3 +296,67 @@ class DurableBatchAPIClient(BatchAPIClient):
                 operation="Batch cancellation",
             )
         return result
+
+
+class TenantDurableBatchAPIClient(DurableBatchAPIClient):
+    """Durable Batch API client with a required trusted tenant identity.
+
+    The tenant scope is validated synchronously at construction and remains
+    read-only. It is propagated only through the explicit tenant-aware recorder
+    seam and trusted recovery evidence; provider data never selects it.
+    """
+
+    def __init__(
+        self,
+        postgres_dsn: str,
+        credentials: CredentialsProvider,
+        *,
+        tenant_scope: str,
+        tenant_lifecycle_recorder: TenantLifecycleRecorder = (
+            persist_tenant_remote_batch_state
+        ),
+        observation_reserver: ObservationReserver = (
+            reserve_remote_batch_observation_order
+        ),
+        **client_options: Any,
+    ) -> None:
+        """Initialize the client after validating trusted tenant context."""
+        self._tenant_scope = validate_tenant_scope(tenant_scope)
+        if "lifecycle_recorder" in client_options:
+            raise ValidationError(
+                field="lifecycle_recorder",
+                value="<provided>",
+                reason="tenant clients require tenant_lifecycle_recorder",
+            )
+        self._tenant_lifecycle_recorder = tenant_lifecycle_recorder
+        super().__init__(
+            postgres_dsn,
+            credentials,
+            observation_reserver=observation_reserver,
+            **client_options,
+        )
+
+    @property
+    def tenant_scope(self) -> str:
+        """Return the exact immutable host-authorized tenant identity."""
+        return self._tenant_scope
+
+    def _lifecycle_recovery_context(self) -> Dict[str, Any]:
+        """Return the trusted tenant identity for bounded recovery evidence."""
+        return {"tenant_scope": self._tenant_scope}
+
+    async def _record_lifecycle_snapshot(
+        self,
+        endpoint_alias: str,
+        provider_batch: Mapping[str, Any],
+        observation_order: int,
+    ) -> None:
+        """Dispatch one snapshot through the tenant-qualified recorder seam."""
+        await asyncio.to_thread(
+            self._tenant_lifecycle_recorder,
+            self.postgres_dsn,
+            self._tenant_scope,
+            endpoint_alias,
+            provider_batch,
+            observation_order,
+        )
