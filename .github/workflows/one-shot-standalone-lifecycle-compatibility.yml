@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: 460855b0878016a90b64487eaa6056a8943e48b8
+          EXPECTED_PARENT: e9d63ab24d01eb625256472fbf5aa275caac62a8
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
