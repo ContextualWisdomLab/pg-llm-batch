@@ -103,7 +103,7 @@ def test_standalone_persistence_sets_transaction_scope_before_upsert(
         observed_at=observed,
     )
 
-    assert snapshot["tenant_scope"] == "standalone"
+    assert "tenant_scope" not in snapshot
     assert driver.executions[0] == (
         "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
         ("standalone",),

@@ -209,7 +209,6 @@ def test_persist_remote_batch_state_upserts_curated_terminal_snapshot(
     )
 
     assert snapshot == {
-        "tenant_scope": "standalone",
         "endpoint_alias": "primary",
         "remote_batch_id": "batch-123",
         "observation_order": 17,
@@ -260,7 +259,7 @@ def test_persist_remote_batch_state_normalizes_untrusted_optional_fields(
         observation_order=18,
     )
 
-    assert snapshot["tenant_scope"] == "standalone"
+    assert "tenant_scope" not in snapshot
     assert snapshot["endpoint_alias"] == "edge"
     assert snapshot["observation_order"] == 18
     assert snapshot["batch_status"] == "unknown"

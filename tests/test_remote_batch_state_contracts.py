@@ -303,17 +303,20 @@ async def test_provider_generated_oversized_id_never_reaches_recorder() -> None:
 
 
 def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> None:
-    """Lifecycle documentation must not overstate audit or tenant isolation."""
-    documentation = (
-        Path(__file__).parents[1] / "docs" / "remote-batch-lifecycle.md"
-    ).read_text(encoding="utf-8")
+    """Lifecycle documentation must bound audit and tenant assurances."""
+    documentation = " ".join(
+        (
+  Path(__file__).parents[1] / "docs" / "remote-batch-lifecycle.md"
+        ).read_text(encoding="utf-8").split()
+    )
 
     assert "current-state projection" in documentation
-    assert "not an authorization or tenant-isolation boundary" in documentation
     assert "append-only audit history" in documentation
-    assert "at most 128 characters" in documentation
-    assert "at most 256 ASCII characters" in documentation
-    assert "All caller-provided remote resource identifiers" in documentation
+    assert "arbitrary tenant scope" in documentation
+    assert "not a substitute" in documentation
+    assert "longer than 128 characters" in documentation
+    assert "limited to 256 ASCII characters" in documentation
+    assert "Caller-provided identifiers are validated before" in documentation
 
 
 @pytest.mark.parametrize(

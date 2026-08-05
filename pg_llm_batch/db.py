@@ -539,8 +539,8 @@ def persist_remote_batch_state(
     *,
     observed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Persist one lifecycle projection in the explicit standalone scope."""
-    return _persist_remote_batch_state(
+    """Persist one standalone projection without changing its return shape."""
+    snapshot = _persist_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
         endpoint_alias,
@@ -548,6 +548,8 @@ def persist_remote_batch_state(
         observation_order,
         observed_at=observed_at,
     )
+    snapshot.pop("tenant_scope", None)
+    return snapshot
 
 
 def persist_tenant_remote_batch_state(
