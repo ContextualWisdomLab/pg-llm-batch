@@ -20,9 +20,14 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _normalized(path: Path) -> str:
+    """Return Markdown with insignificant whitespace collapsed."""
+    return " ".join(_read(path).split())
+
+
 def test_remote_lifecycle_guide_exposes_tenant_qualified_operations() -> None:
     """The operator guide must describe the public tenant client and triple key."""
-    guide = _read(REMOTE_LIFECYCLE_GUIDE)
+    guide = _normalized(REMOTE_LIFECYCLE_GUIDE)
 
     assert "TenantDurableBatchAPIClient" in guide
     assert "(tenant_scope, endpoint_alias, remote_batch_id)" in guide
@@ -35,7 +40,7 @@ def test_remote_lifecycle_guide_exposes_tenant_qualified_operations() -> None:
 
 def test_readme_exposes_standalone_and_tenant_scoped_entry_points() -> None:
     """The first-run guide must make both deployment modes discoverable."""
-    readme = _read(README_PATH)
+    readme = _normalized(README_PATH)
 
     assert "DurableBatchAPIClient" in readme
     assert "TenantDurableBatchAPIClient" in readme
@@ -46,8 +51,8 @@ def test_readme_exposes_standalone_and_tenant_scoped_entry_points() -> None:
 
 def test_architecture_and_doctoring_bound_the_custom_guc_claim() -> None:
     """RLS documentation must not imply protection from arbitrary SQL execution."""
-    architecture = _read(ARCHITECTURE_PATH)
-    doctoring = _read(DOCTORING_PATH)
+    architecture = _normalized(ARCHITECTURE_PATH)
+    doctoring = _normalized(DOCTORING_PATH)
 
     for document in (architecture, doctoring):
         assert "arbitrary SQL" in document
