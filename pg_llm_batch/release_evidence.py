@@ -7,7 +7,7 @@ import hashlib
 import json
 import os
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -49,21 +49,33 @@ def _validate_metadata(
         raise ReleaseEvidenceError("invalid release evidence metadata")
 
 
+def _bounded_directory_entries(paths: Sequence[Path]) -> str:
+    """Return at most eight truncated entry names for safe failure diagnosis."""
+    return ", ".join(repr(path.name[:128]) for path in paths[:8])
+
+
 def _release_paths(directory: Path) -> tuple[Path, Path]:
     """Return the single regular wheel and sdist from a trusted directory boundary."""
     if directory.is_symlink() or not directory.is_dir():
         raise ReleaseEvidenceError("release directory must be a regular directory")
 
     paths = sorted(directory.iterdir(), key=lambda path: path.name)
+    entries = _bounded_directory_entries(paths)
     if len(paths) != 2:
-        raise ReleaseEvidenceError("release directory must contain exactly one wheel and one sdist")
+        raise ReleaseEvidenceError(
+            "release directory must contain exactly one wheel and one sdist; "
+            f"entries=[{entries}]"
+        )
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise ReleaseEvidenceError("release artifacts must be regular non-symlink files")
 
     wheels = [path for path in paths if path.name.endswith(".whl")]
     sdists = [path for path in paths if path.name.endswith(".tar.gz")]
     if len(wheels) != 1 or len(sdists) != 1:
-        raise ReleaseEvidenceError("release directory must contain exactly one wheel and one sdist")
+        raise ReleaseEvidenceError(
+            "release directory must contain exactly one wheel and one sdist; "
+            f"entries=[{entries}]"
+        )
     return wheels[0], sdists[0]
 
 
