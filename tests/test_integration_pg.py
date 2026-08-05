@@ -181,6 +181,49 @@ def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
                 )
                 assert cursor.fetchone()[0] == 0
 
+        pooled_connection = psycopg.connect(role_dsn)
+        try:
+            with pooled_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT set_config("
+                    "'pg_llm_batch.tenant_scope', %s, true)",
+                    ("tenant-a",),
+                )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                assert cursor.fetchone()[0] == 1
+            pooled_connection.rollback()
+
+            with pooled_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                assert cursor.fetchone()[0] == 0
+                cursor.execute(
+                    "SELECT set_config("
+                    "'pg_llm_batch.tenant_scope', %s, true)",
+                    ("tenant-b",),
+                )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                    ("tenant-a", batch_id),
+                )
+                assert cursor.fetchone()[0] == 0
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                    ("tenant-b", batch_id),
+                )
+                assert cursor.fetchone()[0] == 1
+        finally:
+            pooled_connection.close()
+
         with psycopg.connect(role_dsn) as tenant_connection:
             with tenant_connection.cursor() as cursor:
                 cursor.execute(
