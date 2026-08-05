@@ -116,7 +116,10 @@ class DurableBatchAPIClient(BatchAPIClient):
                 recovery_batch_id = validated_batch_id
             elif validated_batch_id != recovery_batch_id:
                 raise ValidationError(
-                    "provider batch id does not match requested batch id"
+                    field="remote_batch_id",
+                    value="<redacted>",
+                    reason="does not match requested batch id",
+                    message="provider batch id does not match requested batch id",
                 )
             normalized_snapshot = dict(provider_batch)
             normalized_snapshot["id"] = validated_batch_id
