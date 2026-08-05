@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rejected status-poll responses whose valid-looking provider batch identifier
+  differs from the requested identifier before lifecycle recorder or PostgreSQL
+  access; recovery metadata now retains only the trusted requested identifier.
 - Redacted unsupported provider-generated batch identifiers from durable
   lifecycle recovery metadata and exception causes while retaining validated
   identifiers, observation order, operation, phase, endpoint alias, and bounded
