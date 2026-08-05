@@ -28,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforced byte-accurate control-plane limits for multi-byte `memoryview`
+  chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
+  bounded body-free diagnostics.
 - Prevented caller- or provider-defined exception class names from entering
   OpenTelemetry span and metric attributes; unknown exact exception types now
   use the standardized low-cardinality `_OTHER` classification while the exact
