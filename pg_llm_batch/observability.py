@@ -130,26 +130,12 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
             None,
         )
 
-    def _close_span_context(
-        self,
-        span_context: Any,
-        error: Optional[BaseException],
-    ) -> None:
-        """Close an entered span context without changing operation semantics."""
+    def _close_span_context(self, span_context: Any) -> None:
+        """Close an entered span context without exposing operation exceptions."""
         if span_context is None:
             return
-        if error is None:
-            exception_type = exception_value = exception_traceback = None
-        else:
-            exception_type = type(error)
-            exception_value = error
-            exception_traceback = error.__traceback__
         self._telemetry_or_default(
-            lambda: span_context.__exit__(
-                exception_type,
-                exception_value,
-                exception_traceback,
-            ),
+            lambda: span_context.__exit__(None, None, None),
             None,
         )
 
@@ -196,7 +182,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 ERROR_TYPE_ATTRIBUTE: error_type,
             }
             self._emit_measurements(started_at, attributes)
-            self._close_span_context(span_context, exc)
+            self._close_span_context(span_context)
             raise
 
         attributes = {
@@ -204,7 +190,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
             OPERATION_OUTCOME_ATTRIBUTE: "success",
         }
         self._emit_measurements(started_at, attributes)
-        self._close_span_context(span_context, None)
+        self._close_span_context(span_context)
         return result
 
     async def upload_jsonl(
