@@ -39,9 +39,14 @@ failing hosted tests before the corresponding production change:
    reported `1 failed, 257 passed, 3 deselected`. Catching all
    `BaseException` at the telemetry-only boundary incorrectly swallowed an
    arbitrary non-cancellation process-control exception.
+8. Nested public-operation suppression, exact head
+   `642f43eefa8e795f5debe9f28b5a77ed3fe806d8`: CI run `30976749340`,
+   Python 3.10 job `92212230204`, failed with the two intended regressions and
+   reported `2 failed, 258 passed, 3 deselected`. Real `wait_for_batch()` and
+   `download_results()` dispatch emitted extra `get_batch_status` telemetry.
 
-The detailed initial failure is retained in
-`2026-08-05-opentelemetry-operations-red.md`. Later RED runs remain visible in
+The detailed initial and nested-dispatch failures are retained in
+`2026-08-05-opentelemetry-operations-red.md`. Other RED runs remain visible in
 the immutable GitHub Actions history and are summarized here so the final
 safety contract is auditable without treating post-implementation tests as
 TDD evidence.
@@ -50,7 +55,7 @@ TDD evidence.
 
 Exact production and test head:
 
-`1bfd55dff128a722c7b3c4a613ca906f78a0f02f`
+`5da30fb8799c51dca0749adb4f6990f3cbee203f`
 
 Base SHA:
 
@@ -58,9 +63,9 @@ Base SHA:
 
 The following same-head GitHub Actions runs succeeded:
 
-- CI run `30976370842`;
-- SAST Semgrep run `30976370815`; and
-- Security Scan run `30976370846`.
+- CI run `30976859989`;
+- SAST Semgrep run `30976859996`; and
+- Security Scan run `30976859962`.
 
 ## Verification results
 
@@ -74,14 +79,15 @@ results on the verified implementation head:
 - Ruff: `All checks passed!`;
 - public docstring coverage: `100.0%` with a `100.0%` threshold;
 - production statement and branch coverage: `100.00%`;
-- total coverage: 1,252 statements with zero misses and 330 branches with zero
+- total coverage: 1,259 statements with zero misses and 332 branches with zero
   partial branches;
-- `pg_llm_batch/observability.py`: 81 statements with zero misses and six
+- `pg_llm_batch/observability.py`: 88 statements with zero misses and eight
   branches with zero partial branches;
-- test result: `258 passed, 3 deselected`;
+- test result: `260 passed, 3 deselected`;
 - lockfile freshness: success;
 - source distribution and wheel builds: success, with
-  `pg_llm_batch/observability.py` included in both artifacts;
+  `pg_llm_batch/observability.py` and the regression test included in the source
+  distribution;
 - SAST Semgrep: success; and
 - Security Scan: success.
 
@@ -89,8 +95,15 @@ results on the verified implementation head:
 
 Deterministic tracer, span-context, meter, and instrument doubles prove that:
 
-- all six public client operations emit one bounded span, operation-count
-  measurement, and duration measurement when providers are available;
+- all six caller-invoked public client operations emit one bounded span,
+  operation-count measurement, and duration measurement when providers are
+  available;
+- internal status polling performed by `wait_for_batch()` and
+  `download_results()` does not emit additional caller-visible
+  `get_batch_status` signals;
+- the suppression guard uses task-local context state and is reset in a
+  `finally` block, so concurrent tasks and exceptional exits do not share or
+  strand mutable observation state;
 - emitted attributes contain only the bounded operation name, outcome, and
   canonical error class;
 - endpoint aliases, remote identifiers, tenant values, payloads, exception
