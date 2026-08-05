@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Independent 1 MiB bounded-stream decoding for Files and Batches control-plane JSON before strict UTF-8 and object parsing.
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
   caller-invoked public Batch API client operations, with explicit tracer/meter
   injection, lazy global-provider resolution, a finite documented `error.type`
@@ -27,6 +28,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Enforced byte-accurate control-plane limits for multi-byte `memoryview`
+  chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
+  bounded body-free diagnostics.
 - Prevented caller- or provider-defined exception class names from entering
   OpenTelemetry span and metric attributes; unknown exact exception types now
   use the standardized low-cardinality `_OTHER` classification while the exact

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -13,6 +14,19 @@ import pytest
 from pg_llm_batch import batch_api_client as client_mod
 from pg_llm_batch.batch_api_client import BatchAPIClient, GatewayCredentials
 from pg_llm_batch.exceptions import GatewayError, ValidationError
+
+
+
+class ResponseContent:
+    """Expose deterministic JSON bytes through a bounded stream."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    async def iter_chunked(self, size: int):
+        """Yield bytes in chunks no larger than the requested size."""
+        for index in range(0, len(self.payload), size):
+            yield self.payload[index : index + size]
 
 
 class Response:
@@ -28,6 +42,9 @@ class Response:
         self.status = status
         self.payload = payload
         self.headers = headers or {}
+        encoded = json.dumps(payload).encode("utf-8")
+        self.content_length = len(encoded)
+        self.content = ResponseContent(encoded)
         self.exit_count = 0
 
     async def __aenter__(self):

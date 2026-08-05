@@ -17,12 +17,32 @@ def _credentials(_alias: str) -> GatewayCredentials:
     return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
 
 
+
+class ResponseContent:
+    """Expose deterministic response bytes through a bounded stream."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    async def iter_chunked(self, size: int):
+        """Yield bytes in chunks no larger than the requested size."""
+        for index in range(0, len(self.payload), size):
+            yield self.payload[index : index + size]
+
+
 class Response:
     """Minimal asynchronous response used by transport boundary tests."""
 
     def __init__(self, payload, *, status: int = 200) -> None:
         self.payload = payload
         self.status = status
+        encoded = (
+            b"{"
+            if isinstance(payload, json.JSONDecodeError)
+            else json.dumps(payload).encode("utf-8")
+        )
+        self.content_length = len(encoded)
+        self.content = ResponseContent(encoded)
 
     async def __aenter__(self):
         return self

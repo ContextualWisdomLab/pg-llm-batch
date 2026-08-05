@@ -151,6 +151,7 @@ client = BatchAPIClient(
     dsn,
     config_credentials_provider(config, secrets),
     max_download_bytes=256 * 1024 * 1024,
+    max_control_response_bytes=1 * 1024 * 1024,
 )
 ```
 
@@ -165,6 +166,13 @@ db.apply_schema(dsn)
 The `credentials` argument to `BatchAPIClient` is a seam: pass
 `config_credentials_provider(...)` to use the KV stores, or supply your own
 `Callable[[str], GatewayCredentials]` to source credentials from your host app.
+
+Files and Batches control-plane JSON responses are streamed through an
+independent 1 MiB decoded-byte budget before strict UTF-8 and JSON object
+parsing. The client never uses whole-body `response.json()` or
+`response.text()` fallbacks, and adapters without `content.iter_chunked` fail
+closed. Set `max_control_response_bytes` only for a reviewed provider metadata
+contract; changing it does not alter the provider-file download budget.
 
 Provider result and error files are streamed in 64 KiB chunks and limited to
 128 MiB of decoded UTF-8 data by default. The limit is enforced after aiohttp

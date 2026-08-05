@@ -34,7 +34,13 @@ class Response:
         self.status = status
         self.payload = payload
         self.text_value = text
-        encoded = text.encode("utf-8")
+        encoded = (
+            text.encode("utf-8")
+            if text
+            else json.dumps(payload).encode("utf-8")
+            if payload is not None
+            else b""
+        )
         self.content_length = len(encoded)
         self.content = ResponseContent(encoded)
 

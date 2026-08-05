@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_USER_AGENT = "pg-llm-batch"
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 30.0
 DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
+DEFAULT_MAX_CONTROL_RESPONSE_BYTES = 1 * 1024 * 1024
 DOWNLOAD_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
@@ -221,6 +222,7 @@ class BatchAPIClient:
         *,
         request_timeout_seconds: float = DEFAULT_REQUEST_TIMEOUT_SECONDS,
         max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,
+        max_control_response_bytes: int = DEFAULT_MAX_CONTROL_RESPONSE_BYTES,
         max_retry_attempts: int = DEFAULT_MAX_RETRY_ATTEMPTS,
         retry_base_delay_seconds: float = DEFAULT_RETRY_BASE_DELAY_SECONDS,
         retry_max_delay_seconds: float = DEFAULT_RETRY_MAX_DELAY_SECONDS,
@@ -266,6 +268,16 @@ class BatchAPIClient:
                 value=max_retry_attempts,
                 reason="must be a positive integer total-attempt limit",
             )
+        if (
+            isinstance(max_control_response_bytes, bool)
+            or not isinstance(max_control_response_bytes, int)
+            or max_control_response_bytes <= 0
+        ):
+            raise ValidationError(
+                field="max_control_response_bytes",
+                value=max_control_response_bytes,
+                reason="must be a positive integer number of bytes",
+            )
         normalized_retry_base = _normalize_retry_delay(
             "retry_base_delay_seconds", retry_base_delay_seconds
         )
@@ -282,6 +294,7 @@ class BatchAPIClient:
         self._credentials = credentials
         self.request_timeout_seconds = normalized_timeout
         self.max_download_bytes = max_download_bytes
+        self.max_control_response_bytes = max_control_response_bytes
         self.max_retry_attempts = max_retry_attempts
         self.retry_base_delay_seconds = normalized_retry_base
         self.retry_max_delay_seconds = normalized_retry_max
@@ -397,11 +410,20 @@ class BatchAPIClient:
             await asyncio.sleep(delay)
             attempt += 1
 
-    async def _read_json_object(self, response: Any, operation: str) -> Dict[str, Any]:
-        """Decode a response body and require it to be a JSON object, else raise."""
+    async def _read_json_object(
+        self,
+        response: Any,
+        operation: str,
+    ) -> Dict[str, Any]:
+        """Decode one bounded control-plane body and require a JSON object."""
+        content = await self._read_bounded_utf8(
+            response,
+            operation,
+            max_bytes=self.max_control_response_bytes,
+        )
         try:
-            result = await response.json()
-        except (aiohttp.ClientError, ValueError, UnicodeError) as exc:
+            result = json.loads(content)
+        except (json.JSONDecodeError, RecursionError) as exc:
             raise GatewayError(
                 f"{operation} returned invalid JSON",
                 status_code=getattr(response, "status", None),
@@ -420,22 +442,29 @@ class BatchAPIClient:
         response: Any,
         operation: str,
         *,
+        max_bytes: int,
         declared_bytes: Optional[int],
         bytes_read: int,
     ) -> GatewayError:
-        """Build a body-free error describing one provider download limit breach."""
+        """Build a body-free error for one explicit response byte limit."""
         return GatewayError(
             f"{operation} exceeded download limit",
             status_code=getattr(response, "status", None),
             response_data={
-                "limit_bytes": self.max_download_bytes,
+                "limit_bytes": max_bytes,
                 "declared_bytes": declared_bytes,
                 "bytes_read": bytes_read,
             },
         )
 
-    async def _read_bounded_utf8(self, response: Any, operation: str) -> str:
-        """Read one response body within the configured decoded-byte limit."""
+    async def _read_bounded_utf8(
+        self,
+        response: Any,
+        operation: str,
+        *,
+        max_bytes: int,
+    ) -> str:
+        """Read one strict UTF-8 response body within an explicit byte limit."""
         declared_value = getattr(response, "content_length", None)
         declared_bytes = (
             declared_value
@@ -444,17 +473,14 @@ class BatchAPIClient:
             and declared_value >= 0
             else None
         )
-        if (
-            declared_bytes is not None
-            and declared_bytes > self.max_download_bytes
-        ):
+        if declared_bytes is not None and declared_bytes > max_bytes:
             raise self._download_limit_error(
                 response,
                 operation,
+                max_bytes=max_bytes,
                 declared_bytes=declared_bytes,
                 bytes_read=0,
             )
-
         stream = getattr(response, "content", None)
         iterator = getattr(stream, "iter_chunked", None)
         if not callable(iterator):
@@ -463,18 +489,30 @@ class BatchAPIClient:
                 status_code=getattr(response, "status", None),
                 response_data={"error_type": "MissingBoundedStream"},
             )
-
         payload = bytearray()
         async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
-            if len(payload) + len(chunk) > self.max_download_bytes:
+            if isinstance(chunk, memoryview):
+                chunk_bytes = chunk.nbytes
+            elif isinstance(chunk, (bytes, bytearray)):
+                chunk_bytes = len(chunk)
+            else:
+                raise GatewayError(
+                    f"{operation} response yielded a non-byte stream chunk",
+                    status_code=getattr(response, "status", None),
+                    response_data={"error_type": "InvalidByteChunk"},
+                )
+            if len(payload) + chunk_bytes > max_bytes:
                 raise self._download_limit_error(
                     response,
                     operation,
+                    max_bytes=max_bytes,
                     declared_bytes=declared_bytes,
                     bytes_read=len(payload),
                 )
-            payload.extend(chunk)
-
+            if isinstance(chunk, memoryview):
+                payload.extend(chunk.tobytes())
+            else:
+                payload.extend(chunk)
         try:
             return payload.decode("utf-8")
         except UnicodeDecodeError as exc:
@@ -710,7 +748,11 @@ class BatchAPIClient:
             operation=operation,
             headers=self._headers(creds.api_key),
         ) as response:
-            content = await self._read_bounded_utf8(response, operation)
+            content = await self._read_bounded_utf8(
+                response,
+                operation,
+                max_bytes=self.max_download_bytes,
+            )
             if response.status != 200:
                 raise GatewayError(
                     f"{operation} failed: {response.status}",
