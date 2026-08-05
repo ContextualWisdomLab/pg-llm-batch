@@ -1,0 +1,577 @@
+name: One-shot bounded control JSON repair
+
+on:
+  push:
+    branches: [agent/bounded-control-plane-json]
+    paths:
+      - .github/workflows/one-shot-bounded-control-json-repair.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-bounded-control-json-repair
+  cancel-in-progress: true
+
+jobs:
+  repair-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout feature branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/bounded-control-plane-json
+          fetch-depth: 0
+
+      - name: Synchronize current main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Apply explicit control-plane response budget
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent, indent
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+
+          client_path = Path("pg_llm_batch/batch_api_client.py")
+          client = client_path.read_text(encoding="utf-8")
+
+          if "DEFAULT_MAX_CONTROL_RESPONSE_BYTES" not in client:
+              client = replace_once(
+                  client,
+                  "DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024\n",
+                  "DEFAULT_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024\n"
+                  "DEFAULT_MAX_CONTROL_RESPONSE_BYTES = 1 * 1024 * 1024\n",
+                  "control response constant",
+              )
+
+          if "max_control_response_bytes: int = DEFAULT_MAX_CONTROL_RESPONSE_BYTES" not in client:
+              client = replace_once(
+                  client,
+                  "        max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,\n",
+                  "        max_download_bytes: int = DEFAULT_MAX_DOWNLOAD_BYTES,\n"
+                  "        max_control_response_bytes: int = DEFAULT_MAX_CONTROL_RESPONSE_BYTES,\n",
+                  "constructor control response option",
+              )
+
+          if 'field="max_control_response_bytes"' not in client:
+              validation_anchor = (
+                  "        normalized_retry_base = _normalize_retry_delay(\n"
+              )
+              validation = (
+                  "        if (\n"
+                  "            isinstance(max_control_response_bytes, bool)\n"
+                  "            or not isinstance(max_control_response_bytes, int)\n"
+                  "            or max_control_response_bytes <= 0\n"
+                  "        ):\n"
+                  "            raise ValidationError(\n"
+                  "                field=\"max_control_response_bytes\",\n"
+                  "                value=max_control_response_bytes,\n"
+                  "                reason=\"must be a positive integer number of bytes\",\n"
+                  "            )\n"
+              )
+              client = replace_once(
+                  client,
+                  validation_anchor,
+                  validation + validation_anchor,
+                  "control response validation",
+              )
+
+          if "        self.max_control_response_bytes = max_control_response_bytes\n" not in client:
+              client = replace_once(
+                  client,
+                  "        self.max_download_bytes = max_download_bytes\n",
+                  "        self.max_download_bytes = max_download_bytes\n"
+                  "        self.max_control_response_bytes = max_control_response_bytes\n",
+                  "control response assignment",
+              )
+
+          json_start = client.index("    async def _read_json_object(\n")
+          json_end = client.index("    def _download_limit_error(\n", json_start)
+          json_method = indent(
+              dedent(
+                  '''
+                  async def _read_json_object(
+                      self,
+                      response: Any,
+                      operation: str,
+                  ) -> Dict[str, Any]:
+                      """Decode one bounded control-plane body and require a JSON object."""
+                      content = await self._read_bounded_utf8(
+                          response,
+                          operation,
+                          max_bytes=self.max_control_response_bytes,
+                      )
+                      try:
+                          result = json.loads(content)
+                      except (json.JSONDecodeError, RecursionError) as exc:
+                          raise GatewayError(
+                              f"{operation} returned invalid JSON",
+                              status_code=getattr(response, "status", None),
+                              response_data={"error_type": type(exc).__name__},
+                          ) from exc
+                      if not isinstance(result, dict):
+                          raise GatewayError(
+                              f"{operation} returned a non-object JSON response",
+                              status_code=getattr(response, "status", None),
+                              response_data={"response_type": type(result).__name__},
+                          )
+                      return result
+
+                  '''
+              ).lstrip("\n"),
+              "    ",
+          )
+          client = client[:json_start] + json_method + client[json_end:]
+
+          limit_start = client.index("    def _download_limit_error(\n")
+          limit_end = client.index("    async def _read_bounded_utf8(\n", limit_start)
+          limit_method = indent(
+              dedent(
+                  '''
+                  def _download_limit_error(
+                      self,
+                      response: Any,
+                      operation: str,
+                      *,
+                      max_bytes: int,
+                      declared_bytes: Optional[int],
+                      bytes_read: int,
+                  ) -> GatewayError:
+                      """Build a body-free error for one explicit response byte limit."""
+                      return GatewayError(
+                          f"{operation} exceeded download limit",
+                          status_code=getattr(response, "status", None),
+                          response_data={
+                              "limit_bytes": max_bytes,
+                              "declared_bytes": declared_bytes,
+                              "bytes_read": bytes_read,
+                          },
+                      )
+
+                  '''
+              ).lstrip("\n"),
+              "    ",
+          )
+          client = client[:limit_start] + limit_method + client[limit_end:]
+
+          reader_start = client.index("    async def _read_bounded_utf8(\n")
+          reader_end = client.index("    def _headers(\n", reader_start)
+          reader = indent(
+              dedent(
+                  '''
+                  async def _read_bounded_utf8(
+                      self,
+                      response: Any,
+                      operation: str,
+                      *,
+                      max_bytes: int,
+                  ) -> str:
+                      """Read one strict UTF-8 response body within an explicit byte limit."""
+                      declared_value = getattr(response, "content_length", None)
+                      declared_bytes = (
+                          declared_value
+                          if isinstance(declared_value, int)
+                          and not isinstance(declared_value, bool)
+                          and declared_value >= 0
+                          else None
+                      )
+                      if declared_bytes is not None and declared_bytes > max_bytes:
+                          raise self._download_limit_error(
+                              response,
+                              operation,
+                              max_bytes=max_bytes,
+                              declared_bytes=declared_bytes,
+                              bytes_read=0,
+                          )
+
+                      stream = getattr(response, "content", None)
+                      iterator = getattr(stream, "iter_chunked", None)
+                      if not callable(iterator):
+                          raise GatewayError(
+                              f"{operation} response does not expose a bounded byte stream",
+                              status_code=getattr(response, "status", None),
+                              response_data={"error_type": "MissingBoundedStream"},
+                          )
+
+                      payload = bytearray()
+                      async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
+                          if len(payload) + len(chunk) > max_bytes:
+                              raise self._download_limit_error(
+                                  response,
+                                  operation,
+                                  max_bytes=max_bytes,
+                                  declared_bytes=declared_bytes,
+                                  bytes_read=len(payload),
+                              )
+                          payload.extend(chunk)
+
+                      try:
+                          return payload.decode("utf-8")
+                      except UnicodeDecodeError as exc:
+                          raise GatewayError(
+                              f"{operation} returned invalid UTF-8",
+                              status_code=getattr(response, "status", None),
+                              response_data={
+                                  "error_type": type(exc).__name__,
+                                  "byte_offset": exc.start,
+                              },
+                          ) from exc
+
+                  '''
+              ).lstrip("\n"),
+              "    ",
+          )
+          client = client[:reader_start] + reader + client[reader_end:]
+
+          legacy_file_read = "            content = await self._read_bounded_utf8(response, operation)\n"
+          explicit_file_read = (
+              "            content = await self._read_bounded_utf8(\n"
+              "                response,\n"
+              "                operation,\n"
+              "                max_bytes=self.max_download_bytes,\n"
+              "            )\n"
+          )
+          if legacy_file_read in client:
+              client = replace_once(
+                  client,
+                  legacy_file_read,
+                  explicit_file_read,
+                  "provider file explicit budget",
+              )
+          elif explicit_file_read not in client:
+              raise SystemExit("provider file bounded-read call has an unexpected shape")
+
+          if "await response.json()" in client or "await response.text()" in client:
+              raise SystemExit("whole-body response helper remains in production source")
+          if "_read_bounded_utf8(response, operation)" in client:
+              raise SystemExit("bounded reader call without an explicit budget remains")
+          client_path.write_text(client, encoding="utf-8")
+
+          batch_path = Path("tests/test_batch_api_client.py")
+          batch = batch_path.read_text(encoding="utf-8")
+          batch = replace_once(
+              batch,
+              "        encoded = text.encode(\"utf-8\")\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = FakeContent(encoded)\n",
+              "        encoded = (\n"
+              "            text.encode(\"utf-8\")\n"
+              "            if text\n"
+              "            else json.dumps(payload).encode(\"utf-8\")\n"
+              "            if payload is not None\n"
+              "            else b\"\"\n"
+              "        )\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = FakeContent(encoded)\n",
+              "batch API response bytes",
+          )
+          batch_path.write_text(batch, encoding="utf-8")
+
+          error_path = Path("tests/test_error_file_retrieval.py")
+          error_tests = error_path.read_text(encoding="utf-8")
+          error_tests = replace_once(
+              error_tests,
+              "        encoded = text.encode(\"utf-8\")\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = ResponseContent(encoded)\n",
+              "        encoded = (\n"
+              "            text.encode(\"utf-8\")\n"
+              "            if text\n"
+              "            else json.dumps(payload).encode(\"utf-8\")\n"
+              "            if payload is not None\n"
+              "            else b\"\"\n"
+              "        )\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = ResponseContent(encoded)\n",
+              "error retrieval response bytes",
+          )
+          error_path.write_text(error_tests, encoding="utf-8")
+
+          retry_path = Path("tests/test_idempotent_get_retries.py")
+          retry = retry_path.read_text(encoding="utf-8")
+          if "import json\n" not in retry:
+              retry = replace_once(
+                  retry,
+                  "import asyncio\n",
+                  "import asyncio\nimport json\n",
+                  "retry JSON import",
+              )
+          if "class ResponseContent:" not in retry:
+              helper = dedent(
+                  '''
+                  class ResponseContent:
+                      """Expose deterministic JSON bytes through a bounded stream."""
+
+                      def __init__(self, payload: bytes) -> None:
+                          self.payload = payload
+
+                      async def iter_chunked(self, size: int):
+                          """Yield bytes in chunks no larger than the requested size."""
+                          for index in range(0, len(self.payload), size):
+                              yield self.payload[index : index + size]
+
+
+                  '''
+              )
+              retry = replace_once(
+                  retry,
+                  "class Response:\n",
+                  helper + "class Response:\n",
+                  "retry response content helper",
+              )
+          retry = replace_once(
+              retry,
+              "        self.payload = payload\n"
+              "        self.headers = headers or {}\n"
+              "        self.exit_count = 0\n",
+              "        self.payload = payload\n"
+              "        self.headers = headers or {}\n"
+              "        encoded = json.dumps(payload).encode(\"utf-8\")\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = ResponseContent(encoded)\n"
+              "        self.exit_count = 0\n",
+              "retry response bytes",
+          )
+          retry_path.write_text(retry, encoding="utf-8")
+
+          transport_path = Path("tests/test_http_transport.py")
+          transport = transport_path.read_text(encoding="utf-8")
+          if "class ResponseContent:" not in transport:
+              helper = dedent(
+                  '''
+                  class ResponseContent:
+                      """Expose deterministic response bytes through a bounded stream."""
+
+                      def __init__(self, payload: bytes) -> None:
+                          self.payload = payload
+
+                      async def iter_chunked(self, size: int):
+                          """Yield bytes in chunks no larger than the requested size."""
+                          for index in range(0, len(self.payload), size):
+                              yield self.payload[index : index + size]
+
+
+                  '''
+              )
+              transport = replace_once(
+                  transport,
+                  "class Response:\n",
+                  helper + "class Response:\n",
+                  "transport response content helper",
+              )
+          transport = replace_once(
+              transport,
+              "        self.payload = payload\n"
+              "        self.status = status\n",
+              "        self.payload = payload\n"
+              "        self.status = status\n"
+              "        encoded = (\n"
+              "            b\"{\"\n"
+              "            if isinstance(payload, json.JSONDecodeError)\n"
+              "            else json.dumps(payload).encode(\"utf-8\")\n"
+              "        )\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = ResponseContent(encoded)\n",
+              "transport response bytes",
+          )
+          transport_path.write_text(transport, encoding="utf-8")
+
+          resource_path = Path("tests/test_resource_id_validation.py")
+          resource = resource_path.read_text(encoding="utf-8")
+          if "import json\n" not in resource:
+              resource = replace_once(
+                  resource,
+                  "from __future__ import annotations\n\n",
+                  "from __future__ import annotations\n\nimport json\n\n",
+                  "resource JSON import",
+              )
+          if "class ResponseContent:" not in resource:
+              helper = dedent(
+                  '''
+                  class ResponseContent:
+                      """Expose deterministic JSON bytes through a bounded stream."""
+
+                      def __init__(self, payload: bytes) -> None:
+                          self.payload = payload
+
+                      async def iter_chunked(self, size: int):
+                          """Yield bytes in chunks no larger than the requested size."""
+                          for index in range(0, len(self.payload), size):
+                              yield self.payload[index : index + size]
+
+
+                  '''
+              )
+              resource = replace_once(
+                  resource,
+                  "class Response:\n",
+                  helper + "class Response:\n",
+                  "resource response content helper",
+              )
+          resource = replace_once(
+              resource,
+              "    def __init__(self, payload) -> None:\n"
+              "        self.payload = payload\n",
+              "    def __init__(self, payload) -> None:\n"
+              "        self.payload = payload\n"
+              "        encoded = json.dumps(payload).encode(\"utf-8\")\n"
+              "        self.content_length = len(encoded)\n"
+              "        self.content = ResponseContent(encoded)\n",
+              "resource response bytes",
+          )
+          resource_path.write_text(resource, encoding="utf-8")
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          constructor_anchor = "    max_download_bytes=256 * 1024 * 1024,\n"
+          if "max_control_response_bytes=" not in readme:
+              readme = replace_once(
+                  readme,
+                  constructor_anchor,
+                  constructor_anchor + "    max_control_response_bytes=1 * 1024 * 1024,\n",
+                  "README constructor limit",
+              )
+          paragraph = (
+              "Files and Batches control-plane JSON responses are streamed through an\n"
+              "independent 1 MiB decoded-byte budget before strict UTF-8 and JSON object\n"
+              "parsing. The client never uses whole-body `response.json()` or\n"
+              "`response.text()` fallbacks, and adapters without `content.iter_chunked` fail\n"
+              "closed. Set `max_control_response_bytes` only for a reviewed provider metadata\n"
+              "contract; changing it does not alter the provider-file download budget.\n\n"
+          )
+          if paragraph not in readme:
+              readme = replace_once(
+                  readme,
+                  "Provider result and error files are streamed in 64 KiB chunks and limited to\n",
+                  paragraph
+                  + "Provider result and error files are streamed in 64 KiB chunks and limited to\n",
+                  "README control response paragraph",
+              )
+          readme_path.write_text(readme, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          entry = (
+              "- Independent 1 MiB bounded-stream decoding for Files and Batches "
+              "control-plane JSON before strict UTF-8 and object parsing.\n"
+          )
+          if entry not in changelog:
+              marker = "### Added\n\n"
+              if changelog.count(marker) != 1:
+                  raise SystemExit("expected one Unreleased Added section")
+              changelog = changelog.replace(marker, marker + entry, 1)
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          plan_path = Path("docs/superpowers/plans/2026-08-05-bounded-control-plane-json.md")
+          plan = plan_path.read_text(encoding="utf-8")
+          pending = (
+              "Inspect every current-head human, CodeRabbit, OpenCode, and security finding.",
+              "Require exact-head CI, SAST Semgrep, and Security Scan success.",
+              "Merge only the reviewed exact head.",
+              "Re-query the PR queue and continue with the next bounded product gap.",
+          )
+          for line in plan.splitlines():
+              if line.startswith("- [ ] ") and not any(item in line for item in pending):
+                  plan = plan.replace(line, line.replace("- [ ] ", "- [x] ", 1), 1)
+          plan_path.write_text(plan, encoding="utf-8")
+          PY
+
+      - name: Install exact locked dependencies
+        run: uv sync --locked
+
+      - name: Verify focused and complete quality contracts
+        run: |
+          set -euo pipefail
+          uv run pytest -q \
+            tests/test_bounded_control_plane_json.py \
+            tests/test_batch_api_client.py \
+            tests/test_error_file_retrieval.py \
+            tests/test_idempotent_get_retries.py \
+            tests/test_http_transport.py \
+            tests/test_resource_id_validation.py \
+            tests/test_bounded_result_downloads.py
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch tests
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          rm -rf dist
+          uv build --no-sources
+          docker compose config >/dev/null
+          docker build --tag pg-llm-batch:bounded-control-json .
+          docker build --tag pg-llm-batch-postgres:bounded-control-json docker/postgres
+
+      - name: Record green evidence
+        run: |
+          cat > docs/superpowers/evidence/2026-08-05-bounded-control-plane-json-green.md <<'EOF'
+          # Bounded control-plane JSON green evidence
+
+          The implementation workflow passed the focused response-boundary suite,
+          complete non-integration tests, Python compilation, Ruff, 100% production
+          docstrings, 100% production statement and branch coverage, lockfile
+          freshness, wheel/source builds, Compose validation, and component and
+          PostgreSQL container builds.
+
+          Files and Batches metadata now passes through an independent one-MiB
+          decoded-byte stream boundary before strict UTF-8 and JSON object parsing.
+          Provider output and error files retain their separate download budget.
+          EOF
+
+      - name: Publish verified implementation and remove workflows
+        env:
+          BRANCH_NAME: agent/bounded-control-plane-json
+        run: |
+          set -euo pipefail
+          rm -f \
+            .github/workflows/one-shot-bounded-control-json-implementation.yml \
+            .github/workflows/one-shot-bounded-control-json-repair.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pg_llm_batch/batch_api_client.py \
+            tests/test_bounded_control_plane_json.py \
+            tests/test_batch_api_client.py \
+            tests/test_error_file_retrieval.py \
+            tests/test_idempotent_get_retries.py \
+            tests/test_http_transport.py \
+            tests/test_resource_id_validation.py \
+            README.md \
+            CHANGELOG.md \
+            docs/superpowers/plans/2026-08-05-bounded-control-plane-json.md \
+            docs/superpowers/evidence/2026-08-05-bounded-control-plane-json-green.md \
+            .github/workflows/one-shot-bounded-control-json-implementation.yml \
+            .github/workflows/one-shot-bounded-control-json-repair.yml
+          git diff --cached --quiet && { echo "No bounded control JSON implementation generated" >&2; exit 1; }
+          git commit -m "feat(gateway): bound control-plane JSON responses"
+          git push origin "HEAD:${BRANCH_NAME}"
