@@ -1,0 +1,53 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Regression contract for the reproducible release acceptance workflow."""
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW = ROOT / ".github" / "workflows" / "release-acceptance.yml"
+
+
+def test_release_acceptance_workflow_is_exact_head_least_privilege() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "permissions:\n  contents: read\n" in text
+    assert "id-token: write" not in text
+    assert "attestations: write" not in text
+    assert "packages: write" not in text
+    assert "persist-credentials: false" in text
+    assert "ref: ${{ github.event.pull_request.head.sha }}" in text
+    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in text
+    assert "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" in text
+    assert "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9" in text
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in text
+
+
+def test_release_acceptance_workflow_builds_twice_and_preserves_evidence() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "SOURCE_DATE_EPOCH" in text
+    assert "git show -s --format=%ct HEAD" in text
+    assert "uv build --no-sources --out-dir dist-first" in text
+    assert "uv build --no-sources --out-dir dist-second" in text
+    assert "verify_reproducible_release" in text
+    assert "write_release_manifest" in text
+    assert "release-manifest.json" in text
+    assert "retention-days: 14" in text
+
+
+def test_release_acceptance_workflow_runs_for_every_contract_change() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    required_paths = (
+        ".github/workflows/release-acceptance.yml",
+        "pg_llm_batch/**",
+        "tests/test_release_evidence.py",
+        "tests/test_release_acceptance_workflow.py",
+        "pyproject.toml",
+        "uv.lock",
+        "LICENSE",
+        "NOTICE",
+    )
+    for path in required_paths:
+        assert f"- {path}" in text
