@@ -59,6 +59,14 @@ class FakeTracer:
         return FakeSpanContext(span)
 
 
+class ExplodingTracer:
+    """Model a broken tracer provider that raises before entering a span."""
+
+    def start_as_current_span(self, _name: str, **_kwargs: Any) -> FakeSpanContext:
+        """Raise the provider failure instead of creating a span."""
+        raise RuntimeError("tracer unavailable")
+
+
 @dataclass
 class FakeInstrument:
     """Capture metric measurements and their attributes."""
@@ -72,6 +80,20 @@ class FakeInstrument:
     def record(self, value: float, attributes: dict[str, Any]) -> None:
         """Capture a histogram measurement."""
         self.calls.append((float(value), dict(attributes)))
+
+
+class ExplodingInstrument(FakeInstrument):
+    """Model a metric instrument whose provider fails during measurement."""
+
+    def add(self, _value: int, attributes: dict[str, Any]) -> None:
+        """Raise while adding a counter measurement."""
+        del attributes
+        raise RuntimeError("metric provider unavailable")
+
+    def record(self, _value: float, attributes: dict[str, Any]) -> None:
+        """Raise while recording a histogram measurement."""
+        del attributes
+        raise RuntimeError("metric provider unavailable")
 
 
 class FakeMeter:
@@ -93,6 +115,15 @@ class FakeMeter:
         """Return the shared fake histogram."""
         self.created.append(("histogram", name, unit, description))
         return self.histogram
+
+
+class ExplodingMeter(FakeMeter):
+    """Create metric instruments that fail when the client emits measurements."""
+
+    def __init__(self) -> None:
+        self.created: list[tuple[str, str, str, str]] = []
+        self.counter = ExplodingInstrument()
+        self.histogram = ExplodingInstrument()
 
 
 def credentials(_alias: str) -> GatewayCredentials:
@@ -223,6 +254,77 @@ async def test_failed_operation_records_error_type_and_reraises(
     assert meter.counter.calls == [(1.0, expected_attributes)]
     assert len(meter.histogram.calls) == 1
     assert meter.histogram.calls[0][1] == expected_attributes
+
+
+async def test_tracer_failure_does_not_skip_or_replace_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken tracer cannot prevent the underlying operation from succeeding."""
+    expected = {"success": True}
+    calls = 0
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return expected
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=ExplodingTracer(),
+        meter=FakeMeter(),
+    )
+
+    result = await client.cancel_batch("batch-1", "private-alias")
+
+    assert result is expected
+    assert calls == 1
+
+
+async def test_metric_failure_does_not_replace_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken metric provider cannot replace a successful operation result."""
+    expected = {"success": True}
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        return expected
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=FakeTracer(),
+        meter=ExplodingMeter(),
+    )
+
+    result = await client.cancel_batch("batch-1", "private-alias")
+
+    assert result is expected
+
+
+async def test_metric_failure_does_not_replace_operation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A broken metric provider cannot mask the original operation exception."""
+    failure = GatewayError("provider unavailable")
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        raise failure
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=FakeTracer(),
+        meter=ExplodingMeter(),
+    )
+
+    with pytest.raises(GatewayError) as exc_info:
+        await client.cancel_batch("batch-1", "private-alias")
+
+    assert exc_info.value is failure
 
 
 def test_client_creates_stable_metric_instruments(
