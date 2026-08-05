@@ -1,0 +1,61 @@
+name: One-shot PR 52 memoryview byte accounting
+
+on:
+  push:
+    branches:
+      - agent/bounded-control-plane-json
+    paths:
+      - .github/workflows/one-shot-pr52-memoryview-bytes.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-pr52-memoryview-bytes
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.repository == 'ContextualWisdomLab/pg-llm-batch' && github.actor == 'seonghobae'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: agent/bounded-control-plane-json
+          fetch-depth: 1
+          persist-credentials: true
+      - name: Apply the exact byte-accounting repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('pg_llm_batch/batch_api_client.py')
+          text = path.read_text(encoding='utf-8')
+          old = '            if len(payload) + len(chunk) > max_bytes:\n'
+          new = (
+              '            chunk_bytes = chunk.nbytes if isinstance(chunk, memoryview) else len(chunk)\n'
+              '            if len(payload) + chunk_bytes > max_bytes:\n'
+          )
+          if text.count(old) != 1:
+              raise SystemExit('expected exactly one bounded-stream length check')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          rm .github/workflows/one-shot-pr52-memoryview-bytes.yml
+          git diff --check
+          grep -F 'chunk_bytes = chunk.nbytes if isinstance(chunk, memoryview) else len(chunk)' pg_llm_batch/batch_api_client.py
+      - name: Commit the bounded repair and remove this workflow
+        shell: bash
+        env:
+          EXPECTED_BRANCH: agent/bounded-control-plane-json
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "$EXPECTED_BRANCH"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add pg_llm_batch/batch_api_client.py .github/workflows/one-shot-pr52-memoryview-bytes.yml
+          git commit -m 'fix(gateway): count memoryview bytes accurately'
+          git push origin "HEAD:${EXPECTED_BRANCH}"
