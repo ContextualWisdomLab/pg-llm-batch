@@ -8,6 +8,9 @@ on:
       - pg_llm_batch/**
       - tests/test_release_evidence.py
       - tests/test_release_acceptance_workflow.py
+      - tests/test_release_evidence_documentation.py
+      - docs/adr/0003-reproducible-release-evidence.md
+      - docs/doctoring/reproducible-release-evidence.md
       - pyproject.toml
       - uv.lock
       - LICENSE
@@ -78,13 +81,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          (cd source-first && uv build --no-sources --out-dir ../dist-first)
+          uv build --no-sources --out-dir dist-first source-first
 
       - name: Build second distribution set
         shell: bash
         run: |
           set -euo pipefail
-          (cd source-second && uv build --no-sources --out-dir ../dist-second)
+          uv build --no-sources --out-dir dist-second source-second
 
       - name: Verify artifact identity and write bounded evidence
         shell: bash
