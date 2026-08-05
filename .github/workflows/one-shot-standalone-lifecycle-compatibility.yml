@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: 503ccf94c87b75365578251b2e4bb0c5fab45496
+          EXPECTED_PARENT: 984cf0d7a5c00b748f1fb75ef69704e26b8170ad
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -94,6 +94,7 @@ jobs:
         run: |
           python3 -I - <<'PY'
           from pathlib import Path
+          from textwrap import dedent
 
           def replace_once(path: str, old: str, new: str) -> None:
               """Replace one exact reviewed anchor and fail closed on drift."""
@@ -104,31 +105,31 @@ jobs:
                   raise SystemExit(f"{path}: expected one anchor, found {count}")
               target.write_text(source.replace(old, new, 1), encoding="utf-8")
 
-          replace_once(
-              "pg_llm_batch/db.py",
-              '''    """Persist one lifecycle projection in the explicit standalone scope."""
-          return _persist_remote_batch_state(
-              dsn,
-              DEFAULT_TENANT_SCOPE,
-              endpoint_alias,
-              provider_batch,
-              observation_order,
-              observed_at=observed_at,
-          )
-          '''.replace("\n          ", "\n"),
-              '''    """Persist one standalone projection without changing its return shape."""
-          snapshot = _persist_remote_batch_state(
-              dsn,
-              DEFAULT_TENANT_SCOPE,
-              endpoint_alias,
-              provider_batch,
-              observation_order,
-              observed_at=observed_at,
-          )
-          snapshot.pop("tenant_scope", None)
-          return snapshot
-          '''.replace("\n          ", "\n"),
-          )
+          old_wrapper = dedent('''\
+              """Persist one lifecycle projection in the explicit standalone scope."""
+              return _persist_remote_batch_state(
+                  dsn,
+                  DEFAULT_TENANT_SCOPE,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at=observed_at,
+              )
+          ''')
+          new_wrapper = dedent('''\
+              """Persist one standalone projection without changing its return shape."""
+              snapshot = _persist_remote_batch_state(
+                  dsn,
+                  DEFAULT_TENANT_SCOPE,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at=observed_at,
+              )
+              snapshot.pop("tenant_scope", None)
+              return snapshot
+          ''')
+          replace_once("pg_llm_batch/db.py", old_wrapper, new_wrapper)
           replace_once(
               "tests/test_remote_batch_lifecycle.py",
               '        "tenant_scope": "standalone",\n',
@@ -144,42 +145,52 @@ jobs:
               '    assert snapshot["tenant_scope"] == "standalone"\n',
               '    assert "tenant_scope" not in snapshot\n',
           )
+
+          old_backfill = dedent('''\
+              assert (
+                  "ALTER TABLE llm_remote_batch_jobs\\n"
+                  "    ADD COLUMN IF NOT EXISTS tenant_scope TEXT;"
+              ) in schema
+              assert (
+                  "UPDATE llm_remote_batch_jobs\\n"
+                  "SET tenant_scope = 'standalone'\\n"
+                  "WHERE tenant_scope IS NULL;"
+              ) in schema
+          ''')
+          new_backfill = dedent('''\
+              migration_start = schema.index(
+                  "-- Reapplying the schema may occur after FORCE RLS was installed."
+              )
+              migration_end = schema.index(
+                  "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
+              )
+              migration = schema[migration_start:migration_end]
+              assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in migration
+              assert "SET tenant_scope = 'standalone'" in migration
+          ''')
           replace_once(
               "tests/test_tenant_lifecycle_schema.py",
-              '''    assert (
-              "ALTER TABLE llm_remote_batch_jobs\\n"
-              "    ADD COLUMN IF NOT EXISTS tenant_scope TEXT;"
-          ) in schema
-          assert (
-              "UPDATE llm_remote_batch_jobs\\n"
-              "SET tenant_scope = 'standalone'\\n"
-              "WHERE tenant_scope IS NULL;"
-          ) in schema
-          '''.replace("\n          ", "\n"),
-              '''    migration_start = schema.index(
-              "-- Reapplying the schema may occur after FORCE RLS was installed."
+              old_backfill,
+              new_backfill,
           )
-          migration_end = schema.index(
-              "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
-          )
-          migration = schema[migration_start:migration_end]
-          assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in migration
-          assert "SET tenant_scope = 'standalone'" in migration
-          '''.replace("\n          ", "\n"),
-          )
+
+          old_force_order = dedent('''\
+              assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.index(
+                  "FORCE ROW LEVEL SECURITY"
+              )
+          ''')
+          new_force_order = dedent('''\
+              force_statement = (
+                  "ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;"
+              )
+              assert atomic_transition.index(
+                  "SET tenant_scope = 'standalone'"
+              ) < atomic_transition.rindex(force_statement)
+          ''')
           replace_once(
               "tests/test_tenant_lifecycle_schema.py",
-              '''    assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.index(
-              "FORCE ROW LEVEL SECURITY"
-          )
-          '''.replace("\n          ", "\n"),
-              '''    force_statement = (
-              "ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;"
-          )
-          assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.rindex(
-              force_statement
-          )
-          '''.replace("\n          ", "\n"),
+              old_force_order,
+              new_force_order,
           )
           replace_once(
               "docs/remote-batch-lifecycle.md",
