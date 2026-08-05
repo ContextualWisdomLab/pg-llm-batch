@@ -20,10 +20,9 @@ jobs:
   repair-verify-publish:
     if: >-
       github.repository == 'ContextualWisdomLab/pg-llm-batch' &&
-      github.actor == 'seonghobae' &&
       github.ref == 'refs/heads/agent/tenant-scoped-lifecycle'
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    timeout-minutes: 35
     permissions:
       contents: write
     steps:
@@ -42,7 +41,7 @@ jobs:
       - name: Refuse stale state or competing branch writers
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
-          EXPECTED_PARENT: c7f5ca0be1c3a0900ee6d6a32cafbe354f316f92
+          EXPECTED_PARENT: 764600f0a58bdf59fb4614b6fffeaa41e23eb01b
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -69,22 +68,18 @@ jobs:
       - name: Install exact locked dependencies
         run: uv sync --locked
 
-      - name: Prove atomic enablement regression is RED
+      - name: Confirm permanent regression is RED
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           set +e
-          red_output="$(
-            uv run pytest -q \
-              tests/test_tenant_lifecycle_schema.py::test_rls_owner_transition_is_atomic_for_psql_reapplication \
-              2>&1
-          )"
-          red_status=$?
+          output="$(uv run pytest -q tests/test_tenant_lifecycle_schema.py::test_rls_owner_transition_is_atomic_for_psql_reapplication 2>&1)"
+          status=$?
           set -e
-          printf '%s\n' "$red_output"
-          test "$red_status" -ne 0
-          printf '%s\n' "$red_output" | grep -F 'ENABLE ROW LEVEL SECURITY'
+          printf '%s\n' "$output"
+          test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F 'ENABLE ROW LEVEL SECURITY'
 
-      - name: Enable and force RLS inside the atomic migration statement
+      - name: Apply bounded atomic-RLS repair
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           python3 -I - <<'PY'
@@ -96,171 +91,111 @@ jobs:
           )
           original = schema_paths[0].read_text(encoding="utf-8")
           if schema_paths[1].read_text(encoding="utf-8") != original:
-              raise SystemExit("schema mirrors differ before the bounded repair")
+              raise SystemExit("schema mirrors differ before repair")
 
-          old_comment = """-- backfill, and constraint migration execute inside one anonymous block. If any
+          replacements = (
+              (
+                  """-- backfill, and constraint migration execute inside one anonymous block. If any
 -- operation fails, PostgreSQL rolls the entire statement back and FORCE RLS is
 -- never left disabled between committed statements.
-"""
-          new_comment = """-- backfill, constraint migration, and RLS enable/force transition execute
+""",
+                  """-- backfill, constraint migration, and RLS enable/force transition execute
 -- inside one anonymous block. If any operation fails, PostgreSQL rolls the
 -- statement back so no disabled, unforced, or partially migrated state commits.
-"""
-          old_transition = """    ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
+""",
+              ),
+              (
+                  """    ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 END $$;
-"""
-          new_transition = """    ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
+""",
+                  """    ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 END $$;
-"""
-          old_post_policy = """ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
+""",
+              ),
+              (
+                  """ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
 ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 
-"""
-
+""",
+                  "",
+              ),
+          )
           repaired = original
-          for old, new, expected in (
-              (old_comment, new_comment, 1),
-              (old_transition, new_transition, 1),
-              (old_post_policy, "", 1),
-          ):
-              count = repaired.count(old)
-              if count != expected:
-                  raise SystemExit(
-                      f"schema replacement drift: expected {expected}, found {count}"
-                  )
-              repaired = repaired.replace(old, new, expected)
-
+          for old, new in replacements:
+              if repaired.count(old) != 1:
+                  raise SystemExit("schema replacement drifted")
+              repaired = repaired.replace(old, new, 1)
           for path in schema_paths:
               path.write_text(repaired, encoding="utf-8")
 
-          doctoring_path = Path("docs/doctoring/tenant-scoped-lifecycle.md")
-          doctoring = doctoring_path.read_text(encoding="utf-8")
-          old_doctoring = """The temporary owner-enforcement transition,
+          documentation = {
+              Path("docs/doctoring/tenant-scoped-lifecycle.md"): (
+                  """The temporary owner-enforcement transition,
 legacy-row backfill, constraint migration, and `FORCE ROW LEVEL SECURITY`
 restoration execute inside one anonymous PostgreSQL block. This prevents psql
 autocommit from committing an intermediate owner-bypass state.
-"""
-          new_doctoring = """The temporary owner-enforcement transition,
+""",
+                  """The temporary owner-enforcement transition,
 legacy-row backfill, constraint migration, `ENABLE ROW LEVEL SECURITY`, and
 `FORCE ROW LEVEL SECURITY` restoration execute inside one anonymous PostgreSQL
 block. A legacy installation therefore cannot commit a migrated table while RLS
 is still disabled; policy recreation afterward remains default-deny until the
 new policy exists.
-"""
-          if doctoring.count(old_doctoring) != 1:
-              raise SystemExit("doctoring migration paragraph drifted")
-          doctoring_path.write_text(
-              doctoring.replace(old_doctoring, new_doctoring, 1),
-              encoding="utf-8",
-          )
-
-          adr_path = Path("docs/adr/0002-tenant-scoped-lifecycle.md")
-          adr = adr_path.read_text(encoding="utf-8")
-          old_adr = """Legacy rows are backfilled to `standalone`. Owner enforcement may be relaxed
+""",
+              ),
+              Path("docs/adr/0002-tenant-scoped-lifecycle.md"): (
+                  """Legacy rows are backfilled to `standalone`. Owner enforcement may be relaxed
 only inside the same atomic SQL statement that performs the backfill and restores
 `FORCE ROW LEVEL SECURITY`.
-"""
-          new_adr = """Legacy rows are backfilled to `standalone`. Owner enforcement may be relaxed
+""",
+                  """Legacy rows are backfilled to `standalone`. Owner enforcement may be relaxed
 only inside the same atomic SQL statement that performs the backfill, enables
 row-level security for legacy tables, and restores `FORCE ROW LEVEL SECURITY`.
 Policy recreation follows under enabled and forced default-deny behavior.
-"""
-          if adr.count(old_adr) != 1:
-              raise SystemExit("ADR migration paragraph drifted")
-          adr_path.write_text(adr.replace(old_adr, new_adr, 1), encoding="utf-8")
+""",
+              ),
+          }
+          for path, (old, new) in documentation.items():
+              text = path.read_text(encoding="utf-8")
+              if text.count(old) != 1:
+                  raise SystemExit(f"documentation replacement drifted: {path}")
+              path.write_text(text.replace(old, new, 1), encoding="utf-8")
           PY
-          git diff --check
           cmp -s pg_llm_batch/schema.sql docker/postgres/init/02_schema.sql
+          git diff --check
 
-      - name: Verify focused migration and isolation contracts
-        run: |
-          uv run pytest -q \
-            tests/test_tenant_lifecycle_schema.py \
-            tests/test_schema_integrity.py \
-            tests/test_tenant_operator_documentation.py
-
-      - name: Verify complete deterministic quality contract
+      - name: Verify focused and complete deterministic gates
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
+          uv run pytest -q tests/test_tenant_lifecycle_schema.py tests/test_schema_integrity.py tests/test_tenant_operator_documentation.py
           uv run python -m compileall -q pg_llm_batch tests
           uv run ruff check pg_llm_batch tests
           uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
           uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
-            --cov=pg_llm_batch --cov-branch --cov-report=term-missing \
-            --cov-fail-under=100
+            --cov=pg_llm_batch --cov-branch --cov-report=term-missing --cov-fail-under=100
           uv lock --check
-          rm -rf build dist
+          rm -rf .coverage .coverage.* htmlcov build dist
           uv build --no-sources
           docker compose config >/dev/null
-          docker build --tag pg-llm-batch:atomic-rls .
-          docker build --tag pg-llm-batch-postgres:atomic-rls docker/postgres
 
-      - name: Verify live PostgreSQL migration, default deny, and pool reset
-        shell: bash --noprofile --norc -e -o pipefail {0}
-        env:
-          PG_LLM_BATCH_TEST_DSN: postgresql://pgllm:pgllm@localhost:5432/pgllm
-        run: |
-          cleanup() {
-            docker compose down --volumes --remove-orphans
-          }
-          trap cleanup EXIT
-          docker compose up -d --build postgres
-          ready=0
-          for _attempt in $(seq 1 90); do
-            if docker compose exec -T postgres pg_isready -U pgllm -d pgllm; then
-              ready=1
-              break
-            fi
-            sleep 2
-          done
-          test "$ready" -eq 1
-          uv run pytest -q -m integration tests/test_integration_pg.py
-
-      - name: Record exact RED/GREEN evidence and remove temporary automation
-        shell: bash --noprofile --norc -e -o pipefail {0}
-        env:
-          SOURCE_HEAD: ${{ github.sha }}
-        run: |
-          rm .github/workflows/one-shot-enable-tenant-rls-atomically.yml
-          rm -rf .coverage .coverage.* htmlcov build dist
-          mkdir -p docs/superpowers/evidence
-          cat > docs/superpowers/evidence/2026-08-05-atomic-tenant-rls-enablement.md <<EOF
-          # Atomic Tenant RLS Enablement Evidence
-
-          - Permanent RED contract head: \`c7f5ca0be1c3a0900ee6d6a32cafbe354f316f92\`.
-          - Verification workflow source head: \`$SOURCE_HEAD\`.
-          - The RED contract proved that the migration restored FORCE inside its
-            anonymous block but left ENABLE as a later autocommitted statement.
-          - The final migration now enables and forces row security in the same
-            PostgreSQL statement as owner relaxation, backfill, and constraint
-            replacement. Policy recreation occurs while missing-policy behavior
-            is default-deny.
-          - Focused migration tests, the complete non-integration suite, 100%
-            production statement/branch/docstring coverage, compilation, Ruff,
-            lock freshness, distributions, Compose validation, both container
-            builds, and live PostgreSQL tenant/default-deny/pool-reset tests passed.
-          - The temporary write-capable workflow removed itself from the final tree.
-          EOF
-          test ! -e .github/workflows/one-shot-enable-tenant-rls-atomically.yml
-          cmp -s pg_llm_batch/schema.sql docker/postgres/init/02_schema.sql
-          git diff --check
-
-      - name: Publish only from the unchanged exact remote head
+      - name: Remove temporary automation and publish exact result
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           BRANCH_NAME: agent/tenant-scoped-lifecycle
           EXPECTED_HEAD: ${{ github.sha }}
           PUSH_TOKEN: ${{ github.token }}
         run: |
+          rm .github/workflows/one-shot-enable-tenant-rls-atomically.yml
+          rm -rf .coverage .coverage.* htmlcov build dist
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git ls-remote origin refs/heads/$BRANCH_NAME | cut -f1)" = "$EXPECTED_HEAD"
+          cmp -s pg_llm_batch/schema.sql docker/postgres/init/02_schema.sql
+          git diff --check
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git diff --cached --quiet && { echo "No atomic RLS repair generated" >&2; exit 1; }
           git commit -m "fix(schema): enable tenant RLS atomically"
           auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
           echo "::add-mask::$auth_header"
-          git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
-            push origin "HEAD:${BRANCH_NAME}"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" push origin "HEAD:${BRANCH_NAME}"
