@@ -1,0 +1,1581 @@
+name: Tenant Lifecycle One Shot
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+concurrency:
+  group: tenant-lifecycle-one-shot-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  implement:
+    if: >-
+      github.repository == 'ContextualWisdomLab/pg-llm-batch' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'agent/tenant-scoped-lifecycle'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout exact pull-request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Refuse stale or competing branch writers
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$HEAD_BRANCH" = "agent/tenant-scoped-lifecycle"
+          mapfile -t writers < <(find .github/workflows -maxdepth 1 -type f \
+            \( -name '*one-shot*.yml' -o -name '*repair*.yml' \) -print | sort)
+          test "${#writers[@]}" -eq 1
+          test "${writers[0]}" = ".github/workflows/tenant-lifecycle-one-shot.yml"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Add tenant-isolation tests first
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          unit_test = r'''# SPDX-License-Identifier: Apache-2.0
+          """Tests for tenant-scoped durable lifecycle isolation."""
+
+          from __future__ import annotations
+
+          from datetime import datetime, timezone
+          from pathlib import Path
+          from typing import Any
+
+          import pytest
+
+          from pg_llm_batch import (
+              DEFAULT_TENANT_SCOPE,
+              TenantDurableBatchAPIClient,
+              get_remote_batch_state,
+              get_tenant_remote_batch_state,
+              persist_tenant_remote_batch_state,
+              validate_tenant_scope,
+          )
+          from pg_llm_batch import db
+          from pg_llm_batch.batch_api_client import GatewayCredentials
+          from pg_llm_batch.exceptions import ValidationError
+
+
+          class _Cursor:
+              """Record SQL and return configured lifecycle rows."""
+
+              def __init__(self, driver: Any) -> None:
+                  self.driver = driver
+
+              def __enter__(self):
+                  return self
+
+              def __exit__(self, *exc: Any):
+                  return None
+
+              def execute(self, sql: str, params: Any = None) -> None:
+                  self.driver.executions.append((sql, params))
+
+              def fetchone(self):
+                  if not self.driver.rows:
+                      return None
+                  return self.driver.rows.pop(0)
+
+
+          class _Connection:
+              """Expose one cursor and explicit commit evidence."""
+
+              def __init__(self, driver: Any) -> None:
+                  self.driver = driver
+
+              def __enter__(self):
+                  return self
+
+              def __exit__(self, *exc: Any):
+                  return None
+
+              def cursor(self):
+                  return _Cursor(self.driver)
+
+              def commit(self) -> None:
+                  self.driver.commits += 1
+
+
+          class _Psycopg:
+              """Minimal psycopg replacement for lifecycle helpers."""
+
+              def __init__(self, rows: list[Any] | None = None) -> None:
+                  self.rows = list(rows or [])
+                  self.executions: list[tuple[str, Any]] = []
+                  self.connections: list[str] = []
+                  self.commits = 0
+
+              def connect(self, dsn: str):
+                  self.connections.append(dsn)
+                  return _Connection(self)
+
+
+          def _credentials(_alias: str) -> GatewayCredentials:
+              """Return deterministic credentials without external effects."""
+              return GatewayCredentials(
+                  url="https://gateway.example/v1",
+                  api_key="secret",
+              )
+
+
+          @pytest.mark.parametrize(
+              "tenant_scope",
+              ["tenant-a", "Team.alpha:west_2", "A" * 128, DEFAULT_TENANT_SCOPE],
+          )
+          def test_validate_tenant_scope_accepts_exact_bounded_ascii(
+              tenant_scope: str,
+          ) -> None:
+              """Trusted scopes retain their exact validated identity."""
+              assert validate_tenant_scope(tenant_scope) == tenant_scope
+
+
+          @pytest.mark.parametrize(
+              "tenant_scope",
+              [
+                  None,
+                  True,
+                  "",
+                  " tenant-a",
+                  "tenant-a ",
+                  "tenant/a",
+                  "tenant%2Fa",
+                  "한글",
+                  "a" * 129,
+              ],
+          )
+          def test_validate_tenant_scope_rejects_ambiguous_or_unbounded_values(
+              tenant_scope: Any,
+          ) -> None:
+              """Untrusted scope syntax fails without coercion."""
+              with pytest.raises(ValidationError) as captured:
+                  validate_tenant_scope(tenant_scope)
+              assert captured.value.details["field"] == "tenant_scope"
+
+
+          def test_tenant_persistence_binds_scope_before_rls_checked_upsert(
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              """One statement installs local scope and uses a tenant-qualified key."""
+              driver = _Psycopg()
+              monkeypatch.setattr(db, "psycopg", driver)
+              observed = datetime(2026, 8, 5, 11, 0, tzinfo=timezone.utc)
+
+              snapshot = persist_tenant_remote_batch_state(
+                  "postgresql://tenant",
+                  "tenant-a",
+                  "primary",
+                  {
+                      "id": "batch-1",
+                      "status": "completed",
+                      "request_counts": {"total": 2, "completed": 2, "failed": 0},
+                  },
+                  9,
+                  observed_at=observed,
+              )
+
+              assert snapshot["tenant_scope"] == "tenant-a"
+              sql, params = driver.executions[0]
+              assert "set_config('pg_llm_batch.tenant_scope', %s, true)" in sql
+              assert (
+                  "ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id)"
+                  in sql
+              )
+              assert params[-1] == "tenant-a"
+              assert driver.commits == 1
+
+
+          def test_standalone_persistence_retains_legacy_return_shape(
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              """The legacy helper writes standalone scope without adding a return key."""
+              driver = _Psycopg()
+              monkeypatch.setattr(db, "psycopg", driver)
+
+              snapshot = db.persist_remote_batch_state(
+                  "postgresql://standalone",
+                  "primary",
+                  {"id": "batch-standalone"},
+                  10,
+              )
+
+              assert "tenant_scope" not in snapshot
+              assert driver.executions[0][1][-1] == DEFAULT_TENANT_SCOPE
+
+
+          def test_tenant_reads_are_scope_bound_and_return_curated_rows(
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              """Tenant reads set transaction context and never query by ID alone."""
+              observed = datetime(2026, 8, 5, 11, 1, tzinfo=timezone.utc)
+              row = (
+                  "tenant-a",
+                  "primary",
+                  "batch-1",
+                  9,
+                  "file-1",
+                  "/v1/responses",
+                  "completed",
+                  "output-1",
+                  None,
+                  2,
+                  2,
+                  0,
+                  {"safe": True},
+                  observed,
+                  observed,
+                  observed,
+                  observed,
+              )
+              standalone_row = (DEFAULT_TENANT_SCOPE, *row[1:])
+              driver = _Psycopg(rows=[row, None, standalone_row])
+              monkeypatch.setattr(db, "psycopg", driver)
+
+              snapshot = get_tenant_remote_batch_state(
+                  "postgresql://tenant", "tenant-a", "primary", "batch-1"
+              )
+              missing = get_tenant_remote_batch_state(
+                  "postgresql://tenant", "tenant-b", "primary", "batch-1"
+              )
+              standalone = get_remote_batch_state(
+                  "postgresql://tenant", "primary", "batch-1"
+              )
+
+              assert snapshot is not None
+              assert snapshot["tenant_scope"] == "tenant-a"
+              assert snapshot["provider_metadata"] == {"safe": True}
+              assert missing is None
+              assert standalone is not None
+              assert standalone["tenant_scope"] == DEFAULT_TENANT_SCOPE
+              first_sql, first_params = driver.executions[0]
+              assert "MATERIALIZED" in first_sql
+              assert "set_config('pg_llm_batch.tenant_scope', %s, true)" in first_sql
+              assert first_params == ("tenant-a", "primary", "batch-1")
+
+
+          async def test_tenant_client_dispatches_only_to_tenant_recorder() -> None:
+              """The tenant client propagates the trusted scope through its recorder seam."""
+              recorded: list[tuple[str, str, str, dict[str, Any], int]] = []
+
+              def recorder(
+                  dsn: str,
+                  tenant_scope: str,
+                  alias: str,
+                  payload: Any,
+                  observation_order: int,
+              ) -> None:
+                  recorded.append(
+                      (dsn, tenant_scope, alias, dict(payload), observation_order)
+                  )
+
+              client = TenantDurableBatchAPIClient(
+                  "postgresql://tenant",
+                  _credentials,
+                  tenant_scope="tenant-a",
+                  tenant_lifecycle_recorder=recorder,
+              )
+              await client._write_lifecycle_snapshot(
+                  "primary", {"id": "batch-1", "status": "validating"}, 11
+              )
+
+              assert client.tenant_scope == "tenant-a"
+              assert recorded == [
+                  (
+                      "postgresql://tenant",
+                      "tenant-a",
+                      "primary",
+                      {"id": "batch-1", "status": "validating"},
+                      11,
+                  )
+              ]
+
+
+          def test_tenant_client_rejects_invalid_scope_before_client_setup() -> None:
+              """Construction fails before a reserver, credential lookup, or provider call."""
+              with pytest.raises(ValidationError):
+                  TenantDurableBatchAPIClient(
+                      "postgresql://tenant",
+                      _credentials,
+                      tenant_scope=" tenant-a",
+                  )
+
+
+          def test_tenant_client_rejects_legacy_recorder_seam() -> None:
+              """Tenant callers cannot accidentally inject an unscoped recorder."""
+              with pytest.raises(ValidationError, match="tenant_lifecycle_recorder"):
+                  TenantDurableBatchAPIClient(
+                      "postgresql://tenant",
+                      _credentials,
+                      tenant_scope="tenant-a",
+                      lifecycle_recorder=lambda *_args: None,
+                  )
+
+
+          def test_schema_migrates_and_forces_tenant_row_isolation() -> None:
+              """The canonical DDL backfills safely and installs default-deny RLS."""
+              schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
+              source = Path(db.__file__).read_text(encoding="utf-8")
+              assert "tenant_scope TEXT NOT NULL DEFAULT 'standalone'" in schema
+              assert "ck_llm_remote_batch_jobs_tenant_scope" in schema
+              assert (
+                  "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)" in schema
+              )
+              assert "DROP CONSTRAINT IF EXISTS uq_llm_remote_batch_jobs_endpoint_id" in schema
+              assert "ENABLE ROW LEVEL SECURITY" in schema
+              assert "FORCE ROW LEVEL SECURITY" in schema
+              assert "pl_llm_remote_batch_jobs_tenant_scope" in schema
+              assert "current_setting('pg_llm_batch.tenant_scope', true)" in schema
+              assert "idx_llm_remote_batch_jobs_tenant_status_observed" in schema
+              assert "idx_llm_remote_batch_jobs_status_observed" in schema
+              assert "set_config('pg_llm_batch.tenant_scope', %s, true)" in source
+          '''
+          Path("tests/test_tenant_scoped_lifecycle.py").write_text(
+              unit_test.replace("\n          ", "\n").lstrip(),
+              encoding="utf-8",
+          )
+
+          integration_test = r'''# SPDX-License-Identifier: Apache-2.0
+          """Live PostgreSQL isolation tests for tenant lifecycle state."""
+
+          from __future__ import annotations
+
+          import os
+          import uuid
+
+          import pytest
+
+          from pg_llm_batch import db
+
+          pytestmark = pytest.mark.integration
+          DSN = os.environ.get("PG_LLM_BATCH_TEST_DSN")
+          skip_no_db = pytest.mark.skipif(
+              not DSN,
+              reason="PG_LLM_BATCH_TEST_DSN not set; skipping live-DB integration",
+          )
+
+
+          @skip_no_db
+          def test_live_rls_separates_identical_provider_ids_by_tenant() -> None:
+              """A non-bypass role cannot observe another tenant's identical batch ID."""
+              import psycopg
+              from psycopg import sql
+              from psycopg.conninfo import make_conninfo
+
+              db.apply_schema(DSN)
+              suffix = uuid.uuid4().hex[:12]
+              role_name = f"tenant_scope_test_{suffix}"
+              password = uuid.uuid4().hex
+              batch_id = f"batch-{suffix}"
+              role_dsn = make_conninfo(DSN, user=role_name, password=password)
+
+              with psycopg.connect(DSN) as admin:
+                  with admin.cursor() as cursor:
+                      cursor.execute(
+                          sql.SQL(
+                              "CREATE ROLE {} LOGIN PASSWORD %s "
+                              "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
+                              "NOREPLICATION NOBYPASSRLS"
+                          ).format(sql.Identifier(role_name)),
+                          (password,),
+                      )
+                      cursor.execute(
+                          sql.SQL(
+                              "GRANT SELECT, INSERT, UPDATE ON "
+                              "llm_remote_batch_jobs TO {}"
+                          ).format(sql.Identifier(role_name))
+                      )
+                  admin.commit()
+
+              try:
+                  db.persist_tenant_remote_batch_state(
+                      role_dsn,
+                      "tenant-a",
+                      "primary",
+                      {"id": batch_id, "status": "in_progress"},
+                      1,
+                  )
+                  db.persist_tenant_remote_batch_state(
+                      role_dsn,
+                      "tenant-b",
+                      "primary",
+                      {"id": batch_id, "status": "in_progress"},
+                      2,
+                  )
+                  assert db.get_tenant_remote_batch_state(
+                      role_dsn, "tenant-a", "primary", batch_id
+                  )["tenant_scope"] == "tenant-a"
+                  assert db.get_tenant_remote_batch_state(
+                      role_dsn, "tenant-b", "primary", batch_id
+                  )["tenant_scope"] == "tenant-b"
+
+                  with psycopg.connect(role_dsn) as tenant_connection:
+                      with tenant_connection.cursor() as cursor:
+                          cursor.execute(
+                              "SELECT set_config(" 
+                              "'pg_llm_batch.tenant_scope', %s, true)",
+                              ("tenant-a",),
+                          )
+                          cursor.execute(
+                              "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                              "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                              ("tenant-b", batch_id),
+                          )
+                          assert cursor.fetchone()[0] == 0
+              finally:
+                  with psycopg.connect(DSN) as admin:
+                      with admin.cursor() as cursor:
+                          for tenant_scope in ("tenant-a", "tenant-b"):
+                              cursor.execute(
+                                  "SELECT set_config(" 
+                                  "'pg_llm_batch.tenant_scope', %s, true)",
+                                  (tenant_scope,),
+                              )
+                              cursor.execute(
+                                  "DELETE FROM llm_remote_batch_jobs "
+                                  "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                                  (tenant_scope, batch_id),
+                              )
+                          cursor.execute(
+                              sql.SQL("DROP OWNED BY {}").format(
+                                  sql.Identifier(role_name)
+                              )
+                          )
+                          cursor.execute(
+                              sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name))
+                          )
+                      admin.commit()
+          '''
+          Path("tests/test_tenant_lifecycle_integration.py").write_text(
+              integration_test.replace("\n          ", "\n").lstrip(),
+              encoding="utf-8",
+          )
+
+          lifecycle_tests = Path("tests/test_remote_batch_lifecycle.py")
+          lifecycle_text = lifecycle_tests.read_text(encoding="utf-8")
+          replacements = {
+              '"CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id"':
+                  '"CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id"',
+              '"UNIQUE (endpoint_alias, remote_batch_id)"':
+                  '"UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)"',
+              '"ON CONFLICT (endpoint_alias, remote_batch_id) DO UPDATE"':
+                  '"ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE"',
+          }
+          for old, new in replacements.items():
+              if old not in lifecycle_text:
+                  raise SystemExit(f"missing lifecycle test anchor: {old}")
+              lifecycle_text = lifecycle_text.replace(old, new)
+          lifecycle_tests.write_text(lifecycle_text, encoding="utf-8")
+          PY
+
+      - name: Prove the tenant contract is RED
+        id: red
+        shell: bash
+        run: |
+          set +e
+          uv run pytest -q tests/test_tenant_scoped_lifecycle.py > /tmp/tenant-red.log 2>&1
+          status=$?
+          set -e
+          cat /tmp/tenant-red.log
+          test "$status" -ne 0
+          grep -Eq "cannot import name|ImportError|ModuleNotFoundError" /tmp/tenant-red.log
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
+      - name: Implement tenant-scoped lifecycle isolation
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          db_path = Path("pg_llm_batch/db.py")
+          db_text = db_path.read_text(encoding="utf-8")
+          constants_anchor = "MAX_REMOTE_RESOURCE_ID_CHARACTERS = 256\n"
+          constants_addition = (
+              "DEFAULT_TENANT_SCOPE = \"standalone\"\n"
+              "MAX_TENANT_SCOPE_CHARACTERS = 128\n"
+              "TENANT_SCOPE_PATTERN = re.compile(\n"
+              "    rf\"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_TENANT_SCOPE_CHARACTERS - 1}}}\\\\Z\"\n"
+              ")\n"
+              "REMOTE_BATCH_STATE_FIELDS = (\n"
+              "    \"tenant_scope\",\n"
+              "    \"endpoint_alias\",\n"
+              "    \"remote_batch_id\",\n"
+              "    \"observation_order\",\n"
+              "    \"input_file_id\",\n"
+              "    \"batch_endpoint\",\n"
+              "    \"batch_status\",\n"
+              "    \"output_file_id\",\n"
+              "    \"error_file_id\",\n"
+              "    \"total_requests\",\n"
+              "    \"completed_requests\",\n"
+              "    \"failed_requests\",\n"
+              "    \"provider_metadata\",\n"
+              "    \"first_seen_at\",\n"
+              "    \"last_observed_at\",\n"
+              "    \"terminal_at\",\n"
+              "    \"updated_at\",\n"
+              ")\n"
+          )
+          if constants_addition not in db_text:
+              if constants_anchor not in db_text:
+                  raise SystemExit("missing db constants anchor")
+              db_text = db_text.replace(
+                  constants_anchor,
+                  constants_anchor + constants_addition,
+                  1,
+              )
+
+          validator_anchor = "\n\ndef validate_remote_resource_id(value: Any, field: str) -> str:\n"
+          validator_code = r'''
+
+          def validate_tenant_scope(value: Any) -> str:
+              """Validate one trusted local tenant scope without coercion.
+
+              Tenant scope is an authorization attribute supplied by a trusted host
+              boundary. The exact 1-128 character ASCII value is retained; whitespace,
+              Unicode, controls, path separators, percent escapes, booleans, and
+              over-limit values fail before database or provider effects.
+              """
+              if (
+                  not isinstance(value, str)
+                  or TENANT_SCOPE_PATTERN.fullmatch(value) is None
+              ):
+                  raise ValidationError(
+                      field="tenant_scope",
+                      value=value,
+                      reason=(
+                          "must be 1-128 ASCII characters beginning with an "
+                          "alphanumeric character and containing only letters, "
+                          "digits, dot, underscore, colon, or hyphen"
+                      ),
+                  )
+              return value
+          '''.replace("\n          ", "\n")
+          if "def validate_tenant_scope" not in db_text:
+              if validator_anchor not in db_text:
+                  raise SystemExit("missing validator insertion anchor")
+              db_text = db_text.replace(
+                  validator_anchor,
+                  validator_code + validator_anchor,
+                  1,
+              )
+
+          persist_start = db_text.index("def persist_remote_batch_state(\n")
+          persist_end = db_text.index("\n\ndef get_model_metadata", persist_start)
+          persist_code = r'''def _build_remote_batch_snapshot(
+              tenant_scope: str,
+              endpoint_alias: str,
+              provider_batch: Mapping[str, Any],
+              observation_order: int,
+              observed_at: Optional[datetime],
+          ) -> tuple[Dict[str, Any], str]:
+              """Validate and normalize one tenant-qualified provider observation."""
+              normalized_tenant = validate_tenant_scope(tenant_scope)
+              if (
+                  isinstance(observation_order, bool)
+                  or not isinstance(observation_order, int)
+                  or observation_order <= 0
+              ):
+                  raise ValueError("observation_order must be a positive integer")
+              try:
+                  normalized_alias = validate_endpoint_alias(endpoint_alias)
+              except ValidationError as exc:
+                  raise ValueError(
+                      "endpoint_alias must be a non-empty NUL-free string of at most "
+                      f"{MAX_ENDPOINT_ALIAS_CHARACTERS} characters"
+                  ) from exc
+              if not isinstance(provider_batch, Mapping):
+                  raise ValueError("provider_batch must be a mapping object")
+
+              try:
+                  remote_batch_id = validate_remote_resource_id(
+                      provider_batch.get("id"),
+                      "remote_batch_id",
+                  )
+              except ValidationError as exc:
+                  raise ValueError(
+                      "remote_batch_id (provider batch id) must be a supported "
+                      "non-empty string of at most "
+                      f"{MAX_REMOTE_RESOURCE_ID_CHARACTERS} characters"
+                  ) from exc
+
+              observed = observed_at or datetime.now(timezone.utc)
+              if (
+                  not isinstance(observed, datetime)
+                  or observed.tzinfo is None
+                  or observed.utcoffset() is None
+              ):
+                  raise ValueError("observed_at must be a timezone-aware datetime")
+
+              input_file_id = _persisted_remote_resource_id(
+                  provider_batch.get("input_file_id"),
+                  "input_file_id",
+              )
+              output_file_id = _persisted_remote_resource_id(
+                  provider_batch.get("output_file_id"),
+                  "output_file_id",
+              )
+              error_file_id = _persisted_remote_resource_id(
+                  provider_batch.get("error_file_id"),
+                  "error_file_id",
+              )
+              batch_status = (
+                  normalize_optional_provider_text(provider_batch.get("status"))
+                  or "unknown"
+              )
+              counts_value = provider_batch.get("request_counts")
+              request_counts = counts_value if isinstance(counts_value, Mapping) else {}
+              provider_metadata, metadata_json = _provider_metadata(
+                  provider_batch.get("metadata")
+              )
+              terminal_at = (
+                  observed if batch_status in REMOTE_TERMINAL_STATUSES else None
+              )
+
+              snapshot: Dict[str, Any] = {
+                  "tenant_scope": normalized_tenant,
+                  "endpoint_alias": normalized_alias,
+                  "remote_batch_id": remote_batch_id,
+                  "observation_order": observation_order,
+                  "input_file_id": input_file_id,
+                  "batch_endpoint": normalize_optional_provider_text(
+                      provider_batch.get("endpoint")
+                  ),
+                  "batch_status": batch_status,
+                  "output_file_id": output_file_id,
+                  "error_file_id": error_file_id,
+                  "total_requests": _provider_count(request_counts.get("total")),
+                  "completed_requests": _provider_count(
+                      request_counts.get("completed")
+                  ),
+                  "failed_requests": _provider_count(request_counts.get("failed")),
+                  "provider_metadata": provider_metadata,
+                  "observed_at": observed,
+                  "terminal_at": terminal_at,
+              }
+              return snapshot, metadata_json
+
+
+          def _persist_remote_batch_state(
+              dsn: str,
+              tenant_scope: str,
+              endpoint_alias: str,
+              provider_batch: Mapping[str, Any],
+              observation_order: int,
+              *,
+              observed_at: Optional[datetime] = None,
+          ) -> Dict[str, Any]:
+              """Persist one validated tenant-qualified lifecycle projection."""
+              snapshot, metadata_json = _build_remote_batch_snapshot(
+                  tenant_scope,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at,
+              )
+              observed = snapshot["observed_at"]
+              terminal_at = snapshot["terminal_at"]
+              sql = """
+                  INSERT INTO llm_remote_batch_jobs (
+                      endpoint_alias,
+                      remote_batch_id,
+                      observation_order,
+                      input_file_id,
+                      batch_endpoint,
+                      batch_status,
+                      output_file_id,
+                      error_file_id,
+                      total_requests,
+                      completed_requests,
+                      failed_requests,
+                      provider_metadata,
+                      first_seen_at,
+                      last_observed_at,
+                      terminal_at,
+                      updated_at,
+                      tenant_scope
+                  )
+                  SELECT
+                      %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                      %s::jsonb, %s, %s, %s, %s, tenant_context.tenant_scope
+                  FROM (
+                      SELECT set_config(
+                          'pg_llm_batch.tenant_scope', %s, true
+                      ) AS tenant_scope
+                  ) AS tenant_context
+                  ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id)
+                  DO UPDATE
+                  SET observation_order = EXCLUDED.observation_order,
+                      input_file_id = COALESCE(
+                          EXCLUDED.input_file_id,
+                          llm_remote_batch_jobs.input_file_id
+                      ),
+                      batch_endpoint = COALESCE(
+                          EXCLUDED.batch_endpoint,
+                          llm_remote_batch_jobs.batch_endpoint
+                      ),
+                      batch_status = EXCLUDED.batch_status,
+                      output_file_id = COALESCE(
+                          EXCLUDED.output_file_id,
+                          llm_remote_batch_jobs.output_file_id
+                      ),
+                      error_file_id = COALESCE(
+                          EXCLUDED.error_file_id,
+                          llm_remote_batch_jobs.error_file_id
+                      ),
+                      total_requests = GREATEST(
+                          llm_remote_batch_jobs.total_requests,
+                          EXCLUDED.total_requests
+                      ),
+                      completed_requests = GREATEST(
+                          llm_remote_batch_jobs.completed_requests,
+                          EXCLUDED.completed_requests
+                      ),
+                      failed_requests = GREATEST(
+                          llm_remote_batch_jobs.failed_requests,
+                          EXCLUDED.failed_requests
+                      ),
+                      provider_metadata = CASE
+                          WHEN EXCLUDED.provider_metadata = '{}'::jsonb
+                              THEN llm_remote_batch_jobs.provider_metadata
+                          ELSE EXCLUDED.provider_metadata
+                      END,
+                      last_observed_at = EXCLUDED.last_observed_at,
+                      terminal_at = COALESCE(
+                          llm_remote_batch_jobs.terminal_at,
+                          EXCLUDED.terminal_at
+                      ),
+                      updated_at = EXCLUDED.updated_at
+                  WHERE EXCLUDED.observation_order >
+                            llm_remote_batch_jobs.observation_order
+                    AND (
+                        llm_remote_batch_jobs.batch_status NOT IN (
+                            'completed', 'failed', 'expired', 'cancelled'
+                        )
+                        OR EXCLUDED.batch_status =
+                            llm_remote_batch_jobs.batch_status
+                    )
+              """
+              params = (
+                  snapshot["endpoint_alias"],
+                  snapshot["remote_batch_id"],
+                  snapshot["observation_order"],
+                  snapshot["input_file_id"],
+                  snapshot["batch_endpoint"],
+                  snapshot["batch_status"],
+                  snapshot["output_file_id"],
+                  snapshot["error_file_id"],
+                  snapshot["total_requests"],
+                  snapshot["completed_requests"],
+                  snapshot["failed_requests"],
+                  metadata_json,
+                  observed,
+                  observed,
+                  terminal_at,
+                  observed,
+                  snapshot["tenant_scope"],
+              )
+              _require_psycopg()
+              with psycopg.connect(dsn) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute(sql, params)
+                  conn.commit()
+              return snapshot
+
+
+          def persist_remote_batch_state(
+              dsn: str,
+              endpoint_alias: str,
+              provider_batch: Mapping[str, Any],
+              observation_order: int,
+              *,
+              observed_at: Optional[datetime] = None,
+          ) -> Dict[str, Any]:
+              """Persist one standalone lifecycle projection compatibly.
+
+              Existing callers retain the original recorder signature and return
+              shape. The row is stored under the explicit ``standalone`` tenant
+              scope so shared-table deployments cannot collide with named tenants.
+              """
+              snapshot = _persist_remote_batch_state(
+                  dsn,
+                  DEFAULT_TENANT_SCOPE,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at=observed_at,
+              )
+              compatible_snapshot = dict(snapshot)
+              compatible_snapshot.pop("tenant_scope")
+              return compatible_snapshot
+
+
+          def persist_tenant_remote_batch_state(
+              dsn: str,
+              tenant_scope: str,
+              endpoint_alias: str,
+              provider_batch: Mapping[str, Any],
+              observation_order: int,
+              *,
+              observed_at: Optional[datetime] = None,
+          ) -> Dict[str, Any]:
+              """Persist one lifecycle projection for a trusted tenant scope."""
+              return _persist_remote_batch_state(
+                  dsn,
+                  tenant_scope,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at=observed_at,
+              )
+
+
+          def get_tenant_remote_batch_state(
+              dsn: str,
+              tenant_scope: str,
+              endpoint_alias: str,
+              remote_batch_id: str,
+          ) -> Optional[Dict[str, Any]]:
+              """Return one projection visible to the validated tenant scope."""
+              normalized_tenant = validate_tenant_scope(tenant_scope)
+              normalized_alias = validate_endpoint_alias(endpoint_alias)
+              normalized_batch_id = validate_remote_resource_id(
+                  remote_batch_id,
+                  "remote_batch_id",
+              )
+              sql = """
+                  WITH tenant_context AS MATERIALIZED (
+                      SELECT set_config(
+                          'pg_llm_batch.tenant_scope', %s, true
+                      ) AS tenant_scope
+                  )
+                  SELECT
+                      job.tenant_scope,
+                      job.endpoint_alias,
+                      job.remote_batch_id,
+                      job.observation_order,
+                      job.input_file_id,
+                      job.batch_endpoint,
+                      job.batch_status,
+                      job.output_file_id,
+                      job.error_file_id,
+                      job.total_requests,
+                      job.completed_requests,
+                      job.failed_requests,
+                      job.provider_metadata,
+                      job.first_seen_at,
+                      job.last_observed_at,
+                      job.terminal_at,
+                      job.updated_at
+                  FROM tenant_context
+                  JOIN llm_remote_batch_jobs AS job
+                    ON job.tenant_scope = tenant_context.tenant_scope
+                  WHERE job.endpoint_alias = %s
+                    AND job.remote_batch_id = %s
+              """
+              _require_psycopg()
+              with psycopg.connect(dsn) as conn:
+                  with conn.cursor() as cur:
+                      cur.execute(
+                          sql,
+                          (
+                              normalized_tenant,
+                              normalized_alias,
+                              normalized_batch_id,
+                          ),
+                      )
+                      row = cur.fetchone()
+              if not row:
+                  return None
+              return dict(zip(REMOTE_BATCH_STATE_FIELDS, row))
+
+
+          def get_remote_batch_state(
+              dsn: str,
+              endpoint_alias: str,
+              remote_batch_id: str,
+          ) -> Optional[Dict[str, Any]]:
+              """Return one lifecycle projection from the standalone scope."""
+              return get_tenant_remote_batch_state(
+                  dsn,
+                  DEFAULT_TENANT_SCOPE,
+                  endpoint_alias,
+                  remote_batch_id,
+              )
+          '''.replace("\n          ", "\n")
+          db_text = db_text[:persist_start] + persist_code + db_text[persist_end:]
+          db_path.write_text(db_text, encoding="utf-8")
+
+          durable_path = Path("pg_llm_batch/durable_client.py")
+          durable_text = durable_path.read_text(encoding="utf-8")
+          durable_text = durable_text.replace(
+              "    persist_remote_batch_state,\n",
+              "    persist_remote_batch_state,\n"
+              "    persist_tenant_remote_batch_state,\n",
+              1,
+          )
+          durable_text = durable_text.replace(
+              "    validate_remote_resource_id,\n",
+              "    validate_remote_resource_id,\n"
+              "    validate_tenant_scope,\n",
+              1,
+          )
+          type_anchor = (
+              "LifecycleRecorder = Callable[[str, str, Mapping[str, Any], int], Any]\n"
+              "ObservationReserver = Callable[[str], int]\n"
+          )
+          type_replacement = (
+              "LifecycleRecorder = Callable[[str, str, Mapping[str, Any], int], Any]\n"
+              "TenantLifecycleRecorder = Callable[\n"
+              "    [str, str, str, Mapping[str, Any], int], Any\n"
+              "]\n"
+              "ObservationReserver = Callable[[str], int]\n"
+          )
+          if type_anchor not in durable_text:
+              raise SystemExit("missing durable type anchor")
+          durable_text = durable_text.replace(type_anchor, type_replacement, 1)
+
+          persist_method_anchor = "    async def _persist_snapshot(\n"
+          write_method = r'''    async def _write_lifecycle_snapshot(
+              self,
+              endpoint_alias: str,
+              provider_batch: Mapping[str, Any],
+              observation_order: int,
+          ) -> None:
+              """Dispatch one normalized snapshot to the configured recorder."""
+              await asyncio.to_thread(
+                  self._lifecycle_recorder,
+                  self.postgres_dsn,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+              )
+
+          '''.replace("\n          ", "\n")
+          if write_method.strip() not in durable_text:
+              if persist_method_anchor not in durable_text:
+                  raise SystemExit("missing durable persistence method anchor")
+              durable_text = durable_text.replace(
+                  persist_method_anchor,
+                  write_method + persist_method_anchor,
+                  1,
+              )
+
+          old_dispatch = r'''            await asyncio.to_thread(
+                  self._lifecycle_recorder,
+                  self.postgres_dsn,
+                  endpoint_alias,
+                  normalized_snapshot,
+                  observation_order,
+              )'''.replace("\n              ", "\n")
+          new_dispatch = r'''            await self._write_lifecycle_snapshot(
+                  endpoint_alias,
+                  normalized_snapshot,
+                  observation_order,
+              )'''.replace("\n              ", "\n")
+          if old_dispatch not in durable_text:
+              raise SystemExit("missing durable recorder dispatch anchor")
+          durable_text = durable_text.replace(old_dispatch, new_dispatch, 1)
+
+          tenant_class = r'''
+
+          class TenantDurableBatchAPIClient(DurableBatchAPIClient):
+              """Durable client with a required trusted local tenant scope.
+
+              The scope must come from an authenticated host boundary. It is
+              validated synchronously and passed only to the explicit tenant-aware
+              recorder seam; provider metadata never chooses authorization context.
+              """
+
+              def __init__(
+                  self,
+                  postgres_dsn: str,
+                  credentials: CredentialsProvider,
+                  *,
+                  tenant_scope: str,
+                  tenant_lifecycle_recorder: TenantLifecycleRecorder = (
+                      persist_tenant_remote_batch_state
+                  ),
+                  **client_options: Any,
+              ) -> None:
+                  """Initialize a tenant client before any external side effect."""
+                  self.tenant_scope = validate_tenant_scope(tenant_scope)
+                  if "lifecycle_recorder" in client_options:
+                      raise ValidationError(
+                          field="lifecycle_recorder",
+                          value="<provided>",
+                          reason=(
+                              "tenant clients must use tenant_lifecycle_recorder"
+                          ),
+                          message=(
+                              "TenantDurableBatchAPIClient requires "
+                              "tenant_lifecycle_recorder instead of the unscoped "
+                              "lifecycle_recorder seam"
+                          ),
+                      )
+                  self._tenant_lifecycle_recorder = tenant_lifecycle_recorder
+                  super().__init__(postgres_dsn, credentials, **client_options)
+
+              async def _write_lifecycle_snapshot(
+                  self,
+                  endpoint_alias: str,
+                  provider_batch: Mapping[str, Any],
+                  observation_order: int,
+              ) -> None:
+                  """Dispatch one snapshot with its trusted tenant scope."""
+                  await asyncio.to_thread(
+                      self._tenant_lifecycle_recorder,
+                      self.postgres_dsn,
+                      self.tenant_scope,
+                      endpoint_alias,
+                      provider_batch,
+                      observation_order,
+                  )
+          '''.replace("\n          ", "\n")
+          if "class TenantDurableBatchAPIClient" not in durable_text:
+              durable_text = durable_text.rstrip() + tenant_class + "\n"
+          durable_path.write_text(durable_text, encoding="utf-8")
+
+          init_path = Path("pg_llm_batch/__init__.py")
+          init_text = init_path.read_text(encoding="utf-8")
+          init_text = init_text.replace(
+              "    DurableBatchAPIClient            -- submit/poll/retrieve with lifecycle state\n",
+              "    DurableBatchAPIClient            -- standalone durable lifecycle state\n"
+              "    TenantDurableBatchAPIClient      -- tenant-isolated durable lifecycle state\n",
+              1,
+          )
+          init_text = init_text.replace(
+              "from .durable_client import DurableBatchAPIClient\n",
+              "from .db import (\n"
+              "    DEFAULT_TENANT_SCOPE,\n"
+              "    get_remote_batch_state,\n"
+              "    get_tenant_remote_batch_state,\n"
+              "    persist_tenant_remote_batch_state,\n"
+              "    validate_tenant_scope,\n"
+              ")\n"
+              "from .durable_client import (\n"
+              "    DurableBatchAPIClient,\n"
+              "    TenantDurableBatchAPIClient,\n"
+              ")\n",
+              1,
+          )
+          init_text = init_text.replace(
+              '    "DurableBatchAPIClient",\n',
+              '    "DurableBatchAPIClient",\n'
+              '    "TenantDurableBatchAPIClient",\n'
+              '    "DEFAULT_TENANT_SCOPE",\n'
+              '    "validate_tenant_scope",\n'
+              '    "persist_tenant_remote_batch_state",\n'
+              '    "get_tenant_remote_batch_state",\n'
+              '    "get_remote_batch_state",\n',
+              1,
+          )
+          init_path.write_text(init_text, encoding="utf-8")
+
+          schema_path = Path("pg_llm_batch/schema.sql")
+          schema_text = schema_path.read_text(encoding="utf-8")
+          schema_start = schema_text.index(
+              "-- Curated, provider-facing lifecycle state."
+          )
+          schema_end = schema_text.index(
+              "\nCREATE TABLE IF NOT EXISTS llm_batch_file_payloads",
+              schema_start,
+          )
+          schema_block = r'''-- Curated provider lifecycle state. Tenant scope is a trusted local
+          -- authorization attribute; provider metadata is never an authorization source.
+          CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
+              remote_job_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+              tenant_scope TEXT NOT NULL DEFAULT 'standalone'
+                  CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope
+                  CHECK (tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+              endpoint_alias TEXT NOT NULL
+                  CHECK (LENGTH(endpoint_alias) BETWEEN 1 AND 128),
+              remote_batch_id TEXT NOT NULL
+                  CHECK (LENGTH(remote_batch_id) BETWEEN 1 AND 256)
+                  CHECK (remote_batch_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'),
+              observation_order BIGINT NOT NULL
+                  CHECK (observation_order > 0),
+              input_file_id TEXT
+                  CHECK (
+                      input_file_id IS NULL OR
+                      input_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+                  ),
+              batch_endpoint TEXT,
+              batch_status TEXT NOT NULL,
+              output_file_id TEXT
+                  CHECK (
+                      output_file_id IS NULL OR
+                      output_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+                  ),
+              error_file_id TEXT
+                  CHECK (
+                      error_file_id IS NULL OR
+                      error_file_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$'
+                  ),
+              total_requests INTEGER NOT NULL DEFAULT 0
+                  CHECK (total_requests >= 0),
+              completed_requests INTEGER NOT NULL DEFAULT 0
+                  CHECK (completed_requests >= 0),
+              failed_requests INTEGER NOT NULL DEFAULT 0
+                  CHECK (failed_requests >= 0),
+              provider_metadata JSONB NOT NULL DEFAULT '{}'::JSONB,
+              first_seen_at TIMESTAMPTZ NOT NULL,
+              last_observed_at TIMESTAMPTZ NOT NULL,
+              terminal_at TIMESTAMPTZ NULL,
+              updated_at TIMESTAMPTZ NOT NULL,
+              CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id
+                  UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)
+          );
+
+          -- Migration is transaction-safe under apply_schema(). Temporarily removing
+          -- owner-force semantics takes an ACCESS EXCLUSIVE lock; no weaker policy is
+          -- externally observable before the transaction restores FORCE RLS and commits.
+          ALTER TABLE llm_remote_batch_jobs NO FORCE ROW LEVEL SECURITY;
+          ALTER TABLE llm_remote_batch_jobs
+              ADD COLUMN IF NOT EXISTS tenant_scope TEXT;
+          UPDATE llm_remote_batch_jobs
+          SET tenant_scope = 'standalone'
+          WHERE tenant_scope IS NULL;
+          ALTER TABLE llm_remote_batch_jobs
+              ALTER COLUMN tenant_scope SET DEFAULT 'standalone';
+          ALTER TABLE llm_remote_batch_jobs
+              ALTER COLUMN tenant_scope SET NOT NULL;
+
+          DO $$
+          BEGIN
+              IF NOT EXISTS (
+                  SELECT 1
+                  FROM pg_constraint
+                  WHERE conname = 'ck_llm_remote_batch_jobs_tenant_scope'
+                    AND conrelid = 'llm_remote_batch_jobs'::regclass
+              ) THEN
+                  ALTER TABLE llm_remote_batch_jobs
+                      ADD CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope
+                      CHECK (
+                          tenant_scope ~
+                          '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                      ) NOT VALID;
+              END IF;
+          END $$;
+          ALTER TABLE llm_remote_batch_jobs
+              VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope;
+
+          ALTER TABLE llm_remote_batch_jobs
+              DROP CONSTRAINT IF EXISTS uq_llm_remote_batch_jobs_endpoint_id;
+          DO $$
+          BEGIN
+              IF NOT EXISTS (
+                  SELECT 1
+                  FROM pg_constraint
+                  WHERE conname =
+                        'uq_llm_remote_batch_jobs_tenant_endpoint_id'
+                    AND conrelid = 'llm_remote_batch_jobs'::regclass
+              ) THEN
+                  ALTER TABLE llm_remote_batch_jobs
+                      ADD CONSTRAINT
+                          uq_llm_remote_batch_jobs_tenant_endpoint_id
+                      UNIQUE (
+                          tenant_scope,
+                          endpoint_alias,
+                          remote_batch_id
+                      );
+              END IF;
+          END $$;
+
+          DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;
+          CREATE INDEX IF NOT EXISTS
+              idx_llm_remote_batch_jobs_tenant_status_observed
+              ON llm_remote_batch_jobs(
+                  tenant_scope,
+                  batch_status,
+                  last_observed_at
+              );
+
+          ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
+          ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
+          DROP POLICY IF EXISTS pl_llm_remote_batch_jobs_tenant_scope
+              ON llm_remote_batch_jobs;
+          CREATE POLICY pl_llm_remote_batch_jobs_tenant_scope
+              ON llm_remote_batch_jobs
+              TO PUBLIC
+              USING (
+                  tenant_scope =
+                      current_setting('pg_llm_batch.tenant_scope', true)
+              )
+              WITH CHECK (
+                  tenant_scope =
+                      current_setting('pg_llm_batch.tenant_scope', true)
+              );
+          '''.replace("\n          ", "\n")
+          schema_text = (
+              schema_text[:schema_start]
+              + schema_block.rstrip()
+              + "\n"
+              + schema_text[schema_end:]
+          )
+          schema_path.write_text(schema_text, encoding="utf-8")
+
+          mirror_header = (
+              "-- SPDX-License-Identifier: Apache-2.0\n"
+              "-- Build-context mirror of pg_llm_batch/schema.sql (canonical source read by\n"
+              "-- pg_llm_batch/db.py). Kept here so docker/postgres/Dockerfile builds with its\n"
+              "-- own directory as the build context (the central coverage-evidence job builds\n"
+              "-- each changed Dockerfile with context = its own directory). Keep in sync with\n"
+              "-- pg_llm_batch/schema.sql.\n"
+          )
+          Path("docker/postgres/init/02_schema.sql").write_text(
+              mirror_header + schema_text,
+              encoding="utf-8",
+          )
+
+          readme_path = Path("README.md")
+          readme = readme_path.read_text(encoding="utf-8")
+          tenant_section = r'''
+          ### Tenant-scoped durable lifecycle state
+
+          Shared-table MSA deployments should use a trusted tenant context rather
+          than provider metadata:
+
+          ```python
+          from pg_llm_batch import TenantDurableBatchAPIClient
+
+          client = TenantDurableBatchAPIClient(
+              dsn,
+              credentials,
+              tenant_scope=authenticated_tenant_scope,
+          )
+          ```
+
+          `tenant_scope` is validated without coercion and becomes part of the
+          durable identity `(tenant_scope, endpoint_alias, remote_batch_id)`.
+          PostgreSQL row-level security is enabled and forced for the table owner;
+          package reads and writes install the validated scope with transaction-local
+          `set_config` before accessing rows. Missing context is default-deny.
+          Superusers and roles carrying `BYPASSRLS` remain outside this guarantee,
+          so application roles must be `NOSUPERUSER NOBYPASSRLS`. Existing
+          `DurableBatchAPIClient` callers continue under the explicit `standalone`
+          scope with their original recorder signature and return shape. See
+          [`docs/doctoring/tenant-scoped-lifecycle.md`](docs/doctoring/tenant-scoped-lifecycle.md).
+
+          '''.replace("\n          ", "\n")
+          readme_anchor = "\n---\n\n## Tests\n"
+          if "### Tenant-scoped durable lifecycle state" not in readme:
+              if readme_anchor not in readme:
+                  raise SystemExit("missing README tests anchor")
+              readme = readme.replace(
+                  readme_anchor,
+                  "\n" + tenant_section + readme_anchor,
+                  1,
+              )
+          readme_path.write_text(readme, encoding="utf-8")
+
+          lifecycle_doc = Path("docs/remote-batch-lifecycle.md")
+          lifecycle_text = lifecycle_doc.read_text(encoding="utf-8")
+          lifecycle_addition = r'''
+
+          ## Tenant isolation
+
+          The standalone recorder persists under `tenant_scope=standalone`.
+          Embedded shared-table services use `TenantDurableBatchAPIClient` and pass
+          an authorization scope derived from a trusted authenticated host boundary.
+          Provider metadata, endpoint aliases, request headers, and remote IDs do not
+          choose tenant context. Every package lifecycle statement uses a bound,
+          transaction-local `set_config('pg_llm_batch.tenant_scope', ..., true)` and
+          the table is protected by enabled and forced PostgreSQL row-level security.
+          Production roles must not be superusers and must not carry `BYPASSRLS`.
+          The migration backfills legacy rows to `standalone`, replaces the old
+          two-column unique key with the tenant-qualified triple, and is idempotent.
+          '''.replace("\n          ", "\n")
+          if "## Tenant isolation" not in lifecycle_text:
+              lifecycle_doc.write_text(
+                  lifecycle_text.rstrip() + lifecycle_addition + "\n",
+                  encoding="utf-8",
+              )
+
+          architecture = r'''# Architecture
+
+          ## Deployment boundary
+
+          `pg-llm-batch` remains independently deployable and embeddable. PostgreSQL
+          owns token counting, JSONL payloads, configuration, encrypted secrets, and
+          durable remote batch lifecycle state. HTTP provider behavior is isolated
+          behind `BatchAPIClient`; host services can inject credential and persistence
+          seams without changing provider semantics.
+
+          ## Durable lifecycle tenancy
+
+          `DurableBatchAPIClient` is the backward-compatible standalone facade and
+          stores rows under `standalone`. `TenantDurableBatchAPIClient` requires a
+          trusted host-selected `tenant_scope`. The database identity is:
+
+          `(tenant_scope, endpoint_alias, remote_batch_id)`
+
+          Row-level security compares each row with the transaction-local
+          `pg_llm_batch.tenant_scope` setting. The policy is default-deny when context
+          is missing, and `FORCE ROW LEVEL SECURITY` covers ordinary table-owner
+          access. PostgreSQL superusers and `BYPASSRLS` roles are administrative
+          escape hatches and must not be used by application services.
+
+          ## Migration and rollback
+
+          Legacy rows are backfilled to `standalone` without deletion or identity
+          merging. The old unique constraint and status index are replaced by
+          tenant-qualified objects. Schema application takes an exclusive migration
+          lock and restores forced RLS before commit. Rollback requires first proving
+          that no two tenant scopes share the same endpoint/provider identifier pair;
+          otherwise a two-column key cannot be restored safely.
+
+          ## Interoperability
+
+          CWL hosts, including `contextual-orchestrator` and `naruon`, supply tenant
+          context only after their own authentication and authorization boundary.
+          Tenant scope is local control-plane identity, not provider-returned data.
+          No UI, model call, or psychometric computation is introduced by this layer.
+          '''.replace("\n          ", "\n").lstrip()
+          Path("ARCHITECTURE.md").write_text(architecture, encoding="utf-8")
+
+          claude = r'''# CLAUDE.md
+
+          ## Tenant lifecycle invariants
+
+          - Preserve standalone operation under the exact `standalone` scope.
+          - Never derive tenant scope from provider metadata, headers, endpoint aliases,
+            remote resource IDs, or other untrusted transport values.
+          - Validate tenant scope before reservation, credentials, provider I/O, or DB I/O.
+          - Bind tenant scope as a parameter with transaction-local `set_config`.
+          - Keep RLS enabled and forced; application roles are `NOSUPERUSER NOBYPASSRLS`.
+          - Every lifecycle lookup and conflict key includes tenant scope.
+          - Keep the packaged schema and Docker initialization mirror byte-exact.
+          - Preserve 100% production statement, branch, and public-docstring coverage.
+          '''.replace("\n          ", "\n").lstrip()
+          Path("CLAUDE.md").write_text(claude, encoding="utf-8")
+
+          agents_path = Path("AGENTS.md")
+          agents = agents_path.read_text(encoding="utf-8")
+          agents_addition = r'''
+
+          ## Tenant lifecycle security contract
+
+          Lifecycle work must preserve the trusted `tenant_scope` boundary, the
+          tenant-qualified compound key, transaction-local `set_config`, enabled and
+          forced RLS, and the explicit superuser/`BYPASSRLS` limitation. Provider data
+          never supplies authorization context. Keep standalone recorder compatibility,
+          schema migration idempotency, Docker schema mirroring, and 100% coverage.
+          '''.replace("\n          ", "\n")
+          if "## Tenant lifecycle security contract" not in agents:
+              agents_path.write_text(
+                  agents.rstrip() + agents_addition + "\n",
+                  encoding="utf-8",
+              )
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          changelog_entry = (
+              "- Trusted tenant-scoped durable lifecycle identities, explicit "
+              "standalone compatibility, tenant-aware client/read/write helpers, "
+              "transaction-local PostgreSQL context, idempotent legacy backfill, "
+              "and forced default-deny row-level security for shared-table MSA "
+              "deployments.\n"
+          )
+          added_anchor = "### Added\n\n"
+          if changelog_entry not in changelog:
+              changelog = changelog.replace(
+                  added_anchor,
+                  added_anchor + changelog_entry,
+                  1,
+              )
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          design_path = Path(
+              "docs/superpowers/specs/2026-08-05-tenant-scoped-lifecycle-design.md"
+          )
+          design = design_path.read_text(encoding="utf-8")
+          design = design.replace(
+              "Both return the normalized snapshot including `tenant_scope`. The upsert conflict\n"
+              "key and every update reference use the tenant-qualified identity.\n",
+              "The tenant-aware helper returns the normalized snapshot including "
+              "`tenant_scope`. The legacy helper deliberately preserves its original "
+              "return shape while writing under `standalone`, avoiding a behavioral "
+              "compatibility break. The upsert conflict key and every update reference "
+              "use the tenant-qualified identity.\n",
+          )
+          design_path.write_text(design, encoding="utf-8")
+
+          plan = r'''# Tenant-Scoped Lifecycle Isolation Implementation Plan
+
+          1. Add deterministic tests for strict tenant validation, compatibility,
+             tenant-qualified persistence and reads, client recorder propagation,
+             schema migration, RLS, and live PostgreSQL separation.
+          2. Prove the new public contract fails before production APIs exist.
+          3. Add a trusted tenant validator and tenant-aware persistence/read helpers.
+          4. Preserve the legacy recorder signature and return shape under `standalone`.
+          5. Add the tenant durable client and explicit recorder seam.
+          6. Migrate lifecycle identity and indexes; enable and force default-deny RLS.
+          7. Synchronize the deployable schema mirror and operator/architecture records.
+          8. Run unit, coverage, docstring, lint, lock, package, and container gates.
+          '''.replace("\n          ", "\n").lstrip()
+          Path(
+              "docs/superpowers/plans/2026-08-05-tenant-scoped-lifecycle.md"
+          ).write_text(plan, encoding="utf-8")
+
+          doctoring = r'''# Tenant-Scoped Durable Lifecycle Isolation
+
+          ## Decision
+
+          Shared-table deployments use a trusted local `tenant_scope` as part of the
+          lifecycle identity and enforce it with PostgreSQL row-level security.
+          `TenantDurableBatchAPIClient` requires the scope at construction. Existing
+          `DurableBatchAPIClient` consumers remain source- and behavior-compatible in
+          the explicit `standalone` scope.
+
+          ## Security contract
+
+          - Accepted scope syntax is `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}` with no
+            trimming or coercion.
+          - The host derives scope after authentication and authorization; provider
+            metadata and request transport are not tenant authorities.
+          - Reads and writes bind `set_config('pg_llm_batch.tenant_scope', value, true)`
+            inside the same transaction before lifecycle table access.
+          - RLS is enabled and forced, with matching `USING` and `WITH CHECK` clauses.
+          - Missing context is default-deny. Superusers and `BYPASSRLS` roles bypass
+            PostgreSQL RLS and therefore cannot be application identities.
+          - The unique identity and status index begin with tenant scope.
+
+          ## Migration and rollback
+
+          Existing rows are backfilled to `standalone`; no rows are deleted or merged.
+          The migration replaces the old unique constraint and status index under an
+          exclusive table lock, then restores forced RLS before commit. A rollback to
+          the old two-column identity is unsafe until an operator proves no duplicate
+          `(endpoint_alias, remote_batch_id)` pair exists across tenant scopes.
+
+          ## Verification
+
+          Deterministic unit tests cover validation boundaries, SQL parameterization,
+          compatibility, client dispatch, schema policy text, default-deny reads, and
+          exact schema mirroring. A live PostgreSQL integration test creates a
+          `NOSUPERUSER NOBYPASSRLS` role, persists the same provider ID for two tenants,
+          and verifies tenant A cannot query tenant B.
+
+          ## References
+
+          Joint Task Force. (2020). *Security and privacy controls for information
+          systems and organizations* (NIST Special Publication 800-53, Revision 5).
+          National Institute of Standards and Technology.
+          https://doi.org/10.6028/NIST.SP.800-53r5
+
+          OWASP Foundation. (n.d.). *Multi-tenant security cheat sheet*. OWASP Cheat
+          Sheet Series. Retrieved August 5, 2026, from
+          https://cheatsheetseries.owasp.org/cheatsheets/Multi_Tenant_Security_Cheat_Sheet.html
+
+          PostgreSQL Global Development Group. (2026). *Row security policies*. In
+          *PostgreSQL 18 documentation*.
+          https://www.postgresql.org/docs/18/ddl-rowsecurity.html
+
+          PostgreSQL Global Development Group. (2026). *System administration
+          functions*. In *PostgreSQL 18 documentation*.
+          https://www.postgresql.org/docs/18/functions-admin.html
+          '''.replace("\n          ", "\n").lstrip()
+          Path("docs/doctoring/tenant-scoped-lifecycle.md").write_text(
+              doctoring,
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Verify GREEN quality and package gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python -m compileall -q pg_llm_batch
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100 \
+            | tee /tmp/tenant-green.log
+          uv lock --check
+          uv build --no-sources
+
+      - name: Remove one-shot workflow and record evidence
+        shell: bash
+        env:
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          rm .github/workflows/tenant-lifecycle-one-shot.yml
+          rm -rf .coverage .coverage.* htmlcov build dist
+          cat > docs/superpowers/evidence/2026-08-05-tenant-scoped-lifecycle-red-green.md <<EOF
+          # Tenant-Scoped Lifecycle RED/GREEN Evidence
+
+          - Source head: \`$SOURCE_HEAD\`
+          - RED: \`uv run pytest -q tests/test_tenant_scoped_lifecycle.py\`
+            failed during collection because the tenant public APIs did not exist.
+          - GREEN: compile, Ruff, 100% interrogate, the complete non-integration test
+            suite with 100% production statement and branch coverage, lockfile
+            freshness, and source/wheel build all succeeded in the credential-free
+            verification phase.
+          - The temporary one-shot workflow removed itself before the final commit.
+          - Live PostgreSQL RLS verification remains available through
+            \`tests/test_tenant_lifecycle_integration.py\` when
+            \`PG_LLM_BATCH_TEST_DSN\` is provided.
+          EOF
+          test ! -e .github/workflows/tenant-lifecycle-one-shot.yml
+          test -z "$(git ls-files --others --exclude-standard | grep -E '(^|/)(\.coverage|htmlcov|build|dist)(/|$)' || true)"
+
+      - name: Commit only after exact-head stale check
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "refs/heads/$HEAD_BRANCH:refs/remotes/origin/$HEAD_BRANCH"
+          test "$(git rev-parse "refs/remotes/origin/$HEAD_BRANCH")" = "$EXPECTED_HEAD"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git status --short
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          test -n "$(git diff --cached --name-only)"
+          test -z "$(git diff --cached --name-only | grep '^\.github/workflows/tenant-lifecycle-one-shot.yml$' || true)"
+          git commit -m "feat(lifecycle): isolate durable state by tenant"
+          git remote set-url origin \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git push origin "HEAD:refs/heads/$HEAD_BRANCH"
