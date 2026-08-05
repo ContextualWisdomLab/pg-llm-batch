@@ -29,6 +29,14 @@ class ByteStream:
             yield chunk
 
 
+class InvalidChunkStream:
+    """Yield one malformed adapter chunk that is not a byte sequence."""
+
+    async def iter_chunked(self, _size: int) -> AsyncIterator[Any]:
+        """Expose a deterministic non-byte chunk for fail-closed validation."""
+        yield "provider-controlled-text"
+
+
 class ControlResponse:
     """Provide a bounded byte stream and reject whole-body convenience reads."""
 
@@ -72,6 +80,14 @@ class MissingStreamResponse:
     status = 200
     content_length = None
     content = object()
+
+
+class InvalidChunkResponse:
+    """Represent an adapter whose advertised stream yields non-byte content."""
+
+    status = 200
+    content_length = None
+    content = InvalidChunkStream()
 
 
 class RouteSession:
@@ -250,6 +266,18 @@ async def test_missing_bounded_stream_fails_closed() -> None:
     assert exc_info.value.response_data == {
         "error_type": "MissingBoundedStream"
     }
+
+
+async def test_non_byte_stream_chunk_fails_closed_without_content_leakage() -> None:
+    """Malformed adapters cannot leak raw chunks through incidental type errors."""
+    client = BatchAPIClient("postgresql://example", credentials)
+
+    with pytest.raises(GatewayError, match="non-byte stream chunk") as exc_info:
+        await client._read_json_object(InvalidChunkResponse(), "Batch status")
+
+    assert exc_info.value.response_data == {"error_type": "InvalidByteChunk"}
+    assert "provider-controlled-text" not in str(exc_info.value)
+    assert "provider-controlled-text" not in repr(exc_info.value.response_data)
 
 
 async def test_all_control_plane_endpoints_use_bounded_streams(
