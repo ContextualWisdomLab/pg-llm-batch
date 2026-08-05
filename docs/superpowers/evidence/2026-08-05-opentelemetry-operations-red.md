@@ -54,6 +54,33 @@ another caller-visible operation. The test does not replace either outer parent
 method; it replaces only the provider-status boundary so dynamic dispatch remains
 part of the exercised production path.
 
+## Dynamic error-type RED
+
+The initial privacy contract prevented exception messages and tracebacks from
+entering telemetry but copied `type(error).__name__` into `error.type`. A caller
+or provider can define an exception class at runtime, so that name can contain a
+tenant identifier, secret-like value, or an unbounded set of dimensions.
+
+The exact test-only head `d53e5223e69d63bb5b97fe94b7038468dbf77154`
+constructed an exception class named
+`Tenant42BearerTokenMustNotBecomeTelemetry` and required `_OTHER` in the span,
+counter, and histogram while preserving the original exception object. GitHub
+Actions CI run `30977814467` failed on Python 3.10, 3.12, and 3.14. The Python
+3.12 job `92215533742` reported the intended single regression:
+
+```text
+1 failed, 260 passed, 3 deselected
+
+expected: _OTHER
+received: Tenant42BearerTokenMustNotBecomeTelemetry
+FAILED tests/test_opentelemetry_privacy_contract.py::test_untrusted_exception_class_name_uses_bounded_fallback
+Process completed with exit code 1.
+```
+
+This proves that the previous implementation exposed a caller-controlled class
+name as custom telemetry and did not satisfy the predictable low-cardinality
+`error.type` contract.
+
 ## Required green behavior
 
 - all six caller-invoked public client operations emit one bounded span, count,
@@ -61,7 +88,9 @@ part of the exercised production path.
 - internal public-method dispatch performed by an already observed outer
   operation does not emit a second caller-visible signal set;
 - success and error outcomes are distinguished without dynamic identifiers;
-- failures record a canonical exception type and re-raise the original object;
+- failures use a finite documented exact-type vocabulary and `_OTHER` for every
+  unrecognized or caller-defined class;
+- failures re-raise the exact original exception object;
 - the base client retains no mandatory OpenTelemetry dependency;
 - global provider resolution is lazy and produces an actionable missing-package
   error;

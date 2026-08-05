@@ -44,18 +44,24 @@ failing hosted tests before the corresponding production change:
    Python 3.10 job `92212230204`, failed with the two intended regressions and
    reported `2 failed, 258 passed, 3 deselected`. Real `wait_for_batch()` and
    `download_results()` dispatch emitted extra `get_batch_status` telemetry.
+9. Dynamic error-type privacy and cardinality, exact head
+   `d53e5223e69d63bb5b97fe94b7038468dbf77154`: CI run `30977814467`,
+   Python 3.12 job `92215533742`, failed with the intended regression and
+   reported `1 failed, 260 passed, 3 deselected`. A caller-defined exception
+   class named `Tenant42BearerTokenMustNotBecomeTelemetry` entered every
+   `error.type` attribute instead of the required `_OTHER` fallback.
 
-The detailed initial and nested-dispatch failures are retained in
-`2026-08-05-opentelemetry-operations-red.md`. Other RED runs remain visible in
-the immutable GitHub Actions history and are summarized here so the final
-safety contract is auditable without treating post-implementation tests as
+The detailed initial, nested-dispatch, and dynamic error-type failures are
+retained in `2026-08-05-opentelemetry-operations-red.md`. Other RED runs remain
+visible in the immutable GitHub Actions history and are summarized here so the
+final safety contract is auditable without treating post-implementation tests as
 TDD evidence.
 
 ## Verified implementation head
 
 Exact production and test head:
 
-`5da30fb8799c51dca0749adb4f6990f3cbee203f`
+`3ca641b64b41d43992e4c35f04dcad05498f481e`
 
 Base SHA:
 
@@ -63,9 +69,9 @@ Base SHA:
 
 The following same-head GitHub Actions runs succeeded:
 
-- CI run `30976859989`;
-- SAST Semgrep run `30976859996`; and
-- Security Scan run `30976859962`.
+- CI run `30978057085`;
+- SAST Semgrep run `30978057012`; and
+- Security Scan run `30978057104`.
 
 ## Verification results
 
@@ -79,15 +85,14 @@ results on the verified implementation head:
 - Ruff: `All checks passed!`;
 - public docstring coverage: `100.0%` with a `100.0%` threshold;
 - production statement and branch coverage: `100.00%`;
-- total coverage: 1,259 statements with zero misses and 332 branches with zero
+- total coverage: 1,264 statements with zero misses and 332 branches with zero
   partial branches;
-- `pg_llm_batch/observability.py`: 88 statements with zero misses and eight
+- `pg_llm_batch/observability.py`: 93 statements with zero misses and eight
   branches with zero partial branches;
-- test result: `260 passed, 3 deselected`;
+- test result: `261 passed, 3 deselected`;
 - lockfile freshness: success;
-- source distribution and wheel builds: success, with
-  `pg_llm_batch/observability.py` and the regression test included in the source
-  distribution;
+- source distribution and wheel builds: success, with the observability module
+  and all regression tests included in the source distribution;
 - SAST Semgrep: success; and
 - Security Scan: success.
 
@@ -105,9 +110,15 @@ Deterministic tracer, span-context, meter, and instrument doubles prove that:
   `finally` block, so concurrent tasks and exceptional exits do not share or
   strand mutable observation state;
 - emitted attributes contain only the bounded operation name, outcome, and
-  canonical error class;
+  finite documented error classification;
+- recognized exact exception classes produce one of the documented identifiers,
+  while every caller-defined, provider-defined, or otherwise unknown exact class
+  produces `_OTHER`;
+- subclasses do not inherit an allowlisted telemetry name and therefore cannot
+  inject a dynamic class-name dimension;
 - endpoint aliases, remote identifiers, tenant values, payloads, exception
-  objects, exception messages, and tracebacks do not enter custom telemetry;
+  objects, exception messages, caller-defined class names, and tracebacks do not
+  enter custom telemetry;
 - span contexts receive null exception exit arguments on provider failures and
   provider task cancellation;
 - ordinary telemetry-provider failures and telemetry-originated
@@ -127,7 +138,7 @@ coverage.
 
 ## Final exact-head rule
 
-This evidence update changes the pull-request head and does not substitute for
-final-head verification. Merge remains prohibited until every required CI,
-security, review, provenance, branch-protection, and independent-approval gate
-succeeds again on the exact final head and base.
+This evidence and doctoring update changes the pull-request head and does not
+substitute for final-head verification. Merge remains prohibited until every
+required CI, security, review, provenance, branch-protection, and independent-
+approval gate succeeds again on the exact final head and base.

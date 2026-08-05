@@ -96,11 +96,31 @@ The bounded operation-name vocabulary is:
 - `download_results`
 - `cancel_batch`
 
-The outcome vocabulary is `success` or `error`. `error.type` is the canonical
-Python exception class name, such as `GatewayError`, `ValidationError`, or
-`CancelledError`. OpenTelemetry recommends predictable, low-cardinality
-`error.type` values and recommends including error classification on operation
-duration metrics.
+The outcome vocabulary is `success` or `error`. The complete custom
+`error.type` vocabulary is:
+
+- `CancelledError`
+- `ConfigError`
+- `ConnectionError`
+- `Exception`
+- `GatewayError`
+- `OSError`
+- `PgLlmBatchError`
+- `RuntimeError`
+- `TimeoutError`
+- `TokenLimitExceededError`
+- `TypeError`
+- `ValidationError`
+- `ValueError`
+- `_OTHER`
+
+The lookup uses **exact Python class identity**. A caller- or provider-defined
+exception class, including a subclass of one of the documented classes, maps to
+`_OTHER`; its class name is not copied into telemetry. This prevents attacker-
+or tenant-controlled class names from becoming confidential or unbounded metric
+dimensions. OpenTelemetry semantic conventions require `error.type` values to
+be predictable and low-cardinality and define `_OTHER` as the fallback when no
+more specific standardized identifier is available.
 
 ### Nested operation boundary
 
@@ -130,25 +150,25 @@ The instrumentation deliberately does **not** record:
 - API keys, database connection strings, or other credentials;
 - request metadata, prompts, model inputs, provider response bodies, or result
   records;
-- exception objects, exception messages, stack traces, or stack-frame local
-  values.
+- exception objects, exception messages, stack traces, stack-frame local values,
+  or caller-defined exception class names.
 
 The library disables automatic exception recording and span-status mutation and
-does not call `record_exception()`. A failure emits only the bounded canonical
-`error.type` attribute before the exact original exception is re-raised. Span
-contexts are closed with null exception arguments, including during
+does not call `record_exception()`. A failure emits only the finite
+`error.type` mapping above before the exact original exception is re-raised.
+Span contexts are closed with null exception arguments, including during
 `asyncio.CancelledError`, so injected context managers do not receive the
 operation exception object or traceback. This stricter library boundary avoids
-copying exception text or stack data into an export pipeline because exception
-messages can contain provider bodies, identifiers, credentials, prompts, or
-tenant data. Operators must still apply appropriate SDK processor, exporter,
-and backend redaction policies to telemetry created elsewhere in the host
-process.
+copying exception text, stack data, or dynamic type names into an export
+pipeline because those values can contain provider bodies, identifiers,
+credentials, prompts, tenant data, or attacker-controlled cardinality. Operators
+must still apply appropriate SDK processor, exporter, and backend redaction
+policies to telemetry created elsewhere in the host process.
 
-Do not add dynamic provider, tenant, URL, resource-ID, model, or payload-derived
-attributes to these instruments. Such attributes can expose confidential data
-and create unbounded metric cardinality. Add deployment identity through the
-host SDK's bounded resource attributes instead.
+Do not add dynamic provider, tenant, URL, resource-ID, model, payload-derived, or
+runtime class-name attributes to these instruments. Such attributes can expose
+confidential data and create unbounded metric cardinality. Add deployment
+identity through the host SDK's bounded resource attributes instead.
 
 ## Failure and cancellation semantics
 
@@ -180,15 +200,16 @@ propagation, and absence of a private endpoint alias from emitted telemetry.
 `wait_for_batch()` and `download_results()` dispatch paths and proves that each
 caller invocation emits only its outer signal set instead of an additional
 `get_batch_status` signal set. `tests/test_opentelemetry_privacy_contract.py`
-additionally proves that a provider exception containing secret-like text is
-propagated to the caller but is not copied into spans, context-exit arguments,
-or metric attributes. `tests/test_opentelemetry_lifecycle_safety.py` proves that
-provider cancellation closes its span without exception payloads,
-telemetry-originated cancellation cannot replace provider behavior, and
-metric-instrument construction failure cannot disable the client.
-`tests/test_opentelemetry_control_flow.py` proves that non-cancellation
-process-level control flow is propagated rather than hidden. Production
-statement, branch, and public-docstring gates remain 100%.
+proves that a provider exception containing secret-like text is propagated to
+the caller but is not copied into spans, context-exit arguments, or metric
+attributes; it also constructs a secret-bearing exception class name and proves
+that all signal types receive `_OTHER` rather than that untrusted name.
+`tests/test_opentelemetry_lifecycle_safety.py` proves that provider cancellation
+closes its span without exception payloads, telemetry-originated cancellation
+cannot replace provider behavior, and metric-instrument construction failure
+cannot disable the client. `tests/test_opentelemetry_control_flow.py` proves
+that non-cancellation process-level control flow is propagated rather than
+hidden. Production statement, branch, and public-docstring gates remain 100%.
 
 ## References
 
