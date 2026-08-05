@@ -19,6 +19,7 @@ class PrivacySpan:
 
     attributes: dict[str, Any] = field(default_factory=dict)
     exceptions: list[BaseException] = field(default_factory=list)
+    exit_arguments: tuple[Any, ...] | None = None
 
     def set_attribute(self, name: str, value: Any) -> None:
         """Record one span attribute."""
@@ -39,8 +40,9 @@ class PrivacySpanContext:
         """Enter and return the captured span."""
         return self.span
 
-    def __exit__(self, *_exc: Any) -> None:
-        """Exit without suppressing the provider exception."""
+    def __exit__(self, *exc: Any) -> None:
+        """Capture exit arguments without suppressing the provider exception."""
+        self.span.exit_arguments = exc
         return None
 
 
@@ -126,10 +128,12 @@ async def test_failure_telemetry_does_not_capture_exception_message(
 
     assert exc_info.value is failure
     assert tracer.spans[0].exceptions == []
+    assert tracer.spans[0].exit_arguments == (None, None, None)
     emitted_telemetry = repr(
         (
             tracer.spans[0].attributes,
             tracer.spans[0].exceptions,
+            tracer.spans[0].exit_arguments,
             meter.counter.calls,
             meter.histogram.calls,
         )
