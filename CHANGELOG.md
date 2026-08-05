@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rejected non-callable standalone and tenant lifecycle recorders or observation reservers during client construction, before any provider operation can succeed without a usable persistence path.
 - Made the tenant lifecycle migration atomic across owner-enforcement relaxation, legacy-row backfill, constraint replacement, and forced-RLS restoration so psql autocommit cannot commit an intermediate owner-bypass state.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
