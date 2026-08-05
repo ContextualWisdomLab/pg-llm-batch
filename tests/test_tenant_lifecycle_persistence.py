@@ -267,6 +267,22 @@ def test_tenant_scoped_read_returns_none_only_for_a_missing_row(
     assert len(driver.executions) == 2
 
 
+def test_tenant_scoped_read_rejects_malformed_database_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A partial row cannot become an ambiguous lifecycle projection."""
+    driver = _Psycopg(fetchone_rows=[("tenant-a", "primary")])
+    monkeypatch.setattr(db, "psycopg", driver)
+
+    with pytest.raises(RuntimeError, match="invalid row"):
+        db.get_tenant_remote_batch_state(
+            "postgresql://tenant-test",
+            "tenant-a",
+            "primary",
+            "batch-shared",
+        )
+
+
 def test_standalone_read_delegates_to_explicit_default_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
