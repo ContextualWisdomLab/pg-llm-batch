@@ -84,10 +84,14 @@ class RouteSession:
     def _match(self, method: str, url: str, kwargs: dict[str, Any]) -> ControlResponse:
         """Record one request and return its configured response context."""
         self.calls.append((method, url, kwargs))
-        for (route_method, fragment), response in self.routes.items():
-            if method == route_method and fragment in url:
-                return response
-        raise AssertionError(f"no response route for {method} {url}")
+        matches = [
+            (fragment, response)
+            for (route_method, fragment), response in self.routes.items()
+            if method == route_method and fragment in url
+        ]
+        if not matches:
+            raise AssertionError(f"no response route for {method} {url}")
+        return max(matches, key=lambda match: len(match[0]))[1]
 
     def get(self, url: str, **kwargs: Any) -> ControlResponse:
         """Return a configured GET response."""

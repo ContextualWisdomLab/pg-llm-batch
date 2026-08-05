@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Independent 1 MiB bounded-stream decoding for Files and Batches control-plane JSON before strict UTF-8 and object parsing.
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
   caller-invoked public Batch API client operations, with explicit tracer/meter
   injection, lazy global-provider resolution, a finite documented `error.type`

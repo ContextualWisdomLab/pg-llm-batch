@@ -28,30 +28,30 @@ through that reader, and retain the independent provider-file budget.
 **Files:**
 - Create: `tests/test_bounded_control_plane_json.py`
 
-- [ ] Validate constructor values and the one-MiB default.
-- [ ] Reject declared oversize before reading.
-- [ ] Reject actual decoded-byte overflow with an understated header.
-- [ ] Accept an exact-limit JSON object.
-- [ ] Reject invalid UTF-8 without content leakage.
-- [ ] Preserve malformed and non-object JSON errors.
-- [ ] Prove whole-body JSON/text helpers are never called.
-- [ ] Exercise upload, creation, status, and cancellation.
-- [ ] Prove provider-file downloads retain their independent limit.
-- [ ] Record exact pre-implementation red evidence.
+- [x] Validate constructor values and the one-MiB default.
+- [x] Reject declared oversize before reading.
+- [x] Reject actual decoded-byte overflow with an understated header.
+- [x] Accept an exact-limit JSON object.
+- [x] Reject invalid UTF-8 without content leakage.
+- [x] Preserve malformed and non-object JSON errors.
+- [x] Prove whole-body JSON/text helpers are never called.
+- [x] Exercise upload, creation, status, and cancellation.
+- [x] Prove provider-file downloads retain their independent limit.
+- [x] Record exact pre-implementation red evidence.
 
 ## Task 2: Implement the explicit response budget
 
 **Files:**
 - Modify: `pg_llm_batch/batch_api_client.py`
 
-- [ ] Add `DEFAULT_MAX_CONTROL_RESPONSE_BYTES`.
-- [ ] Add and validate `max_control_response_bytes`.
-- [ ] Store the active limit.
-- [ ] Require `max_bytes` in `_download_limit_error`.
-- [ ] Require `max_bytes` in `_read_bounded_utf8`.
-- [ ] Decode control-plane JSON through bounded bytes and `json.loads()`.
-- [ ] Route provider files through `self.max_download_bytes`.
-- [ ] Preserve endpoint status and result contracts.
+- [x] Add `DEFAULT_MAX_CONTROL_RESPONSE_BYTES`.
+- [x] Add and validate `max_control_response_bytes`.
+- [x] Store the active limit.
+- [x] Require `max_bytes` in `_download_limit_error`.
+- [x] Require `max_bytes` in `_read_bounded_utf8`.
+- [x] Decode control-plane JSON through bounded bytes and `json.loads()`.
+- [x] Route provider files through `self.max_download_bytes`.
+- [x] Preserve endpoint status and result contracts.
 
 ## Task 3: Document the operator boundary
 
@@ -60,20 +60,20 @@ through that reader, and retain the independent provider-file budget.
 - Modify: `CHANGELOG.md`
 - Maintain: `docs/doctoring/bounded-control-plane-json.md`
 
-- [ ] Document default, override, and independent budgets.
-- [ ] Document fail-closed response-adapter requirements.
-- [ ] Add the feature under `Unreleased`.
+- [x] Document default, override, and independent budgets.
+- [x] Document fail-closed response-adapter requirements.
+- [x] Add the feature under `Unreleased`.
 
 ## Task 4: Verify, review, and merge
 
-- [ ] Run focused bounded-response tests.
-- [ ] Run the complete non-integration suite.
-- [ ] Run Ruff and compileall.
-- [ ] Require 100% production docstrings.
-- [ ] Require 100% production statement and branch coverage.
-- [ ] Require lockfile freshness.
-- [ ] Build wheel and source distribution.
-- [ ] Validate Compose and both runtime images.
+- [x] Run focused bounded-response tests.
+- [x] Run the complete non-integration suite.
+- [x] Run Ruff and compileall.
+- [x] Require 100% production docstrings.
+- [x] Require 100% production statement and branch coverage.
+- [x] Require lockfile freshness.
+- [x] Build wheel and source distribution.
+- [x] Validate Compose and both runtime images.
 - [ ] Inspect every current-head human, CodeRabbit, OpenCode, and security finding.
 - [ ] Require exact-head CI, SAST Semgrep, and Security Scan success.
 - [ ] Merge only the reviewed exact head.

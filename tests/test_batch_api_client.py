@@ -33,7 +33,13 @@ class FakeResponse:
         self.status = status
         self._payload = payload
         self._text = text
-        encoded = text.encode("utf-8")
+        encoded = (
+            text.encode("utf-8")
+            if text
+            else json.dumps(payload).encode("utf-8")
+            if payload is not None
+            else b""
+        )
         self.content_length = len(encoded)
         self.content = FakeContent(encoded)
 

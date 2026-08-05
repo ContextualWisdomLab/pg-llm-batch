@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from pg_llm_batch.batch_api_client import (
@@ -62,6 +64,19 @@ class Credentials:
         return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
 
 
+
+class ResponseContent:
+    """Expose deterministic JSON bytes through a bounded stream."""
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    async def iter_chunked(self, size: int):
+        """Yield bytes in chunks no larger than the requested size."""
+        for index in range(0, len(self.payload), size):
+            yield self.payload[index : index + size]
+
+
 class Response:
     """Minimal asynchronous JSON response."""
 
@@ -69,6 +84,9 @@ class Response:
 
     def __init__(self, payload) -> None:
         self.payload = payload
+        encoded = json.dumps(payload).encode("utf-8")
+        self.content_length = len(encoded)
+        self.content = ResponseContent(encoded)
 
     async def __aenter__(self):
         return self
