@@ -6,7 +6,7 @@
 ordinary `BatchAPIClient` therefore keeps OpenTelemetry optional. A host that
 already owns an OpenTelemetry SDK can select `OpenTelemetryBatchAPIClient` and
 receive one trace span, operation counter measurement, and duration histogram
-measurement for each public batch-client operation.
+measurement for each caller-invoked public batch-client operation.
 
 OpenTelemetry Python supports Python 3.10 and newer, and its trace and metric
 signals are stable. This matches the package's supported Python floor without
@@ -78,7 +78,8 @@ instead of allowing an injected telemetry component to hide them.
 
 ## Signals
 
-Every completed public operation emits the following custom signals:
+Every completed caller-invoked public operation emits the following custom
+signals:
 
 | Signal | Name | Unit | Stable attributes |
 | --- | --- | --- | --- |
@@ -100,6 +101,25 @@ Python exception class name, such as `GatewayError`, `ValidationError`, or
 `CancelledError`. OpenTelemetry recommends predictable, low-cardinality
 `error.type` values and recommends including error classification on operation
 duration metrics.
+
+### Nested operation boundary
+
+The public client API contains implementation reuse. `wait_for_batch()` polls
+through `self.get_batch_status()`, and `download_results()` checks status through
+the same dispatch path. Those calls are internal steps of the outer caller
+operation; they are not additional caller invocations. The instrumented client
+therefore emits only the outer `wait_for_batch` or `download_results` signal set
+and suppresses nested `get_batch_status` operation telemetry.
+
+Suppression uses a context-local observation depth rather than a shared mutable
+instance flag. Each asynchronous task retains its own state, and the depth is
+reset in a `finally` block after success, failure, cancellation, or process-level
+control flow. Independent concurrent caller operations therefore remain
+observable while internal dynamic dispatch stays hidden.
+
+Standard HTTP client instrumentation remains independent. A host may still
+observe every provider request and polling request through aiohttp or gateway
+instrumentation without corrupting the library's caller-operation metrics.
 
 ## Privacy and cardinality contract
 
@@ -142,11 +162,13 @@ cancellation is isolated like an ordinary telemetry provider failure so it
 cannot replace a provider result or provider cancellation. No provider request
 is retried, swallowed, converted, or replayed by the observability layer.
 
-The duration covers the complete public method call. For `wait_for_batch`, this
-includes all polling and sleeps performed by that call. This is an end-to-end
-library-operation metric, not a replacement for standard HTTP client metrics.
-Hosts may independently instrument aiohttp or an upstream gateway and correlate
-those child spans through the active OpenTelemetry context.
+The duration covers the complete caller-invoked public method call. For
+`wait_for_batch`, this includes all polling and sleeps performed by that call.
+For `download_results`, it includes the internal status check and bounded result
+and error-file retrieval. These are end-to-end library-operation metrics, not a
+replacement for standard HTTP client metrics. Hosts may independently
+instrument aiohttp or an upstream gateway and correlate those child spans
+through the active OpenTelemetry context.
 
 ## Verification contract
 
@@ -154,15 +176,19 @@ those child spans through the active OpenTelemetry context.
 meter doubles. It verifies every public operation, success and error paths,
 metric names and units, optional dependency behavior, unchanged exception
 propagation, and absence of a private endpoint alias from emitted telemetry.
-`tests/test_opentelemetry_privacy_contract.py` additionally proves that a
-provider exception containing secret-like text is propagated to the caller but
-is not copied into spans, context-exit arguments, or metric attributes.
-`tests/test_opentelemetry_lifecycle_safety.py` proves that provider cancellation
-closes its span without exception payloads, telemetry-originated cancellation
-cannot replace provider behavior, and metric-instrument construction failure
-cannot disable the client. `tests/test_opentelemetry_control_flow.py` proves that
-non-cancellation process-level control flow is propagated rather than hidden.
-Production statement, branch, and public-docstring gates remain 100%.
+`tests/test_opentelemetry_nested_operations.py` executes the real parent
+`wait_for_batch()` and `download_results()` dispatch paths and proves that each
+caller invocation emits only its outer signal set instead of an additional
+`get_batch_status` signal set. `tests/test_opentelemetry_privacy_contract.py`
+additionally proves that a provider exception containing secret-like text is
+propagated to the caller but is not copied into spans, context-exit arguments,
+or metric attributes. `tests/test_opentelemetry_lifecycle_safety.py` proves that
+provider cancellation closes its span without exception payloads,
+telemetry-originated cancellation cannot replace provider behavior, and
+metric-instrument construction failure cannot disable the client.
+`tests/test_opentelemetry_control_flow.py` proves that non-cancellation
+process-level control flow is propagated rather than hidden. Production
+statement, branch, and public-docstring gates remain 100%.
 
 ## References
 
