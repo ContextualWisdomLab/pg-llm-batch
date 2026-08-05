@@ -21,6 +21,17 @@ def _deployed_schema() -> str:
     )
 
 
+def _tenant_migration(schema: str) -> str:
+    """Return the bounded legacy-to-tenant migration section."""
+    migration_start = schema.index(
+        "-- Reapplying the schema may occur after FORCE RLS was installed."
+    )
+    migration_end = schema.index(
+        "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
+    )
+    return schema[migration_start:migration_end]
+
+
 def test_lifecycle_identity_is_tenant_qualified() -> None:
     """Current-state rows use a trusted tenant-qualified business identity."""
     schema = _canonical_schema()
@@ -37,49 +48,39 @@ def test_lifecycle_identity_is_tenant_qualified() -> None:
 def test_legacy_lifecycle_rows_are_backfilled_without_deletion() -> None:
     """The idempotent migration maps existing rows to standalone deterministically."""
     schema = _canonical_schema()
+    migration = _tenant_migration(schema)
 
-    assert (
-        "ALTER TABLE llm_remote_batch_jobs\n"
-        "    ADD COLUMN IF NOT EXISTS tenant_scope TEXT;"
-    ) in schema
-    assert (
-        "UPDATE llm_remote_batch_jobs\n"
-        "SET tenant_scope = 'standalone'\n"
-        "WHERE tenant_scope IS NULL;"
-    ) in schema
-    assert "ALTER COLUMN tenant_scope SET DEFAULT 'standalone'" in schema
-    assert "ALTER COLUMN tenant_scope SET NOT NULL" in schema
-    assert "DROP CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id" in schema
+    assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in migration
+    assert "SET tenant_scope = 'standalone'" in migration
+    assert "WHERE tenant_scope IS NULL" in migration
+    assert "ALTER COLUMN tenant_scope SET DEFAULT 'standalone'" in migration
+    assert "ALTER COLUMN tenant_scope SET NOT NULL" in migration
+    assert "DROP CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id" in migration
     assert "DELETE FROM llm_remote_batch_jobs" not in schema.upper()
     assert "TRUNCATE llm_remote_batch_jobs" not in schema.upper()
 
 
 def test_rls_owner_transition_is_atomic_for_psql_reapplication() -> None:
     """Reapplying the SQL file cannot expose an owner-bypass window between statements."""
-    schema = _canonical_schema()
-    migration_start = schema.index(
-        "-- Reapplying the schema may occur after FORCE RLS was installed."
-    )
-    migration_end = schema.index(
-        "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
-    )
-    migration = schema[migration_start:migration_end]
+    migration = _tenant_migration(_canonical_schema())
 
     assert "DISABLE ROW LEVEL SECURITY" not in migration
     atomic_start = migration.index("DO $$\nBEGIN")
     atomic_end = migration.index("END $$;", atomic_start) + len("END $$;")
     atomic_transition = migration[atomic_start:atomic_end]
+    force_statement = "ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;"
+
     assert "NO FORCE ROW LEVEL SECURITY" in atomic_transition
     assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in atomic_transition
     assert "SET tenant_scope = 'standalone'" in atomic_transition
     assert "ALTER COLUMN tenant_scope SET NOT NULL" in atomic_transition
-    assert "FORCE ROW LEVEL SECURITY" in atomic_transition
+    assert force_statement in atomic_transition
     assert atomic_transition.index("NO FORCE ROW LEVEL SECURITY") < atomic_transition.index(
         "SET tenant_scope = 'standalone'"
     )
-    assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.index(
-        "FORCE ROW LEVEL SECURITY"
-    )
+    assert atomic_transition.index(
+        "SET tenant_scope = 'standalone'"
+    ) < atomic_transition.rindex(force_statement)
 
 
 def test_lifecycle_row_security_is_forced_and_default_deny() -> None:
