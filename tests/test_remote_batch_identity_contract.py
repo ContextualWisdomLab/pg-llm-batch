@@ -99,15 +99,17 @@ async def test_mismatch_validation_uses_bounded_structured_diagnostics(
     real_validation_error = durable_client_module.ValidationError
     calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
-    def capture_validation_error(*args: Any, **kwargs: Any) -> Exception:
-        """Capture constructor arguments while returning the real domain error."""
-        calls.append((args, kwargs))
-        return real_validation_error(*args, **kwargs)
+    class CapturingValidationError(real_validation_error):
+        """Capture constructor arguments while preserving exception semantics."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            calls.append((args, kwargs))
+            super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(
         durable_client_module,
         "ValidationError",
-        capture_validation_error,
+        CapturingValidationError,
     )
     client = _client()
 
