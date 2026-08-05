@@ -91,14 +91,33 @@ class DurableBatchAPIClient(BatchAPIClient):
         observation_order: int,
         *,
         operation: str,
+        expected_batch_id: Optional[str] = None,
     ) -> None:
-        """Persist one ordered observation or raise recovery-oriented evidence."""
+        """Persist one ordered observation while enforcing any expected identity.
+
+        Poll operations provide the already validated requested identifier as
+        ``expected_batch_id``. A provider response that carries another identity
+        is rejected before an injected recorder or PostgreSQL receives it, and
+        recovery evidence retains only the trusted requested identifier.
+        """
         validated_batch_id: Optional[str] = None
+        recovery_batch_id: Optional[str] = None
         try:
+            if expected_batch_id is not None:
+                recovery_batch_id = validate_remote_resource_id(
+                    expected_batch_id,
+                    "expected_batch_id",
+                )
             validated_batch_id = validate_remote_resource_id(
                 provider_batch.get("id"),
                 "remote_batch_id",
             )
+            if recovery_batch_id is None:
+                recovery_batch_id = validated_batch_id
+            elif validated_batch_id != recovery_batch_id:
+                raise ValidationError(
+                    "provider batch id does not match requested batch id"
+                )
             normalized_snapshot = dict(provider_batch)
             normalized_snapshot["id"] = validated_batch_id
             for resource_field in (
@@ -137,7 +156,7 @@ class DurableBatchAPIClient(BatchAPIClient):
                     "operation": operation,
                     "phase": "persistence",
                     "endpoint_alias": endpoint_alias,
-                    "batch_id": validated_batch_id,
+                    "batch_id": recovery_batch_id,
                     "observation_order": observation_order,
                     "error_type": type(exc).__name__,
                 },
@@ -149,7 +168,7 @@ class DurableBatchAPIClient(BatchAPIClient):
                     "operation": operation,
                     "phase": "persistence",
                     "endpoint_alias": endpoint_alias,
-                    "batch_id": validated_batch_id,
+                    "batch_id": recovery_batch_id,
                     "observation_order": observation_order,
                     "error_type": type(exc).__name__,
                 },
@@ -214,6 +233,7 @@ class DurableBatchAPIClient(BatchAPIClient):
             snapshot,
             observation_order,
             operation="Batch status",
+            expected_batch_id=validated_batch_id,
         )
         return result
 
