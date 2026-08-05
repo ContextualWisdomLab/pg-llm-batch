@@ -1,0 +1,328 @@
+name: One-shot tenant contract reconcile
+
+on:
+  push:
+    branches: [agent/tenant-scoped-lifecycle]
+    paths:
+      - .github/workflows/one-shot-tenant-contract-reconcile.yml
+
+concurrency:
+  group: one-shot-tenant-contract-reconcile
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  reconcile:
+    if: >-
+      github.repository == 'ContextualWisdomLab/pg-llm-batch' &&
+      github.ref == 'refs/heads/agent/tenant-scoped-lifecycle'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out exact trigger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Refuse stale state or competing writers
+        shell: bash
+        env:
+          EXPECTED_PARENT: 121dda8b0e346d4bfe6c5ebff0e5f53ec7b227d2
+          EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
+          BRANCH_NAME: agent/tenant-scoped-lifecycle
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_BASE"
+          test "$(git ls-remote origin refs/heads/$BRANCH_NAME | cut -f1)" = "$GITHUB_SHA"
+          mapfile -t writers < <(find .github/workflows -maxdepth 1 -type f \
+            \( -name '*one-shot*.yml' -o -name '*repair*.yml' \) -print | sort)
+          test "${#writers[@]}" -eq 1
+          test "${writers[0]}" = ".github/workflows/one-shot-tenant-contract-reconcile.yml"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Reconcile compatibility and stale tests
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          python3 -I - <<'PY'
+          from pathlib import Path
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              target = Path(path)
+              text = target.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one anchor, found {count}: {old!r}")
+              target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          replace_once(
+              "pg_llm_batch/db.py",
+              '''    return _persist_remote_batch_state(
+                  dsn,
+                  DEFAULT_TENANT_SCOPE,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at=observed_at,
+              )
+          '''.replace("\n          ", "\n"),
+              '''    snapshot = _persist_remote_batch_state(
+                  dsn,
+                  DEFAULT_TENANT_SCOPE,
+                  endpoint_alias,
+                  provider_batch,
+                  observation_order,
+                  observed_at=observed_at,
+              )
+              compatible_snapshot = dict(snapshot)
+              compatible_snapshot.pop("tenant_scope")
+              return compatible_snapshot
+          '''.replace("\n          ", "\n"),
+          )
+
+          lifecycle_path = Path("tests/test_remote_batch_lifecycle.py")
+          lifecycle = lifecycle_path.read_text(encoding="utf-8")
+          if "import json\n" not in lifecycle:
+              lifecycle = lifecycle.replace("import asyncio\n", "import asyncio\nimport json\n", 1)
+          old_response = '''class _Response:
+              """Async response double for successful or failed provider operations."""
+
+              def __init__(self, status: int, payload: dict[str, Any]) -> None:
+                  self.status = status
+                  self.payload = payload
+                  self.headers: dict[str, str] = {}
+
+              async def json(self) -> dict[str, Any]:
+                  return self.payload
+
+              async def __aenter__(self):
+                  return self
+
+              async def __aexit__(self, *exc: Any):
+                  return None
+          '''.replace("\n          ", "\n")
+          new_response = '''class _ResponseContent:
+              """Expose deterministic provider JSON through bounded streaming."""
+
+              def __init__(self, payload: dict[str, Any]) -> None:
+                  self.body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+              async def iter_chunked(self, size: int):
+                  """Yield response bytes in chunks no larger than ``size``."""
+                  for offset in range(0, len(self.body), size):
+                      yield self.body[offset : offset + size]
+
+
+          class _Response:
+              """Async response double for successful or failed provider operations."""
+
+              def __init__(self, status: int, payload: dict[str, Any]) -> None:
+                  self.status = status
+                  self.payload = payload
+                  self.headers: dict[str, str] = {}
+                  self.content = _ResponseContent(payload)
+                  self.content_length = len(self.content.body)
+
+              async def json(self) -> dict[str, Any]:
+                  """Reject whole-body reads that bypass bounded streaming."""
+                  raise AssertionError("response.json() must not bypass bounded streaming")
+
+              async def __aenter__(self):
+                  return self
+
+              async def __aexit__(self, *exc: Any):
+                  return None
+          '''.replace("\n          ", "\n")
+          if lifecycle.count(old_response) != 1:
+              raise SystemExit("test_remote_batch_lifecycle response anchor mismatch")
+          lifecycle = lifecycle.replace(old_response, new_response, 1)
+          replacements = {
+              '    assert "CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id" in schema\n':
+                  '    assert "CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id" in schema\n',
+              '    assert "UNIQUE (endpoint_alias, remote_batch_id)" in schema\n':
+                  '    assert "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)" in schema\n',
+              '    assert "idx_llm_remote_batch_jobs_status_observed" in schema\n':
+                  '    assert "idx_llm_remote_batch_jobs_tenant_status_observed" in schema\n',
+              '    sql, params = driver.executions[0]\n'
+              '    assert "ON CONFLICT (endpoint_alias, remote_batch_id) DO UPDATE" in sql\n':
+                  '    assert driver.executions[0] == (\n'
+                  '        "SELECT set_config(\'pg_llm_batch.tenant_scope\', %s, true)",\n'
+                  '        ("standalone",),\n'
+                  '    )\n'
+                  '    sql, params = driver.executions[1]\n'
+                  '    assert (\n'
+                  '        "ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE"\n'
+                  '        in sql\n'
+                  '    )\n',
+          }
+          for old, new in replacements.items():
+              count = lifecycle.count(old)
+              if count != 1:
+                  raise SystemExit(f"lifecycle assertion anchor mismatch ({count}): {old!r}")
+              lifecycle = lifecycle.replace(old, new, 1)
+          lifecycle = lifecycle.replace("params[11]", "params[12]")
+          lifecycle = lifecycle.replace("driver.executions[-1][1][11]", "driver.executions[-1][1][12]")
+          lifecycle_path.write_text(lifecycle, encoding="utf-8")
+
+          tenant_persistence = Path("tests/test_tenant_lifecycle_persistence.py")
+          persistence = tenant_persistence.read_text(encoding="utf-8")
+          persistence = persistence.replace(
+              '    assert snapshot["tenant_scope"] == "standalone"\n',
+              '    assert "tenant_scope" not in snapshot\n',
+              1,
+          )
+          malformed = '''
+
+          def test_tenant_scoped_read_rejects_malformed_database_rows(
+              monkeypatch: pytest.MonkeyPatch,
+          ) -> None:
+              """A partial row cannot become an ambiguous lifecycle projection."""
+              driver = _Psycopg(fetchone_rows=[("tenant-a", "primary")])
+              monkeypatch.setattr(db, "psycopg", driver)
+
+              with pytest.raises(RuntimeError, match="invalid row"):
+                  db.get_tenant_remote_batch_state(
+                      "postgresql://tenant-test",
+                      "tenant-a",
+                      "primary",
+                      "batch-shared",
+                  )
+          '''.replace("\n          ", "\n")
+          if "test_tenant_scoped_read_rejects_malformed_database_rows" not in persistence:
+              persistence = persistence.rstrip() + malformed + "\n"
+          tenant_persistence.write_text(persistence, encoding="utf-8")
+
+          tenant_client_path = Path("tests/test_tenant_durable_client.py")
+          tenant_client = tenant_client_path.read_text(encoding="utf-8").replace(
+              "pytest.MonPatch", "pytest.MonkeyPatch"
+          )
+          tenant_client_path.write_text(tenant_client, encoding="utf-8")
+
+          schema_integrity_path = Path("tests/test_schema_integrity.py")
+          schema_integrity = schema_integrity_path.read_text(encoding="utf-8")
+          marker = "def test_postgres_image_schema_is_an_exact_canonical_mirror():"
+          start = schema_integrity.index(marker)
+          schema_integrity = schema_integrity[:start] + '''def test_postgres_image_schema_is_an_exact_canonical_mirror():
+              """The deployable image schema is byte-exact with the package source."""
+              root = Path(__file__).resolve().parents[1]
+              canonical = (root / "pg_llm_batch" / "schema.sql").read_text(
+                  encoding="utf-8"
+              )
+              mirror = (
+                  root / "docker" / "postgres" / "init" / "02_schema.sql"
+              ).read_text(encoding="utf-8")
+              assert mirror == canonical
+          '''.replace("\n          ", "\n")
+          schema_integrity_path.write_text(schema_integrity, encoding="utf-8")
+
+          design_path = Path("docs/superpowers/specs/2026-08-05-tenant-scoped-lifecycle-design.md")
+          design = design_path.read_text(encoding="utf-8")
+          old_design = (
+              "Both return the normalized snapshot including `tenant_scope`. The upsert conflict\n"
+              "key and every update reference use the tenant-qualified identity.\n"
+          )
+          if old_design in design:
+              design = design.replace(
+                  old_design,
+                  "The tenant helper returns `tenant_scope`. The legacy helper preserves "
+                  "its original return shape while writing under `standalone`. The upsert "
+                  "conflict key and every update reference use tenant-qualified identity.\n",
+                  1,
+              )
+          design_path.write_text(design, encoding="utf-8")
+          PY
+          git diff --check
+
+      - name: Verify focused contracts
+        run: |
+          set -euo pipefail
+          uv run pytest -q \
+            tests/test_remote_batch_lifecycle.py \
+            tests/test_remote_batch_metadata_contract.py \
+            tests/test_remote_batch_state_contracts.py \
+            tests/test_tenant_scope_validation.py \
+            tests/test_tenant_lifecycle_schema.py \
+            tests/test_tenant_lifecycle_persistence.py \
+            tests/test_tenant_durable_client.py \
+            tests/test_schema_integrity.py
+
+      - name: Verify full deterministic quality
+        run: |
+          set -euo pipefail
+          uv run python -m compileall -q pg_llm_batch tests
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-branch --cov-report=term-missing \
+            --cov-fail-under=100
+          uv lock --check
+          rm -rf build dist
+          uv build --no-sources
+
+      - name: Remove temporary workflow and generated evidence artifacts
+        shell: bash
+        env:
+          SOURCE_HEAD: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          rm .github/workflows/one-shot-tenant-contract-reconcile.yml
+          rm -rf .coverage .coverage.* htmlcov build dist
+          mkdir -p docs/superpowers/evidence
+          cat > docs/superpowers/evidence/2026-08-05-tenant-contract-reconciliation.md <<EOF
+          # Tenant Contract Reconciliation Evidence
+
+          - Verification source head: \`$SOURCE_HEAD\`
+          - Focused tenant, lifecycle, metadata, and bounded-stream contracts passed.
+          - Full non-integration tests passed with 100% production statement and branch coverage.
+          - Public production docstrings, Ruff, compile, lockfile, and package builds passed.
+          - The temporary exact-trigger workflow removed itself from the final diff.
+          EOF
+          test ! -e .github/workflows/one-shot-tenant-contract-reconcile.yml
+          test -z "$(git ls-files --others --exclude-standard | grep -E '(^|/)(\.coverage|htmlcov|build|dist)(/|$)' || true)"
+          git diff --check
+
+      - name: Push only if the exact remote head is unchanged
+        shell: bash
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+          BRANCH_NAME: agent/tenant-scoped-lifecycle
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/$BRANCH_NAME | cut -f1)" = "$GITHUB_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 1
+          test -z "$(git diff --cached --name-only | grep '^\.github/workflows/one-shot-tenant-contract-reconcile.yml$' || true)"
+          git commit -m "test(tenant): reconcile lifecycle contracts"
+          auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth_header"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:$BRANCH_NAME"
