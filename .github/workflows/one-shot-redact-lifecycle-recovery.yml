@@ -1,0 +1,271 @@
+name: One-shot lifecycle recovery redaction
+
+on:
+  push:
+    branches: [agent/persist-remote-batch-lifecycle]
+    paths:
+      - .github/workflows/one-shot-redact-lifecycle-recovery.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: one-shot-redact-lifecycle-recovery
+  cancel-in-progress: true
+
+jobs:
+  implement-and-verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout durable lifecycle branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: agent/persist-remote-batch-lifecycle
+          fetch-depth: 0
+
+      - name: Synchronize current main
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git merge --no-edit origin/main
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Apply body-free lifecycle recovery boundary
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from textwrap import dedent, indent
+
+
+          def replace_once(text: str, old: str, new: str, label: str) -> str:
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{label}: expected one match, found {count}")
+              return text.replace(old, new, 1)
+
+
+          client_path = Path("pg_llm_batch/durable_client.py")
+          client = client_path.read_text(encoding="utf-8")
+          method_start = client.index("    async def _persist_snapshot(\n")
+          method_end = client.index("    async def create_batch_job(\n", method_start)
+          replacement = indent(
+              dedent(
+                  '''
+                  async def _persist_snapshot(
+                      self,
+                      endpoint_alias: str,
+                      provider_batch: Mapping[str, Any],
+                      observation_order: int,
+                      *,
+                      operation: str,
+                  ) -> None:
+                      """Persist one ordered observation with body-free recovery evidence."""
+                      batch_id: Optional[str] = None
+                      try:
+                          batch_id = validate_remote_resource_id(
+                              provider_batch.get("id"),
+                              "remote_batch_id",
+                          )
+                          normalized_snapshot = dict(provider_batch)
+                          normalized_snapshot["id"] = batch_id
+                          for resource_field in (
+                              "input_file_id",
+                              "output_file_id",
+                              "error_file_id",
+                          ):
+                              normalized_snapshot[resource_field] = (
+                                  validate_optional_remote_resource_id(
+                                      normalized_snapshot.get(resource_field),
+                                      resource_field,
+                                  )
+                              )
+                          normalized_snapshot["endpoint"] = (
+                              normalize_optional_provider_text(
+                                  normalized_snapshot.get("endpoint")
+                              )
+                          )
+                          normalized_snapshot["status"] = (
+                              normalize_optional_provider_text(
+                                  normalized_snapshot.get("status")
+                              )
+                              or "unknown"
+                          )
+                          if "metadata" in provider_batch:
+                              normalized_snapshot["metadata"] = (
+                                  normalize_provider_metadata(
+                                      provider_batch.get("metadata")
+                                  )
+                              )
+                          await asyncio.to_thread(
+                              self._lifecycle_recorder,
+                              self.postgres_dsn,
+                              endpoint_alias,
+                              normalized_snapshot,
+                              observation_order,
+                          )
+                      except Exception as exc:
+                          raise GatewayError(
+                              f"{operation} succeeded but lifecycle persistence failed",
+                              response_data={
+                                  "operation": operation,
+                                  "phase": "persistence",
+                                  "endpoint_alias": endpoint_alias,
+                                  "batch_id": batch_id,
+                                  "observation_order": observation_order,
+                                  "error_type": type(exc).__name__,
+                              },
+                          ) from None
+
+                  '''
+              ).lstrip("\n"),
+              "    ",
+          )
+          client = client[:method_start] + replacement + client[method_end:]
+          client_path.write_text(client, encoding="utf-8")
+
+          docs_path = Path("docs/remote-batch-lifecycle.md")
+          docs = docs_path.read_text(encoding="utf-8")
+          docs = replace_once(
+              docs,
+              "Unsupported provider-generated values remain available only\n"
+              "as structured reconciliation evidence; they never reach PostgreSQL or an injected\n"
+              "recorder.",
+              "Unsupported provider-generated identifiers are redacted from public recovery\n"
+              "evidence; they never reach PostgreSQL or an injected recorder. A rejected raw\n"
+              "identifier must be investigated through a separately authorized provider-side\n"
+              "support path.",
+              "operator identifier boundary",
+          )
+          docs = replace_once(
+              docs,
+              "This recovery path also covers a successful provider response containing a\n"
+              "batch identifier outside the supported gateway contract. The untrusted value is\n"
+              "included as reconciliation evidence but is never passed to a custom lifecycle\n"
+              "recorder or PostgreSQL.\n\n"
+              "The remote batch identifier and order remain available for operator\n"
+              "reconciliation.",
+              "This recovery path also covers a successful provider response containing a\n"
+              "batch identifier outside the supported gateway contract. The raw value is not\n"
+              "included in the public error, exception chain, custom recorder, or PostgreSQL.\n"
+              "The structured evidence retains a null `batch_id`, the observation order, and\n"
+              "the bounded exception type.\n\n"
+              "A validated remote batch identifier and the observation order remain available\n"
+              "for operator reconciliation. When the identifier itself is rejected, operators\n"
+              "must correlate the request through separately authorized provider-side logs.",
+              "persistence failure redaction",
+          )
+          if "CWE-532" not in docs:
+              docs = docs.rstrip() + (
+                  "\n\nMITRE. (2026). *CWE-532: Insertion of sensitive information into log "
+                  "file* (Version 4.20). "
+                  "https://cwe.mitre.org/data/definitions/532.html\n\n"
+                  "OWASP Foundation. (n.d.). *Logging cheat sheet*. OWASP Cheat "
+                  "Sheet Series. Retrieved August 5, 2026, from "
+                  "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html\n"
+              )
+          docs_path.write_text(docs, encoding="utf-8")
+
+          changelog_path = Path("CHANGELOG.md")
+          changelog = changelog_path.read_text(encoding="utf-8")
+          entry = (
+              "- Redacted unsupported provider-generated batch identifiers from durable "
+              "lifecycle recovery metadata and exception chains while retaining validated "
+              "identifiers, observation order, and bounded error type.\n"
+          )
+          if entry not in changelog:
+              marker = "### Fixed\n\n"
+              if changelog.count(marker) != 1:
+                  raise SystemExit("expected one Unreleased Fixed section")
+              changelog = changelog.replace(marker, marker + entry, 1)
+          changelog_path.write_text(changelog, encoding="utf-8")
+
+          evidence_dir = Path("docs/superpowers/evidence")
+          evidence_dir.mkdir(parents=True, exist_ok=True)
+          (evidence_dir / "2026-08-05-remote-batch-error-redaction-red.md").write_text(
+              "# Remote batch recovery red evidence\n\n"
+              "Exact head `be303cd27f094878d56e909a0f6c748fec1f5492` was "
+              "executed by CI run `30976923588`. Python 3.10, 3.12, and 3.14 "
+              "all failed only the new lifecycle recovery regression because "
+              "`response_data.batch_id` reproduced an unsupported provider-controlled "
+              "identifier instead of remaining null. Python 3.14 reported 304 passing "
+              "tests, three deselections, and one intended failure.\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Verify lifecycle recovery and quality contracts
+        run: |
+          set -euo pipefail
+          uv run pytest -q \
+            tests/test_remote_batch_error_redaction.py \
+            tests/test_remote_batch_state_contracts.py \
+            tests/test_remote_batch_lifecycle.py
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch tests
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          rm -rf dist
+          uv build --no-sources
+          docker compose config >/dev/null
+          docker build --tag pg-llm-batch:lifecycle-redaction .
+          docker build --tag pg-llm-batch-postgres:lifecycle-redaction docker/postgres
+
+      - name: Record green evidence
+        run: |
+          cat > docs/superpowers/evidence/2026-08-05-remote-batch-error-redaction-green.md <<'EOF'
+          # Remote batch recovery green evidence
+
+          The implementation workflow passed the focused lifecycle recovery,
+          remote state, and lifecycle suites; the complete non-integration suite;
+          Python compilation; Ruff; 100% production docstrings; 100% production
+          statement and branch coverage; lockfile freshness; wheel/source builds;
+          Compose validation; and component/PostgreSQL container builds.
+
+          Unsupported provider-generated batch identifiers now remain absent from
+          structured recovery metadata and exception chains. Validated identifiers,
+          observation order, operation, phase, endpoint alias, and bounded error type
+          remain available for reconciliation.
+          EOF
+
+      - name: Publish verified implementation and remove workflow
+        env:
+          BRANCH_NAME: agent/persist-remote-batch-lifecycle
+        run: |
+          set -euo pipefail
+          rm .github/workflows/one-shot-redact-lifecycle-recovery.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            pg_llm_batch/durable_client.py \
+            tests/test_remote_batch_error_redaction.py \
+            docs/remote-batch-lifecycle.md \
+            docs/superpowers/evidence/2026-08-05-remote-batch-error-redaction-red.md \
+            docs/superpowers/evidence/2026-08-05-remote-batch-error-redaction-green.md \
+            CHANGELOG.md \
+            .github/workflows/one-shot-redact-lifecycle-recovery.yml
+          git diff --cached --quiet && { echo "No lifecycle redaction changes generated" >&2; exit 1; }
+          git commit -m "fix(lifecycle): redact invalid provider identifiers"
+          git push origin "HEAD:${BRANCH_NAME}"
