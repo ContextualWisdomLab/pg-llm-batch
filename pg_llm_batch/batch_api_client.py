@@ -491,6 +491,12 @@ class BatchAPIClient:
             )
         payload = bytearray()
         async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
+            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+                raise GatewayError(
+                    f"{operation} response yielded a non-byte stream chunk",
+                    status_code=getattr(response, "status", None),
+                    response_data={"error_type": "InvalidByteChunk"},
+                )
             if len(payload) + len(chunk) > max_bytes:
                 raise self._download_limit_error(
                     response,
