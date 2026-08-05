@@ -30,6 +30,7 @@ def test_release_acceptance_workflow_builds_twice_and_preserves_evidence() -> No
     assert "git show -s --format=%ct HEAD" in text
     assert "uv build --no-sources --out-dir dist-first" in text
     assert "uv build --no-sources --out-dir dist-second" in text
+    assert text.count("--no-create-gitignore") == 2
     assert "verify_reproducible_release" in text
     assert "write_release_manifest" in text
     assert "release-manifest.json" in text
