@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from pg_llm_batch import durable_client as durable_client_module
 from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError
@@ -48,6 +49,18 @@ def _credentials(_alias: str) -> GatewayCredentials:
     return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
 
 
+def _client(*, recorder: Any = None) -> DurableBatchAPIClient:
+    """Build a deterministic durable client for mismatch regressions."""
+    client = DurableBatchAPIClient(
+        "postgresql://example",
+        _credentials,
+        lifecycle_recorder=recorder or (lambda *_args: None),
+        observation_reserver=lambda _dsn: 106,
+    )
+    client._session = _Session()
+    return client
+
+
 async def test_poll_rejects_mismatched_provider_batch_identity() -> None:
     """A poll response cannot be persisted under a different batch identity."""
     recorded: list[dict[str, Any]] = []
@@ -60,13 +73,7 @@ async def test_poll_rejects_mismatched_provider_batch_identity() -> None:
     ) -> None:
         recorded.append(dict(provider_batch))
 
-    client = DurableBatchAPIClient(
-        "postgresql://example",
-        _credentials,
-        lifecycle_recorder=recorder,
-        observation_reserver=lambda _dsn: 106,
-    )
-    client._session = _Session()
+    client = _client(recorder=recorder)
 
     with pytest.raises(GatewayError, match="lifecycle persistence failed") as exc_info:
         await client.get_batch_status("batch-requested", "primary")
@@ -83,3 +90,38 @@ async def test_poll_rejects_mismatched_provider_batch_identity() -> None:
     assert "batch-other" not in repr(exc_info.value)
     assert "batch-other" not in repr(exc_info.value.response_data)
     assert recorded == []
+
+
+async def test_mismatch_validation_uses_bounded_structured_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mismatch diagnostics keep a stable message without storing provider data."""
+    real_validation_error = durable_client_module.ValidationError
+    calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def capture_validation_error(*args: Any, **kwargs: Any) -> Exception:
+        """Capture constructor arguments while returning the real domain error."""
+        calls.append((args, kwargs))
+        return real_validation_error(*args, **kwargs)
+
+    monkeypatch.setattr(
+        durable_client_module,
+        "ValidationError",
+        capture_validation_error,
+    )
+    client = _client()
+
+    with pytest.raises(GatewayError, match="lifecycle persistence failed"):
+        await client.get_batch_status("batch-requested", "primary")
+
+    assert calls == [
+        (
+            (),
+            {
+                "field": "remote_batch_id",
+                "value": "<redacted>",
+                "reason": "does not match requested batch id",
+                "message": "provider batch id does not match requested batch id",
+            },
+        )
+    ]
