@@ -27,11 +27,16 @@ or provider I/O. Provider-returned identifiers are validated before any lifecycl
 recorder receives them. Unsupported provider-generated identifiers are redacted
 from public recovery evidence; they never reach PostgreSQL or an injected
 recorder. A rejected raw identifier must be investigated through a separately
-authorized provider-side support path. Provider-returned `endpoint` and `status`
-text is also normalized before custom recorders and PostgreSQL: NUL-bearing,
-empty, or non-string endpoints become absent, while an unsafe status becomes
-`unknown`. These application checks align with the PostgreSQL storage constraints
-and prevent avoidable remote-success/local-persistence split-brain failures.
+authorized provider-side support path. For a status poll, a present provider
+response `id` must exactly equal the already validated requested batch identifier.
+A mismatch fails before an injected recorder or PostgreSQL receives the response;
+recovery evidence exposes only the trusted requested identifier and never copies
+the mismatched provider value. Provider-returned `endpoint` and `status` text is
+also normalized before custom recorders and PostgreSQL: NUL-bearing, empty, or
+non-string endpoints become absent, while an unsafe status becomes `unknown`.
+These application checks align with the PostgreSQL storage constraints and
+prevent avoidable remote-success/local-persistence split-brain failures and
+cross-batch state contamination.
 
 Only curated operational fields are persisted:
 
@@ -127,6 +132,13 @@ included in the public error, exception cause, custom recorder, or PostgreSQL.
 The structured evidence retains a null `batch_id`, the observation order, and
 the bounded exception type.
 
+For status polling, it also covers a valid-looking provider identifier that does
+not equal the requested identifier. The client retains the trusted requested
+identifier in structured recovery evidence, drops the mismatched provider value,
+does not call the lifecycle recorder, and does not write either identity to
+PostgreSQL for that observation. This fail-closed boundary prevents one provider
+response from mutating another batch's durable projection.
+
 A validated remote batch identifier and the observation order remain available
 for operator reconciliation. When the identifier itself is rejected, operators
 must correlate the request through separately authorized provider-side logs.
@@ -185,8 +197,10 @@ The stored field set follows the core Batch object fields documented by OpenAI:
 `id`, `input_file_id`, `endpoint`, `status`, `output_file_id`, `error_file_id`,
 `request_counts`, and object-valued `metadata`. OpenAI-compatible gateways may
 omit optional fields; the normalization rules above preserve a stable local
-contract. Gateways that emit resource identifiers outside the documented ASCII
-path-segment contract require an adapter before durable lifecycle persistence.
+contract. A status response that includes `id` must echo the requested batch
+identifier exactly. Gateways that emit resource identifiers outside the
+documented ASCII path-segment contract, or return a different identifier for a
+status request, require an adapter before durable lifecycle persistence.
 
 ## References
 
