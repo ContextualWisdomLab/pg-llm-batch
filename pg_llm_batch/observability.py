@@ -15,7 +15,7 @@ from importlib import import_module
 from time import perf_counter
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
-from .batch_api_client import BatchAPIClient, CredentialsProvider
+from .batch_api_client import BatchAPIClient
 
 INSTRUMENTATION_SCOPE_NAME = "pg_llm_batch"
 OPERATION_NAME_ATTRIBUTE = "pg_llm_batch.operation.name"
