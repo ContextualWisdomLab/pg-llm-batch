@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
   public Batch API client operations, with explicit tracer/meter injection,
   lazy global-provider resolution, bounded error and cancellation
-  classification, a strict no-identifiers/no-payload telemetry contract, and
-  fail-open isolation when tracer or metric providers are unavailable.
+  classification, a strict no-identifiers/no-payload telemetry contract,
+  fail-open isolation for ordinary telemetry failures and telemetry-originated
+  cancellation, preservation of non-cancellation process-control exceptions,
+  and local no-op metric fallbacks when instruments cannot be created.
 - Bounded, streamed provider result and error downloads with a 128 MiB
   decoded-byte default, strict UTF-8 validation, body-free oversize errors,
   and fail-closed handling when a bounded byte stream is unavailable.
