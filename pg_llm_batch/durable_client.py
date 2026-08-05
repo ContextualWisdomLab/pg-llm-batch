@@ -27,6 +27,24 @@ TenantLifecycleRecorder = Callable[[str, str, str, Mapping[str, Any], int], Any]
 ObservationReserver = Callable[[str], int]
 
 
+def _validate_callable_seam(field: str, value: Any) -> None:
+    """Reject one non-callable lifecycle dependency during construction.
+
+    Args:
+        field: Public constructor field used in structured diagnostics.
+        value: Candidate recorder or observation-reservation callable.
+
+    Raises:
+        ValidationError: If the supplied dependency cannot be called.
+    """
+    if not callable(value):
+        raise ValidationError(
+            field=field,
+            value=value,
+            reason="must be callable",
+        )
+
+
 class DurableBatchAPIClient(BatchAPIClient):
     """Batch API client with fail-closed standalone lifecycle persistence.
 
@@ -47,6 +65,8 @@ class DurableBatchAPIClient(BatchAPIClient):
         **client_options: Any,
     ) -> None:
         """Initialize HTTP behavior and durable ordering/persistence seams."""
+        _validate_callable_seam("lifecycle_recorder", lifecycle_recorder)
+        _validate_callable_seam("observation_reserver", observation_reserver)
         super().__init__(postgres_dsn, credentials, **client_options)
         self._lifecycle_recorder = lifecycle_recorder
         self._observation_reserver = observation_reserver
@@ -328,6 +348,10 @@ class TenantDurableBatchAPIClient(DurableBatchAPIClient):
                 value="<provided>",
                 reason="tenant clients require tenant_lifecycle_recorder",
             )
+        _validate_callable_seam(
+            "tenant_lifecycle_recorder",
+            tenant_lifecycle_recorder,
+        )
         self._tenant_lifecycle_recorder = tenant_lifecycle_recorder
         super().__init__(
             postgres_dsn,
