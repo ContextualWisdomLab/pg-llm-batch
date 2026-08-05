@@ -141,3 +141,42 @@ async def test_failure_telemetry_does_not_capture_exception_message(
     assert secret_message not in emitted_telemetry
     assert "batch-private" not in emitted_telemetry
     assert "tenant-private" not in emitted_telemetry
+
+
+async def test_untrusted_exception_class_name_uses_bounded_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller-defined exception types cannot create secret or unbounded dimensions."""
+    secret_type_name = "Tenant42BearerTokenMustNotBecomeTelemetry"
+    custom_error_type = type(secret_type_name, (Exception,), {})
+    failure = custom_error_type("private exception message")
+    tracer = PrivacyTracer()
+    meter = PrivacyMeter()
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        raise failure
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=tracer,
+        meter=meter,
+    )
+
+    with pytest.raises(custom_error_type) as exc_info:
+        await client.cancel_batch("batch-private", "tenant-private")
+
+    assert exc_info.value is failure
+    assert tracer.spans[0].attributes["error.type"] == "_OTHER"
+    assert meter.counter.calls[0][1]["error.type"] == "_OTHER"
+    assert meter.histogram.calls[0][1]["error.type"] == "_OTHER"
+    emitted_telemetry = repr(
+        (
+            tracer.spans[0].attributes,
+            meter.counter.calls,
+            meter.histogram.calls,
+        )
+    )
+    assert secret_type_name not in emitted_telemetry
+    assert "private exception message" not in emitted_telemetry
