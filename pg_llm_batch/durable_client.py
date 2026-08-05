@@ -18,7 +18,7 @@ from .db import (
     validate_optional_remote_resource_id,
     validate_remote_resource_id,
 )
-from .exceptions import GatewayError
+from .exceptions import GatewayError, ValidationError
 
 LifecycleRecorder = Callable[[str, str, Mapping[str, Any], int], Any]
 ObservationReserver = Callable[[str], int]
@@ -93,11 +93,10 @@ class DurableBatchAPIClient(BatchAPIClient):
         operation: str,
     ) -> None:
         """Persist one ordered observation or raise recovery-oriented evidence."""
-        batch_id: Any = None
+        validated_batch_id: Optional[str] = None
         try:
-            batch_id = provider_batch.get("id")
             validated_batch_id = validate_remote_resource_id(
-                batch_id,
+                provider_batch.get("id"),
                 "remote_batch_id",
             )
             normalized_snapshot = dict(provider_batch)
@@ -131,6 +130,18 @@ class DurableBatchAPIClient(BatchAPIClient):
                 normalized_snapshot,
                 observation_order,
             )
+        except ValidationError as exc:
+            raise GatewayError(
+                f"{operation} succeeded but lifecycle persistence failed",
+                response_data={
+                    "operation": operation,
+                    "phase": "persistence",
+                    "endpoint_alias": endpoint_alias,
+                    "batch_id": validated_batch_id,
+                    "observation_order": observation_order,
+                    "error_type": type(exc).__name__,
+                },
+            ) from None
         except Exception as exc:
             raise GatewayError(
                 f"{operation} succeeded but lifecycle persistence failed",
@@ -138,7 +149,7 @@ class DurableBatchAPIClient(BatchAPIClient):
                     "operation": operation,
                     "phase": "persistence",
                     "endpoint_alias": endpoint_alias,
-                    "batch_id": batch_id,
+                    "batch_id": validated_batch_id,
                     "observation_order": observation_order,
                     "error_type": type(exc).__name__,
                 },
