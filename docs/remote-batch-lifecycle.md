@@ -24,13 +24,14 @@ only letters, digits, dot, underscore, colon, or hyphen. This contract covers
 All caller-provided remote resource identifiers, including input file and batch
 identifiers, are validated before observation reservation, credential resolution,
 or provider I/O. Provider-returned identifiers are validated before any lifecycle
-recorder receives them. Unsupported provider-generated values remain available only
-as structured reconciliation evidence; they never reach PostgreSQL or an injected
-recorder. Provider-returned `endpoint` and `status` text is also normalized before
-custom recorders and PostgreSQL: NUL-bearing, empty, or non-string endpoints become
-absent, while an unsafe status becomes `unknown`. These application checks align with
-the PostgreSQL storage constraints and prevent avoidable remote-success/local-
-persistence split-brain failures.
+recorder receives them. Unsupported provider-generated identifiers are redacted
+from public recovery evidence; they never reach PostgreSQL or an injected
+recorder. A rejected raw identifier must be investigated through a separately
+authorized provider-side support path. Provider-returned `endpoint` and `status`
+text is also normalized before custom recorders and PostgreSQL: NUL-bearing,
+empty, or non-string endpoints become absent, while an unsafe status becomes
+`unknown`. These application checks align with the PostgreSQL storage constraints
+and prevent avoidable remote-success/local-persistence split-brain failures.
 
 Only curated operational fields are persisted:
 
@@ -116,19 +117,21 @@ client raises `GatewayError` with:
 - `operation`;
 - `phase` set to `persistence`;
 - `endpoint_alias`;
-- `batch_id` when known;
+- a validated `batch_id` when available;
 - `observation_order`;
 - the persistence exception type.
 
 This recovery path also covers a successful provider response containing a
-batch identifier outside the supported gateway contract. The untrusted value is
-included as reconciliation evidence but is never passed to a custom lifecycle
-recorder or PostgreSQL.
+batch identifier outside the supported gateway contract. The raw value is not
+included in the public error, exception cause, custom recorder, or PostgreSQL.
+The structured evidence retains a null `batch_id`, the observation order, and
+the bounded exception type.
 
-The remote batch identifier and order remain available for operator
-reconciliation. The client does not replay side-effecting provider POST
-operations and does not pretend that an unpersisted transition succeeded
-locally.
+A validated remote batch identifier and the observation order remain available
+for operator reconciliation. When the identifier itself is rejected, operators
+must correlate the request through separately authorized provider-side logs.
+The client does not replay side-effecting provider POST operations and does not
+pretend that an unpersisted transition succeeded locally.
 
 ## Usage
 
@@ -187,8 +190,15 @@ path-segment contract require an adapter before durable lifecycle persistence.
 
 ## References
 
+MITRE. (2026). *CWE-532: Insertion of sensitive information into log file*
+(Version 4.20). https://cwe.mitre.org/data/definitions/532.html
+
 OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 4,
 2026, from https://platform.openai.com/docs/api-reference/batch/object
+
+OWASP Foundation. (n.d.). *Logging cheat sheet*. OWASP Cheat Sheet Series.
+Retrieved August 5, 2026, from
+https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
 
 PostgreSQL Global Development Group. (2026). *Conditional expressions*. In
 *PostgreSQL 18 documentation*.
