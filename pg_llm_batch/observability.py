@@ -118,10 +118,10 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         action: Callable[[], _TelemetryResult],
         default: _TelemetryResult,
     ) -> _TelemetryResult:
-        """Run one telemetry-only action and return a safe default on failure."""
+        """Isolate any telemetry-only failure and return the supplied safe default."""
         try:
             return action()
-        except Exception:
+        except BaseException:
             return default
 
     def _use_span(self, span: Any, action: Callable[[Any], Any]) -> None:
