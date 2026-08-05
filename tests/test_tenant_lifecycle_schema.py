@@ -54,6 +54,34 @@ def test_legacy_lifecycle_rows_are_backfilled_without_deletion() -> None:
     assert "TRUNCATE llm_remote_batch_jobs" not in schema.upper()
 
 
+def test_rls_owner_transition_is_atomic_for_psql_reapplication() -> None:
+    """Reapplying the SQL file cannot expose an owner-bypass window between statements."""
+    schema = _canonical_schema()
+    migration_start = schema.index(
+        "-- Reapplying the schema may occur after FORCE RLS was installed."
+    )
+    migration_end = schema.index(
+        "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
+    )
+    migration = schema[migration_start:migration_end]
+
+    assert "DISABLE ROW LEVEL SECURITY" not in migration
+    atomic_start = migration.index("DO $$\nBEGIN")
+    atomic_end = migration.index("END $$;", atomic_start) + len("END $$;")
+    atomic_transition = migration[atomic_start:atomic_end]
+    assert "NO FORCE ROW LEVEL SECURITY" in atomic_transition
+    assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in atomic_transition
+    assert "SET tenant_scope = 'standalone'" in atomic_transition
+    assert "ALTER COLUMN tenant_scope SET NOT NULL" in atomic_transition
+    assert "FORCE ROW LEVEL SECURITY" in atomic_transition
+    assert atomic_transition.index("NO FORCE ROW LEVEL SECURITY") < atomic_transition.index(
+        "SET tenant_scope = 'standalone'"
+    )
+    assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.index(
+        "FORCE ROW LEVEL SECURITY"
+    )
+
+
 def test_lifecycle_row_security_is_forced_and_default_deny() -> None:
     """Missing transaction tenant context cannot expose or mutate lifecycle rows."""
     schema = _canonical_schema()
