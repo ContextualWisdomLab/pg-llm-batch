@@ -491,13 +491,16 @@ class BatchAPIClient:
             )
         payload = bytearray()
         async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
-            if not isinstance(chunk, (bytes, bytearray, memoryview)):
+            if isinstance(chunk, memoryview):
+                chunk_bytes = chunk.nbytes
+            elif isinstance(chunk, (bytes, bytearray)):
+                chunk_bytes = len(chunk)
+            else:
                 raise GatewayError(
                     f"{operation} response yielded a non-byte stream chunk",
                     status_code=getattr(response, "status", None),
                     response_data={"error_type": "InvalidByteChunk"},
                 )
-            chunk_bytes = chunk.nbytes if isinstance(chunk, memoryview) else len(chunk)
             if len(payload) + chunk_bytes > max_bytes:
                 raise self._download_limit_error(
                     response,
@@ -506,7 +509,10 @@ class BatchAPIClient:
                     declared_bytes=declared_bytes,
                     bytes_read=len(payload),
                 )
-            payload.extend(chunk)
+            if isinstance(chunk, memoryview):
+                payload.extend(chunk.tobytes())
+            else:
+                payload.extend(chunk)
         try:
             return payload.decode("utf-8")
         except UnicodeDecodeError as exc:
