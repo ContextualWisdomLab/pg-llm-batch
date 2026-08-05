@@ -64,12 +64,17 @@ client = OpenTelemetryBatchAPIClient(
 
 This seam preserves standalone operation and allows a CWL service mesh or other
 MSA host to apply its own resource, tenant, exporter, and sampling policies.
-A tracer or meter remains observational: failures while creating metric
-instruments or while starting, mutating, closing, or recording telemetry do not
-prevent construction, skip the underlying provider call, replace its return
-value, mask its exception, or swallow task cancellation. An unavailable metric
-instrument is replaced locally by a no-op instrument; this does not affect the
-ordinary uninstrumented client.
+Ordinary exceptions and telemetry-originated `asyncio.CancelledError` raised
+while creating metric instruments or while starting, mutating, closing, or
+recording telemetry do not prevent construction, skip the underlying provider
+call, replace its return value, mask its exception, or swallow provider task
+cancellation. An unavailable metric instrument is replaced locally by a no-op
+instrument; this does not affect the ordinary uninstrumented client.
+
+The isolation boundary is intentionally precise. Other `BaseException`
+subclasses representing process-level control flow are not swallowed. This
+preserves host shutdown, interrupt, and equivalent runtime-control semantics
+instead of allowing an injected telemetry component to hide them.
 
 ## Signals
 
@@ -130,10 +135,12 @@ host SDK's bounded resource attributes instead.
 Telemetry is observational and does not alter the public operation result. A
 successful operation returns the exact parent-client result. A failed operation
 records its bounded error classification and re-raises the same exception
-object. Task cancellation is classified as `CancelledError`, measured once when
-instruments are available, closed without passing the cancellation payload to
-the span context, and re-raised unchanged. No provider request is retried,
-swallowed, converted, or replayed by the observability layer.
+object. Provider task cancellation is classified as `CancelledError`, measured
+once when instruments are available, closed without passing the cancellation
+payload to the span context, and re-raised unchanged. Telemetry-originated
+cancellation is isolated like an ordinary telemetry provider failure so it
+cannot replace a provider result or provider cancellation. No provider request
+is retried, swallowed, converted, or replayed by the observability layer.
 
 The duration covers the complete public method call. For `wait_for_batch`, this
 includes all polling and sleeps performed by that call. This is an end-to-end
@@ -150,10 +157,12 @@ propagation, and absence of a private endpoint alias from emitted telemetry.
 `tests/test_opentelemetry_privacy_contract.py` additionally proves that a
 provider exception containing secret-like text is propagated to the caller but
 is not copied into spans, context-exit arguments, or metric attributes.
-`tests/test_opentelemetry_lifecycle_safety.py` proves that cancellation closes
-its span without exception payloads and that metric-instrument construction
-failure cannot disable the client or its provider operation. Production
-statement, branch, and public-docstring gates remain 100%.
+`tests/test_opentelemetry_lifecycle_safety.py` proves that provider cancellation
+closes its span without exception payloads, telemetry-originated cancellation
+cannot replace provider behavior, and metric-instrument construction failure
+cannot disable the client. `tests/test_opentelemetry_control_flow.py` proves that
+non-cancellation process-level control flow is propagated rather than hidden.
+Production statement, branch, and public-docstring gates remain 100%.
 
 ## References
 
