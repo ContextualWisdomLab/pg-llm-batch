@@ -191,7 +191,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
             )
             self._use_span(
                 span,
-                lambda active_span: active_span.record_exception(exc),
+                lambda active_span, error=exc: active_span.record_exception(error),
             )
             attributes = {
                 OPERATION_NAME_ATTRIBUTE: operation_name,
