@@ -21,12 +21,24 @@ failing hosted tests before the corresponding production change:
    `357a815706da3b5698eddfcc265393c0486debc6`: CI run `30975506925`
    failed because the context manager received the exception type, object, and
    traceback instead of null exit arguments.
-5. Cancellation and construction isolation, exact head
+5. Provider cancellation and construction isolation, exact head
    `5ebe9b13e2a6731764d02abfbf68f407589657f5`: CI run `30975688015`,
    Python 3.12 job `92209087983`, failed with two intended regressions. An
-   `asyncio.CancelledError` bypassed the `Exception` handler and left the span
-   open, while a metric-instrument creation error prevented client
-   construction.
+   `asyncio.CancelledError` raised by the provider path bypassed the previous
+   `Exception` handler and left the span open, while a metric-instrument creation
+   error prevented client construction.
+6. Telemetry-originated cancellation isolation, exact head
+   `9f5065ac6131ee0aaf7a1b16c1ebae659444bc0e`: CI run `30976127911`,
+   Python 3.12 job `92210369257`, failed with three intended regressions and
+   reported `3 failed, 254 passed, 3 deselected`. A tracer cancellation skipped
+   the provider call, a metric cancellation replaced a successful result, and a
+   metric cancellation masked the provider's original cancellation object.
+7. Process-control propagation, exact head
+   `ecfcf610236b6ee87d506e40a7ce333f3d347ab6`: CI run `30976286658`,
+   Python 3.12 job `92210853057`, failed with one intended regression and
+   reported `1 failed, 257 passed, 3 deselected`. Catching all
+   `BaseException` at the telemetry-only boundary incorrectly swallowed an
+   arbitrary non-cancellation process-control exception.
 
 The detailed initial failure is retained in
 `2026-08-05-opentelemetry-operations-red.md`. Later RED runs remain visible in
@@ -38,7 +50,7 @@ TDD evidence.
 
 Exact production and test head:
 
-`fa14df057ae9bb98eb5f8fcd30ec4c15647d6155`
+`1bfd55dff128a722c7b3c4a613ca906f78a0f02f`
 
 Base SHA:
 
@@ -46,9 +58,9 @@ Base SHA:
 
 The following same-head GitHub Actions runs succeeded:
 
-- CI run `30975775870`;
-- SAST Semgrep run `30975775766`; and
-- Security Scan run `30975775764`.
+- CI run `30976370842`;
+- SAST Semgrep run `30976370815`; and
+- Security Scan run `30976370846`.
 
 ## Verification results
 
@@ -62,11 +74,11 @@ results on the verified implementation head:
 - Ruff: `All checks passed!`;
 - public docstring coverage: `100.0%` with a `100.0%` threshold;
 - production statement and branch coverage: `100.00%`;
-- total coverage: 1,251 statements with zero misses and 330 branches with zero
+- total coverage: 1,252 statements with zero misses and 330 branches with zero
   partial branches;
-- `pg_llm_batch/observability.py`: 80 statements with zero misses and six
+- `pg_llm_batch/observability.py`: 81 statements with zero misses and six
   branches with zero partial branches;
-- test result: `254 passed, 3 deselected`;
+- test result: `258 passed, 3 deselected`;
 - lockfile freshness: success;
 - source distribution and wheel builds: success, with
   `pg_llm_batch/observability.py` included in both artifacts;
@@ -83,14 +95,17 @@ Deterministic tracer, span-context, meter, and instrument doubles prove that:
   canonical error class;
 - endpoint aliases, remote identifiers, tenant values, payloads, exception
   objects, exception messages, and tracebacks do not enter custom telemetry;
-- span contexts receive null exception exit arguments on both provider failures
-  and task cancellation;
-- tracer and metric runtime failures cannot skip the provider operation, replace
-  a successful result, or mask the original exception;
+- span contexts receive null exception exit arguments on provider failures and
+  provider task cancellation;
+- ordinary telemetry-provider failures and telemetry-originated
+  `asyncio.CancelledError` cannot skip the provider operation, replace a
+  successful result, or mask the original exception or cancellation;
+- arbitrary non-cancellation process-level `BaseException` control flow is not
+  swallowed by the telemetry boundary;
 - metric-instrument construction failures fall back to local no-op instruments
   without disabling the client;
-- `asyncio.CancelledError` is classified, measured when possible, and re-raised
-  unchanged; and
+- provider-originated `asyncio.CancelledError` is classified, measured when
+  possible, and re-raised unchanged; and
 - the ordinary `BatchAPIClient` retains no mandatory OpenTelemetry dependency.
 
 The production module and its fail-open helpers have complete
