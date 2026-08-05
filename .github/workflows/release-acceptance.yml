@@ -6,11 +6,17 @@ on:
     paths:
       - .github/workflows/release-acceptance.yml
       - pg_llm_batch/**
-      - tests/test_release_evidence.py
-      - tests/test_release_acceptance_workflow.py
-      - tests/test_release_evidence_documentation.py
-      - docs/adr/0003-reproducible-release-evidence.md
-      - docs/doctoring/reproducible-release-evidence.md
+      - tests/**
+      - docs/**
+      - docker/**
+      - AGENTS.md
+      - ARCHITECTURE.md
+      - CHANGELOG.md
+      - CLAUDE.md
+      - CODE_OF_CONDUCT.md
+      - CONTRIBUTING.md
+      - README.md
+      - SECURITY.md
       - pyproject.toml
       - uv.lock
       - LICENSE
