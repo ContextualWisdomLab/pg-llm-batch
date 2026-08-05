@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 
@@ -188,7 +188,9 @@ async def test_public_operations_emit_low_cardinality_success_telemetry(
     duration, attributes = meter.histogram.calls[0]
     assert duration >= 0
     assert attributes == expected_attributes
-    assert "private-alias" not in repr(tracer.calls + meter.counter.calls + meter.histogram.calls)
+    assert "private-alias" not in repr(
+        tracer.calls + meter.counter.calls + meter.histogram.calls
+    )
 
 
 async def test_failed_operation_records_error_type_and_reraises(
