@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: 1dba3b5393b79c4a2ab27019fd097670cf39fa97
+          EXPECTED_PARENT: 746c12dea913c7b2036300aa06a6374bce2ea6c8
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -172,7 +172,7 @@ jobs:
               assert \"append-only audit history\" in documentation
               assert \"arbitrary tenant scope\" in documentation
               assert \"not a substitute\" in documentation
-              assert \"at most 128 characters\" in documentation
+              assert \"longer than 128 characters\" in documentation
               assert \"limited to 256 ASCII characters\" in documentation
               assert \"Caller-provided identifiers are validated before\" in documentation
           """.replace("\n          ", "\n")
