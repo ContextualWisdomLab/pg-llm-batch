@@ -1,14 +1,16 @@
 name: One-shot memoryview byte accounting
 
 on:
-  push:
-    branches:
-      - agent/bounded-control-plane-json
+  pull_request:
+    branches: [main]
+    types: [opened, reopened, synchronize]
     paths:
       - .github/workflows/one-shot-memoryview-byte-accounting.yml
+      - pg_llm_batch/batch_api_client.py
+      - tests/test_bounded_memoryview_contract.py
 
 concurrency:
-  group: one-shot-memoryview-byte-accounting
+  group: one-shot-memoryview-byte-accounting-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 permissions:
@@ -21,7 +23,9 @@ jobs:
   red-green-verify-publish:
     if: >-
       github.repository == 'ContextualWisdomLab/pg-llm-batch' &&
-      github.ref == 'refs/heads/agent/bounded-control-plane-json'
+      github.actor == 'seonghobae' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'agent/bounded-control-plane-json'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -32,10 +36,10 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Check out exact trigger
+      - name: Check out exact pull-request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 2
           persist-credentials: false
 
@@ -55,8 +59,10 @@ jobs:
       - name: Verify exact RED contract
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
-          EXPECTED_PARENT_SHA: a97cc3d9c348100a7619aaa51774b7676892c46d
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_PARENT_SHA: 9422aa2f20f345d16291d33597448e47582e08b5
         run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT_SHA"
           set +e
           red_output="$(
