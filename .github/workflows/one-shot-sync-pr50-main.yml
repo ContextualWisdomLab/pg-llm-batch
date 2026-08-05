@@ -1,0 +1,110 @@
+name: One-shot synchronize PR 50 with exact main
+
+on:
+  push:
+    branches:
+      - agent/persist-remote-batch-lifecycle
+    paths:
+      - .github/workflows/one-shot-sync-pr50-main.yml
+
+concurrency:
+  group: one-shot-sync-pr50-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  synchronize-and-verify:
+    if: >-
+      github.repository == 'ContextualWisdomLab/pg-llm-batch' &&
+      github.ref == 'refs/heads/agent/persist-remote-batch-lifecycle'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Check out exact trigger
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Merge exact protected main
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        env:
+          EXPECTED_PARENT_SHA: 56dca9e0a84d5c8edd8ed21e54a424e4fbe4c922
+          EXPECTED_MAIN_SHA: 162e6f544e90545fbd7ffb4000a81a625a88a51a
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT_SHA"
+          git fetch --no-tags origin main
+          test "$(git rev-parse origin/main)" = "$EXPECTED_MAIN_SHA"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git merge --no-edit origin/main; then
+            conflicts="$(git diff --name-only --diff-filter=U)"
+            test "$conflicts" = "CHANGELOG.md"
+            git checkout --ours CHANGELOG.md
+            git add CHANGELOG.md
+            git commit --no-edit
+          fi
+          git merge-base --is-ancestor "$EXPECTED_MAIN_SHA" HEAD
+          grep -Fq 'Opt-in OpenTelemetry spans' CHANGELOG.md
+          grep -Fq 'Durable remote batch lifecycle persistence' CHANGELOG.md
+          git diff --check
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+
+      - name: Install exact locked dependencies
+        run: uv sync --locked
+
+      - name: Verify merged product head
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch tests
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          rm -rf dist
+          uv build --no-sources
+          docker compose config >/dev/null
+          docker build --tag pg-llm-batch:pr50-main-sync .
+          docker build --tag pg-llm-batch-postgres:pr50-main-sync docker/postgres
+          git diff --check
+
+      - name: Publish verified synchronization and remove workflow
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+          BRANCH_NAME: agent/persist-remote-batch-lifecycle
+          EXPECTED_MAIN_SHA: 162e6f544e90545fbd7ffb4000a81a625a88a51a
+        run: |
+          git merge-base --is-ancestor "$EXPECTED_MAIN_SHA" HEAD
+          rm .github/workflows/one-shot-sync-pr50-main.yml
+          git add -A
+          git commit -m "ci: verify lifecycle slice on current main"
+          auth_header="$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$auth_header"
+          git -c http.extraheader="AUTHORIZATION: basic ${auth_header}" \
+            push origin "HEAD:${BRANCH_NAME}"
