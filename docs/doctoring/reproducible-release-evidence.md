@@ -12,11 +12,10 @@ mismatch. It derives `SOURCE_DATE_EPOCH` from the checked-out commit, exports a
 fixed hash seed, timezone, and locale, and creates two clean source trees with
 `git archive`. Each tree is built independently from the locked project input.
 
-Each build directory must contain exactly one wheel and exactly one source
-distribution. Every artifact must be a regular non-symlink file. The filename
-must identify the expected distribution and project version. Extra files,
-missing files, symlinks, wrong versions, wrong distribution names, or byte
-mismatches fail closed.
+Each build directory must contain exactly one wheel and exactly one source distribution.
+Every artifact must be a regular non-symlink file. The filename must identify the
+expected distribution and project version. Extra files, missing files, symlinks,
+wrong versions, wrong distribution names, or byte mismatches fail closed.
 
 SHA-256 is calculated in bounded chunks. The verifier compares only:
 
