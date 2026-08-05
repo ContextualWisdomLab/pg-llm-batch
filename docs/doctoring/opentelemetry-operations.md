@@ -64,6 +64,12 @@ client = OpenTelemetryBatchAPIClient(
 
 This seam preserves standalone operation and allows a CWL service mesh or other
 MSA host to apply its own resource, tenant, exporter, and sampling policies.
+A tracer or meter remains observational: failures while creating metric
+instruments or while starting, mutating, closing, or recording telemetry do not
+prevent construction, skip the underlying provider call, replace its return
+value, mask its exception, or swallow task cancellation. An unavailable metric
+instrument is replaced locally by a no-op instrument; this does not affect the
+ordinary uninstrumented client.
 
 ## Signals
 
@@ -85,9 +91,10 @@ The bounded operation-name vocabulary is:
 - `cancel_batch`
 
 The outcome vocabulary is `success` or `error`. `error.type` is the canonical
-Python exception class name, such as `GatewayError` or `ValidationError`.
-OpenTelemetry recommends predictable, low-cardinality `error.type` values and
-recommends including error classification on operation duration metrics.
+Python exception class name, such as `GatewayError`, `ValidationError`, or
+`CancelledError`. OpenTelemetry recommends predictable, low-cardinality
+`error.type` values and recommends including error classification on operation
+duration metrics.
 
 ## Privacy and cardinality contract
 
@@ -103,25 +110,30 @@ The instrumentation deliberately does **not** record:
 
 The library disables automatic exception recording and span-status mutation and
 does not call `record_exception()`. A failure emits only the bounded canonical
-`error.type` attribute before the exact original exception is re-raised. This
-stricter library boundary avoids copying exception text or stack data into an
-export pipeline because exception messages can contain provider bodies,
-identifiers, credentials, prompts, or tenant data. Operators must still apply
-appropriate SDK processor, exporter, and backend redaction policies to telemetry
-created elsewhere in the host process.
+`error.type` attribute before the exact original exception is re-raised. Span
+contexts are closed with null exception arguments, including during
+`asyncio.CancelledError`, so injected context managers do not receive the
+operation exception object or traceback. This stricter library boundary avoids
+copying exception text or stack data into an export pipeline because exception
+messages can contain provider bodies, identifiers, credentials, prompts, or
+tenant data. Operators must still apply appropriate SDK processor, exporter,
+and backend redaction policies to telemetry created elsewhere in the host
+process.
 
 Do not add dynamic provider, tenant, URL, resource-ID, model, or payload-derived
 attributes to these instruments. Such attributes can expose confidential data
 and create unbounded metric cardinality. Add deployment identity through the
 host SDK's bounded resource attributes instead.
 
-## Failure semantics
+## Failure and cancellation semantics
 
 Telemetry is observational and does not alter the public operation result. A
 successful operation returns the exact parent-client result. A failed operation
 records its bounded error classification and re-raises the same exception
-object. No provider request is retried, swallowed, converted, or replayed by the
-observability layer.
+object. Task cancellation is classified as `CancelledError`, measured once when
+instruments are available, closed without passing the cancellation payload to
+the span context, and re-raised unchanged. No provider request is retried,
+swallowed, converted, or replayed by the observability layer.
 
 The duration covers the complete public method call. For `wait_for_batch`, this
 includes all polling and sleeps performed by that call. This is an end-to-end
@@ -137,8 +149,11 @@ metric names and units, optional dependency behavior, unchanged exception
 propagation, and absence of a private endpoint alias from emitted telemetry.
 `tests/test_opentelemetry_privacy_contract.py` additionally proves that a
 provider exception containing secret-like text is propagated to the caller but
-is not copied into spans or metric attributes. Production statement, branch,
-and public-docstring gates remain 100%.
+is not copied into spans, context-exit arguments, or metric attributes.
+`tests/test_opentelemetry_lifecycle_safety.py` proves that cancellation closes
+its span without exception payloads and that metric-instrument construction
+failure cannot disable the client or its provider operation. Production
+statement, branch, and public-docstring gates remain 100%.
 
 ## References
 
