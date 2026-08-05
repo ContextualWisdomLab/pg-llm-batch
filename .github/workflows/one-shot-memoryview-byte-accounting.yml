@@ -60,7 +60,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT_SHA: 9422aa2f20f345d16291d33597448e47582e08b5
+          EXPECTED_PARENT_SHA: d7f39ca83aa82483d9b052bf34fe671e8be2d77d
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT_SHA"
@@ -84,47 +84,53 @@ jobs:
 
           path = Path("pg_llm_batch/batch_api_client.py")
           source = path.read_text(encoding="utf-8")
-          old = '''        async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
-              if not isinstance(chunk, (bytes, bytearray, memoryview)):
-                  raise GatewayError(
-                      f"{operation} response yielded a non-byte stream chunk",
-                      status_code=getattr(response, "status", None),
-                      response_data={"error_type": "InvalidByteChunk"},
-                  )
-              if len(payload) + len(chunk) > max_bytes:
-                  raise self._download_limit_error(
-                      response,
-                      operation,
-                      max_bytes=max_bytes,
-                      declared_bytes=declared_bytes,
-                      bytes_read=len(payload),
-                  )
-              payload.extend(chunk)
-          '''
-          new = '''        async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
-              if isinstance(chunk, memoryview):
-                  chunk_bytes = chunk.nbytes
-              elif isinstance(chunk, (bytes, bytearray)):
-                  chunk_bytes = len(chunk)
-              else:
-                  raise GatewayError(
-                      f"{operation} response yielded a non-byte stream chunk",
-                      status_code=getattr(response, "status", None),
-                      response_data={"error_type": "InvalidByteChunk"},
-                  )
-              if len(payload) + chunk_bytes > max_bytes:
-                  raise self._download_limit_error(
-                      response,
-                      operation,
-                      max_bytes=max_bytes,
-                      declared_bytes=declared_bytes,
-                      bytes_read=len(payload),
-                  )
-              if isinstance(chunk, memoryview):
-                  payload.extend(chunk.tobytes())
-              else:
-                  payload.extend(chunk)
-          '''
+          old = "\n".join(
+              [
+                  "        async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):",
+                  "            if not isinstance(chunk, (bytes, bytearray, memoryview)):",
+                  "                raise GatewayError(",
+                  '                    f"{operation} response yielded a non-byte stream chunk",',
+                  '                    status_code=getattr(response, "status", None),',
+                  '                    response_data={"error_type": "InvalidByteChunk"},',
+                  "                )",
+                  "            if len(payload) + len(chunk) > max_bytes:",
+                  "                raise self._download_limit_error(",
+                  "                    response,",
+                  "                    operation,",
+                  "                    max_bytes=max_bytes,",
+                  "                    declared_bytes=declared_bytes,",
+                  "                    bytes_read=len(payload),",
+                  "                )",
+                  "            payload.extend(chunk)",
+              ]
+          ) + "\n"
+          new = "\n".join(
+              [
+                  "        async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):",
+                  "            if isinstance(chunk, memoryview):",
+                  "                chunk_bytes = chunk.nbytes",
+                  "            elif isinstance(chunk, (bytes, bytearray)):",
+                  "                chunk_bytes = len(chunk)",
+                  "            else:",
+                  "                raise GatewayError(",
+                  '                    f"{operation} response yielded a non-byte stream chunk",',
+                  '                    status_code=getattr(response, "status", None),',
+                  '                    response_data={"error_type": "InvalidByteChunk"},',
+                  "                )",
+                  "            if len(payload) + chunk_bytes > max_bytes:",
+                  "                raise self._download_limit_error(",
+                  "                    response,",
+                  "                    operation,",
+                  "                    max_bytes=max_bytes,",
+                  "                    declared_bytes=declared_bytes,",
+                  "                    bytes_read=len(payload),",
+                  "                )",
+                  "            if isinstance(chunk, memoryview):",
+                  "                payload.extend(chunk.tobytes())",
+                  "            else:",
+                  "                payload.extend(chunk)",
+              ]
+          ) + "\n"
           if source.count(old) != 1:
               raise SystemExit("expected one uncorrected bounded stream loop")
           path.write_text(source.replace(old, new), encoding="utf-8")
