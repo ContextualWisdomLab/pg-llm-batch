@@ -172,6 +172,15 @@ def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
         assert tenant_a["batch_status"] == "in_progress"
         assert tenant_b["batch_status"] == "completed"
 
+        with psycopg.connect(role_dsn) as unscoped_connection:
+            with unscoped_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                assert cursor.fetchone()[0] == 0
+
         with psycopg.connect(role_dsn) as tenant_connection:
             with tenant_connection.cursor() as cursor:
                 cursor.execute(
