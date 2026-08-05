@@ -58,6 +58,18 @@ class CapturingTracer:
         return CapturingSpanContext(span)
 
 
+class CancellingTracer:
+    """Raise task cancellation from a telemetry-only span-start boundary."""
+
+    def start_as_current_span(
+        self,
+        _name: str,
+        **_kwargs: Any,
+    ) -> CapturingSpanContext:
+        """Model a tracer that raises cancellation before a span is created."""
+        raise asyncio.CancelledError("telemetry-only-cancellation")
+
+
 @dataclass
 class CapturingInstrument:
     """Capture low-cardinality metric calls."""
@@ -71,6 +83,20 @@ class CapturingInstrument:
     def record(self, value: float, attributes: dict[str, Any]) -> None:
         """Capture one duration sample."""
         self.calls.append((float(value), dict(attributes)))
+
+
+class CancellingInstrument(CapturingInstrument):
+    """Raise task cancellation from telemetry-only metric boundaries."""
+
+    def add(self, _value: int, attributes: dict[str, Any]) -> None:
+        """Model cancellation while recording a counter measurement."""
+        del attributes
+        raise asyncio.CancelledError("telemetry-counter-cancellation")
+
+    def record(self, _value: float, attributes: dict[str, Any]) -> None:
+        """Model cancellation while recording a duration measurement."""
+        del attributes
+        raise asyncio.CancelledError("telemetry-histogram-cancellation")
 
 
 class CapturingMeter:
@@ -101,6 +127,14 @@ class CapturingMeter:
         """Return the inspectable histogram."""
         del unit, description
         return self.histogram
+
+
+class CancellingMeter(CapturingMeter):
+    """Create instruments that raise cancellation during telemetry emission."""
+
+    def __init__(self) -> None:
+        self.counter = CancellingInstrument()
+        self.histogram = CancellingInstrument()
 
 
 class ExplodingCreationMeter:
@@ -160,6 +194,77 @@ async def test_async_cancellation_closes_span_without_exception_payload(
     assert "tenant-secret-cancellation" not in emitted
     assert "batch-private" not in emitted
     assert "tenant-private" not in emitted
+
+
+async def test_tracer_cancellation_cannot_skip_successful_provider_operation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telemetry-originated cancellation cannot skip or replace provider success."""
+    expected = {"success": True}
+    calls = 0
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        return expected
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=CancellingTracer(),
+        meter=CapturingMeter(),
+    )
+
+    result = await client.cancel_batch("batch-1", "default")
+
+    assert result is expected
+    assert calls == 1
+
+
+async def test_metric_cancellation_cannot_replace_successful_provider_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telemetry-originated metric cancellation cannot replace provider success."""
+    expected = {"success": True}
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        return expected
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=CapturingTracer(),
+        meter=CancellingMeter(),
+    )
+
+    result = await client.cancel_batch("batch-1", "default")
+
+    assert result is expected
+
+
+async def test_metric_cancellation_cannot_mask_provider_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Telemetry cancellation cannot replace the provider's cancellation object."""
+    cancellation = asyncio.CancelledError("provider-cancellation")
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        raise cancellation
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=CapturingTracer(),
+        meter=CancellingMeter(),
+    )
+
+    with pytest.raises(asyncio.CancelledError) as exc_info:
+        await client.cancel_batch("batch-1", "default")
+
+    assert exc_info.value is cancellation
 
 
 async def test_metric_instrument_creation_failure_does_not_disable_client(
