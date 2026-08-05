@@ -11,6 +11,7 @@ identifiers, tenant metadata, provider URLs, API keys, or payloads.
 
 from __future__ import annotations
 
+from asyncio import CancelledError
 from importlib import import_module
 from time import perf_counter
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
@@ -118,10 +119,10 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         action: Callable[[], _TelemetryResult],
         default: _TelemetryResult,
     ) -> _TelemetryResult:
-        """Isolate any telemetry-only failure and return the supplied safe default."""
+        """Isolate ordinary telemetry failures and telemetry task cancellation."""
         try:
             return action()
-        except BaseException:
+        except (Exception, CancelledError):
             return default
 
     def _use_span(self, span: Any, action: Callable[[Any], Any]) -> None:
