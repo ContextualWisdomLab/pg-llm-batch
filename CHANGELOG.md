@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Redacted unsupported provider-generated batch identifiers from durable
+  lifecycle recovery metadata and exception causes while retaining validated
+  identifiers, observation order, operation, phase, endpoint alias, and bounded
+  error type for reconciliation.
 - Enforced NUL-free, 128-character endpoint aliases and 256-character remote
   batch, input, output, and error file string identifiers before order
   reservation, credential resolution, provider calls, custom lifecycle
