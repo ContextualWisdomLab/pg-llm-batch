@@ -228,7 +228,7 @@ async def test_failed_operation_records_error_type_and_reraises(
     telemetry_client: tuple[OpenTelemetryBatchAPIClient, FakeTracer, FakeMeter],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Failures preserve the exception while emitting bounded error telemetry."""
+    """Failures preserve exceptions without exporting their payloads."""
     client, tracer, meter = telemetry_client
     failure = GatewayError("provider unavailable")
 
@@ -245,7 +245,7 @@ async def test_failed_operation_records_error_type_and_reraises(
         "pg_llm_batch.operation.name": "cancel_batch",
         "error.type": "GatewayError",
     }
-    assert tracer.spans[0].exceptions == [failure]
+    assert tracer.spans[0].exceptions == []
     expected_attributes = {
         "pg_llm_batch.operation.name": "cancel_batch",
         "pg_llm_batch.operation.outcome": "error",
