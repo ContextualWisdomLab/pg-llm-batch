@@ -37,9 +37,10 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
     Telemetry intentionally contains only the bounded operation name, outcome,
     duration, and canonical exception class name. It never records caller or
     provider identifiers, URLs, credentials, metadata, request bodies, response
-    bodies, or exception messages. Runtime failures raised by an injected
-    tracer, span, or metric instrument are isolated so observability cannot skip
-    a provider operation, replace its return value, or mask its exception.
+    bodies, exception objects, stack traces, or exception messages. Runtime
+    failures raised by an injected tracer, span, or metric instrument are
+    isolated so observability cannot skip a provider operation, replace its
+    return value, or mask its exception.
     """
 
     def __init__(
@@ -188,10 +189,6 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                     ERROR_TYPE_ATTRIBUTE,
                     error_type,
                 ),
-            )
-            self._use_span(
-                span,
-                lambda active_span, error=exc: active_span.record_exception(error),
             )
             attributes = {
                 OPERATION_NAME_ATTRIBUTE: operation_name,
