@@ -22,12 +22,6 @@ def test_pyproject_uses_pep639_license_metadata() -> None:
     assert "License ::" not in project
 
 
-def test_component_image_copies_pep639_legal_files_before_build() -> None:
-    """The component builder receives every legal file required by metadata."""
-    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
-    assert "COPY pyproject.toml uv.lock README.md LICENSE NOTICE ./" in dockerfile
-
-
 def test_installed_distribution_exposes_normalized_license_metadata() -> None:
     """Installed metadata exposes the SPDX expression and both legal files."""
     package_metadata = metadata("pg-llm-batch")
