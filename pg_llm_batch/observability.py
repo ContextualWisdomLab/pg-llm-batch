@@ -18,14 +18,43 @@ from time import perf_counter
 from typing import Any, Awaitable, Callable, Dict, Optional, TypeVar
 
 from .batch_api_client import BatchAPIClient
+from .exceptions import (
+    ConfigError,
+    GatewayError,
+    PgLlmBatchError,
+    TokenLimitExceededError,
+    ValidationError,
+)
 
 INSTRUMENTATION_SCOPE_NAME = "pg_llm_batch"
 OPERATION_NAME_ATTRIBUTE = "pg_llm_batch.operation.name"
 OPERATION_OUTCOME_ATTRIBUTE = "pg_llm_batch.operation.outcome"
 ERROR_TYPE_ATTRIBUTE = "error.type"
+ERROR_TYPE_OTHER = "_OTHER"
 
 _Result = TypeVar("_Result")
 _TelemetryResult = TypeVar("_TelemetryResult")
+
+_ERROR_TYPE_NAMES: dict[type[BaseException], str] = {
+    CancelledError: "CancelledError",
+    ConfigError: "ConfigError",
+    ConnectionError: "ConnectionError",
+    Exception: "Exception",
+    GatewayError: "GatewayError",
+    OSError: "OSError",
+    PgLlmBatchError: "PgLlmBatchError",
+    RuntimeError: "RuntimeError",
+    TimeoutError: "TimeoutError",
+    TokenLimitExceededError: "TokenLimitExceededError",
+    TypeError: "TypeError",
+    ValidationError: "ValidationError",
+    ValueError: "ValueError",
+}
+
+
+def _bounded_error_type(error: BaseException) -> str:
+    """Return one documented low-cardinality identifier for an exact error type."""
+    return _ERROR_TYPE_NAMES.get(type(error), ERROR_TYPE_OTHER)
 
 
 class _NoOpInstrument:
@@ -49,12 +78,13 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
     ``opentelemetry-api`` and an SDK in the host application.
 
     Telemetry intentionally contains only the bounded operation name, outcome,
-    duration, and canonical exception class name. It never records caller or
-    provider identifiers, URLs, credentials, metadata, request bodies, response
-    bodies, exception objects, stack traces, or exception messages. Runtime
-    failures raised while creating or using an injected tracer, span, or metric
-    instrument are isolated so observability cannot skip a provider operation,
-    replace its return value, or mask its exception or cancellation.
+    duration, and documented error type. It never records caller or provider
+    identifiers, URLs, credentials, metadata, request bodies, response bodies,
+    exception objects, stack traces, exception messages, or caller-defined
+    exception class names. Runtime failures raised while creating or using an
+    injected tracer, span, or metric instrument are isolated so observability
+    cannot skip a provider operation, replace its return value, or mask its
+    exception or cancellation.
     """
 
     def __init__(
@@ -197,7 +227,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
             try:
                 result = await operation()
             except BaseException as exc:
-                error_type = type(exc).__name__
+                error_type = _bounded_error_type(exc)
                 self._use_span(
                     span,
                     lambda active_span: active_span.set_attribute(
