@@ -44,6 +44,23 @@ def test_tenant_client_requires_a_valid_scope_at_construction() -> None:
     assert calls == []
 
 
+def test_tenant_client_rejects_the_unscoped_recorder_seam() -> None:
+    """Tenant callers cannot accidentally inject the standalone recorder contract."""
+    with pytest.raises(ValidationError) as exc_info:
+        TenantDurableBatchAPIClient(
+            "postgresql://tenant-test",
+            _credentials,
+            tenant_scope="tenant-a",
+            lifecycle_recorder=lambda *_args: None,
+        )
+
+    assert exc_info.value.details == {
+        "field": "lifecycle_recorder",
+        "value": "<provided>",
+        "reason": "tenant clients require tenant_lifecycle_recorder",
+    }
+
+
 def test_tenant_scope_is_exposed_as_exact_read_only_identity() -> None:
     """The tenant client preserves the host-authorized scope without coercion."""
     client = TenantDurableBatchAPIClient(
