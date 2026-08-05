@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: 984cf0d7a5c00b748f1fb75ef69704e26b8170ad
+          EXPECTED_PARENT: 700e707767a6185178ba9e1083b49874fce2ed15
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -71,53 +71,54 @@ jobs:
       - name: Install exact locked dependencies
         run: uv sync --locked
 
-      - name: Prove six regressions are RED
+      - name: Prove remaining compatibility regressions are RED
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           set +e
           output="$(uv run pytest -q \
             tests/test_standalone_lifecycle_compatibility.py::test_standalone_persistence_keeps_the_pre_tenant_return_shape \
             tests/test_remote_batch_state_contracts.py::test_operator_docs_define_current_state_and_tenant_trust_boundaries \
-            tests/test_tenant_lifecycle_schema.py::test_legacy_lifecycle_rows_are_backfilled_without_deletion \
-            tests/test_tenant_lifecycle_schema.py::test_rls_owner_transition_is_atomic_for_psql_reapplication \
-            tests/test_tenant_operator_documentation.py::test_remote_lifecycle_guide_exposes_tenant_qualified_operations \
-            tests/test_tenant_operator_documentation.py::test_architecture_and_doctoring_bound_the_custom_guc_claim 2>&1)"
+            2>&1)"
           status=$?
           set -e
           printf '%s\n' "$output"
           test "$status" -ne 0
+          printf '%s\n' "$output" | grep -F '2 failed'
           printf '%s\n' "$output" | grep -F 'assert "tenant_scope" not in snapshot'
-          printf '%s\n' "$output" | grep -F '6 failed'
 
-      - name: Apply reviewed compatibility and contract fixes
+      - name: Apply reviewed standalone and documentation fixes
         shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           python3 -I - <<'PY'
           from pathlib import Path
-          from textwrap import dedent
 
-          def replace_once(path: str, old: str, new: str) -> None:
-              """Replace one exact reviewed anchor and fail closed on drift."""
-              target = Path(path)
-              source = target.read_text(encoding="utf-8")
+          def replace_once(path: Path, old: str, new: str) -> None:
+              """Apply one exact reviewed replacement and reject source drift."""
+              source = path.read_text(encoding="utf-8")
               count = source.count(old)
               if count != 1:
                   raise SystemExit(f"{path}: expected one anchor, found {count}")
-              target.write_text(source.replace(old, new, 1), encoding="utf-8")
+              path.write_text(source.replace(old, new, 1), encoding="utf-8")
 
-          old_wrapper = dedent('''\
-              """Persist one lifecycle projection in the explicit standalone scope."""
-              return _persist_remote_batch_state(
-                  dsn,
-                  DEFAULT_TENANT_SCOPE,
-                  endpoint_alias,
-                  provider_batch,
-                  observation_order,
-                  observed_at=observed_at,
-              )
-          ''')
-          new_wrapper = dedent('''\
-              """Persist one standalone projection without changing its return shape."""
+          db_path = Path("pg_llm_batch/db.py")
+          db_source = db_path.read_text(encoding="utf-8")
+          function_start = db_source.index("def persist_remote_batch_state(\n")
+          function_end = db_source.index(
+              "\n\ndef persist_tenant_remote_batch_state(\n",
+              function_start,
+          )
+          current_function = db_source[function_start:function_end]
+          if current_function.count("return _persist_remote_batch_state(") != 1:
+              raise SystemExit("db.py: unexpected standalone persistence function")
+          new_function = """def persist_remote_batch_state(
+              dsn: str,
+              endpoint_alias: str,
+              provider_batch: Mapping[str, Any],
+              observation_order: int,
+              *,
+              observed_at: Optional[datetime] = None,
+          ) -> Dict[str, Any]:
+              \"\"\"Persist one standalone projection without changing its return shape.\"\"\"
               snapshot = _persist_remote_batch_state(
                   dsn,
                   DEFAULT_TENANT_SCOPE,
@@ -126,91 +127,65 @@ jobs:
                   observation_order,
                   observed_at=observed_at,
               )
-              snapshot.pop("tenant_scope", None)
+              snapshot.pop(\"tenant_scope\", None)
               return snapshot
-          ''')
-          replace_once("pg_llm_batch/db.py", old_wrapper, new_wrapper)
+          """.replace("\n          ", "\n")
+          db_path.write_text(
+              db_source[:function_start] + new_function + db_source[function_end:],
+              encoding="utf-8",
+          )
+
           replace_once(
-              "tests/test_remote_batch_lifecycle.py",
+              Path("tests/test_remote_batch_lifecycle.py"),
               '        "tenant_scope": "standalone",\n',
               "",
           )
           replace_once(
-              "tests/test_remote_batch_lifecycle.py",
+              Path("tests/test_remote_batch_lifecycle.py"),
               '    assert snapshot["tenant_scope"] == "standalone"\n',
               '    assert "tenant_scope" not in snapshot\n',
           )
           replace_once(
-              "tests/test_tenant_lifecycle_persistence.py",
+              Path("tests/test_tenant_lifecycle_persistence.py"),
               '    assert snapshot["tenant_scope"] == "standalone"\n',
               '    assert "tenant_scope" not in snapshot\n',
           )
 
-          old_backfill = dedent('''\
-              assert (
-                  "ALTER TABLE llm_remote_batch_jobs\\n"
-                  "    ADD COLUMN IF NOT EXISTS tenant_scope TEXT;"
-              ) in schema
-              assert (
-                  "UPDATE llm_remote_batch_jobs\\n"
-                  "SET tenant_scope = 'standalone'\\n"
-                  "WHERE tenant_scope IS NULL;"
-              ) in schema
-          ''')
-          new_backfill = dedent('''\
-              migration_start = schema.index(
-                  "-- Reapplying the schema may occur after FORCE RLS was installed."
-              )
-              migration_end = schema.index(
-                  "DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;"
-              )
-              migration = schema[migration_start:migration_end]
-              assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in migration
-              assert "SET tenant_scope = 'standalone'" in migration
-          ''')
-          replace_once(
-              "tests/test_tenant_lifecycle_schema.py",
-              old_backfill,
-              new_backfill,
+          contract_path = Path("tests/test_remote_batch_state_contracts.py")
+          contract_source = contract_path.read_text(encoding="utf-8")
+          contract_start = contract_source.index(
+              "def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> None:\n"
           )
+          contract_end = contract_source.index(
+              "\n\n@pytest.mark.parametrize(\n",
+              contract_start,
+          )
+          new_contract = """def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> None:
+              \"\"\"Lifecycle documentation must bound audit and tenant assurances.\"\"\"
+              documentation = \" \".join(
+                  (
+                      Path(__file__).parents[1] / \"docs\" / \"remote-batch-lifecycle.md\"
+                  ).read_text(encoding=\"utf-8\").split()
+              )
 
-          old_force_order = dedent('''\
-              assert atomic_transition.index("SET tenant_scope = 'standalone'") < atomic_transition.index(
-                  "FORCE ROW LEVEL SECURITY"
-              )
-          ''')
-          new_force_order = dedent('''\
-              force_statement = (
-                  "ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;"
-              )
-              assert atomic_transition.index(
-                  "SET tenant_scope = 'standalone'"
-              ) < atomic_transition.rindex(force_statement)
-          ''')
-          replace_once(
-              "tests/test_tenant_lifecycle_schema.py",
-              old_force_order,
-              new_force_order,
-          )
-          replace_once(
-              "docs/remote-batch-lifecycle.md",
-              "The durable table is a mutable current-state\nprojection, not append-only audit history.",
-              "The durable table is a mutable\ncurrent-state projection, not append-only audit history.",
-          )
-          replace_once(
-              "docs/remote-batch-lifecycle.md",
-              "can execute arbitrary SQL can call `set_config` with an arbitrary tenant\nscope.",
-              "can execute arbitrary SQL can call `set_config` with an arbitrary tenant scope.",
-          )
-          replace_once(
-              "docs/doctoring/tenant-scoped-lifecycle.md",
-              "This design is a **trusted\napplication boundary** and is not a substitute",
-              "This design is a **trusted application boundary** and is not a substitute",
+              assert \"current-state projection\" in documentation
+              assert \"append-only audit history\" in documentation
+              assert \"arbitrary tenant scope\" in documentation
+              assert \"not a substitute\" in documentation
+              assert \"at most 128 characters\" in documentation
+              assert \"limited to 256 ASCII characters\" in documentation
+              assert \"Caller-provided identifiers are validated before\" in documentation
+          """.replace("\n          ", "\n")
+          contract_path.write_text(
+              contract_source[:contract_start]
+              + new_contract
+              + contract_source[contract_end:],
+              encoding="utf-8",
           )
           PY
           git diff --check
 
-      - name: Verify focused contracts
+      - name: Verify focused compatibility and tenant contracts
         run: |
           uv run pytest -q \
             tests/test_standalone_lifecycle_compatibility.py \
@@ -249,15 +224,17 @@ jobs:
           # Standalone Lifecycle Compatibility Evidence
 
           - RED workflow source head: \`$SOURCE_HEAD\`.
-          - The legacy standalone result shape no longer exposes internal
-            \`tenant_scope\`; explicit tenant helpers still return trusted scope.
-          - Migration tests inspect the atomic block and distinguish final FORCE
-            from the earlier NO FORCE statement.
-          - Operator and doctoring contracts state the current-state and trusted
-            application-boundary limitations without line-break ambiguity.
-          - Focused tests, all deterministic tests, Ruff, compilation, 100%
-            production statement/branch/docstring coverage, lock freshness,
-            package builds, Compose validation, and both container builds passed.
+          - The legacy persistence helper no longer exposes the internal
+            \`tenant_scope\` field, while its transaction still binds the exact
+            \`standalone\` scope for forced row-level security.
+          - The explicit tenant-aware helper retains tenant-qualified results.
+          - Documentation tests collapse insignificant Markdown whitespace and
+            enforce the current-state, arbitrary-SQL, role, and trusted-boundary
+            limitations.
+          - Focused contracts, the complete non-integration suite, 100%
+            production statement/branch/docstring coverage, Ruff, compilation,
+            lock freshness, distributions, Compose validation, and both
+            container builds passed.
           - This temporary write-capable workflow removed itself from the final tree.
           EOF
           test ! -e .github/workflows/one-shot-standalone-lifecycle-compatibility.yml
