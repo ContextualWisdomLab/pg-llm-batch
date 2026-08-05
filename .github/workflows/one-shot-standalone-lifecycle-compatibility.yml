@@ -44,7 +44,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_PARENT: 85fc0ecf89dd101e40101a39ef2bec5fc4e27e56
+          EXPECTED_PARENT: f565707961d239cb1beac684d7a60147214632c4
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
@@ -130,6 +130,11 @@ jobs:
               Path("tests/test_remote_batch_lifecycle.py"),
               '        "tenant_scope": "standalone",\n',
               "",
+          )
+          replace_once(
+              Path("tests/test_remote_batch_lifecycle.py"),
+              '    assert snapshot["tenant_scope"] == "standalone"\n',
+              '    assert "tenant_scope" not in snapshot\n',
           )
           replace_once(
               Path("tests/test_tenant_lifecycle_persistence.py"),
