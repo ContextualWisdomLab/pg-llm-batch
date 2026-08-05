@@ -5,7 +5,6 @@ from __future__ import annotations
 
 from array import array
 from collections.abc import AsyncIterator
-from typing import Any
 
 import pytest
 
@@ -52,3 +51,16 @@ async def test_memoryview_limit_uses_nbytes_not_element_count() -> None:
     }
     assert "AAAA" not in str(exc_info.value)
     assert "AAAA" not in repr(exc_info.value.response_data)
+
+
+async def test_memoryview_within_limit_decodes_all_underlying_bytes() -> None:
+    """A permitted memoryview contributes every underlying byte to the payload."""
+    client = BatchAPIClient("postgresql://example", _credentials)
+
+    result = await client._read_bounded_utf8(
+        _WideMemoryViewResponse(),
+        "Batch status",
+        max_bytes=4,
+    )
+
+    assert result == "AAAA"
