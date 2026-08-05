@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -13,19 +15,36 @@ from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError
 
 
+class _ByteStream:
+    """Expose deterministic JSON bytes through aiohttp's bounded stream seam."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        """Yield the encoded body in chunks no larger than the requested size."""
+        for offset in range(0, len(self.body), size):
+            yield self.body[offset : offset + size]
+
+
 class _Response:
     """Expose one successful provider response through the aiohttp contract."""
 
     status = 200
     headers: dict[str, str] = {}
 
-    async def json(self) -> dict[str, Any]:
-        """Return a syntactically valid but identity-mismatched provider payload."""
-        return {
+    def __init__(self) -> None:
+        payload = {
             "id": "batch-other",
             "status": "in_progress",
             "request_counts": {"total": 2, "completed": 1, "failed": 0},
         }
+        self.content = _ByteStream(payload)
+        self.content_length = len(self.content.body)
+
+    async def json(self) -> dict[str, Any]:
+        """Reject whole-body convenience reads outside the bounded stream."""
+        raise AssertionError("response.json() must not bypass bounded streaming")
 
     async def __aenter__(self) -> "_Response":
         """Enter the response context."""
