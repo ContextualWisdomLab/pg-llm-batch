@@ -61,26 +61,31 @@ def test_legacy_lifecycle_rows_are_backfilled_without_deletion() -> None:
 
 
 def test_rls_owner_transition_is_atomic_for_psql_reapplication() -> None:
-    """Reapplying the SQL file cannot expose an owner-bypass window between statements."""
+    """Reapplying SQL cannot commit an enabled/forced RLS transition piecemeal."""
     migration = _tenant_migration(_canonical_schema())
 
     assert "DISABLE ROW LEVEL SECURITY" not in migration
     atomic_start = migration.index("DO $$\nBEGIN")
     atomic_end = migration.index("END $$;", atomic_start) + len("END $$;")
     atomic_transition = migration[atomic_start:atomic_end]
+    enable_statement = "ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;"
     force_statement = "ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;"
 
     assert "NO FORCE ROW LEVEL SECURITY" in atomic_transition
     assert "ADD COLUMN IF NOT EXISTS tenant_scope TEXT" in atomic_transition
     assert "SET tenant_scope = 'standalone'" in atomic_transition
     assert "ALTER COLUMN tenant_scope SET NOT NULL" in atomic_transition
+    assert enable_statement in atomic_transition
     assert force_statement in atomic_transition
     assert atomic_transition.index("NO FORCE ROW LEVEL SECURITY") < atomic_transition.index(
         "SET tenant_scope = 'standalone'"
     )
     assert atomic_transition.index(
         "SET tenant_scope = 'standalone'"
-    ) < atomic_transition.rindex(force_statement)
+    ) < atomic_transition.index(enable_statement)
+    assert atomic_transition.index(enable_statement) < atomic_transition.rindex(
+        force_statement
+    )
 
 
 def test_lifecycle_row_security_is_forced_and_default_deny() -> None:
