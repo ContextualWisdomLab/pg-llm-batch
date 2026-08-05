@@ -30,6 +30,21 @@ def _write_release(directory: Path, wheel: bytes = b"wheel", sdist: bytes = b"sd
     (directory / SDIST).write_bytes(sdist)
 
 
+def _verify(first: Path, second: Path, **overrides: object) -> dict[str, object]:
+    arguments: dict[str, object] = {
+        "distribution_name": DISTRIBUTION,
+        "version": VERSION,
+        "source_commit": COMMIT,
+        "source_date_epoch": SOURCE_DATE_EPOCH,
+    }
+    arguments.update(overrides)
+    return verify_reproducible_release(  # type: ignore[arg-type,return-value]
+        first,
+        second,
+        **arguments,
+    )
+
+
 def test_verify_reproducible_release_returns_bounded_deterministic_manifest(
     tmp_path: Path,
 ) -> None:
@@ -38,14 +53,7 @@ def test_verify_reproducible_release_returns_bounded_deterministic_manifest(
     _write_release(first)
     _write_release(second)
 
-    manifest = verify_reproducible_release(
-        first,
-        second,
-        distribution_name=DISTRIBUTION,
-        version=VERSION,
-        source_commit=COMMIT,
-        source_date_epoch=SOURCE_DATE_EPOCH,
-    )
+    manifest = _verify(first, second)
 
     assert manifest == {
         "schema_version": 1,
@@ -75,14 +83,7 @@ def test_verify_reproducible_release_rejects_byte_mismatch(tmp_path: Path) -> No
     _write_release(second, wheel=b"different")
 
     with pytest.raises(ReleaseEvidenceError, match="not reproducible"):
-        verify_reproducible_release(
-            first,
-            second,
-            distribution_name=DISTRIBUTION,
-            version=VERSION,
-            source_commit=COMMIT,
-            source_date_epoch=SOURCE_DATE_EPOCH,
-        )
+        _verify(first, second)
 
 
 def test_verify_reproducible_release_rejects_missing_or_extra_artifacts(
@@ -95,14 +96,7 @@ def test_verify_reproducible_release_rejects_missing_or_extra_artifacts(
     (second / "unexpected.txt").write_text("extra", encoding="utf-8")
 
     with pytest.raises(ReleaseEvidenceError, match="exactly one wheel and one sdist"):
-        verify_reproducible_release(
-            first,
-            second,
-            distribution_name=DISTRIBUTION,
-            version=VERSION,
-            source_commit=COMMIT,
-            source_date_epoch=SOURCE_DATE_EPOCH,
-        )
+        _verify(first, second)
 
 
 def test_verify_reproducible_release_rejects_symlinked_artifact(tmp_path: Path) -> None:
@@ -114,35 +108,64 @@ def test_verify_reproducible_release_rejects_symlinked_artifact(tmp_path: Path) 
     (second / WHEEL).symlink_to(first / WHEEL)
 
     with pytest.raises(ReleaseEvidenceError, match="regular non-symlink"):
-        verify_reproducible_release(
-            first,
-            second,
-            distribution_name=DISTRIBUTION,
-            version=VERSION,
-            source_commit=COMMIT,
-            source_date_epoch=SOURCE_DATE_EPOCH,
-        )
+        _verify(first, second)
 
 
-def test_verify_reproducible_release_rejects_wrong_distribution_or_version(
+def test_verify_reproducible_release_rejects_directory_artifact(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    second.mkdir()
+    (second / SDIST).write_bytes(b"sdist")
+    (second / WHEEL).mkdir()
+
+    with pytest.raises(ReleaseEvidenceError, match="regular non-symlink"):
+        _verify(first, second)
+
+
+def test_verify_reproducible_release_rejects_wrong_artifact_kinds(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    second.mkdir()
+    (second / SDIST).write_bytes(b"sdist")
+    (second / "unexpected.txt").write_bytes(b"other")
+
+    with pytest.raises(ReleaseEvidenceError, match="exactly one wheel and one sdist"):
+        _verify(first, second)
+
+
+@pytest.mark.parametrize(
+    "wrong_name",
+    [
+        "other_project-0.1.0-py3-none-any.whl",
+        "pg_llm_batch-9.9.9-py3-none-any.whl",
+        "malformed.whl",
+    ],
+)
+def test_verify_reproducible_release_rejects_wrong_wheel_identity(
     tmp_path: Path,
+    wrong_name: str,
 ) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"
     _write_release(first)
     _write_release(second)
-    wrong = second / WHEEL
-    wrong.rename(second / "other_project-9.9.9-py3-none-any.whl")
+    (second / WHEEL).rename(second / wrong_name)
 
     with pytest.raises(ReleaseEvidenceError, match="distribution and version"):
-        verify_reproducible_release(
-            first,
-            second,
-            distribution_name=DISTRIBUTION,
-            version=VERSION,
-            source_commit=COMMIT,
-            source_date_epoch=SOURCE_DATE_EPOCH,
-        )
+        _verify(first, second)
+
+
+def test_verify_reproducible_release_rejects_wrong_sdist_identity(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    _write_release(second)
+    (second / SDIST).rename(second / "pg_llm_batch-9.9.9.tar.gz")
+
+    with pytest.raises(ReleaseEvidenceError, match="distribution and version"):
+        _verify(first, second)
 
 
 @pytest.mark.parametrize(
@@ -150,10 +173,13 @@ def test_verify_reproducible_release_rejects_wrong_distribution_or_version(
     [
         ("distribution_name", "../package"),
         ("distribution_name", ""),
+        ("distribution_name", None),
         ("version", "1.0/../../bad"),
         ("version", ""),
+        ("version", 1),
         ("source_commit", "A" * 40),
         ("source_commit", "abc"),
+        ("source_commit", None),
         ("source_date_epoch", -1),
         ("source_date_epoch", True),
     ],
@@ -167,16 +193,9 @@ def test_verify_reproducible_release_rejects_untrusted_metadata(
     second = tmp_path / "second"
     _write_release(first)
     _write_release(second)
-    arguments: dict[str, object] = {
-        "distribution_name": DISTRIBUTION,
-        "version": VERSION,
-        "source_commit": COMMIT,
-        "source_date_epoch": SOURCE_DATE_EPOCH,
-    }
-    arguments[field] = value
 
     with pytest.raises(ReleaseEvidenceError, match="invalid release evidence"):
-        verify_reproducible_release(first, second, **arguments)  # type: ignore[arg-type]
+        _verify(first, second, **{field: value})
 
 
 def test_verify_reproducible_release_rejects_missing_directory(tmp_path: Path) -> None:
@@ -184,14 +203,19 @@ def test_verify_reproducible_release_rejects_missing_directory(tmp_path: Path) -
     _write_release(existing)
 
     with pytest.raises(ReleaseEvidenceError, match="release directory"):
-        verify_reproducible_release(
-            existing,
-            tmp_path / "missing",
-            distribution_name=DISTRIBUTION,
-            version=VERSION,
-            source_commit=COMMIT,
-            source_date_epoch=SOURCE_DATE_EPOCH,
-        )
+        _verify(existing, tmp_path / "missing")
+
+
+def test_verify_reproducible_release_rejects_symlinked_directory(tmp_path: Path) -> None:
+    first = tmp_path / "first"
+    target = tmp_path / "target"
+    linked = tmp_path / "linked"
+    _write_release(first)
+    _write_release(target)
+    linked.symlink_to(target, target_is_directory=True)
+
+    with pytest.raises(ReleaseEvidenceError, match="release directory"):
+        _verify(first, linked)
 
 
 def test_write_release_manifest_is_atomic_and_canonical(tmp_path: Path) -> None:
@@ -199,15 +223,10 @@ def test_write_release_manifest_is_atomic_and_canonical(tmp_path: Path) -> None:
     second = tmp_path / "second"
     _write_release(first)
     _write_release(second)
-    manifest = verify_reproducible_release(
-        first,
-        second,
-        distribution_name=DISTRIBUTION,
-        version=VERSION,
-        source_commit=COMMIT,
-        source_date_epoch=SOURCE_DATE_EPOCH,
-    )
+    manifest = _verify(first, second)
     output = tmp_path / "evidence" / "release-manifest.json"
+    output.parent.mkdir()
+    output.write_text("predecessor", encoding="utf-8")
 
     write_release_manifest(manifest, output)
 
@@ -226,3 +245,25 @@ def test_write_release_manifest_refuses_symlink_destination(tmp_path: Path) -> N
         write_release_manifest({"schema_version": 1}, destination)
 
     assert target.read_text(encoding="utf-8") == "trusted"
+
+
+def test_write_release_manifest_refuses_existing_temporary_file(tmp_path: Path) -> None:
+    destination = tmp_path / "manifest.json"
+    temporary = tmp_path / ".manifest.json.tmp"
+    temporary.write_text("untrusted", encoding="utf-8")
+
+    with pytest.raises(ReleaseEvidenceError, match="temporary path"):
+        write_release_manifest({"schema_version": 1}, destination)
+
+    assert temporary.read_text(encoding="utf-8") == "untrusted"
+
+
+def test_write_release_manifest_refuses_dangling_temporary_symlink(
+    tmp_path: Path,
+) -> None:
+    destination = tmp_path / "manifest.json"
+    temporary = tmp_path / ".manifest.json.tmp"
+    temporary.symlink_to(tmp_path / "missing-target")
+
+    with pytest.raises(ReleaseEvidenceError, match="temporary path"):
+        write_release_manifest({"schema_version": 1}, destination)
