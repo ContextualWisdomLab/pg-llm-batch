@@ -125,10 +125,10 @@ def _artifact_records(
     distribution_name: str,
     version: str,
 ) -> list[dict[str, Any]]:
-    """Return sorted bounded identity records for one release directory."""
+    """Return source-distribution then wheel identity records."""
     wheel, sdist = _release_paths(directory)
     records: list[dict[str, Any]] = []
-    for path in (wheel, sdist):
+    for path in (sdist, wheel):
         _validate_artifact_filename(
             path,
             distribution_name=distribution_name,
@@ -141,7 +141,7 @@ def _artifact_records(
                 "size": path.stat().st_size,
             }
         )
-    return sorted(records, key=lambda record: str(record["filename"]))
+    return records
 
 
 def verify_reproducible_release(
