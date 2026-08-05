@@ -98,13 +98,17 @@ The instrumentation deliberately does **not** record:
 - API keys, database connection strings, or other credentials;
 - request metadata, prompts, model inputs, provider response bodies, or result
   records;
-- exception messages or stack-frame local values.
+- exception objects, exception messages, stack traces, or stack-frame local
+  values.
 
-Exception events are delegated to the configured tracer. Operators must still
-apply their SDK's processor, exporter, and backend redaction policies. The
-library disables automatic exception recording and span-status mutation before
-recording the original exception exactly once, preventing duplicate exception
-events from the context manager.
+The library disables automatic exception recording and span-status mutation and
+does not call `record_exception()`. A failure emits only the bounded canonical
+`error.type` attribute before the exact original exception is re-raised. This
+stricter library boundary avoids copying exception text or stack data into an
+export pipeline because exception messages can contain provider bodies,
+identifiers, credentials, prompts, or tenant data. Operators must still apply
+appropriate SDK processor, exporter, and backend redaction policies to telemetry
+created elsewhere in the host process.
 
 Do not add dynamic provider, tenant, URL, resource-ID, model, or payload-derived
 attributes to these instruments. Such attributes can expose confidential data
@@ -131,7 +135,10 @@ those child spans through the active OpenTelemetry context.
 meter doubles. It verifies every public operation, success and error paths,
 metric names and units, optional dependency behavior, unchanged exception
 propagation, and absence of a private endpoint alias from emitted telemetry.
-Production statement, branch, and public-docstring gates remain 100%.
+`tests/test_opentelemetry_privacy_contract.py` additionally proves that a
+provider exception containing secret-like text is propagated to the caller but
+is not copied into spans or metric attributes. Production statement, branch,
+and public-docstring gates remain 100%.
 
 ## References
 
