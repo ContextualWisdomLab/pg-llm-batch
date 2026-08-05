@@ -38,14 +38,24 @@ def test_release_acceptance_workflow_builds_twice_and_preserves_evidence() -> No
     assert "retention-days: 14" in text
 
 
-def test_release_acceptance_workflow_runs_for_every_contract_change() -> None:
+def test_release_acceptance_workflow_runs_for_every_packaged_input() -> None:
+    """Every file class included in a distribution permanently triggers the gate."""
     text = WORKFLOW.read_text(encoding="utf-8")
 
     required_paths = (
         ".github/workflows/release-acceptance.yml",
         "pg_llm_batch/**",
-        "tests/test_release_evidence.py",
-        "tests/test_release_acceptance_workflow.py",
+        "tests/**",
+        "docs/**",
+        "docker/**",
+        "AGENTS.md",
+        "ARCHITECTURE.md",
+        "CHANGELOG.md",
+        "CLAUDE.md",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
+        "README.md",
+        "SECURITY.md",
         "pyproject.toml",
         "uv.lock",
         "LICENSE",
