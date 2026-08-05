@@ -39,9 +39,11 @@ SQL should add a separately reviewed role mapping or security-definer interface.
 Existing rows are backfilled to `standalone`; no lifecycle row is deleted or
 merged. The former endpoint/provider unique constraint is replaced by a
 tenant-qualified constraint. The temporary owner-enforcement transition,
-legacy-row backfill, constraint migration, and `FORCE ROW LEVEL SECURITY`
-restoration execute inside one anonymous PostgreSQL block. This prevents psql
-autocommit from committing an intermediate owner-bypass state.
+legacy-row backfill, constraint migration, `ENABLE ROW LEVEL SECURITY`, and
+`FORCE ROW LEVEL SECURITY` restoration execute inside one anonymous PostgreSQL
+block. A legacy installation therefore cannot commit a migrated table while RLS
+is still disabled; policy recreation afterward remains default-deny until the
+new policy exists.
 
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair appears in more than one tenant scope.
