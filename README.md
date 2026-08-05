@@ -40,6 +40,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 | Token counting + accumulation | `pg_llm_batch/token_counter.py` |
 | Batch assembly + persistence | `pg_llm_batch/orchestrator.py` |
 | Submit / poll / wait / retrieve | `pg_llm_batch/batch_api_client.py` |
+| Opt-in OpenTelemetry operations | `pg_llm_batch/observability.py` |
 | KV config + encrypted secrets | `pg_llm_batch/config.py` |
 | DDL subset | `pg_llm_batch/schema.sql` |
 | Readiness (`/healthz`) | `pg_llm_batch/health.py` |
@@ -181,6 +182,24 @@ operations are never retried automatically. Operators can override
 `max_retry_attempts`, `retry_base_delay_seconds`, and
 `retry_max_delay_seconds` in the `BatchAPIClient` constructor.
 
+Hosts that already operate OpenTelemetry can select the opt-in subclass without
+adding telemetry dependencies to ordinary standalone installations:
+
+```python
+from pg_llm_batch.observability import OpenTelemetryBatchAPIClient
+
+client = OpenTelemetryBatchAPIClient.from_global_provider(
+    dsn,
+    config_credentials_provider(config, secrets),
+)
+```
+
+The emitted spans and metrics use bounded operation and outcome vocabularies and
+never include endpoint aliases, provider URLs, resource IDs, credentials,
+metadata, prompts, or provider response bodies. See the
+[OpenTelemetry operation contract](docs/doctoring/opentelemetry-operations.md)
+for signals, ownership boundaries, privacy rules, and APA 7 references.
+
 ---
 
 ## Tests
@@ -196,6 +215,9 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
+- [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
+  — opt-in operation traces/metrics, host ownership, privacy and cardinality
+  boundaries, verification, and APA 7 references.
 - [`docs/papers/`](docs/papers/) — CC BY 4.0 reference papers on LLM batching
   (PagedAttention/vLLM, DeepSpeed-FastGen) with citations.
 
