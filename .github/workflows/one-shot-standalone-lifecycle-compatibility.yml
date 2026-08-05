@@ -1,8 +1,9 @@
 name: One-shot standalone lifecycle compatibility
 
 on:
-  push:
-    branches: [agent/tenant-scoped-lifecycle]
+  pull_request:
+    branches: [main]
+    types: [synchronize]
     paths:
       - .github/workflows/one-shot-standalone-lifecycle-compatibility.yml
 
@@ -10,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: one-shot-standalone-lifecycle-compatibility
+  group: one-shot-standalone-lifecycle-compatibility-${{ github.event.pull_request.number }}
   cancel-in-progress: false
 
 env:
@@ -20,8 +21,8 @@ jobs:
   repair-verify-publish:
     if: >-
       github.repository == 'ContextualWisdomLab/pg-llm-batch' &&
-      github.actor == 'seonghobae' &&
-      github.ref == 'refs/heads/agent/tenant-scoped-lifecycle'
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.head_ref == 'agent/tenant-scoped-lifecycle'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     permissions:
@@ -32,24 +33,25 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Check out exact trigger
+      - name: Check out exact pull-request head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 2
           persist-credentials: false
 
       - name: Refuse stale state or competing branch writers
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
-          EXPECTED_PARENT: acd17564410747e72331d229e1c7fe58fcc2c68b
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_PARENT: 460855b0878016a90b64487eaa6056a8943e48b8
           EXPECTED_BASE: f0c5f79c5327a090014dd5558750110fce9fd2ac
           BRANCH_NAME: agent/tenant-scoped-lifecycle
         run: |
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
           test "$(git rev-parse HEAD^)" = "$EXPECTED_PARENT"
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_BASE"
-          test "$(git ls-remote origin refs/heads/$BRANCH_NAME | cut -f1)" = "$GITHUB_SHA"
+          test "$(git ls-remote origin refs/heads/$BRANCH_NAME | cut -f1)" = "$EXPECTED_HEAD"
           mapfile -t writers < <(find .github/workflows -maxdepth 1 -type f \
             \( -name '*one-shot*.yml' -o -name '*repair*.yml' \) -print | sort)
           test "${#writers[@]}" -eq 1
@@ -163,7 +165,7 @@ jobs:
       - name: Record evidence and remove temporary automation
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
-          SOURCE_HEAD: ${{ github.sha }}
+          SOURCE_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
           rm .github/workflows/one-shot-standalone-lifecycle-compatibility.yml
           rm -rf .coverage .coverage.* htmlcov build dist
@@ -172,7 +174,7 @@ jobs:
           # Standalone Lifecycle Compatibility Evidence
 
           - RED workflow source head: \`$SOURCE_HEAD\`.
-          - The new strict regression demonstrated that the legacy
+          - The strict regression demonstrated that the legacy
             \`persist_remote_batch_state()\` result had gained a
             \`tenant_scope\` key and therefore changed its exact public shape.
           - The standalone wrapper continues to bind transaction-local scope
@@ -193,7 +195,7 @@ jobs:
         shell: bash --noprofile --norc -e -o pipefail {0}
         env:
           BRANCH_NAME: agent/tenant-scoped-lifecycle
-          EXPECTED_HEAD: ${{ github.sha }}
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
           PUSH_TOKEN: ${{ github.token }}
         run: |
           test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
