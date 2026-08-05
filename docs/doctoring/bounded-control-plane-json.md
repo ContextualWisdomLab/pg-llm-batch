@@ -58,16 +58,21 @@ Every control-plane response is processed in this order:
 1. inspect a non-negative integer `content_length` only as an early rejection
    signal;
 2. require a callable `response.content.iter_chunked` stream;
-3. read chunks while enforcing the actual decoded-byte total;
-4. reject the first chunk that would exceed the active limit;
-5. decode strict UTF-8;
-6. call `json.loads()` exactly once;
-7. require a JSON object;
-8. apply the endpoint's existing HTTP-status contract.
+3. accept only `bytes`, `bytearray`, or `memoryview` chunks;
+4. account `memoryview` values by `nbytes`, never by element count;
+5. reject the first chunk that would exceed the active decoded-byte limit;
+6. convert an admitted memory view only after its complete underlying byte size
+   fits within the remaining budget;
+7. decode strict UTF-8;
+8. call `json.loads()` exactly once;
+9. require a JSON object;
+10. apply the endpoint's existing HTTP-status contract.
 
 `Content-Length` is not authoritative because it can be absent, malformed, or
 smaller than the decoded stream. The observed decoded-byte total is the final
-resource boundary.
+resource boundary. A multi-byte-formatted `memoryview` can have an element count
+smaller than its underlying byte size, so `len(view)` is not a valid resource
+measurement; `view.nbytes` is the authoritative value.
 
 ## Error data minimization
 
@@ -87,9 +92,11 @@ UTF-8 and malformed/non-object JSON retain only exception class or response type
 Provider content, previews, digests, URLs, headers, aliases, credentials, and
 resource identifiers are excluded.
 
-A response adapter without `content.iter_chunked` fails closed. The client never
-falls back to `response.json()` or `response.text()` because either fallback
-would remove the bounded-read guarantee.
+A response adapter without `content.iter_chunked` fails closed. A stream yielding
+any value other than `bytes`, `bytearray`, or `memoryview` fails with the bounded
+`InvalidByteChunk` category and never echoes the malformed value. The client
+never falls back to `response.json()` or `response.text()` because either
+fallback would remove the bounded-read guarantee.
 
 ## Compatibility
 
@@ -100,7 +107,8 @@ and error-file downloads continue to use the independent
 
 Custom response adapters and test doubles must implement the same bounded byte
 stream contract as aiohttp. This is an intentional security requirement rather
-than a compatibility fallback.
+than a compatibility fallback. Multi-byte memory views remain supported when
+their complete underlying bytes fit within the configured budget.
 
 ## Verification
 
@@ -117,6 +125,8 @@ Permanent tests cover:
 - upload, creation, status, and cancellation paths;
 - independent provider-file download limits;
 - missing bounded-stream fail-closed behavior;
+- non-byte adapter chunks with body-free diagnostics;
+- byte-accurate rejection and successful decoding of multi-byte memory views;
 - Python 3.10, 3.12, and 3.14 compatibility;
 - production statement, branch, and docstring coverage at 100%.
 
