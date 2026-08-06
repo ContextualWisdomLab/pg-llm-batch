@@ -137,6 +137,15 @@ def _duration_seconds(start_ns: Any, end_ns: Any) -> float:
         return 0.0
 
 
+def _resolve_error_status() -> Any:
+    """Resolve OpenTelemetry ``StatusCode.ERROR`` without adding a dependency."""
+    try:
+        from opentelemetry.trace import StatusCode
+    except _TELEMETRY_FAILURES:
+        return None
+    return StatusCode.ERROR
+
+
 def _classify_failure(error: BaseException) -> tuple[str, str]:
     """Map one failure to a finite low-cardinality telemetry classification."""
     if isinstance(error, CheckpointConflictError):
@@ -150,6 +159,16 @@ def _safe_set_attribute(span: Any, name: str, value: str) -> None:
     """Set one bounded span attribute without exposing exporter availability."""
     try:
         span.set_attribute(name, value)
+    except _TELEMETRY_FAILURES:
+        pass
+
+
+def _safe_set_status(span: Any, status: Any) -> None:
+    """Set one host API status without making tracing an application dependency."""
+    if status is None:
+        return
+    try:
+        span.set_status(status)
     except _TELEMETRY_FAILURES:
         pass
 
@@ -200,6 +219,7 @@ class OpenTelemetryCheckpointStore:
         self._counter = _create_counter(meter)
         self._histogram = _create_histogram(meter)
         self._monotonic_ns = monotonic_ns
+        self._error_status = _resolve_error_status()
 
     def _execute(
         self,
@@ -230,6 +250,7 @@ class OpenTelemetryCheckpointStore:
                 metric_attributes[_ERROR_TYPE_ATTRIBUTE] = error_type
                 _safe_set_attribute(span, _OUTCOME_ATTRIBUTE, outcome)
                 _safe_set_attribute(span, _ERROR_TYPE_ATTRIBUTE, error_type)
+                _safe_set_status(span, self._error_status)
                 _safe_add(self._counter, metric_attributes)
                 _safe_record(
                     self._histogram,
