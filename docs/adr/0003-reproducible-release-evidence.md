@@ -25,6 +25,11 @@ backend requirement to `uv_build==0.12.1`. The exact frontend can use its
 compatible bundled backend, while external PEP 517 frontends are constrained to
 the same backend version instead of silently selecting a later patch release.
 
+The canonical evidence writer runs against pull-request-controlled workspace
+paths. Rejecting only a symlink at the final manifest filename is insufficient:
+a symlink in any existing parent component can redirect both the temporary file
+and the atomic replacement outside the intended evidence directory.
+
 ## Decision
 
 Every release-relevant pull request runs a read-only acceptance workflow that:
@@ -37,7 +42,9 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
 5. requires one wheel and one source distribution in each result;
 6. verifies regular non-symlink files, expected distribution/version identity,
    byte size, and streaming SHA-256 equality;
-7. writes one canonical bounded `release-manifest.json`; and
+7. rejects a symlink at the manifest destination or in any existing parent path
+   component before creating the evidence directory, then writes one canonical
+   bounded `release-manifest.json` atomically; and
 8. retains only that manifest for 14 days as review evidence.
 
 The pull-request workflow has only `contents: read`. It does not publish,
@@ -54,6 +61,8 @@ approval, branch protection, exact-head security, packaging, and release gates.
   external PEP 517 builds without an explicit reviewed source change.
 - Artifact identity evidence is machine-readable, bounded, and free of source
   payloads, credentials, provider data, and environment dumps.
+- Pull-request-controlled parent symlinks cannot redirect manifest writes or the
+  temporary atomic-replacement file outside the selected evidence directory.
 - The manifest is evidence for review, not a signature, SBOM, provenance
   attestation, release authorization, or substitute for independent approval.
 - A future release workflow may consume the same verified artifact set and add
@@ -74,6 +83,12 @@ Rejected for the governed release contract because an external PEP 517 frontend
 could resolve a later compatible `uv_build` patch independently of `uv.lock`.
 Patch upgrades remain straightforward, but they require an explicit reviewed pin
 change and fresh exact-head evidence.
+
+### Follow parent symlinks and validate only the final filename
+
+Rejected because an otherwise ordinary destination path can traverse a parent
+symlink before the final filename exists. The evidence writer must fail before
+creating directories or bytes through that redirected path.
 
 ### Upload both complete build directories from every pull request
 
