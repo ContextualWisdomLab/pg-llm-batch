@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import time
+from asyncio import CancelledError
 from typing import Any, Callable, Optional, TypeVar
 
 from .checkpoint_store import CheckpointConflictError
@@ -19,6 +20,7 @@ _OUTCOME_ATTRIBUTE = "pg_llm_batch.checkpoint.outcome"
 _ERROR_TYPE_ATTRIBUTE = "error.type"
 _DATABASE_SYSTEM_ATTRIBUTE = "db.system.name"
 _DATABASE_SYSTEM = "postgresql"
+_TELEMETRY_FAILURES = (Exception, CancelledError)
 
 _ResultT = TypeVar("_ResultT")
 
@@ -73,7 +75,7 @@ class _SafeSpanScope:
                 set_status_on_exception=False,
             )
             span = context.__enter__()
-        except Exception:
+        except _TELEMETRY_FAILURES:
             self._context = None
             self._span = _NO_OP_SPAN
         else:
@@ -81,12 +83,12 @@ class _SafeSpanScope:
             self._span = span
         return self._span
 
-    def __exit__(self, *exc: Any) -> bool:
-        """End one span while preserving the application result or exception."""
+    def __exit__(self, *_exc: Any) -> bool:
+        """End one span without handing application exceptions to observers."""
         if self._context is not None:
             try:
-                self._context.__exit__(*exc)
-            except Exception:
+                self._context.__exit__(None, None, None)
+            except _TELEMETRY_FAILURES:
                 pass
         return False
 
@@ -99,7 +101,7 @@ def _create_counter(meter: Any) -> Any:
             unit="{operation}",
             description="Completed durable checkpoint operations by bounded outcome.",
         )
-    except Exception:
+    except _TELEMETRY_FAILURES:
         return _NO_OP_INSTRUMENT
 
 
@@ -111,7 +113,7 @@ def _create_histogram(meter: Any) -> Any:
             unit="s",
             description="Duration of durable checkpoint operations.",
         )
-    except Exception:
+    except _TELEMETRY_FAILURES:
         return _NO_OP_INSTRUMENT
 
 
@@ -119,7 +121,7 @@ def _read_clock(clock: Callable[[], int]) -> Optional[int]:
     """Read a monotonic clock without making telemetry a business dependency."""
     try:
         return clock()
-    except Exception:
+    except _TELEMETRY_FAILURES:
         return None
 
 
@@ -143,7 +145,7 @@ def _safe_set_attribute(span: Any, name: str, value: str) -> None:
     """Set one bounded span attribute without exposing exporter availability."""
     try:
         span.set_attribute(name, value)
-    except Exception:
+    except _TELEMETRY_FAILURES:
         pass
 
 
@@ -151,7 +153,7 @@ def _safe_add(counter: Any, attributes: dict[str, str]) -> None:
     """Record one completed operation without making metrics authoritative."""
     try:
         counter.add(1, attributes=dict(attributes))
-    except Exception:
+    except _TELEMETRY_FAILURES:
         pass
 
 
@@ -163,7 +165,7 @@ def _safe_record(
     """Record one duration without making metrics authoritative."""
     try:
         histogram.record(duration_seconds, attributes=dict(attributes))
-    except Exception:
+    except _TELEMETRY_FAILURES:
         pass
 
 
