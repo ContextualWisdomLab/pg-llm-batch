@@ -15,11 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   monotonic duration histogram, and the finite failure vocabulary
   `checkpoint_conflict, validation_error, and internal_error`. Package-owned
   signals omit tenant, consumer, batch, endpoint, file, digest, cursor, DSN,
-  exception-message, and provider-payload data; automatic exception recording is
-  disabled, and ordinary telemetry or clock failures cannot alter checkpoint
-  results, exception identity, compare-and-swap, commit, rollback, or caller-owned
-  transaction behavior. No SDK/exporter dependency, migration, version bump, or
-  release is included.
+  exception-message, and provider-payload data; automatic exception recording
+  and automatic status-on-exception are disabled. Failed checkpoint spans set
+  the host OpenTelemetry API's `StatusCode.ERROR` without a description when
+  available, while successful checkpoint spans leave status Unset. Optional
+  status resolution, explicit status mutation, ordinary telemetry, and clock
+  failures cannot alter checkpoint results, exception identity,
+  compare-and-swap, commit, rollback, or caller-owned transaction behavior. No
+  SDK/exporter dependency, migration, version bump, or release is included.
 - Optional durable result-checkpoint store through
   `PostgresBatchResultCheckpointStore` and
   `llm_result_stream_checkpoints`, with tenant-qualified consumer identity,
