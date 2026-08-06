@@ -3,6 +3,8 @@
 
 from typing import Any
 
+import pytest
+
 from pg_llm_batch.checkpoint_telemetry import OpenTelemetryCheckpointStore
 
 
@@ -74,6 +76,16 @@ class Store:
         return "checkpoint"
 
 
+def observed_store(clock: Any, meter: Meter) -> OpenTelemetryCheckpointStore:
+    """Build one observed store around the supplied clock."""
+    return OpenTelemetryCheckpointStore(
+        Store(),
+        tracer=Tracer(),
+        meter=meter,
+        monotonic_ns=clock,
+    )
+
+
 def test_end_clock_failure_records_zero_duration() -> None:
     """A failed end-clock read remains a zero-duration observer signal."""
     readings: list[int | BaseException] = [1, RuntimeError("clock unavailable")]
@@ -85,12 +97,24 @@ def test_end_clock_failure_records_zero_duration() -> None:
         return value
 
     meter = Meter()
-    observed = OpenTelemetryCheckpointStore(
-        Store(),
-        tracer=Tracer(),
-        meter=meter,
-        monotonic_ns=clock,
-    )
+    observed = observed_store(clock, meter)
+
+    assert observed.load("consumer-a", "batch-a", "endpoint-a") == "checkpoint"
+    assert meter.histogram.values == [0.0]
+
+
+@pytest.mark.parametrize("invalid_value", [object(), "not-a-clock", None])
+def test_nonnumeric_clock_values_cannot_change_application_success(
+    invalid_value: Any,
+) -> None:
+    """Malformed host clock evidence degrades to a zero-duration measurement."""
+    readings = [invalid_value, invalid_value]
+
+    def clock() -> Any:
+        return readings.pop(0)
+
+    meter = Meter()
+    observed = observed_store(clock, meter)
 
     assert observed.load("consumer-a", "batch-a", "endpoint-a") == "checkpoint"
     assert meter.histogram.values == [0.0]
