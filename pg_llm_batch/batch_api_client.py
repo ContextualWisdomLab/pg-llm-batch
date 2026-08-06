@@ -355,7 +355,7 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        """Yield a response, retrying only bounded idempotent GET failures."""
+        """Yield a response and retry only failures before response handoff."""
         session = self._get_session()
         normalized_method = method.lower()
         request = getattr(session, normalized_method)
@@ -364,6 +364,8 @@ class BatchAPIClient:
         while True:
             delay: Optional[float] = None
             retry_reason = ""
+            response_handed_off = False
+            post_handoff_error: Optional[BaseException] = None
             try:
                 async with request(
                     url,
@@ -371,23 +373,30 @@ class BatchAPIClient:
                     allow_redirects=False,
                     **kwargs,
                 ) as response:
+                    should_handoff = True
                     if (
                         retry_safe
                         and attempt < self.max_retry_attempts
                         and response.status in RETRYABLE_GET_STATUSES
                     ):
                         delay = self._retry_delay_for_response(response, attempt)
-                        if delay is None:
+                        if delay is not None:
+                            retry_reason = f"HTTP {response.status}"
+                            should_handoff = False
+                    if should_handoff:
+                        response_handed_off = True
+                        try:
                             yield response
+                        except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                            post_handoff_error = exc
+                        if post_handoff_error is None:
                             return
-                        retry_reason = f"HTTP {response.status}"
-                    else:
-                        yield response
-                        return
             except GatewayError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                if not retry_safe or attempt >= self.max_retry_attempts:
+                if response_handed_off:
+                    post_handoff_error = exc
+                elif not retry_safe or attempt >= self.max_retry_attempts:
                     raise GatewayError(
                         f"{operation} transport failed",
                         response_data={
@@ -395,8 +404,18 @@ class BatchAPIClient:
                             "timeout_seconds": self.request_timeout_seconds,
                         },
                     ) from exc
-                delay = self._fallback_retry_delay(attempt)
-                retry_reason = type(exc).__name__
+                else:
+                    delay = self._fallback_retry_delay(attempt)
+                    retry_reason = type(exc).__name__
+
+            if post_handoff_error is not None:
+                raise GatewayError(
+                    f"{operation} transport failed",
+                    response_data={
+                        "error_type": type(post_handoff_error).__name__,
+                        "timeout_seconds": self.request_timeout_seconds,
+                    },
+                )
 
             logger.warning(
                 "%s retrying idempotent GET after %s "
