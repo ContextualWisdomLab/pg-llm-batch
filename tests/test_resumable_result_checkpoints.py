@@ -295,6 +295,22 @@ async def test_resume_rejects_missing_checkpoint_after_bounded_rescan():
     assert responses["result"].exit_count == 1
 
 
+async def test_resume_does_not_attest_truncation_after_checkpoint():
+    """A matched prefix cannot attest records removed from its unseen suffix."""
+    original, _session, _responses = _client(
+        output_chunks=[b'{"id":1}\n{"id":2}\n'],
+        error_file_id=None,
+    )
+    checkpoint = (await _collect(original))[0].checkpoint
+    truncated, _session, responses = _client(
+        output_chunks=[b'{"id":1}\n'],
+        error_file_id=None,
+    )
+
+    assert await _collect(truncated, resume_after=checkpoint) == []
+    assert responses["result"].exit_count == 1
+
+
 async def test_resume_rejects_changed_provider_file_identity():
     """A new file identifier cannot reuse a checkpoint from an older provider file."""
     original, _session, _responses = _client(
