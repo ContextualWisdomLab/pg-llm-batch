@@ -21,9 +21,12 @@ Any frontend or backend patch upgrade requires an explicit reviewed source
 change and fresh exact-head evidence.
 
 Each build directory must contain exactly one wheel and exactly one source distribution.
-Every artifact must be a regular non-symlink file. The filename must identify the
-expected distribution and project version. Extra files, missing files, symlinks,
-wrong versions, wrong distribution names, or byte mismatches fail closed.
+Every artifact must be a regular non-symlink file. The verifier reads at most
+three directory entries: a third entry is sufficient evidence of an unexpected
+artifact, so it fails without enumerating an unbounded build directory. The
+filename must identify the expected distribution and project version. Extra
+files, missing files, symlinks, wrong versions, wrong distribution names, or
+byte mismatches fail closed.
 
 SHA-256 is calculated in bounded chunks. The verifier compares only:
 
@@ -65,7 +68,8 @@ final main-branch merge evidence.
    reviewed source.
 4. Confirm both clean builds complete under the same `SOURCE_DATE_EPOCH`.
 5. Confirm the verifier reports no missing, extra, symlinked, identity-mismatched,
-   or non-reproducible artifact.
+   or non-reproducible artifact and stops after the third directory entry when
+   rejecting an unexpected artifact set.
 6. Download the bounded manifest only when diligence requires independent digest
    inspection.
 7. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
@@ -81,9 +85,10 @@ satisfy SBOM, vulnerability, package-index, and rollback requirements.
 
 ### Artifact set failure
 
-Inspect the build output for a missing or extra wheel/source distribution. Do
-not relax the exact two-artifact contract to accommodate caches, logs, or local
-evidence files; route those files outside the build directories.
+Inspect the first three build-directory entries reported by the bounded scan.
+The verifier deliberately stops after a third entry because the exact two-artifact
+contract is already disproven. Do not relax that contract to accommodate caches,
+logs, or local evidence files; route those files outside the build directories.
 
 ### Identity failure
 
@@ -116,10 +121,12 @@ or replace an untrusted symlink.
 
 The gate narrows buyer diligence from “the package built once” to “two clean
 builds of the same reviewed source and exact build toolchain produced the same
-named bytes.” This supports repeatable incident reconstruction and future
-SLSA v1.2 provenance without mixing pull-request validation with release
-authority. Top-level permissions remain read-only, credentials are not persisted,
-action sources are immutably pinned, and the evidence payload is bounded.
+named bytes.” Bounded artifact enumeration prevents malformed output directories
+from turning a fail-closed validation decision into unbounded verifier memory
+use. This supports repeatable incident reconstruction and future SLSA v1.2
+provenance without mixing pull-request validation with release authority.
+Top-level permissions remain read-only, credentials are not persisted, action
+sources are immutably pinned, and the evidence payload is bounded.
 
 ## References (APA 7)
 
