@@ -72,18 +72,27 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   decoded-byte limits.
 - Reject non-success provider-file responses before body consumption. Never put
   provider bodies, record contents, URLs, credentials, or identifiers into
-  diagnostics or telemetry.
-- Consume only bounded byte chunks; enforce total bytes, one physical JSONL line,
-  and combined output-plus-error record count before yielding excessive data.
-- Decode each nonblank line as strict UTF-8 and require one JSON object. Preserve
-  deterministic output-then-error ordering, CRLF support, and final lines without
-  a newline.
+  diagnostics, telemetry, or retained exception cause/context links.
+- Consume only non-empty bounded byte chunks; reject missing streams, non-byte
+  chunks, zero-progress chunks, and chunks larger than the requested transport
+  ceiling before package-owned line buffering.
+- Enforce total bytes, one physical JSONL line, and the combined
+  output-plus-error record count before yielding excessive data.
+- Decode each nonblank line as strict UTF-8 and require one unambiguous JSON
+  object. Preserve deterministic output-then-error ordering, CRLF support, and
+  final lines without a newline; reject non-finite numbers and duplicate names.
+- Raise sanitized decoder failures only after leaving the active provider
+  exception handler so exported errors do not retain provider bytes or text.
+- Make lifecycle ownership explicit. `open_batch_records()` is the supported
+  boundary for consumers that may stop early; it closes the outer iterator,
+  nested file iterator, and active HTTP response. Never claim that a bare
+  `async for` break automatically calls `aclose()`.
 - Keep library buffering bounded to one line and one decoded record. Document
   that downstream consumers own backpressure and can recreate aggregate memory
   use by collecting every record.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  deterministic split-chunk, malformed-input, limit, compatibility, and
-  body-free error tests.
+  deterministic split-chunk, malformed-input, limit, compatibility, cleanup,
+  cancellation, and body-free error tests.
 - Update README, architecture, ADR, operator documentation, doctoring, and
-  CHANGELOG whenever streaming resource, ordering, validation, or compatibility
-  contracts change.
+  CHANGELOG whenever streaming resource, ordering, lifecycle, validation, or
+  compatibility contracts change.
