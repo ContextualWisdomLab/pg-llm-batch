@@ -218,16 +218,23 @@ storage does not add provider authentication or full-stream immutability.
 
 ## Checkpoint OpenTelemetry observability boundary
 
-`OpenTelemetryCheckpointStore` is an opt-in wrapper around the durable checkpoint
+`OpenTelemetryCheckpointStore` is an opt-in wrapper around a durable checkpoint
 store. It receives a host-owned tracer and meter through dependency injection and
 does not configure global providers, processors, samplers, exporters,
 collectors, or resources. The wrapped store remains independently usable without
-OpenTelemetry.
+OpenTelemetry and may be the package-owned PostgreSQL store or a compatible
+host-owned implementation.
 
 Package-owned spans and metrics use only fixed operation, transaction-owner,
-outcome, database-system, and finite error-classification attributes. They never
-contain tenant, consumer, batch, endpoint, file, digest, cursor, and DSN values,
-provider payloads, exception messages, or dynamic exception class names.
+outcome, and finite error-classification attributes. They never contain tenant,
+consumer, batch, endpoint, file, digest, cursor, and DSN values, provider
+payloads, exception messages, or dynamic exception class names. The package
+operation span is deliberately storage-agnostic and does not emit
+`db.system.name` or claim OpenTelemetry database-client semantics. Actual
+database-client spans and database-system attributes belong to the host or
+database instrumentation at the client boundary where the storage technology is
+known.
+
 Automatic exception recording and status-on-exception are disabled because a
 checkpoint exception may retain protected structured state even when its public
 message is bounded.
@@ -243,8 +250,8 @@ transaction ownership, commit, or rollback.
 
 Caller-owned transaction spans cover the package call only and do not claim that
 the surrounding transaction later committed. The host owns telemetry retention,
-access control, alerting, collector availability, and any correlation outside
-this confidential package boundary.
+access control, alerting, collector availability, database-client
+instrumentation, and any correlation outside this confidential package boundary.
 
 ## Modular interoperability
 
@@ -303,8 +310,9 @@ repeat, exact compare-and-swap, stale and regressive writers, equal and unequal
 first-writer races, disappearing conflict rows, forced-RLS migration text,
 fail-closed rollback, documentation, and live PostgreSQL persistence. Checkpoint
 telemetry tests additionally prove exact delegation, fixed low-cardinality signal
-attributes, seconds-based nonnegative duration, confidential failure
-classification, disabled exception recording, and preservation of application
-results and exception identity during ordinary tracer, meter, span, and clock
-failures. Final merge evidence must be regenerated against the integrated base;
-successful stacked-base runs are not reusable release evidence.
+attributes, storage-agnostic operation spans, seconds-based nonnegative duration,
+confidential failure classification, disabled exception recording, and
+preservation of application results and exception identity during ordinary
+tracer, meter, span, and clock failures. Final merge evidence must be regenerated
+against the integrated base; successful stacked-base runs are not reusable
+release evidence.
