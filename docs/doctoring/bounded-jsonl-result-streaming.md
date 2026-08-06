@@ -27,10 +27,11 @@ failure modes include:
   object list;
 - a newline-free record growing without a line-level cap;
 - chunk boundaries splitting UTF-8 code units or JSON tokens;
+- a custom adapter ignoring the requested chunk ceiling;
 - missing, false, negative, or encoded-length metadata misleading a byte budget;
 - non-byte adapter chunks bypassing byte accounting;
-- malformed UTF-8, JSON arrays or scalars, or recursively pathological JSON
-  entering durable workflows;
+- malformed UTF-8, non-finite number extensions, duplicate object names, JSON
+  arrays or scalars, or recursively pathological JSON entering durable workflows;
 - redirect-based destination changes or unsafe provider identifiers altering the
   request boundary;
 - non-success response bodies being read into memory or leaked through errors;
@@ -45,18 +46,19 @@ failure modes include:
 | One provider result or error file | 128 MiB decoded bytes | declared and observed byte accounting | fail closed with body-free byte counts |
 | One physical JSONL line | 1 MiB | before UTF-8 decoding and JSON parsing | fail closed with line number and bounded counts |
 | One batch iterator | 100,000 objects | before yielding the first excessive record | fail closed with count and configured limit |
-| HTTP stream chunk request | 64 KiB | `iter_chunked` adapter contract | reject adapters without bounded byte streaming |
+| One HTTP stream chunk | 64 KiB | requested and observed `iter_chunked` size | reject absent, non-byte, or oversized chunks |
 
 Each provider file receives an independent total-download budget. The record
 budget is combined across the deterministic output-then-error sequence. Blank
 physical lines do not consume the record budget. Limits are strict positive
 integers; booleans and coercible strings are rejected rather than normalized.
 
-The implementation may temporarily hold one transport chunk, one bounded line,
-one decoded text value, and one decoded JSON object. Python allocator behavior,
-JSON object expansion, and a caller's retained references prevent a claim of an
-exact resident-set-size ceiling. The defensible claim is bounded package-owned
-input buffering and incremental record release, not fixed total process memory.
+The implementation may temporarily hold one bounded transport chunk, one bounded
+line, one decoded text value, and one decoded JSON object. Python allocator
+behavior, JSON object expansion, and a caller's retained references prevent a
+claim of an exact resident-set-size ceiling. The defensible claim is bounded
+package-owned input buffering and incremental record release, not fixed total
+process memory.
 
 ## Validation and confidentiality controls
 
@@ -69,10 +71,12 @@ input buffering and incremental record release, not fixed total process memory.
 - Custom adapters must expose callable `content.iter_chunked`; there is no
   whole-body `json()` or `text()` fallback.
 - Accepted chunks are `bytes`, `bytearray`, or `memoryview`; memory views are
-  accounted with `nbytes`.
+  accounted with `nbytes`, and every observed chunk must remain within the
+  requested 64 KiB ceiling before package-owned line buffering.
 - UTF-8 decoding is strict, consistent with JSON interoperability requirements.
-- Every nonblank line must decode to one JSON object. Arrays and scalar JSON
-  values fail closed.
+- Every nonblank line must decode to one JSON object. Arrays, scalar JSON values,
+  Python-compatible non-finite number extensions, and duplicate object names fail
+  closed.
 - Diagnostics contain stable file classification, line/count/limit data, and
   bounded error types. They exclude provider bodies, record content, URLs,
   credentials, and provider identifiers.
@@ -92,10 +96,13 @@ The non-live suite proves:
 8. both unterminated and newline-terminated oversized lines fail before JSON
    admission;
 9. declared and observed file byte limits are independently enforced;
-10. missing bounded streams and non-byte chunks fail closed;
-11. invalid UTF-8, malformed JSON, and non-object JSON values fail closed;
-12. non-success responses are rejected without consuming their body; and
-13. the final CR-only blank-line path exits without producing a record.
+10. missing bounded streams, non-byte chunks, and chunks larger than the
+    requested transport ceiling fail closed;
+11. invalid UTF-8, malformed JSON, non-finite numbers, duplicate object names,
+    and non-object JSON values fail closed;
+12. parser diagnostics do not disclose valid provider batch identifiers;
+13. non-success responses are rejected without consuming their body; and
+14. the final CR-only blank-line path exits without producing a record.
 
 Protected CI additionally requires Python 3.10, 3.12, and 3.14 unit success,
 compilation, Ruff, 100% production statements and branches, 100% public
@@ -137,6 +144,8 @@ change and requires normal semantic-versioning review.
 
 - JSON decoding of one permitted line can allocate more memory than the encoded
   line size.
+- A custom adapter has already allocated its returned chunk before the client can
+  reject an oversized value; the package does not control adapter internals.
 - Python runtime and dependency vulnerabilities remain governed by package and
   supply-chain controls.
 - Consumer-side buffering, persistence latency, retries, and idempotency are not
