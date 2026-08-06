@@ -24,18 +24,12 @@ MIGRATION_PATH = (
     Path(__file__).with_name("migrations") / "0007_result_stream_checkpoints.sql"
 )
 MAX_CHECKPOINT_CONSUMER_CHARACTERS = 128
-POSTGRES_BIGINT_MAX = (1 << 63) - 1
 CHECKPOINT_CONSUMER_PATTERN = re.compile(
     rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_CHECKPOINT_CONSUMER_CHARACTERS - 1}}}\Z"
 )
 _CHECKPOINT_COLUMNS = (
     "schema_version, remote_batch_id, endpoint_alias, file_kind, file_id, "
     "file_line_number, batch_line_count, record_count, prefix_sha256"
-)
-_POSTGRES_BIGINT_CHECKPOINT_FIELDS = (
-    "file_line_number",
-    "batch_line_count",
-    "record_count",
 )
 
 
@@ -77,24 +71,13 @@ def validate_checkpoint_consumer_name(value: Any) -> str:
 
 
 def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
-    """Require one immutable checkpoint whose counters fit PostgreSQL storage."""
+    """Require one already validated immutable checkpoint value."""
     if not isinstance(value, BatchResultCheckpoint):
         raise ValidationError(
             field=field,
             value=value,
             reason="must be a BatchResultCheckpoint",
         )
-    for checkpoint_field in _POSTGRES_BIGINT_CHECKPOINT_FIELDS:
-        count = getattr(value, checkpoint_field)
-        if count > POSTGRES_BIGINT_MAX:
-            raise ValidationError(
-                field=f"{field}.{checkpoint_field}",
-                value=count,
-                reason=(
-                    "must be no greater than PostgreSQL BIGINT maximum "
-                    f"{POSTGRES_BIGINT_MAX}"
-                ),
-            )
     return value
 
 
