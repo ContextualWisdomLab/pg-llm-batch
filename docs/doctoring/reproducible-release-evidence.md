@@ -35,8 +35,12 @@ SHA-256 is calculated in bounded chunks. The verifier compares only:
 - SHA-256 digest.
 
 On success, it writes canonical JSON to
-`release-evidence/release-manifest.json`. The manifest additionally records its
-schema version, distribution name, project version, exact source commit, and
+`release-evidence/release-manifest.json`. Before creating that directory or any
+manifest byte, the writer rejects a symlink at the destination and in every
+existing parent path component. This prevents pull-request-controlled workspace
+links from redirecting the temporary file or atomic replacement outside the
+selected evidence directory. The manifest additionally records its schema
+version, distribution name, project version, exact source commit, and
 `SOURCE_DATE_EPOCH`. It never records package contents, source files,
 environment variables, credentials, network headers, provider data, or build
 logs.
@@ -70,9 +74,11 @@ final main-branch merge evidence.
 5. Confirm the verifier reports no missing, extra, symlinked, identity-mismatched,
    or non-reproducible artifact and stops after the third directory entry when
    rejecting an unexpected artifact set.
-6. Download the bounded manifest only when diligence requires independent digest
+6. Confirm `release-evidence` and every existing parent path component are
+   regular non-symlink paths before accepting the manifest upload.
+7. Download the bounded manifest only when diligence requires independent digest
    inspection.
-7. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
+8. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
    stale-base result.
 
 A successful manifest does not prove who built the package. It is not a digital
@@ -113,9 +119,10 @@ over the second or compare only extracted contents.
 
 ### Manifest path failure
 
-The manifest writer refuses a symlink destination or an existing temporary
-path. Remove only a verified local stale temporary file and rerun. Do not follow
-or replace an untrusted symlink.
+The manifest writer refuses a symlink destination, a direct or nested parent
+symlink, or an existing temporary path. Inspect the path lexically rather than
+following it. Remove only a verified local stale temporary file and rerun. Do
+not follow, replace, or normalize around an untrusted symlink.
 
 ## Security and acquisition rationale
 
@@ -123,10 +130,12 @@ The gate narrows buyer diligence from “the package built once” to “two cle
 builds of the same reviewed source and exact build toolchain produced the same
 named bytes.” Bounded artifact enumeration prevents malformed output directories
 from turning a fail-closed validation decision into unbounded verifier memory
-use. This supports repeatable incident reconstruction and future SLSA v1.2
-provenance without mixing pull-request validation with release authority.
-Top-level permissions remain read-only, credentials are not persisted, action
-sources are immutably pinned, and the evidence payload is bounded.
+use. Parent-chain symlink refusal prevents an untrusted pull-request tree from
+redirecting evidence writes outside the governed workspace location. This
+supports repeatable incident reconstruction and future SLSA v1.2 provenance
+without mixing pull-request validation with release authority. Top-level
+permissions remain read-only, credentials are not persisted, action sources are
+immutably pinned, and the evidence payload is bounded.
 
 ## References (APA 7)
 
