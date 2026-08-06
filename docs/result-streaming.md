@@ -33,13 +33,17 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
   parsing, including a final line without a newline.
 - `max_jsonl_records` caps the combined output-plus-error record count for one
   iterator.
-- Response data is consumed only through `content.iter_chunked(64 KiB)`.
-  Adapters without that bounded byte-stream interface fail closed.
+- Response data is consumed only through `content.iter_chunked(64 KiB)`. An
+  adapter that omits the interface, emits a non-byte chunk, or yields a chunk
+  larger than the requested 64 KiB fails closed before package-owned line
+  buffering.
 - Redirects remain disabled, provider identifiers remain validated before URL
   construction, and only idempotent GET transport operations use bounded retry.
-- Every nonblank line must be strict UTF-8 and decode to one JSON object. Arrays,
-  scalars, malformed JSON, and invalid UTF-8 are rejected with body-free
-  diagnostics.
+- Every nonblank line must be strict UTF-8 and decode to one interoperable JSON
+  object. Arrays, scalars, non-finite number extensions, duplicate object names,
+  malformed JSON, and invalid UTF-8 are rejected with body-free diagnostics.
+- Parser diagnostics exclude provider batch and file identifiers as well as
+  record content.
 - Non-success file responses are rejected before reading the provider-controlled
   body.
 
