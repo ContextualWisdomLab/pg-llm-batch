@@ -18,6 +18,7 @@ from .exceptions import GatewayError, ValidationError
 
 DEFAULT_MAX_JSONL_LINE_BYTES = 1 * 1024 * 1024
 DEFAULT_MAX_JSONL_RECORDS = 100_000
+DEFAULT_MAX_JSONL_PHYSICAL_LINES = 100_000
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,28 @@ class BatchResultRecord:
     batch_id: str
     file_kind: str
     record: Dict[str, Any]
+
+
+@dataclass
+class _PhysicalLineBudget:
+    """Track one batch-wide physical JSONL line processing ceiling."""
+
+    limit: int
+    observed: int = 0
+
+    def observe(self, *, file_kind: str, file_line_number: int) -> None:
+        """Record one physical line and fail before parsing above the ceiling."""
+        self.observed += 1
+        if self.observed > self.limit:
+            raise GatewayError(
+                "Provider JSONL physical line limit exceeded",
+                response_data={
+                    "file_kind": file_kind,
+                    "file_line_number": file_line_number,
+                    "batch_line_count": self.observed,
+                    "limit_lines": self.limit,
+                },
+            )
 
 
 def _validate_positive_integer(field: str, value: Any) -> int:
@@ -67,8 +90,9 @@ class StreamingBatchAPIClient(BatchAPIClient):
     """Batch client that yields provider JSONL records without whole-body storage.
 
     This opt-in client preserves :class:`BatchAPIClient` HTTP, credential, retry,
-    redirect, and total-download controls. It additionally limits the bytes in
-    one unterminated JSONL line and the number of records yielded for one batch.
+    redirect, and total-download controls. It additionally limits bytes in one
+    unterminated JSONL line, physical lines processed, and records yielded for
+    one batch.
     """
 
     def __init__(
@@ -78,6 +102,7 @@ class StreamingBatchAPIClient(BatchAPIClient):
         *,
         max_jsonl_line_bytes: int = DEFAULT_MAX_JSONL_LINE_BYTES,
         max_jsonl_records: int = DEFAULT_MAX_JSONL_RECORDS,
+        max_jsonl_physical_lines: int = DEFAULT_MAX_JSONL_PHYSICAL_LINES,
         **kwargs: Any,
     ) -> None:
         """Initialize bounded incremental JSONL retrieval resources."""
@@ -87,9 +112,13 @@ class StreamingBatchAPIClient(BatchAPIClient):
         validated_records = _validate_positive_integer(
             "max_jsonl_records", max_jsonl_records
         )
+        validated_physical_lines = _validate_positive_integer(
+            "max_jsonl_physical_lines", max_jsonl_physical_lines
+        )
         super().__init__(postgres_dsn, credentials, **kwargs)
         self.max_jsonl_line_bytes = validated_line_bytes
         self.max_jsonl_records = validated_records
+        self.max_jsonl_physical_lines = validated_physical_lines
 
     @asynccontextmanager
     async def open_batch_records(
@@ -118,9 +147,10 @@ class StreamingBatchAPIClient(BatchAPIClient):
 
         The batch status is retrieved once before file access. Iteration is
         permitted only for a terminal batch that exposes at least one provider
-        output or error file identifier. Consumers that may exit early should
-        use :meth:`open_batch_records` so the active response closes
-        deterministically.
+        output or error file identifier. Physical lines from result and error
+        files share one batch-wide budget, including blank lines. Consumers that
+        may exit early should use :meth:`open_batch_records` so the active
+        response closes deterministically.
         """
         validated_batch_id = _validate_resource_id(batch_id, "batch_id")
         status = await self.get_batch_status(validated_batch_id, endpoint_alias)
@@ -145,6 +175,7 @@ class StreamingBatchAPIClient(BatchAPIClient):
             )
 
         record_count = 0
+        physical_line_budget = _PhysicalLineBudget(self.max_jsonl_physical_lines)
         for file_kind, file_id in files:
             if not file_id:
                 continue
@@ -153,6 +184,7 @@ class StreamingBatchAPIClient(BatchAPIClient):
                     file_id,
                     endpoint_alias,
                     file_kind=file_kind,
+                    physical_line_budget=physical_line_budget,
                 )
             ) as file_records:
                 async for record in file_records:
@@ -174,6 +206,7 @@ class StreamingBatchAPIClient(BatchAPIClient):
         endpoint_alias: str,
         *,
         file_kind: str,
+        physical_line_budget: _PhysicalLineBudget,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Yield JSON objects from one bounded provider file byte stream."""
         validated_file_id = _validate_resource_id(file_id, f"{file_kind}_file_id")
@@ -272,6 +305,10 @@ class StreamingBatchAPIClient(BatchAPIClient):
                     line = bytes(pending[:newline_index])
                     del pending[: newline_index + 1]
                     line_number += 1
+                    physical_line_budget.observe(
+                        file_kind=file_kind,
+                        file_line_number=line_number,
+                    )
                     parsed_line = self._parse_jsonl_line(
                         line,
                         file_kind=file_kind,
@@ -289,6 +326,10 @@ class StreamingBatchAPIClient(BatchAPIClient):
 
             if pending:
                 line_number += 1
+                physical_line_budget.observe(
+                    file_kind=file_kind,
+                    file_line_number=line_number,
+                )
                 final_record = self._parse_jsonl_line(
                     bytes(pending),
                     file_kind=file_kind,
