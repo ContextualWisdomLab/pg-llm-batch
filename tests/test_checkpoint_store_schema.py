@@ -36,9 +36,12 @@ def test_checkpoint_schema_is_tenant_isolated_and_fail_closed() -> None:
 
 
 def test_rollback_refuses_to_destroy_acknowledgement_evidence() -> None:
-    """Rollback refuses to erase durable acknowledgements implicitly."""
+    """Rollback exposes owner-visible rows before its destructive emptiness check."""
     sql = ROLLBACK_SQL.read_text(encoding="utf-8")
+    no_force = "ALTER TABLE llm_result_stream_checkpoints NO FORCE ROW LEVEL SECURITY"
+    assert no_force in sql
     assert "EXISTS (" in sql
     assert "Refusing to drop non-empty llm_result_stream_checkpoints" in sql
     assert "ERRCODE = '55000'" in sql
+    assert sql.index(no_force) < sql.index("EXISTS (")
     assert sql.index("RAISE EXCEPTION") < sql.index("DROP TABLE")
