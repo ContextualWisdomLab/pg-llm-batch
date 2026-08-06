@@ -78,6 +78,9 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   ceiling before package-owned line buffering.
 - Enforce total bytes, one physical JSONL line, and the combined
   output-plus-error record count before yielding excessive data.
+- Enforce `max_jsonl_physical_lines` as one batch-wide physical line budget
+  shared by result and error files. Count every newline-terminated or final
+  unterminated line, including blank lines, before UTF-8 or JSON parsing.
 - Decode each nonblank line as strict UTF-8 and require one unambiguous JSON
   object. Preserve deterministic output-then-error ordering, CRLF support, and
   final lines without a newline; reject non-finite numbers and duplicate names.
@@ -91,8 +94,9 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   that downstream consumers own backpressure and can recreate aggregate memory
   use by collecting every record.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  deterministic split-chunk, malformed-input, limit, compatibility, cleanup,
-  cancellation, and body-free error tests.
+  deterministic split-chunk, malformed-input, byte-limit, record-limit,
+  physical-line-limit, compatibility, cleanup, cancellation, and body-free error
+  tests.
 - Update README, architecture, ADR, operator documentation, doctoring, and
   CHANGELOG whenever streaming resource, ordering, lifecycle, validation, or
   compatibility contracts change.
