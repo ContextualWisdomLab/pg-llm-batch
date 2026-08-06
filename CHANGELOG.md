@@ -15,7 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   combined record-count limits; split UTF-8, CRLF, blank lines, and final lines
   without a newline are handled deterministically, while invalid streams,
   encodings, JSON, non-object records, and non-success file responses fail closed
-  with body-free diagnostics.
+  with body-free diagnostics. `open_batch_records()` provides deterministic
+  context-managed ownership for consumers that may stop before exhaustion.
 - Read-only exact-head release acceptance that builds one wheel and source
   distribution twice from clean Git archives, proves byte-identical SHA-256
   identity, records bounded canonical evidence, and keeps publication and
@@ -43,6 +44,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Closed active provider-file responses deterministically after context-managed
+  early exits, explicitly closed nested asynchronous generators, rejected
+  zero-progress empty adapter chunks, and removed provider-controlled decoder
+  bytes and text from sanitized parser exception cause and context links.
 - Bound release-directory traversal, artifact open, bounded streaming hash, size
   derivation, and final membership validation to held descriptors; reject parent
   symlinks, `..` traversal, artifact replacement, in-place identity drift, and
