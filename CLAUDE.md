@@ -166,14 +166,17 @@
 - Emit fixed operation, transaction-owner, and outcome labels only. Use a finite
   low-cardinality error vocabulary and disable automatic exception recording.
 - Use `record_exception=False` and `set_status_on_exception=False` for every
-  package-owned checkpoint span.
+  package-owned checkpoint span. On failure, explicitly set the host
+  OpenTelemetry API's `StatusCode.ERROR` without a description when available;
+  on success, leave status Unset.
 - Never add tenant, consumer, batch, endpoint, file, digest, cursor, or DSN values
   to package-owned spans or metrics. Do not add exception messages, dynamic
   exception class names, provider payloads, or database errors either.
 - The original checkpoint result or exact application exception is authoritative;
-  telemetry failures must not mask or replace application results or exceptions.
+  tracer, metric, clock, optional status-code resolution, and status-mutation
+  failures must not mask or replace application results or exceptions.
 - Preserve package-owned versus caller-owned transaction labels without changing
   commit, rollback, compare-and-swap, or cursor ownership.
 - Maintain 100% production statement, branch, and public-docstring coverage for
-  success, conflict, validation, internal-error, duration, confidentiality,
-  delegation, and telemetry-failure paths.
+  success, conflict, validation, internal-error, duration, Error-status,
+  Unset-status, confidentiality, delegation, and telemetry-failure paths.
