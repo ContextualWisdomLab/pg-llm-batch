@@ -15,6 +15,12 @@ The supported claim is limited:
 > reproduces the same checkpoint independently of HTTP chunking. Changed prefix
 > input is rejected before any record after the supplied checkpoint is yielded.
 
+The checkpoint does not attest bytes or records outside that reproduced prefix.
+Mutation or truncation strictly after the acknowledged checkpoint is therefore
+not detected. A host that requires whole-stream immutability needs a stable
+provider validator or authenticated digest, or a separate full-stream manifest
+that is established and compared under its own bounded lifecycle contract.
+
 The implementation does not claim provider authenticity, non-repudiation,
 protection from a host that can replace both stream and checkpoint, or automatic
 exactly-once delivery to an external sink.
@@ -26,7 +32,8 @@ exactly-once delivery to an external sink.
 | Replay after worker restart | Resume suppresses records through the exact acknowledged checkpoint | Resume and final-checkpoint tests |
 | Provider file replacement | File kind and validated file identifier are hash-framed | Changed-file-identity test |
 | Mutation before resume point | Every preceding physical line is hash-framed | Prefix mutation tests |
-| Truncation before checkpoint | End-of-stream without exact match fails closed | Missing-checkpoint test |
+| Truncation at or before checkpoint | End-of-stream without exact match fails closed | Missing-checkpoint test |
+| Suffix mutation or truncation after checkpoint | Explicitly outside the prefix assurance claim | Authoritative boundary contract |
 | Blank-line CPU/framing ambiguity | Blank lines consume the existing batch-wide physical-line budget and digest | Blank-line mutation and framing tests |
 | CRLF/final-line ambiguity | Raw physical bytes and newline-termination state are distinct digest fields | Chunk/framing tests |
 | Delimiter ambiguity | Every digest field has a typed tag and fixed-width length prefix | Deterministic checkpoint comparison tests |
@@ -76,18 +83,23 @@ explicit compatibility decision.
    record number.
 6. Expect a full bounded prefix rescan. Size provider retention windows, rate
    limits, timeout policy, and worker capacity accordingly.
-7. Use `open_checkpointed_batch_records()` when processing may stop early so
+7. Do not treat successful prefix reproduction as evidence that the unseen suffix
+   is complete or immutable. Add a provider validator, authenticated digest, or
+   separate full-stream manifest when that stronger property is required.
+8. Use `open_checkpointed_batch_records()` when processing may stop early so
    provider responses close deterministically.
 
 ## Failure handling
 
 - `checkpoint_status=mismatch` means a record appeared at the expected logical
-  position but the complete checkpoint differed. Possible causes include content
-  mutation, changed file identity, framing changes, inserted or removed records,
-  or the wrong stored checkpoint.
+  position but the complete checkpoint differed. Possible causes include prefix
+  content mutation, changed file identity, framing changes, inserted or removed
+  records, or the wrong stored checkpoint.
 - `checkpoint_status=not_found` means the bounded stream ended before the stored
-  record count was reached. Treat this as truncation, retention loss, or wrong
-  checkpoint identity.
+  record count was reached. Treat this as truncation at or before the checkpoint,
+  retention loss, or wrong checkpoint identity.
+- Successful reproduction means only that the bounded acknowledged prefix
+  matched. It does not classify changes strictly after that checkpoint.
 - Validation errors occur before provider I/O for malformed checkpoint objects or
   request identity mismatch.
 
