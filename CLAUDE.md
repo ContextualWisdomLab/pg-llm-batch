@@ -49,3 +49,26 @@
 - Maintain test-first concurrency, unsupported-platform, bounded-enumeration,
   identity, documentation, and rollback contracts with 100% production
   statement, branch, and public-docstring coverage.
+
+## Provider result streaming invariants
+
+- Preserve the aggregate `BatchAPIClient.download_results()` contract; use the
+  opt-in `StreamingBatchAPIClient` for incremental output.
+- Inherit and preserve credential lookup, HTTPS URL validation, disabled
+  redirects, bounded idempotent GET retry, timeouts, provider identifier
+  validation, and decoded-byte limits.
+- Check the final provider-file HTTP status before consuming its body. Keep
+  failure diagnostics body-free and free of credentials, URLs, identifiers, and
+  record data.
+- Consume only `iter_chunked` byte streams and count `memoryview.nbytes`.
+  Enforce total bytes, physical-line bytes, and the combined result-plus-error
+  record count before excessive data is yielded.
+- Decode each nonblank physical line as strict UTF-8 and require one JSON object.
+  Preserve output-before-error order, CRLF handling, and final records without a
+  terminating newline.
+- Keep library-owned memory bounded to one line and one decoded record. Treat
+  downstream collection, persistence, transformation, and backpressure as host
+  responsibilities.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  deterministic split-chunk, invalid-stream, invalid-encoding, malformed-JSON,
+  record-limit, line-limit, download-limit, compatibility, and error tests.
