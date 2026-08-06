@@ -184,13 +184,18 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   classifications. Use `record_exception=False` and
   `set_status_on_exception=False` because durable checkpoint exceptions may
   retain protected structured details.
+- Failed checkpoint spans must explicitly set the host OpenTelemetry API's
+  `StatusCode.ERROR` without a description when that optional API is available;
+  successful spans must leave status Unset. Status resolution or mutation is
+  best-effort observer work and must never alter application behavior.
 - Never add tenant, consumer, batch, endpoint, file, digest, cursor, DSN,
   provider payload, exception message, or dynamic exception-class values to
   package-owned spans or metrics.
-- Treat tracing, metric, and clock failures as best-effort observer failures.
-  They must never alter checkpoint return values, exception identity,
-  compare-and-swap behavior, transaction ownership, commit, or rollback.
+- Treat tracing, metric, status, optional status-code resolution, and clock
+  failures as best-effort observer failures. They must never alter checkpoint
+  return values, exception identity, compare-and-swap behavior, transaction
+  ownership, commit, or rollback.
 - Keep counter and seconds-based duration histogram behavior deterministic and
   maintain 100% production statement, branch, and public-docstring coverage for
-  success, conflict, validation, internal-error, caller-transaction,
-  confidentiality, and observer-failure paths.
+  success, conflict, validation, internal-error, Error-status, Unset-status,
+  caller-transaction, confidentiality, and observer-failure paths.
