@@ -92,6 +92,6 @@ PostgreSQL Global Development Group. (n.d.). *PostgreSQL 18 documentation:
 Explicit locking*. Retrieved August 6, 2026, from
 https://www.postgresql.org/docs/18/explicit-locking.html
 
-PostgreSQL Global Development Group. (n.d.). *PostgreSQL 18 documentation: Row
-security policies*. Retrieved August 6, 2026, from
+PostgreSQL Global Development Group. (n.d.). *Row security policies*
+(PostgreSQL 18 documentation). Retrieved August 6, 2026, from
 https://www.postgresql.org/docs/18/ddl-rowsecurity.html
