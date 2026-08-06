@@ -80,10 +80,15 @@ def test_write_release_manifest_fails_without_secure_dir_fd_support(
     assert not destination.parent.exists()
 
 
-def test_write_release_manifest_rejects_invalid_destination_name(tmp_path: Path) -> None:
+def test_write_release_manifest_rejects_invalid_destination_name(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Reject a destination that has no final filename."""
+    monkeypatch.chdir(tmp_path)
+
     with pytest.raises(ReleaseEvidenceError, match="destination name is invalid"):
-        write_release_manifest({"schema_version": 1}, tmp_path / ".")
+        write_release_manifest({"schema_version": 1}, Path("."))
 
 
 def test_write_release_manifest_rejects_parent_traversal(
