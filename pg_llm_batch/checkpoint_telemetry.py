@@ -28,13 +28,13 @@ _ResultT = TypeVar("_ResultT")
 class _NoOpInstrument:
     """Ignore one metric operation after instrumentation becomes unavailable."""
 
-    def add(self, _value: int, _attributes: dict[str, str]) -> None:
+    def add(self, _value: int, *, attributes: dict[str, str]) -> None:
         """Ignore one counter measurement."""
-        return None
+        del attributes
 
-    def record(self, _value: float, _attributes: dict[str, str]) -> None:
+    def record(self, _value: float, *, attributes: dict[str, str]) -> None:
         """Ignore one histogram measurement."""
-        return None
+        del attributes
 
 
 class _NoOpSpan:
