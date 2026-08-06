@@ -20,17 +20,22 @@ def test_authoritative_documents_define_checkpoint_telemetry_boundary() -> None:
             "best-effort telemetry cannot change checkpoint operation semantics",
             "storage-agnostic",
             "does not emit `db.system.name`",
+            "StatusCode.ERROR",
+            "successful checkpoint spans leave status Unset",
         ),
         "AGENTS.md": (
             "OpenTelemetry checkpoint signals",
             "record_exception=False",
             "set_status_on_exception=False",
             "finite low-cardinality `error.type`",
+            "StatusCode.ERROR",
+            "successful spans must leave status Unset",
         ),
         "CLAUDE.md": (
             "OpenTelemetry checkpoint signals",
             "Never add tenant, consumer, batch, endpoint, file, digest, cursor, or DSN values",
-            "telemetry failures must not mask or replace application results or exceptions",
+            "StatusCode.ERROR",
+            "on success, leave status Unset",
         ),
         "CHANGELOG.md": (
             "OpenTelemetry-compatible checkpoint spans and metrics",
@@ -39,10 +44,12 @@ def test_authoritative_documents_define_checkpoint_telemetry_boundary() -> None:
         "docs/checkpoint-observability.md": (
             "The wrapper delegates all arguments and returns unchanged",
             "Package-owned telemetry never contains tenant scope",
-            "The wrapper supplies `(None, None, None)` when closing the span context",
+            "supplies `(None, None, None)` when closing the span context",
             "Non-cancellation process-control exceptions remain outside this observer-failure guarantee",
             "Package operation spans are deliberately storage-agnostic",
             "do not emit `db.system.name`",
+            "failed checkpoint spans explicitly set OpenTelemetry status Error without a description",
+            "successful checkpoint spans leave status Unset",
         ),
     }
     for path, phrases in required.items():
@@ -64,16 +71,19 @@ def test_adr_and_doctoring_record_operator_and_standards_contracts() -> None:
         "Exporter, processor, sampler, and provider ownership remains with the host",
         "storage-agnostic",
         "do not emit `db.system.name`",
+        "failed checkpoint spans explicitly set OpenTelemetry status Error without a description",
+        "successful checkpoint spans leave status Unset",
         "Rollback",
     ):
         assert phrase in adr
     for phrase in (
-        "OpenTelemetry semantic conventions 1.43.0",
+        "OpenTelemetry semantic conventions 1.44.0",
         "Semantic conventions for database client spans",
         "Recording errors",
-        "error.type SHOULD be predictable and SHOULD have low cardinality",
+        "failed checkpoint spans explicitly set OpenTelemetry status Error without a description",
+        "successful checkpoint spans leave status Unset",
         "does **not** emit `db.system.name`",
-        "postgresql",
+        "PostgreSQL",
         "storage-agnostic",
         "APA 7",
     ):
