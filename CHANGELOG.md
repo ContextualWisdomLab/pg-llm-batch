@@ -19,9 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a fully bounded rescan from byte zero, suppresses acknowledged records only
   after exact checkpoint reproduction, and fails closed before later delivery
   on prefix mutation, file replacement, inserted or removed framing, or
-  truncation. The host retains tenant authorization, tamper/rollback protection,
-  and atomic sink/checkpoint responsibilities; no schema or release version
-  change is included.
+  truncation at or before the checkpoint. This prefix evidence does not attest
+  mutation or truncation strictly after the acknowledged checkpoint; hosts that
+  require whole-stream immutability need a stable provider validator or a
+  separate full-stream manifest. The host retains tenant authorization,
+  tamper/rollback protection, and atomic sink/checkpoint responsibilities; no
+  schema or release version change is included.
 - Opt-in `StreamingBatchAPIClient` and immutable `BatchResultRecord` for
   output-then-error JSONL iteration without whole-body or whole-result-list
   materialization, with strict per-file decoded-byte, physical-line byte,
