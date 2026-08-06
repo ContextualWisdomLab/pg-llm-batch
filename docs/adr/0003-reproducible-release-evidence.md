@@ -18,6 +18,13 @@ attestation can accurately describe a non-reproducible build, while a
 reproducibility check does not authenticate the builder or publish an artifact.
 Both properties matter, but they require different permissions and review gates.
 
+PEP 517 build-system requirements are resolved independently from ordinary
+project dependencies: build-system requirements are not pinned by `uv.lock`.
+The acceptance path therefore pins the build frontend to `uv` 0.12.1 and the
+backend requirement to `uv_build==0.12.1`. The exact frontend can use its
+compatible bundled backend, while external PEP 517 frontends are constrained to
+the same backend version instead of silently selecting a later patch release.
+
 ## Decision
 
 Every release-relevant pull request runs a read-only acceptance workflow that:
@@ -25,7 +32,8 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
 1. checks out the exact pull-request head with persisted credentials disabled;
 2. derives `SOURCE_DATE_EPOCH` from that exact commit;
 3. creates two clean source trees from the same Git object;
-4. performs two clean exact-head builds with the locked build environment;
+4. performs two clean exact-head builds with the exact `uv` 0.12.1 frontend and
+   `uv_build==0.12.1` backend contract;
 5. requires one wheel and one source distribution in each result;
 6. verifies regular non-symlink files, expected distribution/version identity,
    byte size, and streaming SHA-256 equality;
@@ -42,6 +50,8 @@ approval, branch protection, exact-head security, packaging, and release gates.
 ## Consequences
 
 - Non-deterministic package bytes fail before a tag or release is considered.
+- Build frontend and backend patch selection cannot drift between governed or
+  external PEP 517 builds without an explicit reviewed source change.
 - Artifact identity evidence is machine-readable, bounded, and free of source
   payloads, credentials, provider data, and environment dumps.
 - The manifest is evidence for review, not a signature, SBOM, provenance
@@ -58,6 +68,13 @@ approval, branch protection, exact-head security, packaging, and release gates.
 Rejected because one successful build proves package validity, not deterministic
 artifact identity.
 
+### Permit a compatible backend patch range
+
+Rejected for the governed release contract because an external PEP 517 frontend
+could resolve a later compatible `uv_build` patch independently of `uv.lock`.
+Patch upgrades remain straightforward, but they require an explicit reviewed pin
+change and fresh exact-head evidence.
+
 ### Upload both complete build directories from every pull request
 
 Rejected because complete artifacts increase retention, disclosure, and artifact
@@ -70,6 +87,9 @@ identity or attestation permissions. Least privilege keeps validation separate
 from release authority.
 
 ## References (APA 7th edition)
+
+Astral. (n.d.). *The uv build backend*. uv documentation. Retrieved August 6,
+2026, from https://docs.astral.sh/uv/concepts/build-backend/
 
 GitHub. (n.d.). *Using artifact attestations to establish provenance for builds*.
 GitHub Docs. Retrieved August 6, 2026, from
