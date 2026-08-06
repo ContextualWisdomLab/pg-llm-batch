@@ -27,3 +27,25 @@
 - Maintain 100% production statement, branch, and public-docstring coverage.
   Add realistic migration, rollback, compatibility, security, and
   tenant-isolation tests before implementation changes.
+
+## Release evidence invariants
+
+- Never validate release artifacts by checking a pathname and reopening that
+  pathname later. Hold the release-directory descriptor for enumeration,
+  artifact open, hashing, and final membership validation.
+- Traverse absolute paths from `/` and relative paths from `.` with
+  descriptor-relative `O_DIRECTORY | O_NOFOLLOW`; reject parent traversal and
+  every symlinked or non-directory component.
+- Open artifact names with descriptor-relative `O_NOFOLLOW | O_NONBLOCK`, require
+  a regular file from `fstat`, stream bytes through bounded `os.read`, and reject
+  size, device, inode, type, modification-time, or change-time drift.
+- Compare the initial and final bounded directory-name sets from the same open
+  directory. Do not expose arbitrary operating-system exceptions or unbounded
+  names in diagnostics.
+- Fail closed when the runtime lacks required descriptor or no-follow
+  capabilities. Do not add a pathname fallback for portability.
+- Preserve the separation between reproducibility evidence and publication,
+  signing, attestation, release approval, or artifact reuse authority.
+- Maintain test-first concurrency, unsupported-platform, bounded-enumeration,
+  identity, documentation, and rollback contracts with 100% production
+  statement, branch, and public-docstring coverage.
