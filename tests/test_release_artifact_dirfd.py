@@ -39,6 +39,35 @@ def _verify(first: Path, second: Path) -> dict[str, object]:
     )
 
 
+def test_verifier_accepts_relative_descriptor_traversal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Resolve ordinary relative paths from a pinned current-directory descriptor."""
+    _write_release(tmp_path / "first")
+    _write_release(tmp_path / "second")
+    monkeypatch.chdir(tmp_path)
+
+    manifest = _verify(Path("first"), Path("second"))
+
+    assert manifest["distribution"] == DISTRIBUTION
+
+
+def test_verifier_refuses_parent_traversal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject relative parent components before any release directory is opened."""
+    _write_release(tmp_path / "first")
+    _write_release(tmp_path / "second")
+    working_directory = tmp_path / "working"
+    working_directory.mkdir()
+    monkeypatch.chdir(working_directory)
+
+    with pytest.raises(ReleaseEvidenceError, match="parent traversal"):
+        _verify(Path("../first"), Path("../second"))
+
+
 def test_verifier_refuses_symlinked_parent_component(tmp_path: Path) -> None:
     """Reject a parent-path redirect rather than only checking the final directory."""
     outside = tmp_path / "outside"
@@ -51,6 +80,56 @@ def test_verifier_refuses_symlinked_parent_component(tmp_path: Path) -> None:
 
     with pytest.raises(ReleaseEvidenceError, match="parent.*symlink|directory path"):
         _verify(linked / "first", linked / "second")
+
+
+def test_verifier_reports_root_open_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Convert an unavailable traversal root into one bounded fail-closed error."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    _write_release(second)
+    original_open = os.open
+
+    def failing_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        if dir_fd is None and os.fspath(path) == first.anchor:
+            raise OSError("synthetic root failure")
+        return original_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", failing_open)
+
+    with pytest.raises(ReleaseEvidenceError, match="root could not be opened"):
+        _verify(first, second)
+
+
+def test_verifier_reports_directory_scan_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Convert descriptor scan failures into a bounded public error."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    _write_release(second)
+    original_scandir = os.scandir
+
+    def failing_scandir(path: str | bytes | os.PathLike[str] | int):  # type: ignore[no-untyped-def]
+        if isinstance(path, int):
+            raise OSError("synthetic scan failure")
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", failing_scandir)
+
+    with pytest.raises(ReleaseEvidenceError, match="could not be inspected"):
+        _verify(first, second)
 
 
 def test_verifier_refuses_artifact_replacement_after_directory_scan(
@@ -177,11 +256,71 @@ def test_verifier_refuses_in_place_mutation_during_streaming_hash(
         _verify(first, second)
 
 
+def test_verifier_reports_initial_artifact_stat_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed when metadata cannot be read from an opened artifact descriptor."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    _write_release(second)
+
+    def failing_fstat(file_descriptor: int) -> os.stat_result:
+        del file_descriptor
+        raise OSError("synthetic fstat failure")
+
+    monkeypatch.setattr(os, "fstat", failing_fstat)
+
+    with pytest.raises(ReleaseEvidenceError, match="artifact could not be inspected"):
+        _verify(first, second)
+
+
+def test_verifier_reports_streaming_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed without exposing an operating-system read exception."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    _write_release(second)
+
+    def failing_read(file_descriptor: int, count: int) -> bytes:
+        del file_descriptor, count
+        raise OSError("synthetic read failure")
+
+    monkeypatch.setattr(os, "read", failing_read)
+
+    with pytest.raises(ReleaseEvidenceError, match="artifact could not be read"):
+        _verify(first, second)
+
+
+@pytest.mark.parametrize("unsupported_set", ["supports_dir_fd", "supports_fd"])
+def test_verifier_fails_closed_without_each_descriptor_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    unsupported_set: str,
+) -> None:
+    """Require both relative open and descriptor scan support independently."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    _write_release(second)
+    monkeypatch.setattr(os, unsupported_set, frozenset())
+
+    with pytest.raises(
+        ReleaseEvidenceError,
+        match="secure release artifact verification requires descriptor-relative no-follow support",
+    ):
+        _verify(first, second)
+
+
 def test_verifier_fails_closed_without_secure_artifact_primitives(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Require descriptor-relative no-follow support before reading artifacts."""
+    """Require descriptor-relative no-follow flags before reading artifacts."""
     first = tmp_path / "first"
     second = tmp_path / "second"
     _write_release(first)
