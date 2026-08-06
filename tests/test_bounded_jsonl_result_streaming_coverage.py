@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Coverage edges for bounded incremental provider-result streaming."""
+"""Coverage and security edges for bounded provider-result streaming."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from pg_llm_batch import StreamingBatchAPIClient
-from pg_llm_batch.batch_api_client import GatewayCredentials
+from pg_llm_batch.batch_api_client import DOWNLOAD_CHUNK_BYTES, GatewayCredentials
 from pg_llm_batch.exceptions import GatewayError
 
 
@@ -114,3 +114,51 @@ async def test_final_carriage_return_is_an_ignored_blank_line():
     records = [record async for record in client.iter_batch_records("batch-1", "default")]
 
     assert records == []
+
+
+async def test_adapter_chunk_larger_than_requested_bound_fails_closed():
+    """A custom adapter cannot ignore the requested transport chunk ceiling."""
+    oversized_chunk = b"x" * (DOWNLOAD_CHUNK_BYTES + 1)
+    client = client_for_file([oversized_chunk], max_jsonl_line_bytes=DOWNLOAD_CHUNK_BYTES * 2)
+
+    with pytest.raises(GatewayError, match="chunk exceeded byte limit") as exc_info:
+        _ = [record async for record in client.iter_batch_records("batch-1", "default")]
+
+    assert exc_info.value.response_data == {
+        "error_type": "OversizedByteChunk",
+        "limit_bytes": DOWNLOAD_CHUNK_BYTES,
+        "chunk_bytes": DOWNLOAD_CHUNK_BYTES + 1,
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b'{"value":NaN}\n',
+        b'{"value":Infinity}\n',
+        b'{"value":-Infinity}\n',
+        b'{"duplicate":1,"duplicate":2}\n',
+    ],
+)
+async def test_non_finite_numbers_and_duplicate_object_names_are_rejected(payload: bytes):
+    """Provider lines must be interoperable JSON objects without ambiguous names."""
+    client = client_for_file([payload])
+
+    with pytest.raises(GatewayError, match="Malformed result line 1") as exc_info:
+        _ = [record async for record in client.iter_batch_records("batch-1", "default")]
+
+    assert exc_info.value.response_data == {
+        "file_kind": "result",
+        "line_number": 1,
+    }
+    assert "batch-1" not in str(exc_info.value)
+
+
+async def test_malformed_line_error_does_not_disclose_provider_batch_identifier():
+    """Parser diagnostics exclude otherwise valid provider identifiers."""
+    client = client_for_file([b"{not-json}\n"])
+
+    with pytest.raises(GatewayError, match="Malformed result line 1") as exc_info:
+        _ = [record async for record in client.iter_batch_records("batch-1", "default")]
+
+    assert "batch-1" not in str(exc_info.value)
