@@ -1,0 +1,232 @@
+name: One-shot finalize streaming transport handoff
+
+on:
+  push:
+    branches:
+      - agent/bounded-jsonl-result-streaming
+    paths:
+      - .github/workflows/one-shot-fix-streaming-transport-handoff.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: one-shot-streaming-transport-handoff
+  cancel-in-progress: false
+
+jobs:
+  repair:
+    if: github.repository == 'ContextualWisdomLab/pg-llm-batch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout exact trigger head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: Refuse stale or competing branch state
+        env:
+          EXPECTED_PARENT: 0b08a96b5a5f7ea6555974b0edb362e20d0beaa6
+          EXPECTED_BRANCH: agent/bounded-jsonl-result-streaming
+          WORKFLOW_PATH: .github/workflows/one-shot-fix-streaming-transport-handoff.yml
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = "${EXPECTED_BRANCH}"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD^)" = "${EXPECTED_PARENT}"
+          mapfile -t changed < <(git diff --name-only HEAD^ HEAD)
+          test "${#changed[@]}" -eq 1
+          test "${changed[0]}" = "${WORKFLOW_PATH}"
+          test -z "$(git status --porcelain)"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+          prune-cache: true
+
+      - name: Install exact locked dependencies
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: uv sync --locked
+
+      - name: Prove exact RED confidentiality contract
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          set +e
+          uv run pytest -q tests/test_streaming_transport_handoff.py > /tmp/red-evidence.txt 2>&1
+          red_status=$?
+          set -e
+          cat /tmp/red-evidence.txt
+          test "${red_status}" -eq 1
+          grep -Fq 'test_post_handoff_payload_failure_is_not_retried' /tmp/red-evidence.txt
+          grep -Fq 'test_streaming_payload_failure_never_restarts_or_duplicates' /tmp/red-evidence.txt
+          grep -Fq '__context__ is None' /tmp/red-evidence.txt
+
+      - name: Apply bounded context-free translation
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          WORKFLOW_PATH: .github/workflows/one-shot-fix-streaming-transport-handoff.yml
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("pg_llm_batch/batch_api_client.py")
+          source = path.read_text(encoding="utf-8")
+
+          replacements = (
+              (
+                  "            post_handoff_error: Optional[BaseException] = None\n",
+                  "            post_handoff_error_type: Optional[str] = None\n",
+                  1,
+              ),
+              (
+                  "                            post_handoff_error = exc\n",
+                  "                            post_handoff_error_type = type(exc).__name__\n",
+                  1,
+              ),
+              (
+                  "                        if post_handoff_error is None:\n",
+                  "                        if post_handoff_error_type is None:\n",
+                  1,
+              ),
+              (
+                  "                    post_handoff_error = exc\n",
+                  "                    post_handoff_error_type = type(exc).__name__\n",
+                  1,
+              ),
+          )
+          for old, new, expected_count in replacements:
+              if source.count(old) != expected_count:
+                  raise SystemExit(f"unexpected source marker count: {old!r}")
+              source = source.replace(old, new, expected_count)
+
+          old_block = (
+              "            if post_handoff_error is not None:\n"
+              "                raise GatewayError(\n"
+              "                    f\"{operation} transport failed\",\n"
+              "                    response_data={\n"
+              "                        \"error_type\": type(post_handoff_error).__name__,\n"
+              "                        \"timeout_seconds\": self.request_timeout_seconds,\n"
+              "                    },\n"
+              "                )\n"
+          )
+          new_block = (
+              "            if post_handoff_error_type is not None:\n"
+              "                translated_error = GatewayError(\n"
+              "                    f\"{operation} transport failed\",\n"
+              "                    response_data={\n"
+              "                        \"error_type\": post_handoff_error_type,\n"
+              "                        \"timeout_seconds\": self.request_timeout_seconds,\n"
+              "                    },\n"
+              "                )\n"
+              "                # Raising once attaches the provider exception as context.\n"
+              "                # Clear that automatic link, then re-raise the same error.\n"
+              "                try:\n"
+              "                    raise translated_error\n"
+              "                except GatewayError as error:\n"
+              "                    error.__context__ = None\n"
+              "                    raise\n"
+          )
+          if source.count(old_block) != 1:
+              raise SystemExit("unexpected post-handoff translation block")
+          source = source.replace(old_block, new_block, 1)
+          compile(source, str(path), "exec")
+          path.write_text(source, encoding="utf-8")
+
+          workflow = Path(".github/workflows/one-shot-fix-streaming-transport-handoff.yml")
+          workflow.unlink()
+          PY
+
+      - name: Verify exact-head GREEN state
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          uv run pytest -q tests/test_streaming_transport_handoff.py
+          uv run pytest -q -m "not integration"
+          uv run python -m compileall -q pg_llm_batch tests
+          uv run ruff check pg_llm_batch tests
+          uvx --from 'interrogate==1.7.0' interrogate --fail-under 100 pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-branch --cov-report=term-missing \
+            --cov-fail-under=100
+          uv lock --check
+          uv build --no-sources
+
+      - name: Validate workflow-free final diff
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+          WORKFLOW_PATH: .github/workflows/one-shot-fix-streaming-transport-handoff.yml
+        run: |
+          set -euo pipefail
+          test ! -e "${WORKFLOW_PATH}"
+          git diff --check
+          mapfile -t changed < <(git diff --name-only HEAD | sort)
+          expected=(
+            .github/workflows/one-shot-fix-streaming-transport-handoff.yml
+            pg_llm_batch/batch_api_client.py
+          )
+          mapfile -t expected_sorted < <(printf '%s\n' "${expected[@]}" | sort)
+          diff -u \
+            <(printf '%s\n' "${expected_sorted[@]}") \
+            <(printf '%s\n' "${changed[@]}")
+          test -z "$(git ls-files --others --exclude-standard)"
+
+      - name: Commit verified direct repair
+        env:
+          GITHUB_TOKEN: ""
+          GH_TOKEN: ""
+        run: |
+          set -euo pipefail
+          git config user.name "CWL bounded repair"
+          git config user.email "actions@users.noreply.github.com"
+          git add --all
+          git commit -m "fix(streaming): detach provider transport context"
+          test ! -e .github/workflows/one-shot-fix-streaming-transport-handoff.yml
+
+      - name: Publish only if exact trigger head remains live
+        env:
+          PUSH_TOKEN: ${{ github.token }}
+          EXPECTED_BRANCH: agent/bounded-jsonl-result-streaming
+        run: |
+          set -euo pipefail
+          remote_head="$(git ls-remote origin "refs/heads/${EXPECTED_BRANCH}" | awk '{print $1}')"
+          test "${remote_head}" = "${GITHUB_SHA}"
+          askpass="${RUNNER_TEMP}/git-askpass.sh"
+          cat > "${askpass}" <<'SH'
+          #!/bin/sh
+          case "$1" in
+            *Username*) printf '%s\n' 'x-access-token' ;;
+            *Password*) printf '%s\n' "${PUSH_TOKEN}" ;;
+            *) exit 1 ;;
+          esac
+          SH
+          chmod 700 "${askpass}"
+          GIT_ASKPASS="${askpass}" GIT_TERMINAL_PROMPT=0 \
+            git push origin "HEAD:refs/heads/${EXPECTED_BRANCH}"
