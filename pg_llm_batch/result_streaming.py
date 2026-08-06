@@ -214,14 +214,14 @@ class StreamingBatchAPIClient(BatchAPIClient):
                     line = bytes(pending[:newline_index])
                     del pending[: newline_index + 1]
                     line_number += 1
-                    yield from_line = self._parse_jsonl_line(
+                    parsed_line = self._parse_jsonl_line(
                         line,
                         batch_id=batch_id,
                         file_kind=file_kind,
                         line_number=line_number,
                     )
-                    if from_line is not None:
-                        yield from_line
+                    if parsed_line is not None:
+                        yield parsed_line
 
                 if len(pending) > self.max_jsonl_line_bytes:
                     raise self._line_limit_error(
