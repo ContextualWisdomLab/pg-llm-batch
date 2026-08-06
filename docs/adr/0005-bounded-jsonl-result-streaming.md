@@ -20,6 +20,13 @@ The HTTP adapter already exposes bounded asynchronous byte chunks, so a separate
 opt-in iterator can enforce limits before text or object materialization without
 changing the established aggregate API.
 
+Per-record and per-line byte limits do not bound the number of blank physical
+lines processed. A provider can therefore spend bounded bandwidth on newline
+amplification while forcing substantially more parser-loop work than the yielded
+record count represents. CWE-400 and OWASP API4:2023 require explicit resource
+limits for attacker-influenced processing, so physical line accounting is a
+separate batch-wide control.
+
 Python's asynchronous iteration protocol does not automatically call
 `aclose()` when a consumer exits a bare `async for` loop with `break`. A public
 streaming contract therefore also needs explicit lifecycle ownership for early
@@ -44,14 +51,17 @@ Add `StreamingBatchAPIClient`, a source-compatible subclass of
    `memoryview.nbytes` accurately;
 7. split physical lines incrementally, cap an unterminated or complete line
    before decoding, accept CRLF and a final line without a newline, and ignore
-   blank lines;
-8. decode each nonblank line with strict UTF-8 and require one interoperable JSON
+   blank lines for record emission;
+8. enforce `max_jsonl_physical_lines` as one strict positive batch-wide physical
+   line budget shared by result and error files, counting every blank or nonblank
+   newline-terminated line and a final unterminated line before decoding;
+9. decode each nonblank line with strict UTF-8 and require one interoperable JSON
    object without non-finite number extensions or duplicate object names;
-9. cap the combined number of output and error records before yielding the
-   record that exceeds the limit;
-10. expose only bounded, body-free metadata without provider identifiers or
+10. cap the combined number of output and error records before yielding the
+    record that exceeds the limit;
+11. expose only bounded, body-free metadata without provider identifiers or
     record content in parser diagnostics or retained exception links; and
-11. explicitly close each nested provider-file iterator and provide
+12. explicitly close each nested provider-file iterator and provide
     `open_batch_records()` as the supported context-managed owner for consumers
     that may stop before exhaustion.
 
@@ -70,6 +80,8 @@ the returned iterator.
   internals remain outside the package memory claim.
 - Zero-progress chunks fail closed before an adapter can sustain an unbounded
   empty-chunk loop inside the package parser.
+- Blank-line amplification is bounded independently of emitted records. Result
+  and error files consume one shared batch-wide physical line budget.
 - Hosts can persist or transform records incrementally while retaining standalone
   package operation and modular MSA interoperability.
 - Callers remain responsible for downstream backpressure and must not collect all
@@ -77,7 +89,7 @@ the returned iterator.
 - Callers that may break early use `open_batch_records()` or own an explicit
   `aclose()` call; a bare loop break is not a cleanup guarantee.
 - The file-level total byte limit remains independent for output and error files;
-  the record-count limit applies to the combined iterator.
+  the record-count and physical-line limits apply to the combined iterator.
 - Duplicate JSON object names and Python-compatible `NaN`/infinity extensions are
   rejected to avoid ambiguous or non-interoperable durable records.
 - Decoder failures are translated after the active exception handler exits, so
@@ -104,6 +116,12 @@ the transport budget through object expansion.
 Rejected because the field may be absent, malformed, or describe encoded rather
 than decoded bytes. Observed bytes remain authoritative.
 
+### Count only emitted JSON records
+
+Rejected because blank lines consume transport and parser-loop resources without
+emitting records. A batch-wide physical line limit measures work before parsing
+and closes that independent resource-exhaustion path.
+
 ### Trust custom adapters to honor `iter_chunked(n)`
 
 Rejected because the client can cheaply validate that each observed chunk is
@@ -129,6 +147,12 @@ implementation-specific objects from entering durable workflows.
 Bray, T. (2017). *The JavaScript Object Notation (JSON) data interchange format*
 (RFC 8259; STD 90). Internet Engineering Task Force.
 https://doi.org/10.17487/RFC8259
+
+MITRE Corporation. (2026). *CWE-400: Uncontrolled resource consumption*
+(CWE version 4.20). https://cwe.mitre.org/data/definitions/400.html
+
+OWASP Foundation. (2023). *API4:2023 unrestricted resource consumption*.
+https://owasp.org/API-Security/editions/2023/en/0xa4-unrestricted-resource-consumption/
 
 Python Software Foundation. (2026). *Asynchronous generator-iterator methods*.
 https://docs.python.org/3/reference/expressions.html#asynchronous-generator-iterator-methods
