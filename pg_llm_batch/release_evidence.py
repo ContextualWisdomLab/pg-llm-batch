@@ -150,6 +150,15 @@ def _artifact_records(
     return records
 
 
+def _ensure_manifest_parent(destination: Path) -> None:
+    """Create a manifest parent without following any existing parent symlink."""
+    if any(parent.is_symlink() for parent in destination.parents):
+        raise ReleaseEvidenceError(
+            "release manifest parent path must not contain a symlink"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+
 def verify_reproducible_release(
     first_directory: str | Path,
     second_directory: str | Path,
@@ -199,11 +208,11 @@ def write_release_manifest(
     manifest: Mapping[str, Any],
     output_path: str | Path,
 ) -> None:
-    """Write canonical JSON atomically without following a destination symlink."""
+    """Write canonical JSON atomically without following path symlinks."""
     destination = Path(output_path)
     if destination.is_symlink():
         raise ReleaseEvidenceError("release manifest destination must not be a symlink")
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_manifest_parent(destination)
     temporary = destination.parent / f".{destination.name}.tmp"
     if temporary.exists() or temporary.is_symlink():
         raise ReleaseEvidenceError("release manifest temporary path already exists")
