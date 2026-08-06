@@ -99,6 +99,34 @@ def test_verify_reproducible_release_rejects_missing_or_extra_artifacts(
         _verify(first, second)
 
 
+def test_verify_reproducible_release_stops_after_third_directory_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a third artifact without enumerating an unbounded directory."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    second.mkdir()
+    entries = [second / SDIST, second / WHEEL, second / "unexpected.txt"]
+    for entry in entries:
+        entry.write_bytes(b"artifact")
+
+    original_iterdir = Path.iterdir
+
+    def bounded_iterdir(directory: Path):  # type: ignore[no-untyped-def]
+        if directory != second:
+            yield from original_iterdir(directory)
+            return
+        yield from entries
+        raise AssertionError("release evidence scanned beyond the third entry")
+
+    monkeypatch.setattr(Path, "iterdir", bounded_iterdir)
+
+    with pytest.raises(ReleaseEvidenceError, match="exactly one wheel and one sdist"):
+        _verify(first, second)
+
+
 def test_verify_reproducible_release_rejects_symlinked_artifact(tmp_path: Path) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"
