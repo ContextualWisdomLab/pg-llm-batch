@@ -44,13 +44,20 @@ is removed before JSON parsing.
 credential, URL, timeout, retry-handoff, total-byte, line-byte, physical-line,
 record-count, parsing, and response-lifecycle controls. No record is yielded
 until the supplied checkpoint is reproduced exactly. A changed prefix, changed
-file identity, unexpected record at the checkpoint position, or truncated
-stream fails closed with bounded body-free diagnostics.
+file identity, unexpected record at the checkpoint position, or a stream
+truncated at or before the checkpoint fails closed with bounded body-free
+diagnostics.
 
 Resume does not use HTTP range requests. This keeps the behavior portable across
 OpenAI-compatible providers and ensures that all preceding framing and file
 identity are revalidated. The cost is linear read and parse work through the
 checkpoint position.
+
+This is prefix evidence, not a whole-file attestation. Mutation or truncation
+strictly after the acknowledged checkpoint is not detectable because those bytes
+and records are outside the reproduced prefix. Hosts that require whole-stream
+immutability must rely on a stable provider validator or authenticated digest, or
+establish and compare a separate full-stream manifest before delivery.
 
 ## Security and trust boundary
 
@@ -73,9 +80,9 @@ APIs remain source compatible.
 ### Positive
 
 - A host can resume after its last acknowledged record without replaying that
-  record when the provider stream is unchanged.
-- File replacement, truncation, framing changes, and prefix mutation are detected
-  before a later record is delivered.
+  record when the provider prefix is unchanged.
+- File replacement, truncation at or before the checkpoint, framing changes, and
+  prefix mutation are detected before a later record is delivered.
 - Checkpoints are serializable plain data and do not require PostgreSQL schema
   changes or another CWL service.
 - Chunk boundaries do not affect checkpoint identity.
@@ -87,11 +94,13 @@ APIs remain source compatible.
 - The host remains responsible for durable checkpoint storage and atomic sink
   coordination.
 - An unkeyed digest cannot authenticate an adversarial checkpoint store.
+- Successful checkpoint reproduction does not attest an unseen suffix after the
+  acknowledged record.
 
 ## Alternatives considered
 
 - **Record number only:** rejected because it cannot detect replacement,
-  truncation, blank-line changes, or content mutation.
+  truncation before the record, blank-line changes, or content mutation.
 - **Provider file identifier only:** rejected because providers may preserve an
   identifier while content changes and because it does not bind the acknowledged
   record position.
@@ -104,13 +113,17 @@ APIs remain source compatible.
 - **HMAC or signature:** rejected as a package default because the package does
   not own a checkpoint-signing key or provider attestation contract. A host may
   wrap the serialized checkpoint in its own authenticated envelope.
+- **Full-stream manifest before delivery:** deferred because it requires a second
+  complete pass or provider-owned stable digest and changes time-to-first-record.
+  Hosts needing suffix immutability may add this stronger boundary externally.
 
 ## Verification
 
 Deterministic tests prove chunk independence, result-before-error ordering,
 resume without acknowledged-record replay, final-checkpoint completion,
-result-prefix binding for error-file checkpoints, mutation and truncation failure
-before delivery, changed file identity rejection, strict non-coercive local
-validation before credentials or network access, exact response cleanup, newline
-and blank-line framing sensitivity, Python 3.10/3.12/3.14 compatibility, and 100%
+result-prefix binding for error-file checkpoints, mutation and truncation at or
+before the checkpoint before delivery, changed file identity rejection, strict
+non-coercive local validation before credentials or network access, exact
+response cleanup, newline and blank-line framing sensitivity, an explicit
+unseen-suffix limitation, Python 3.10/3.12/3.14 compatibility, and 100%
 production statement, branch, and public-docstring coverage.
