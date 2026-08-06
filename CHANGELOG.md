@@ -39,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded release-artifact directory enumeration to three entries, so a third
   unexpected artifact fails closed without materializing an unbounded output
   directory in verifier memory.
+- Made missing and extra release-artifact count failures filesystem-order
+  independent by omitting arbitrary sampled filenames from their diagnostics.
 - Refused direct and nested parent symlinks before writing reproducible-release
   manifests, preventing pull-request-controlled workspace paths from redirecting
   the temporary file or atomic replacement outside the evidence directory.
