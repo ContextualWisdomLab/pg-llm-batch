@@ -127,6 +127,48 @@ def test_verify_reproducible_release_stops_after_third_directory_entry(
         _verify(first, second)
 
 
+def test_extra_artifact_diagnostics_ignore_filesystem_iteration_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Emit one deterministic count failure for every bounded extra-file sample."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first)
+    second.mkdir()
+    sdist = second / SDIST
+    wheel = second / WHEEL
+    first_extra = second / "first-extra.txt"
+    second_extra = second / "second-extra.txt"
+    for entry in (sdist, wheel, first_extra, second_extra):
+        entry.write_bytes(b"artifact")
+
+    orders = iter(
+        (
+            (sdist, wheel, first_extra, second_extra),
+            (sdist, wheel, second_extra, first_extra),
+        )
+    )
+    original_iterdir = Path.iterdir
+
+    def reordered_iterdir(directory: Path):  # type: ignore[no-untyped-def]
+        if directory != second:
+            yield from original_iterdir(directory)
+            return
+        yield from next(orders)
+
+    monkeypatch.setattr(Path, "iterdir", reordered_iterdir)
+    expected = "release directory must contain exactly one wheel and one sdist"
+    messages: list[str] = []
+
+    for _ in range(2):
+        with pytest.raises(ReleaseEvidenceError) as raised:
+            _verify(first, second)
+        messages.append(str(raised.value))
+
+    assert messages == [expected, expected]
+
+
 def test_verify_reproducible_release_rejects_symlinked_artifact(tmp_path: Path) -> None:
     first = tmp_path / "first"
     second = tmp_path / "second"
