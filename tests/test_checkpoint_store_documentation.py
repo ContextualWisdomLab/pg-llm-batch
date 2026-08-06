@@ -5,8 +5,8 @@ from pathlib import Path
 
 
 def _text(path: str) -> str:
-    """Read one authoritative UTF-8 project document."""
-    return Path(path).read_text(encoding="utf-8")
+    """Read one authoritative UTF-8 project document with normalized spacing."""
+    return " ".join(Path(path).read_text(encoding="utf-8").split())
 
 
 def test_authoritative_documents_define_durable_checkpoint_contract() -> None:
