@@ -174,3 +174,23 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Maintain 100% production statement, branch, and public-docstring coverage with
   deterministic unit, concurrency, migration, rollback, integration, and
   documentation tests.
+
+## OpenTelemetry checkpoint signals
+
+- Keep `OpenTelemetryCheckpointStore` opt-in and dependency-injected. The package
+  must not configure a global tracer provider, meter provider, sampler,
+  processor, exporter, collector, or host resource.
+- Emit only fixed operation names and finite low-cardinality `error.type`
+  classifications. Use `record_exception=False` and
+  `set_status_on_exception=False` because durable checkpoint exceptions may
+  retain protected structured details.
+- Never add tenant, consumer, batch, endpoint, file, digest, cursor, DSN,
+  provider payload, exception message, or dynamic exception-class values to
+  package-owned spans or metrics.
+- Treat tracing, metric, and clock failures as best-effort observer failures.
+  They must never alter checkpoint return values, exception identity,
+  compare-and-swap behavior, transaction ownership, commit, or rollback.
+- Keep counter and seconds-based duration histogram behavior deterministic and
+  maintain 100% production statement, branch, and public-docstring coverage for
+  success, conflict, validation, internal-error, caller-transaction,
+  confidentiality, and observer-failure paths.
