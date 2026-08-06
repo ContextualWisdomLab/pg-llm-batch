@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections import deque
 from typing import Any
@@ -189,6 +190,45 @@ async def test_context_managed_records_close_active_response_after_early_exit():
             assert record.record == {"id": 1}
             assert response.exit_count == 0
             break
+
+    assert response.exit_count == 1
+
+
+async def test_explicit_outer_close_closes_nested_response_exactly_once():
+    """Closing the public iterator owns and closes its nested file iterator."""
+    client, response = client_and_response_for_file([b'{"id":1}\n{"id":2}\n'])
+    records = client.iter_batch_records("batch-1", "default")
+
+    assert (await anext(records)).record == {"id": 1}
+    assert response.exit_count == 0
+    await records.aclose()
+    assert response.exit_count == 1
+    await records.aclose()
+    assert response.exit_count == 1
+
+
+async def test_context_managed_records_preserve_consumer_exception_and_close():
+    """Consumer failures propagate unchanged while the active response closes."""
+    client, response = client_and_response_for_file([b'{"id":1}\n{"id":2}\n'])
+    consumer_error = RuntimeError("consumer failed")
+
+    with pytest.raises(RuntimeError) as exc_info:
+        async with client.open_batch_records("batch-1", "default") as records:
+            async for _record in records:
+                raise consumer_error
+
+    assert exc_info.value is consumer_error
+    assert response.exit_count == 1
+
+
+async def test_context_managed_records_preserve_cancellation_and_close():
+    """Cancellation propagates while deterministic cleanup closes the response."""
+    client, response = client_and_response_for_file([b'{"id":1}\n{"id":2}\n'])
+
+    with pytest.raises(asyncio.CancelledError):
+        async with client.open_batch_records("batch-1", "default") as records:
+            async for _record in records:
+                raise asyncio.CancelledError
 
     assert response.exit_count == 1
 
