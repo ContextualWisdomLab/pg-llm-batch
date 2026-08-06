@@ -33,6 +33,13 @@ streaming contract therefore also needs explicit lifecycle ownership for early
 exit, cancellation, and exception paths rather than relying on nondeterministic
 asynchronous-generator finalization.
 
+An HTTP `GET` is idempotent at the protocol request boundary, but replaying it
+after a response body has been partially delivered is not idempotent at the
+application-record boundary. Retrying a provider-file request after one or more
+records have been yielded can duplicate durable work and can violate Python's
+asynchronous-context-manager protocol while handling the original body error.
+Retry eligibility must therefore end before response handoff.
+
 ## Decision
 
 Add `StreamingBatchAPIClient`, a source-compatible subclass of
@@ -60,10 +67,13 @@ Add `StreamingBatchAPIClient`, a source-compatible subclass of
 10. cap the combined number of output and error records before yielding the
     record that exceeds the limit;
 11. expose only bounded, body-free metadata without provider identifiers or
-    record content in parser diagnostics or retained exception links; and
+    record content in parser diagnostics or retained exception links;
 12. explicitly close each nested provider-file iterator and provide
     `open_batch_records()` as the supported context-managed owner for consumers
-    that may stop before exhaustion.
+    that may stop before exhaustion; and
+13. retry request acquisition and retryable HTTP statuses only before response
+    handoff. After handoff, translate payload or response-close transport failure
+    once, close the active response, and never reopen the file or replay records.
 
 The aggregate `download_results()` API remains unchanged. Streaming is explicit
 because it changes the caller contract from one returned aggregate to an async
@@ -95,6 +105,10 @@ the returned iterator.
 - Decoder failures are translated after the active exception handler exits, so
   exported sanitized errors do not retain provider-controlled bytes or text in
   `__cause__` or `__context__`.
+- Post-handoff transport failures are not retried. This trades transparent
+  continuation for deterministic at-most-once record delivery within one
+  iterator; a host may start a new iterator only through its own durable
+  idempotency and reconciliation policy.
 - Existing OpenTelemetry operation wrappers do not implicitly instrument this new
   iterator. Consumer telemetry must remain low-cardinality and payload-free.
 - Version `0.1.0` is unchanged; this decision does not authorize publication.
@@ -129,6 +143,13 @@ non-empty and within the requested ceiling before copying it into package-owned
 line buffering. The checks do not control memory already allocated inside the
 adapter, but they preserve the package boundary and guarantee forward byte
 progress for yielded chunks.
+
+### Retry provider-file GET after partial body delivery
+
+Rejected because protocol-level idempotency does not make already-yielded
+application records idempotent. Restarting from byte zero can duplicate records,
+conflict with durable consumers, and make an asynchronous context manager attempt
+a second yield while handling the first body's exception.
 
 ### Rely on bare-loop asynchronous-generator cleanup
 

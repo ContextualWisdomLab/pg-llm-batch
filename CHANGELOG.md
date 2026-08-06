@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stopped idempotent GET retries at response handoff so post-handoff payload or
+  response-close failures close once and cannot reopen provider files, duplicate
+  already-yielded records, or violate the asynchronous-context-manager protocol.
 - Closed active provider-file responses deterministically after context-managed
   early exits, explicitly closed nested asynchronous generators, rejected
   zero-progress empty adapter chunks, and removed provider-controlled decoder

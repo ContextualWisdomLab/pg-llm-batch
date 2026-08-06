@@ -28,7 +28,8 @@ core and relicensed under Apache-2.0. See [`NOTICE`](NOTICE) for provenance.
 - **Incremental large-result retrieval.** An opt-in async iterator bounds one
   physical JSONL line and one decoded record instead of retaining the complete
   provider file and parsed record list. A separate batch-wide physical-line
-  ceiling counts blank lines across result and error files before parsing.
+  ceiling counts blank lines across result and error files before parsing, and
+  post-handoff transport failures never restart the file or replay records.
 - **Embeddable seams.** Credential resolution, lifecycle recording, ordering,
   and telemetry can be supplied by `naruon`, `contextual-orchestrator`, or an
   independent host without making those services mandatory.
@@ -329,8 +330,11 @@ Provider `GET` operations use up to three total attempts for `408`, `429`,
 `502`, `503`, and `504` and for supported transport failures. Bounded RFC 9110
 `Retry-After` delta-seconds or HTTP dates are honored. Malformed guidance uses
 equal-jitter exponential fallback; valid guidance above the configured maximum
-is refused. Side-effecting upload, creation, and cancellation `POST` operations
-are not retried automatically.
+is refused. Retry eligibility ends before a response is handed to the body
+consumer. A payload or response-close failure after handoff closes once and is
+not retried, because restarting from byte zero could duplicate records already
+delivered to the application. Side-effecting upload, creation, and cancellation
+`POST` operations remain single-attempt.
 
 ## OpenTelemetry
 

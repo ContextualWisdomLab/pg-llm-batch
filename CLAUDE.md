@@ -57,6 +57,10 @@
 - Inherit and preserve credential lookup, HTTPS URL validation, disabled
   redirects, bounded idempotent GET retry, timeouts, provider identifier
   validation, and decoded-byte limits.
+- Finish request-acquisition and retryable-status decisions before response
+  handoff. Once body iteration starts, a transport or response-close failure
+  closes the active response exactly once and must never reopen the file or
+  duplicate records already yielded.
 - Check the final provider-file HTTP status before consuming its body. Keep
   failure diagnostics body-free and free of credentials, URLs, identifiers,
   record data, and retained decoder exception payloads.
@@ -84,5 +88,6 @@
 - Maintain 100% production statement, branch, and public-docstring coverage with
   deterministic split-chunk, invalid-stream, zero-progress, invalid-encoding,
   malformed-JSON, exception-sanitization, early-close, nested-close,
-  record-limit, byte-line-limit, batch-wide physical-line-limit, download-limit,
+  post-handoff payload and close failure, no-replay, record-limit,
+  byte-line-limit, batch-wide physical-line-limit, download-limit,
   compatibility, and error tests.

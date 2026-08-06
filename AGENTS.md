@@ -70,6 +70,10 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Preserve inherited credentials, HTTPS validation, disabled redirects, bounded
   idempotent GET retries, request timeouts, identifier validation, and total
   decoded-byte limits.
+- End retry eligibility before response handoff. After body iteration begins, a
+  transport or response-close failure must close the active response exactly
+  once, raise bounded body-free diagnostics, and never reopen the file or replay
+  records already yielded to the caller.
 - Reject non-success provider-file responses before body consumption. Never put
   provider bodies, record contents, URLs, credentials, or identifiers into
   diagnostics, telemetry, or retained exception cause/context links.
@@ -95,8 +99,8 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   use by collecting every record.
 - Maintain 100% production statement, branch, and public-docstring coverage with
   deterministic split-chunk, malformed-input, byte-limit, record-limit,
-  physical-line-limit, compatibility, cleanup, cancellation, and body-free error
-  tests.
+  physical-line-limit, compatibility, cleanup, cancellation, post-handoff
+  transport, no-replay, and body-free error tests.
 - Update README, architecture, ADR, operator documentation, doctoring, and
   CHANGELOG whenever streaming resource, ordering, lifecycle, validation, or
   compatibility contracts change.

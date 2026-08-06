@@ -41,6 +41,9 @@ failure modes include:
 - redirect-based destination changes or unsafe provider identifiers altering the
   request boundary;
 - non-success response bodies being read into memory or leaked through errors;
+- a transport failure after response handoff causing an idempotent GET retry from
+  byte zero, duplicate already-yielded records, or a second context-manager yield
+  while handling the first body exception;
 - an early consumer loop exit retaining an active HTTP response because Python's
   asynchronous iteration protocol does not automatically call `aclose()` on
   `break`;
@@ -58,6 +61,7 @@ failure modes include:
 | One batch's physical lines | 100,000 lines | batch-wide before parsing, shared by result and error files | fail closed with file line, batch count, and configured limit |
 | One batch iterator | 100,000 objects | before yielding the first excessive record | fail closed with count and configured limit |
 | One HTTP stream chunk | 64 KiB | requested and observed `iter_chunked` size | reject absent, empty, non-byte, or oversized chunks |
+| Provider-file retry handoff | one response body | before yielding the response to a body consumer | after handoff close once, fail once, never restart or replay |
 
 Each provider file receives an independent total-download budget. The
 `max_jsonl_physical_lines` and record budgets are combined across the
@@ -81,6 +85,10 @@ record release, not fixed total process memory.
 - Credentials and gateway URL policy are inherited from `BatchAPIClient`.
 - Redirects remain disabled and provider-file GET is the only retried transport
   operation in this path.
+- Request acquisition and retryable response-status handling finish before
+  response handoff. A payload or response-close transport failure after handoff
+  closes the active response once, becomes a bounded body-free `GatewayError`,
+  performs no retry sleep, and does not reopen the file or replay records.
 - A final non-200 response is rejected before its content stream is consumed.
 - Custom adapters must expose callable `content.iter_chunked`; there is no
   whole-body `json()` or `text()` fallback.
@@ -134,9 +142,15 @@ The non-live suite proves:
 15. non-success responses are rejected without consuming their body;
 16. the final CR-only blank-line path exits without producing a record;
 17. a context-managed consumer that breaks after one record closes the active
-    provider response exactly once; and
+    provider response exactly once;
 18. nested provider-file iterators are explicitly closed when the outer iterator
-    is closed.
+    is closed;
+19. a post-handoff payload failure performs one GET, zero retry sleeps, one
+    response close, and one bounded public failure;
+20. a response-close transport failure after successful handoff follows the same
+    no-retry boundary; and
+21. a streaming body that yields one valid record and then fails never restarts
+    from byte zero or duplicates that record.
 
 Protected CI additionally requires Python 3.10, 3.12, and 3.14 unit success,
 compilation, Ruff, 100% production statements and branches, 100% public
@@ -161,6 +175,11 @@ unbounded list.
 Consumers that can stop before exhausting the stream must use
 `open_batch_records()` as an `async with` boundary or otherwise call `aclose()`
 explicitly. A bare `async for` break is not a deterministic cleanup contract.
+
+A post-handoff transport failure is terminal for the current iterator. Operators
+must not transparently restart the provider file unless a host-owned durable
+checkpoint and idempotency policy can prove that already-consumed records will
+not be duplicated.
 
 A host may impose stricter limits but must not weaken the package validation,
 enable redirects, add whole-body fallbacks, accept zero-progress adapter chunks,

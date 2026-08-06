@@ -55,6 +55,9 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
   could otherwise sustain an unbounded adapter loop without reaching a byte cap.
 - Redirects remain disabled, provider identifiers remain validated before URL
   construction, and only idempotent GET transport operations use bounded retry.
+  Retry eligibility ends before the response is handed to the body consumer.
+  Once body iteration begins, payload and response-close failures close the
+  active response once and do not reopen the file or replay yielded records.
 - Every nonblank line must be strict UTF-8 and decode to one interoperable JSON
   object. Arrays, scalars, non-finite number extensions, duplicate object names,
   malformed JSON, and invalid UTF-8 are rejected with body-free diagnostics.
@@ -72,13 +75,18 @@ use and must size its own process accordingly. Cancellation closes active
 response contexts through generator cleanup; planned early exit should use
 `open_batch_records()` for deterministic closure.
 
+A post-handoff transport failure is terminal for the current iterator. Starting
+a new iterator reads the provider file from byte zero, so a host must use its own
+durable idempotency and checkpoint policy before attempting application-level
+recovery.
+
 ## Compatibility and observability
 
 The streaming client subclasses `BatchAPIClient`, so credentials, gateway URL
-validation, timeouts, retry policy, and session lifecycle remain identical. It
-does not require PostgreSQL schema changes or another CWL service. Embedding hosts
-may consume each record into their own durable queue, tenant-qualified store, or
-bounded transformation pipeline.
+validation, timeouts, pre-handoff retry policy, and session lifecycle remain
+identical. It does not require PostgreSQL schema changes or another CWL service.
+Embedding hosts may consume each record into their own durable queue,
+tenant-qualified store, or bounded transformation pipeline.
 
 The existing OpenTelemetry subclass does not automatically wrap this opt-in
 iterator. Hosts that need per-record pipeline telemetry should instrument the

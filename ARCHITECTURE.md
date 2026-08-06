@@ -121,6 +121,14 @@ it the supported API when a consumer may stop early. A bare `async for` break
 does not call `aclose()` and is not a deterministic HTTP-response release
 mechanism.
 
+Transport retry eligibility ends before the response is handed to a body
+consumer. Request acquisition and retryable HTTP-status decisions may retry only
+while no response body has been exposed. Once body iteration begins, a payload
+or response-close transport failure closes that response once, becomes a bounded
+body-free `GatewayError`, and never reopens the provider file or replays records
+already yielded. This boundary prevents an idempotent request retry from becoming
+non-idempotent application delivery after partial consumption.
+
 This boundary does not provide durable downstream backpressure. Embedding hosts
 own record persistence, queue capacity, cancellation, explicit iterator
 lifecycle, and consumer memory. A host that accumulates every yielded record
@@ -139,8 +147,8 @@ publication authority, or an integrated-release attestation.
 
 Streaming retrieval also remains standalone. Host modules may persist each
 `BatchResultRecord` into their own tenant-qualified queue or database, but must
-preserve the package's file ordering, resource limits, and deterministic cleanup
-contract or define and test a stricter local boundary.
+preserve the package's file ordering, resource limits, retry-handoff boundary,
+and deterministic cleanup contract or define and test a stricter local boundary.
 
 ## Verification boundary
 
@@ -161,6 +169,7 @@ behavior, descriptor capability failure, Python compatibility, and 100%
 production statement and branch coverage. Streaming tests cover split chunks,
 CRLF and final-line parsing, invalid and zero-progress streams, encoding and JSON
 failures, exception-context sanitization, nested and early-close lifecycle,
+post-handoff payload and response-close failures, no-retry/no-replay behavior,
 non-object records, non-success responses, total-download, byte-line, combined
 record, and batch-wide physical line limits across result and error files,
 including blank lines, deterministic result/error ordering, and 100% production
