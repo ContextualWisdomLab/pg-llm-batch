@@ -33,6 +33,21 @@ logs.
 The workflow preserves only `release-manifest.json` for 14 days. Uploaded
 artifacts are review evidence and are not authorized release inputs.
 
+## Stacked pull request verification
+
+For a stacked pull request, exact-head release acceptance proves only that the
+head branch produces reproducible artifacts. Repository integration evidence
+must also come from a fresh GitHub-generated merge commit that combines that
+exact head with the current stacked base. A workflow result generated against a
+predecessor base is stale-base evidence even when the head SHA has not changed.
+
+After changing or advancing the prerequisite branch, synchronize the dependent
+pull request and confirm the new merge commit names the expected head and base
+before accepting CI, security, coverage, packaging, or container results. Once
+the prerequisite merges, retarget the dependent pull request to integrated main
+and rerun every required gate. Never reuse a successful stacked-base check as
+final main-branch merge evidence.
+
 ## Operator verification
 
 1. Open the exact-head **Release Acceptance / Reproducible wheel and sdist**
