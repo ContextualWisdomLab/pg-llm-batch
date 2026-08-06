@@ -4,7 +4,8 @@
 `PostgresBatchResultCheckpointStore` or a compatible host-owned checkpoint
 store. It emits one span, one completed-operation count, and one duration
 measurement for each public load or save call. It does not install or configure
-OpenTelemetry.
+OpenTelemetry and does not assume what storage technology a compatible store
+uses.
 
 ## Host setup
 
@@ -56,7 +57,6 @@ Metrics:
 
 Fixed attributes:
 
-- `db.system.name=postgresql` on spans
 - `pg_llm_batch.checkpoint.operation=load|save`
 - `pg_llm_batch.checkpoint.transaction_owner=package|caller`
 - `pg_llm_batch.checkpoint.outcome=success|conflict|validation_error|error`
@@ -64,6 +64,13 @@ Fixed attributes:
 
 Success omits `error.type`. The duration is measured with a monotonic clock and
 is never negative.
+
+Package operation spans are deliberately storage-agnostic and do not emit
+`db.system.name`. They describe the checkpoint abstraction, not a database client
+call. A host that needs PostgreSQL client spans should enable its own database
+instrumentation at the actual database-client boundary, where OpenTelemetry
+database semantic conventions can be applied truthfully. This preserves the same
+wrapper contract for non-PostgreSQL compatible stores.
 
 ## Confidentiality and cardinality
 
