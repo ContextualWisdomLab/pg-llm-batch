@@ -62,3 +62,28 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Update architecture, ADR, doctoring, CHANGELOG, and deterministic security
   tests whenever artifact identity, path traversal, concurrency, portability,
   or rollback semantics change.
+
+## Provider result streaming contract
+
+- Keep `BatchAPIClient.download_results()` source compatible and make incremental
+  retrieval an explicit opt-in through `StreamingBatchAPIClient`.
+- Preserve inherited credentials, HTTPS validation, disabled redirects, bounded
+  idempotent GET retries, request timeouts, identifier validation, and total
+  decoded-byte limits.
+- Reject non-success provider-file responses before body consumption. Never put
+  provider bodies, record contents, URLs, credentials, or identifiers into
+  diagnostics or telemetry.
+- Consume only bounded byte chunks; enforce total bytes, one physical JSONL line,
+  and combined output-plus-error record count before yielding excessive data.
+- Decode each nonblank line as strict UTF-8 and require one JSON object. Preserve
+  deterministic output-then-error ordering, CRLF support, and final lines without
+  a newline.
+- Keep library buffering bounded to one line and one decoded record. Document
+  that downstream consumers own backpressure and can recreate aggregate memory
+  use by collecting every record.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  deterministic split-chunk, malformed-input, limit, compatibility, and
+  body-free error tests.
+- Update README, architecture, ADR, operator documentation, doctoring, and
+  CHANGELOG whenever streaming resource, ordering, validation, or compatibility
+  contracts change.
