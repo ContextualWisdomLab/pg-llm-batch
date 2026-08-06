@@ -4,10 +4,10 @@
 
 This doctoring record supports ADR 0005 and the opt-in
 `StreamingBatchAPIClient`. It documents the claim that library-owned retrieval
-memory is bounded independently of a provider file's permitted total size. The
-claim is limited to the package-owned HTTP and JSONL parsing path; downstream
-queues, persistence adapters, transformations, and callers remain separate trust
-and resource boundaries.
+memory and parser work are bounded independently of a provider file's permitted
+total size. The claim is limited to the package-owned HTTP and JSONL parsing
+path; downstream queues, persistence adapters, transformations, and callers
+remain separate trust and resource boundaries.
 
 The aggregate `BatchAPIClient.download_results()` API is intentionally retained
 for source compatibility. It is not represented as a constant-memory interface.
@@ -26,6 +26,8 @@ failure modes include:
 - a policy-compliant file expanding into an unbounded decoded string and Python
   object list;
 - a newline-free record growing without a line-level cap;
+- a large sequence of blank physical lines consuming parser-loop CPU without
+  consuming the emitted-record budget;
 - chunk boundaries splitting UTF-8 code units or JSON tokens;
 - a custom adapter ignoring the requested chunk ceiling;
 - a custom adapter yielding an unbounded sequence of empty chunks without making
@@ -42,7 +44,8 @@ failure modes include:
 - an early consumer loop exit retaining an active HTTP response because Python's
   asynchronous iteration protocol does not automatically call `aclose()` on
   `break`;
-- result and error files jointly exceeding a host's expected record budget; and
+- result and error files jointly exceeding a host's expected line or record
+  budget; and
 - a caller collecting every yielded record and recreating aggregate memory use.
 
 ## Normative resource contract
@@ -52,20 +55,24 @@ failure modes include:
 | Control-plane JSON response | 1 MiB | inherited bounded status reader | fail closed before object acceptance |
 | One provider result or error file | 128 MiB decoded bytes | declared and observed byte accounting | fail closed with body-free byte counts |
 | One physical JSONL line | 1 MiB | before UTF-8 decoding and JSON parsing | fail closed with line number and bounded counts |
+| One batch's physical lines | 100,000 lines | batch-wide before parsing, shared by result and error files | fail closed with file line, batch count, and configured limit |
 | One batch iterator | 100,000 objects | before yielding the first excessive record | fail closed with count and configured limit |
 | One HTTP stream chunk | 64 KiB | requested and observed `iter_chunked` size | reject absent, empty, non-byte, or oversized chunks |
 
-Each provider file receives an independent total-download budget. The record
-budget is combined across the deterministic output-then-error sequence. Blank
-physical lines do not consume the record budget. Limits are strict positive
-integers; booleans and coercible strings are rejected rather than normalized.
+Each provider file receives an independent total-download budget. The
+`max_jsonl_physical_lines` and record budgets are combined across the
+deterministic output-then-error sequence. Every newline-terminated line and any
+final unterminated line consumes the physical-line budget before decoding;
+blank physical lines do not consume the record budget but do consume the line
+budget. Limits are strict positive integers; booleans and coercible strings are
+rejected rather than normalized.
 
 The implementation may temporarily hold one bounded transport chunk, one bounded
 line, one decoded text value, and one decoded JSON object. Python allocator
 behavior, JSON object expansion, and a caller's retained references prevent a
 claim of an exact resident-set-size ceiling. The defensible claim is bounded
-package-owned input buffering and incremental record release, not fixed total
-process memory.
+package-owned input buffering, bounded physical-line processing, and incremental
+record release, not fixed total process memory.
 
 ## Validation, lifecycle, and confidentiality controls
 
@@ -81,6 +88,9 @@ process memory.
   accounted with `nbytes`, every observed chunk must be non-empty, and every
   observed chunk must remain within the requested 64 KiB ceiling before
   package-owned line buffering.
+- A per-iterator budget object counts physical lines across both files before
+  any UTF-8 or JSON operation. The counter is local to one iterator and is not
+  shared between concurrent batch consumers.
 - UTF-8 decoding is strict, consistent with JSON interoperability requirements.
 - Every nonblank line must decode to one JSON object. Arrays, scalar JSON values,
   Python-compatible non-finite number extensions, and duplicate object names fail
@@ -109,21 +119,23 @@ The non-live suite proves:
 6. incomplete batches and terminal batches without file identifiers fail closed;
 7. record limits apply to the combined output and error sequence before the
    excessive record is yielded;
-8. both unterminated and newline-terminated oversized lines fail before JSON
+8. the physical-line budget is shared across output and error files and counts
+   blank lines before parsing;
+9. both unterminated and newline-terminated oversized lines fail before JSON
    admission;
-9. declared and observed file byte limits are independently enforced;
-10. missing bounded streams, non-byte chunks, empty chunks, and chunks larger
+10. declared and observed file byte limits are independently enforced;
+11. missing bounded streams, non-byte chunks, empty chunks, and chunks larger
     than the requested transport ceiling fail closed;
-11. invalid UTF-8, malformed JSON, non-finite numbers, duplicate object names,
+12. invalid UTF-8, malformed JSON, non-finite numbers, duplicate object names,
     and non-object JSON values fail closed;
-12. sanitized invalid-UTF-8 and malformed-JSON errors expose no decoder cause or
+13. sanitized invalid-UTF-8 and malformed-JSON errors expose no decoder cause or
     context object;
-13. parser diagnostics do not disclose valid provider batch identifiers;
-14. non-success responses are rejected without consuming their body;
-15. the final CR-only blank-line path exits without producing a record;
-16. a context-managed consumer that breaks after one record closes the active
+14. parser diagnostics do not disclose valid provider batch identifiers;
+15. non-success responses are rejected without consuming their body;
+16. the final CR-only blank-line path exits without producing a record;
+17. a context-managed consumer that breaks after one record closes the active
     provider response exactly once; and
-17. nested provider-file iterators are explicitly closed when the outer iterator
+18. nested provider-file iterators are explicitly closed when the outer iterator
     is closed.
 
 Protected CI additionally requires Python 3.10, 3.12, and 3.14 unit success,
@@ -137,11 +149,14 @@ No live LLM is material to these deterministic transport and parsing claims, so
 
 ## Operational guidance
 
-Operators should select limits from an explicit worker memory budget and the
-largest legitimate provider record. The line limit must accommodate one complete
-JSONL object, not merely expected model text. Record consumers should persist or
-transform each record promptly, apply bounded queues, propagate cancellation,
-and avoid collecting the iterator into an unbounded list.
+Operators should select limits from an explicit worker memory and CPU budget and
+the largest legitimate provider record. The line-byte limit must accommodate one
+complete JSONL object, not merely expected model text. The physical-line limit
+must cover the expected sum of result and error lines, including legitimate blank
+lines, while remaining low enough to prevent newline-amplification workloads.
+Record consumers should persist or transform each record promptly, apply bounded
+queues, propagate cancellation, and avoid collecting the iterator into an
+unbounded list.
 
 Consumers that can stop before exhausting the stream must use
 `open_batch_records()` as an `async with` boundary or otherwise call `aclose()`
@@ -163,9 +178,9 @@ contract.
 Rollback consists of ceasing use of `StreamingBatchAPIClient`; no database
 migration, release-state mutation, or provider-side change is required. Existing
 `BatchAPIClient.download_results()` callers retain their aggregate return type.
-Removing the public streaming exports or the deterministic context-manager method
-after release would be a compatibility change and requires normal
-semantic-versioning review.
+Removing the public streaming exports, deterministic context-manager method, or
+accepted constructor limits after release would be a compatibility change and
+requires normal semantic-versioning review.
 
 ## Residual risks and non-claims
 
@@ -184,9 +199,9 @@ semantic-versioning review.
 - OpenTelemetry operation wrappers do not automatically wrap per-record
   iteration. Consumer instrumentation must remain low-cardinality and
   payload-free.
-- A malicious provider can consume bounded CPU through many small valid records;
-  the total byte and record limits bound the accepted work but do not constitute
-  a real-time execution deadline.
+- A malicious provider can consume bounded CPU through many small valid or blank
+  lines; the total byte, physical-line, and record limits bound accepted work but
+  do not constitute a real-time execution deadline.
 
 ## References
 
@@ -196,6 +211,12 @@ https://doi.org/10.17487/RFC8259
 
 Internet Engineering Task Force. (2022). *HTTP semantics* (RFC 9110; STD 97).
 https://doi.org/10.17487/RFC9110
+
+MITRE Corporation. (2026). *CWE-400: Uncontrolled resource consumption*
+(CWE version 4.20). https://cwe.mitre.org/data/definitions/400.html
+
+OWASP Foundation. (2023). *API4:2023 unrestricted resource consumption*.
+https://owasp.org/API-Security/editions/2023/en/0xa4-unrestricted-resource-consumption/
 
 aiohttp contributors. (2026). *Streaming API: StreamReader.iter_chunked*.
 https://docs.aiohttp.org/en/stable/streams.html
