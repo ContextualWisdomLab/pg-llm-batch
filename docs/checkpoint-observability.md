@@ -63,7 +63,13 @@ Fixed attributes:
 - `error.type=checkpoint_conflict|validation_error|internal_error` on failures
 
 Success omits `error.type`. The duration is measured with a monotonic clock and
-is never negative.
+is never negative. Failed checkpoint spans explicitly set OpenTelemetry status
+Error without a description, while successful checkpoint spans leave status
+Unset. This keeps failure discovery interoperable without copying exception
+messages into span status descriptions. The wrapper resolves the host
+OpenTelemetry API's `StatusCode.ERROR` only when that optional API is available;
+if status resolution or mutation fails, the checkpoint result or exact
+application exception remains authoritative.
 
 Package operation spans are deliberately storage-agnostic and do not emit
 `db.system.name`. They describe the checkpoint abstraction, not a database client
@@ -83,15 +89,17 @@ risk. Use access-controlled logs or a separately reviewed audit store when an
 operator must reconcile a specific durable identity.
 
 Automatic exception recording and automatic status-on-exception are disabled.
-The wrapper supplies `(None, None, None)` when closing the span context so the
-application exception is not handed to observer code through context-manager
-arguments.
+The wrapper instead applies the fixed Error status explicitly, without a status
+description, after classifying a failed operation. It supplies `(None, None,
+None)` when closing the span context so the application exception is not handed
+to observer code through context-manager arguments.
 
 ## Failure behavior
 
 Telemetry is best effort. Ordinary tracer, meter, span, exporter-surface, clock,
-and telemetry-originated cancellation failures are contained. They do not change
-the checkpoint result, exact exception object, compare-and-swap decision,
+optional OpenTelemetry status-code resolution, status mutation, and
+telemetry-originated cancellation failures are contained. They do not change the
+checkpoint result, exact exception object, compare-and-swap decision,
 transaction owner, commit, or rollback behavior. Non-cancellation process-control
 exceptions remain outside this observer-failure guarantee.
 
