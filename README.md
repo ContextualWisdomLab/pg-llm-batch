@@ -27,7 +27,8 @@ core and relicensed under Apache-2.0. See [`NOTICE`](NOTICE) for provenance.
   limits and fail-closed validation.
 - **Incremental large-result retrieval.** An opt-in async iterator bounds one
   physical JSONL line and one decoded record instead of retaining the complete
-  provider file and parsed record list.
+  provider file and parsed record list. A separate batch-wide physical-line
+  ceiling counts blank lines across result and error files before parsing.
 - **Embeddable seams.** Credential resolution, lifecycle recording, ordering,
   and telemetry can be supplied by `naruon`, `contextual-orchestrator`, or an
   independent host without making those services mandatory.
@@ -296,6 +297,7 @@ async with StreamingBatchAPIClient(
     max_download_bytes=128 * 1024 * 1024,
     max_jsonl_line_bytes=1 * 1024 * 1024,
     max_jsonl_records=100_000,
+    max_jsonl_physical_lines=100_000,
 ) as client:
     async with client.open_batch_records("batch-123", "default") as records:
         async for item in records:
@@ -312,12 +314,14 @@ not call `aclose()` merely because the loop uses `break`.
 The iterator reads output records before provider error records, accepts CRLF
 and final lines without a newline, skips blank lines, and requires every other
 line to be strict UTF-8 containing one JSON object. The per-file total byte cap,
-per-line byte cap, and combined result-plus-error record cap are enforced before
-excessive data is yielded. Empty, non-byte, and oversized adapter chunks fail
-closed, and sanitized parser exceptions do not retain provider bytes or text in
-cause/context links. Downstream persistence and backpressure remain host
-responsibilities; collecting every yielded record recreates aggregate memory
-use. See [`docs/result-streaming.md`](docs/result-streaming.md).
+per-line byte cap, batch-wide physical line cap, and combined result-plus-error
+record cap are enforced before excessive data is yielded. Result and error files
+share the physical-line budget, and every blank line consumes it even though no
+record is emitted. Empty, non-byte, and oversized adapter chunks fail closed, and
+sanitized parser exceptions do not retain provider bytes or text in cause/context
+links. Downstream persistence and backpressure remain host responsibilities;
+collecting every yielded record recreates aggregate memory use. See
+[`docs/result-streaming.md`](docs/result-streaming.md).
 
 ### Idempotent GET retries
 
