@@ -28,13 +28,20 @@ failure modes include:
 - a newline-free record growing without a line-level cap;
 - chunk boundaries splitting UTF-8 code units or JSON tokens;
 - a custom adapter ignoring the requested chunk ceiling;
+- a custom adapter yielding an unbounded sequence of empty chunks without making
+  byte progress;
 - missing, false, negative, or encoded-length metadata misleading a byte budget;
 - non-byte adapter chunks bypassing byte accounting;
 - malformed UTF-8, non-finite number extensions, duplicate object names, JSON
   arrays or scalars, or recursively pathological JSON entering durable workflows;
+- decoder exceptions retaining provider bytes or text through exported exception
+  causes or contexts;
 - redirect-based destination changes or unsafe provider identifiers altering the
   request boundary;
 - non-success response bodies being read into memory or leaked through errors;
+- an early consumer loop exit retaining an active HTTP response because Python's
+  asynchronous iteration protocol does not automatically call `aclose()` on
+  `break`;
 - result and error files jointly exceeding a host's expected record budget; and
 - a caller collecting every yielded record and recreating aggregate memory use.
 
@@ -46,7 +53,7 @@ failure modes include:
 | One provider result or error file | 128 MiB decoded bytes | declared and observed byte accounting | fail closed with body-free byte counts |
 | One physical JSONL line | 1 MiB | before UTF-8 decoding and JSON parsing | fail closed with line number and bounded counts |
 | One batch iterator | 100,000 objects | before yielding the first excessive record | fail closed with count and configured limit |
-| One HTTP stream chunk | 64 KiB | requested and observed `iter_chunked` size | reject absent, non-byte, or oversized chunks |
+| One HTTP stream chunk | 64 KiB | requested and observed `iter_chunked` size | reject absent, empty, non-byte, or oversized chunks |
 
 Each provider file receives an independent total-download budget. The record
 budget is combined across the deterministic output-then-error sequence. Blank
@@ -60,7 +67,7 @@ claim of an exact resident-set-size ceiling. The defensible claim is bounded
 package-owned input buffering and incremental record release, not fixed total
 process memory.
 
-## Validation and confidentiality controls
+## Validation, lifecycle, and confidentiality controls
 
 - Batch and file identifiers pass the established resource-identifier validator
   before URL construction.
@@ -71,15 +78,24 @@ process memory.
 - Custom adapters must expose callable `content.iter_chunked`; there is no
   whole-body `json()` or `text()` fallback.
 - Accepted chunks are `bytes`, `bytearray`, or `memoryview`; memory views are
-  accounted with `nbytes`, and every observed chunk must remain within the
-  requested 64 KiB ceiling before package-owned line buffering.
+  accounted with `nbytes`, every observed chunk must be non-empty, and every
+  observed chunk must remain within the requested 64 KiB ceiling before
+  package-owned line buffering.
 - UTF-8 decoding is strict, consistent with JSON interoperability requirements.
 - Every nonblank line must decode to one JSON object. Arrays, scalar JSON values,
   Python-compatible non-finite number extensions, and duplicate object names fail
   closed.
+- Sanitized parser errors are raised after leaving the decoder's active exception
+  handler, so exported `GatewayError` cause and context links do not retain the
+  provider-controlled decoder exception.
 - Diagnostics contain stable file classification, line/count/limit data, and
   bounded error types. They exclude provider bodies, record content, URLs,
   credentials, and provider identifiers.
+- `open_batch_records()` owns the outer async generator and closes it in `finally`.
+  The outer generator owns each nested provider-file generator through
+  `contextlib.aclosing`, so early context exit closes the active response exactly
+  once. Direct `iter_batch_records()` callers must exhaust or explicitly close
+  the iterator.
 
 ## Deterministic assurance evidence
 
@@ -96,13 +112,19 @@ The non-live suite proves:
 8. both unterminated and newline-terminated oversized lines fail before JSON
    admission;
 9. declared and observed file byte limits are independently enforced;
-10. missing bounded streams, non-byte chunks, and chunks larger than the
-    requested transport ceiling fail closed;
+10. missing bounded streams, non-byte chunks, empty chunks, and chunks larger
+    than the requested transport ceiling fail closed;
 11. invalid UTF-8, malformed JSON, non-finite numbers, duplicate object names,
     and non-object JSON values fail closed;
-12. parser diagnostics do not disclose valid provider batch identifiers;
-13. non-success responses are rejected without consuming their body; and
-14. the final CR-only blank-line path exits without producing a record.
+12. sanitized invalid-UTF-8 and malformed-JSON errors expose no decoder cause or
+    context object;
+13. parser diagnostics do not disclose valid provider batch identifiers;
+14. non-success responses are rejected without consuming their body;
+15. the final CR-only blank-line path exits without producing a record;
+16. a context-managed consumer that breaks after one record closes the active
+    provider response exactly once; and
+17. nested provider-file iterators are explicitly closed when the outer iterator
+    is closed.
 
 Protected CI additionally requires Python 3.10, 3.12, and 3.14 unit success,
 compilation, Ruff, 100% production statements and branches, 100% public
@@ -121,11 +143,15 @@ JSONL object, not merely expected model text. Record consumers should persist or
 transform each record promptly, apply bounded queues, propagate cancellation,
 and avoid collecting the iterator into an unbounded list.
 
+Consumers that can stop before exhausting the stream must use
+`open_batch_records()` as an `async with` boundary or otherwise call `aclose()`
+explicitly. A bare `async for` break is not a deterministic cleanup contract.
+
 A host may impose stricter limits but must not weaken the package validation,
-enable redirects, add whole-body fallbacks, or attach record content and provider
-identifiers to telemetry. Multi-tenant hosts should persist records under their
-own authenticated tenant identity; provider output is never an authorization
-source.
+enable redirects, add whole-body fallbacks, accept zero-progress adapter chunks,
+or attach record content and provider identifiers to telemetry. Multi-tenant
+hosts should persist records under their own authenticated tenant identity;
+provider output is never an authorization source.
 
 The opt-in iterator does not itself persist cursor position or provide exactly
 once downstream delivery. A consumer interrupted after processing some records
@@ -137,8 +163,9 @@ contract.
 Rollback consists of ceasing use of `StreamingBatchAPIClient`; no database
 migration, release-state mutation, or provider-side change is required. Existing
 `BatchAPIClient.download_results()` callers retain their aggregate return type.
-Removing the public streaming exports after release would be a compatibility
-change and requires normal semantic-versioning review.
+Removing the public streaming exports or the deterministic context-manager method
+after release would be a compatibility change and requires normal
+semantic-versioning review.
 
 ## Residual risks and non-claims
 
@@ -146,6 +173,8 @@ change and requires normal semantic-versioning review.
   line size.
 - A custom adapter has already allocated its returned chunk before the client can
   reject an oversized value; the package does not control adapter internals.
+- An adapter that never yields control is outside the byte-progress check and
+  remains bounded by the inherited request timeout where the adapter honors it.
 - Python runtime and dependency vulnerabilities remain governed by package and
   supply-chain controls.
 - Consumer-side buffering, persistence latency, retries, and idempotency are not
@@ -170,6 +199,9 @@ https://doi.org/10.17487/RFC9110
 
 aiohttp contributors. (2026). *Streaming API: StreamReader.iter_chunked*.
 https://docs.aiohttp.org/en/stable/streams.html
+
+Python Software Foundation. (2026). *Asynchronous generator-iterator methods*.
+https://docs.python.org/3/reference/expressions.html#asynchronous-generator-iterator-methods
 
 Yergeau, F. (2003). *UTF-8, a transformation format of ISO 10646* (RFC 3629;
 STD 63). Internet Engineering Task Force. https://doi.org/10.17487/RFC3629
