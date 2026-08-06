@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -123,3 +124,18 @@ async def test_resume_endpoint_identity_mismatch_fails_before_network():
 
     assert exc_info.value.field == "resume_after.endpoint_alias"
     assert session.calls == []
+
+
+def test_authoritative_docs_state_prefix_only_truncation_boundary():
+    """Authoritative contracts must not overclaim unseen-suffix detection."""
+    root = Path(__file__).resolve().parents[1]
+    paths = (
+        root / "docs/adr/0006-resumable-result-checkpoints.md",
+        root / "docs/doctoring/resumable-result-checkpoints.md",
+        root / "docs/result-streaming.md",
+    )
+
+    for path in paths:
+        normalized = " ".join(path.read_text(encoding="utf-8").split()).lower()
+        assert "strictly after the acknowledged checkpoint" in normalized
+        assert "full-stream manifest" in normalized
