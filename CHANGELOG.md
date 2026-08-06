@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Read-only exact-head release acceptance that builds one wheel and source
+  distribution twice from clean Git archives, proves byte-identical SHA-256
+  identity, records bounded canonical evidence, and keeps publication and
+  attestation authority separate.
 - Independent 1 MiB bounded-stream decoding for Files and Batches control-plane JSON before strict UTF-8 and object parsing.
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
   caller-invoked public Batch API client operations, with explicit tracer/meter
@@ -70,8 +74,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
-  explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
-  floor so built artifacts expose normalized legal metadata without warnings.
+  explicit `LICENSE` and `NOTICE` files, the `uv_build` backend, and exact
+  `uv`/`uv_build` 0.12.1 governed build pins so PEP 517 backend selection cannot
+  drift independently of reviewed source.
 - Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff
   patch updates; setup-uv cache pruning is explicit to preserve the previous
   bounded cache-cost policy.
