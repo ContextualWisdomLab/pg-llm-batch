@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 from collections import deque
-from typing import Any
+from typing import Any, AsyncIterator
 
 import aiohttp
 import pytest
 
 import pg_llm_batch.batch_api_client as batch_api_client_module
+from pg_llm_batch import BatchResultRecord, StreamingBatchAPIClient
 from pg_llm_batch.batch_api_client import BatchAPIClient, GatewayCredentials
 from pg_llm_batch.exceptions import GatewayError
 
@@ -32,6 +33,38 @@ class _ResponseContext:
     async def __aexit__(self, *_exc: Any) -> None:
         """Record closure of the fake response context."""
         self.exit_count += 1
+
+
+class _ClosingFailureResponse(_ResponseContext):
+    """Raise one transport failure while closing a handed-off response."""
+
+    async def __aexit__(self, *_exc: Any) -> None:
+        """Record closure and raise one deterministic transport failure."""
+        self.exit_count += 1
+        raise aiohttp.ClientPayloadError("response close failure")
+
+
+class _FailingChunkStream:
+    """Yield one record and then fail the active response body."""
+
+    def __init__(self) -> None:
+        self.requested_sizes: list[int] = []
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        """Yield one valid line before a deterministic payload failure."""
+        self.requested_sizes.append(size)
+        yield b'{"id":1}\n'
+        raise aiohttp.ClientPayloadError("mid-stream payload failure")
+
+
+class _FailingStreamingResponse(_ResponseContext):
+    """Response whose bounded content fails after one valid record."""
+
+    content_length = None
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.content = _FailingChunkStream()
 
 
 class _QueuedSession:
@@ -93,6 +126,109 @@ async def test_post_handoff_payload_failure_is_not_retried(
         "error_type": "ClientPayloadError",
         "timeout_seconds": client.request_timeout_seconds,
     }
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert len(session.calls) == 1
+    assert sleeps == []
+    assert first_response.enter_count == 1
+    assert first_response.exit_count == 1
+    assert second_response.enter_count == 0
+    assert second_response.exit_count == 0
+
+
+async def test_post_handoff_close_failure_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A response-close transport failure cannot reopen the handed-off GET."""
+    first_response = _ClosingFailureResponse()
+    second_response = _ResponseContext()
+    session = _QueuedSession([first_response, second_response])
+    client = BatchAPIClient(
+        "postgresql://unit",
+        _credentials,
+        max_retry_attempts=3,
+        retry_base_delay_seconds=0,
+        retry_max_delay_seconds=0,
+    )
+    client._session = session
+    sleeps: list[float] = []
+
+    async def _record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(batch_api_client_module.asyncio, "sleep", _record_sleep)
+
+    with pytest.raises(GatewayError, match="transport failed") as exc_info:
+        async with client._request(
+            "get",
+            "https://gw.example/v1/files/out-1/content",
+            operation="Result file download",
+            headers={"Authorization": "Bearer secret"},
+        ):
+            pass
+
+    assert exc_info.value.response_data == {
+        "error_type": "ClientPayloadError",
+        "timeout_seconds": client.request_timeout_seconds,
+    }
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert len(session.calls) == 1
+    assert sleeps == []
+    assert first_response.enter_count == 1
+    assert first_response.exit_count == 1
+    assert second_response.enter_count == 0
+    assert second_response.exit_count == 0
+
+
+async def test_streaming_payload_failure_never_restarts_or_duplicates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A mid-file payload failure closes once without restarting byte zero."""
+    first_response = _FailingStreamingResponse()
+    second_response = _FailingStreamingResponse()
+    session = _QueuedSession([first_response, second_response])
+    client = StreamingBatchAPIClient(
+        "postgresql://unit",
+        _credentials,
+        max_retry_attempts=3,
+        retry_base_delay_seconds=0,
+        retry_max_delay_seconds=0,
+    )
+    client._session = session
+    sleeps: list[float] = []
+
+    async def _record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    async def _terminal_status(
+        _batch_id: str,
+        _endpoint_alias: str,
+    ) -> dict[str, Any]:
+        return {
+            "id": "batch-1",
+            "status": "completed",
+            "is_complete": True,
+            "output_file_id": "out-1",
+            "error_file_id": None,
+        }
+
+    monkeypatch.setattr(batch_api_client_module.asyncio, "sleep", _record_sleep)
+    monkeypatch.setattr(client, "get_batch_status", _terminal_status)
+
+    async with client.open_batch_records("batch-1", "default") as records:
+        assert await anext(records) == BatchResultRecord(
+            "batch-1", "result", {"id": 1}
+        )
+        with pytest.raises(GatewayError, match="transport failed") as exc_info:
+            await anext(records)
+
+    assert exc_info.value.response_data == {
+        "error_type": "ClientPayloadError",
+        "timeout_seconds": client.request_timeout_seconds,
+    }
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert len(session.calls) == 1
     assert sleeps == []
     assert first_response.enter_count == 1
