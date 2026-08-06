@@ -69,8 +69,8 @@ Artifact entries are opened relative to the held final directory with
 `O_NOFOLLOW | O_NONBLOCK`, required to be regular files, and streamed through
 bounded `os.read`. Size and SHA-256 are derived from that same open file
 description. Device, inode, file type, size, modification time, and change time
-must remain stable across the read. The verifier then re-enumerates the same
-held directory descriptor and rejects membership drift.
+must remain stable across the read. The verifier then re-enumerates the same held
+directory descriptor and rejects membership or same-name object-identity drift.
 
 This openat-style boundary removes pathname check-then-open races from the
 release identity decision. It does not prevent a same-UID process from changing
@@ -84,17 +84,41 @@ renames within the pinned final parent, and synchronizes the directory entry.
 Neither verifier nor writer publishes, signs, attests, approves, or authorizes
 reuse of pull-request artifacts.
 
+## Bounded provider result boundary
+
+`BatchAPIClient.download_results()` remains the backward-compatible aggregate
+retrieval facade. `StreamingBatchAPIClient` is the opt-in memory-safety boundary
+for large provider result and error files. It reuses the same credential, URL,
+timeout, no-redirect, identifier, retry, and decoded-byte controls while parsing
+JSONL incrementally.
+
+The streaming client validates one terminal status snapshot, then consumes the
+output file before the error file. It holds at most one transport chunk, one
+bounded physical line, and one decoded JSON object in library-owned memory. A
+strict per-file decoded-byte limit, per-line byte limit, and combined record
+limit fail closed before excessive data is yielded. Non-success file responses
+are rejected before provider body consumption, and every nonblank line must be
+strict UTF-8 containing one JSON object.
+
+This boundary does not provide durable downstream backpressure. Embedding hosts
+own record persistence, queue capacity, cancellation, and consumer memory. A host
+that accumulates every yielded record recreates aggregate memory use.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
-only after their own authentication and authorization boundary. The package
-does not require either host and retains standalone operation. When embedded,
-tenant scope is a local control-plane identity and not model- or
-provider-returned data.
+only after their own authentication and authorization boundary. The package does
+not require either host and retains standalone operation. When embedded, tenant
+scope is a local control-plane identity and not model- or provider-returned data.
 
 Release evidence also remains standalone. Host modules may consume the bounded
 manifest only as review input and must not reinterpret it as provenance,
 publication authority, or an integrated-release attestation.
+
+Streaming retrieval also remains standalone. Host modules may persist each
+`BatchResultRecord` into their own tenant-qualified queue or database, but must
+preserve the package's file ordering and resource limits or define and test a
+stricter local contract.
 
 ## Verification boundary
 
@@ -110,7 +134,11 @@ granted.
 
 Release security tests cover symlinked parents, parent traversal, artifact
 replacement after enumeration, in-place mutation during streaming hash,
-directory-membership drift, bounded scan and error behavior, descriptor
-capability failure, Python compatibility, and 100% production statement and
+directory-membership and same-name identity drift, bounded scan and error
+behavior, descriptor capability failure, Python compatibility, and 100%
+production statement and branch coverage. Streaming tests cover split chunks,
+CRLF and final-line parsing, invalid streams, encoding and JSON failures,
+non-object records, non-success responses, total-download, line, and record
+limits, deterministic result/error ordering, and 100% production statement and
 branch coverage. Final merge evidence must be regenerated against the integrated
 base; successful stacked-base runs are not reusable release evidence.
