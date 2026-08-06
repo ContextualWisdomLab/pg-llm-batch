@@ -11,12 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Opt-in `StreamingBatchAPIClient` and immutable `BatchResultRecord` for
   output-then-error JSONL iteration without whole-body or whole-result-list
-  materialization, with strict per-file decoded-byte, physical-line byte, and
-  combined record-count limits; split UTF-8, CRLF, blank lines, and final lines
-  without a newline are handled deterministically, while invalid streams,
-  encodings, JSON, non-object records, and non-success file responses fail closed
-  with body-free diagnostics. `open_batch_records()` provides deterministic
-  context-managed ownership for consumers that may stop before exhaustion.
+  materialization, with strict per-file decoded-byte, physical-line byte,
+  batch-wide physical line, and combined record-count limits. Result and error
+  files share the physical-line budget, and blank lines consume it before
+  parsing; split UTF-8, CRLF, and final lines without a newline are handled
+  deterministically, while invalid streams, encodings, JSON, non-object records,
+  and non-success file responses fail closed with body-free diagnostics.
+  `open_batch_records()` provides deterministic context-managed ownership for
+  consumers that may stop before exhaustion.
 - Read-only exact-head release acceptance that builds one wheel and source
   distribution twice from clean Git archives, proves byte-identical SHA-256
   identity, records bounded canonical evidence, and keeps publication and
