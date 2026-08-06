@@ -73,6 +73,14 @@ contain at least two descriptive words and use snake_case. The rollback migratio
 refuses to drop a non-empty checkpoint table, requiring export or explicit
 operator reconciliation before evidence can be erased.
 
+Forced RLS would otherwise hide all rows from an owner executing rollback without
+a bound tenant setting. Inside one atomic PostgreSQL `DO` block, rollback first
+uses `ALTER TABLE ... NO FORCE ROW LEVEL SECURITY`, then performs the non-empty
+check as the table owner. A detected row raises SQLSTATE 55000, aborting the
+transaction and restoring forced RLS automatically. A role unable to relax owner
+enforcement also cannot proceed to the destructive drop, so the boundary remains
+fail closed.
+
 ## Alternatives considered
 
 ### Keep persistence entirely host-owned
@@ -92,6 +100,12 @@ Rejected because an unclassified database uniqueness exception is not a stable
 operator contract and cannot distinguish an identical idempotent race from a
 conflicting first checkpoint.
 
+### Check rollback emptiness under forced RLS
+
+Rejected because a missing tenant setting produces a false empty result and can
+silently erase acknowledgements. The owner-visible check must be atomic with the
+subsequent exception or drop.
+
 ### Claim whole-stream or exactly-once assurance
 
 Rejected. The checkpoint authenticates neither the provider nor its unseen
@@ -107,6 +121,8 @@ suffix, and PostgreSQL atomicity does not extend to external side effects.
   overwrite.
 - Operators must apply the dedicated migration and use non-bypass application
   roles.
+- Destructive rollback requires table-owner authority and an owner-visible empty
+  table; non-empty evidence aborts and restores forced RLS.
 - Full-stream immutability, distributed exactly-once delivery, checkpoint-store
   authentication, and administrative rollback authorization remain explicit host
   responsibilities.
