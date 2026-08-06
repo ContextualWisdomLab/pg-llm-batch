@@ -19,8 +19,6 @@ _OPERATION_ATTRIBUTE = "pg_llm_batch.checkpoint.operation"
 _TRANSACTION_OWNER_ATTRIBUTE = "pg_llm_batch.checkpoint.transaction_owner"
 _OUTCOME_ATTRIBUTE = "pg_llm_batch.checkpoint.outcome"
 _ERROR_TYPE_ATTRIBUTE = "error.type"
-_DATABASE_SYSTEM_ATTRIBUTE = "db.system.name"
-_DATABASE_SYSTEM = "postgresql"
 _TELEMETRY_FAILURES = (Exception, CancelledError)
 
 _ResultT = TypeVar("_ResultT")
@@ -183,7 +181,9 @@ class OpenTelemetryCheckpointStore:
     shapes, but this package does not require or configure an SDK or exporter.
     Hosts retain ownership of providers, sampling, export, and resource metadata.
     Checkpoint tenant, consumer, batch, endpoint, file, digest, cursor, and DSN
-    values are never added to package-owned telemetry.
+    values are never added to package-owned telemetry. Package operation spans
+    are storage-agnostic and do not claim database-client semantic attributes;
+    database instrumentation remains the embedding host's responsibility.
     """
 
     def __init__(
@@ -209,7 +209,6 @@ class OpenTelemetryCheckpointStore:
     ) -> _ResultT:
         """Run one checkpoint operation while containing telemetry failures."""
         span_attributes = {
-            _DATABASE_SYSTEM_ATTRIBUTE: _DATABASE_SYSTEM,
             _OPERATION_ATTRIBUTE: operation,
             _TRANSACTION_OWNER_ATTRIBUTE: transaction_owner,
         }
