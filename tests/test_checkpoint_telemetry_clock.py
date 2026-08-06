@@ -103,8 +103,11 @@ def test_end_clock_failure_records_zero_duration() -> None:
     assert meter.histogram.values == [0.0]
 
 
-@pytest.mark.parametrize("invalid_value", [object(), "not-a-clock", None])
-def test_nonnumeric_clock_values_cannot_change_application_success(
+@pytest.mark.parametrize(
+    "invalid_value",
+    [object(), "not-a-clock", None, float("nan"), float("inf")],
+)
+def test_nonnumeric_or_nonfinite_clock_values_cannot_change_application_success(
     invalid_value: Any,
 ) -> None:
     """Malformed host clock evidence degrades to a zero-duration measurement."""
