@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 from collections.abc import Mapping, Sequence
 from itertools import islice
 from pathlib import Path
@@ -20,6 +21,23 @@ _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 _HASH_CHUNK_BYTES = 1024 * 1024
 _RELEASE_ARTIFACT_COUNT = 2
 _RELEASE_DIRECTORY_SCAN_LIMIT = _RELEASE_ARTIFACT_COUNT + 1
+_SECURE_MANIFEST_DIR_FD_FUNCTIONS = frozenset(
+    (os.open, os.mkdir, os.stat, os.unlink, os.rename)
+)
+_SECURE_MANIFEST_FOLLOW_FUNCTIONS = frozenset((os.stat,))
+_SECURE_MANIFEST_FLAGS_AVAILABLE = hasattr(os, "O_DIRECTORY") and hasattr(
+    os, "O_NOFOLLOW"
+)
+_CLOSE_ON_EXEC = getattr(os, "O_CLOEXEC", 0)
+_MANIFEST_DIRECTORY_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | _CLOSE_ON_EXEC
+)
+_MANIFEST_TEMPORARY_FLAGS = (
+    os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | _CLOSE_ON_EXEC
+)
 
 
 class ReleaseEvidenceError(ValueError):
@@ -149,13 +167,175 @@ def _artifact_records(
     return records
 
 
-def _ensure_manifest_parent(destination: Path) -> None:
-    """Create a manifest parent without following any existing parent symlink."""
-    if any(parent.is_symlink() for parent in destination.parents):
-        raise ReleaseEvidenceError(
-            "release manifest parent path must not contain a symlink"
+def _secure_manifest_writes_supported() -> bool:
+    """Return whether the runtime exposes every required no-follow primitive."""
+    return (
+        _SECURE_MANIFEST_FLAGS_AVAILABLE
+        and _SECURE_MANIFEST_DIR_FD_FUNCTIONS.issubset(os.supports_dir_fd)
+        and _SECURE_MANIFEST_FOLLOW_FUNCTIONS.issubset(os.supports_follow_symlinks)
+    )
+
+
+def _manifest_path_parts(destination: Path) -> tuple[str, tuple[str, ...], str]:
+    """Return an anchor, parent components, and final name for secure traversal."""
+    destination_name = destination.name
+    if destination_name in {"", ".", ".."}:
+        raise ReleaseEvidenceError("release manifest destination name is invalid")
+
+    parent_parts = destination.parent.parts
+    if destination.is_absolute():
+        anchor = destination.anchor
+        parent_parts = parent_parts[1:]
+    else:
+        anchor = "."
+    if ".." in parent_parts:
+        raise ReleaseEvidenceError("release manifest parent traversal is not allowed")
+    return anchor, parent_parts, destination_name
+
+
+def _open_manifest_parent(destination: Path) -> tuple[int, str]:
+    """Open or create the final parent by descriptor without following symlinks."""
+    anchor, parent_parts, destination_name = _manifest_path_parts(destination)
+    try:
+        parent_descriptor = os.open(anchor, _MANIFEST_DIRECTORY_FLAGS)
+    except (OSError, ValueError):
+        raise ReleaseEvidenceError("release manifest parent root could not be opened") from None
+
+    try:
+        for component in parent_parts:
+            try:
+                os.mkdir(component, 0o700, dir_fd=parent_descriptor)
+            except FileExistsError:
+                pass
+            except (OSError, ValueError):
+                raise ReleaseEvidenceError(
+                    "release manifest parent directory could not be created"
+                ) from None
+
+            try:
+                next_descriptor = os.open(
+                    component,
+                    _MANIFEST_DIRECTORY_FLAGS,
+                    dir_fd=parent_descriptor,
+                )
+            except (OSError, ValueError):
+                raise ReleaseEvidenceError(
+                    "release manifest parent path must not contain a symlink "
+                    "and must contain only directories"
+                ) from None
+            os.close(parent_descriptor)
+            parent_descriptor = next_descriptor
+        return parent_descriptor, destination_name
+    except BaseException:
+        os.close(parent_descriptor)
+        raise
+
+
+def _validate_manifest_destination(parent_descriptor: int, destination_name: str) -> None:
+    """Require the descriptor-relative destination to be absent or a regular file."""
+    try:
+        destination_status = os.stat(
+            destination_name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
         )
-    destination.parent.mkdir(parents=True, exist_ok=True)
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError):
+        raise ReleaseEvidenceError(
+            "release manifest destination could not be inspected"
+        ) from None
+
+    if stat.S_ISLNK(destination_status.st_mode):
+        raise ReleaseEvidenceError("release manifest destination must not be a symlink")
+    if not stat.S_ISREG(destination_status.st_mode):
+        raise ReleaseEvidenceError(
+            "release manifest destination must be absent or a regular file"
+        )
+
+
+def _remove_owned_temporary(parent_descriptor: int, temporary_name: str) -> None:
+    """Remove only the temporary entry created by the current invocation."""
+    try:
+        os.unlink(temporary_name, dir_fd=parent_descriptor)
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError):
+        raise ReleaseEvidenceError(
+            "release manifest temporary cleanup failed"
+        ) from None
+
+
+def _write_manifest_payload(
+    payload: str,
+    *,
+    parent_descriptor: int,
+    destination_name: str,
+) -> None:
+    """Write, synchronize, and atomically replace a descriptor-relative manifest."""
+    temporary_name = f".{destination_name}.tmp"
+    temporary_descriptor: int | None = None
+    temporary_created = False
+    try:
+        try:
+            temporary_descriptor = os.open(
+                temporary_name,
+                _MANIFEST_TEMPORARY_FLAGS,
+                0o600,
+                dir_fd=parent_descriptor,
+            )
+        except FileExistsError:
+            raise ReleaseEvidenceError(
+                "release manifest temporary path already exists"
+            ) from None
+        except (OSError, ValueError):
+            raise ReleaseEvidenceError(
+                "release manifest temporary file could not be created"
+            ) from None
+        temporary_created = True
+
+        try:
+            handle = os.fdopen(
+                temporary_descriptor,
+                "w",
+                encoding="utf-8",
+                newline="\n",
+            )
+        except (OSError, ValueError):
+            raise ReleaseEvidenceError("release manifest write failed") from None
+        temporary_descriptor = None
+        try:
+            with handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+        except OSError:
+            raise ReleaseEvidenceError("release manifest write failed") from None
+
+        try:
+            os.rename(
+                temporary_name,
+                destination_name,
+                src_dir_fd=parent_descriptor,
+                dst_dir_fd=parent_descriptor,
+            )
+        except (OSError, ValueError):
+            raise ReleaseEvidenceError(
+                "release manifest atomic replacement failed"
+            ) from None
+        temporary_created = False
+
+        try:
+            os.fsync(parent_descriptor)
+        except OSError:
+            raise ReleaseEvidenceError(
+                "release manifest directory synchronization failed"
+            ) from None
+    finally:
+        if temporary_descriptor is not None:
+            os.close(temporary_descriptor)
+        if temporary_created:
+            _remove_owned_temporary(parent_descriptor, temporary_name)
 
 
 def verify_reproducible_release(
@@ -207,23 +387,26 @@ def write_release_manifest(
     manifest: Mapping[str, Any],
     output_path: str | Path,
 ) -> None:
-    """Write canonical JSON atomically without following path symlinks."""
-    destination = Path(output_path)
-    if destination.is_symlink():
-        raise ReleaseEvidenceError("release manifest destination must not be a symlink")
-    _ensure_manifest_parent(destination)
-    temporary = destination.parent / f".{destination.name}.tmp"
-    if temporary.exists() or temporary.is_symlink():
-        raise ReleaseEvidenceError("release manifest temporary path already exists")
+    """Write canonical JSON atomically through a pinned parent descriptor.
 
+    The writer fails closed unless descriptor-relative operations and no-follow
+    flags are available. Every parent component, the temporary file, and the
+    atomic replacement are resolved relative to held directory descriptors.
+    """
     payload = json.dumps(dict(manifest), indent=2, sort_keys=True) + "\n"
-    descriptor = os.open(
-        temporary,
-        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
-        0o600,
-    )
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(payload)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temporary, destination)
+    if not _secure_manifest_writes_supported():
+        raise ReleaseEvidenceError(
+            "secure release manifest writes require descriptor-relative "
+            "no-follow support"
+        )
+
+    parent_descriptor, destination_name = _open_manifest_parent(Path(output_path))
+    try:
+        _validate_manifest_destination(parent_descriptor, destination_name)
+        _write_manifest_payload(
+            payload,
+            parent_descriptor=parent_descriptor,
+            destination_name=destination_name,
+        )
+    finally:
+        os.close(parent_descriptor)
