@@ -25,6 +25,9 @@ core and relicensed under Apache-2.0. See [`NOTICE`](NOTICE) for provenance.
 - **Bounded provider resources.** Transport timeouts, retries, control-plane
   responses, output downloads, metadata, and diagnostic evidence use explicit
   limits and fail-closed validation.
+- **Incremental large-result retrieval.** An opt-in async iterator bounds one
+  physical JSONL line and one decoded record instead of retaining the complete
+  provider file and parsed record list.
 - **Embeddable seams.** Credential resolution, lifecycle recording, ordering,
   and telemetry can be supplied by `naruon`, `contextual-orchestrator`, or an
   independent host without making those services mandatory.
@@ -48,6 +51,10 @@ BatchAPIClient
     ├─ wait_for_batch
     └─ download_results
 
+Optional bounded result iterator:
+    StreamingBatchAPIClient
+        └─ iter_batch_records → BatchResultRecord
+
 Optional durable projection:
     DurableBatchAPIClient
         └─ tenant_scope="standalone"
@@ -60,7 +67,8 @@ Optional durable projection:
 | --- | --- |
 | Token counting and accumulation | `pg_llm_batch/token_counter.py` |
 | Batch assembly and persistence | `pg_llm_batch/orchestrator.py` |
-| Provider submission, polling, and retrieval | `pg_llm_batch/batch_api_client.py` |
+| Provider submission, polling, and aggregate retrieval | `pg_llm_batch/batch_api_client.py` |
+| Incremental bounded result and error records | `pg_llm_batch/result_streaming.py` |
 | Durable standalone and tenant lifecycle clients | `pg_llm_batch/durable_client.py` |
 | Tenant-qualified lifecycle persistence and reads | `pg_llm_batch/db.py` |
 | Opt-in OpenTelemetry operations | `pg_llm_batch/observability.py` |
@@ -274,6 +282,32 @@ Output and provider error files are streamed in 64 KiB chunks and limited to
 decompression and before JSONL parsing. Oversized and invalid UTF-8 responses
 produce body-free structured diagnostics.
 
+`download_results()` retains its aggregate compatibility contract and therefore
+materializes each complete bounded file and parsed record list. For large or
+shared workloads, use the opt-in iterator instead:
+
+```python
+from pg_llm_batch import StreamingBatchAPIClient
+
+async with StreamingBatchAPIClient(
+    dsn,
+    credentials_provider,
+    max_download_bytes=128 * 1024 * 1024,
+    max_jsonl_line_bytes=1 * 1024 * 1024,
+    max_jsonl_records=100_000,
+) as client:
+    async for item in client.iter_batch_records("batch-123", "default"):
+        await persist_record(item.file_kind, item.record)
+```
+
+The iterator reads output records before provider error records, accepts CRLF
+and final lines without a newline, skips blank lines, and requires every other
+line to be strict UTF-8 containing one JSON object. The per-file total byte cap,
+per-line byte cap, and combined result-plus-error record cap are enforced before
+excessive data is yielded. Downstream persistence and backpressure remain host
+responsibilities; collecting every yielded record recreates aggregate memory
+use. See [`docs/result-streaming.md`](docs/result-streaming.md).
+
 ### Idempotent GET retries
 
 Provider `GET` operations use up to three total attempts for `408`, `429`,
@@ -335,6 +369,8 @@ PostgreSQL container builds; SAST; and security scanning.
 - [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) — standalone
   and tenant lifecycle operations, RLS trust boundary, migration, rollback, and
   recovery.
+- [`docs/result-streaming.md`](docs/result-streaming.md) — incremental result and
+  error ordering, resource limits, compatibility, and host backpressure.
 - [`docs/doctoring/tenant-scoped-lifecycle.md`](docs/doctoring/tenant-scoped-lifecycle.md)
   — authoritative security decision and APA 7 references.
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
