@@ -45,6 +45,23 @@ def _validate_positive_integer(field: str, value: Any) -> int:
     return value
 
 
+def _reject_non_finite_json_constant(constant: str) -> None:
+    """Reject JSON extensions such as NaN and infinity values."""
+    raise ValueError(f"non-finite JSON number is not permitted: {constant}")
+
+
+def _object_without_duplicate_names(
+    pairs: list[tuple[str, Any]],
+) -> Dict[str, Any]:
+    """Build one JSON object while rejecting ambiguous duplicate names."""
+    result: Dict[str, Any] = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("duplicate JSON object name")
+        result[name] = value
+    return result
+
+
 class StreamingBatchAPIClient(BatchAPIClient):
     """Batch client that yields provider JSONL records without whole-body storage.
 
@@ -63,13 +80,15 @@ class StreamingBatchAPIClient(BatchAPIClient):
         **kwargs: Any,
     ) -> None:
         """Initialize bounded incremental JSONL retrieval resources."""
-        super().__init__(postgres_dsn, credentials, **kwargs)
-        self.max_jsonl_line_bytes = _validate_positive_integer(
+        validated_line_bytes = _validate_positive_integer(
             "max_jsonl_line_bytes", max_jsonl_line_bytes
         )
-        self.max_jsonl_records = _validate_positive_integer(
+        validated_records = _validate_positive_integer(
             "max_jsonl_records", max_jsonl_records
         )
+        super().__init__(postgres_dsn, credentials, **kwargs)
+        self.max_jsonl_line_bytes = validated_line_bytes
+        self.max_jsonl_records = validated_records
 
     async def iter_batch_records(
         self,
@@ -111,7 +130,6 @@ class StreamingBatchAPIClient(BatchAPIClient):
             async for record in self._iter_jsonl_file(
                 file_id,
                 endpoint_alias,
-                batch_id=validated_batch_id,
                 file_kind=file_kind,
             ):
                 record_count += 1
@@ -131,7 +149,6 @@ class StreamingBatchAPIClient(BatchAPIClient):
         file_id: Any,
         endpoint_alias: str,
         *,
-        batch_id: str,
         file_kind: str,
     ) -> AsyncIterator[Dict[str, Any]]:
         """Yield JSON objects from one bounded provider file byte stream."""
@@ -186,15 +203,23 @@ class StreamingBatchAPIClient(BatchAPIClient):
             async for chunk in iterator(DOWNLOAD_CHUNK_BYTES):
                 if isinstance(chunk, memoryview):
                     chunk_bytes = chunk.nbytes
-                    normalized_chunk = chunk.tobytes()
                 elif isinstance(chunk, (bytes, bytearray)):
                     chunk_bytes = len(chunk)
-                    normalized_chunk = chunk
                 else:
                     raise GatewayError(
                         f"{operation} response yielded a non-byte stream chunk",
                         status_code=response.status,
                         response_data={"error_type": "InvalidByteChunk"},
+                    )
+                if chunk_bytes > DOWNLOAD_CHUNK_BYTES:
+                    raise GatewayError(
+                        f"{operation} response chunk exceeded byte limit",
+                        status_code=response.status,
+                        response_data={
+                            "error_type": "OversizedByteChunk",
+                            "limit_bytes": DOWNLOAD_CHUNK_BYTES,
+                            "chunk_bytes": chunk_bytes,
+                        },
                     )
                 if bytes_read + chunk_bytes > self.max_download_bytes:
                     raise self._download_limit_error(
@@ -204,6 +229,9 @@ class StreamingBatchAPIClient(BatchAPIClient):
                         declared_bytes=declared_bytes,
                         bytes_read=bytes_read,
                     )
+                normalized_chunk = (
+                    chunk.tobytes() if isinstance(chunk, memoryview) else chunk
+                )
                 bytes_read += chunk_bytes
                 pending.extend(normalized_chunk)
 
@@ -216,7 +244,6 @@ class StreamingBatchAPIClient(BatchAPIClient):
                     line_number += 1
                     parsed_line = self._parse_jsonl_line(
                         line,
-                        batch_id=batch_id,
                         file_kind=file_kind,
                         line_number=line_number,
                     )
@@ -234,7 +261,6 @@ class StreamingBatchAPIClient(BatchAPIClient):
                 line_number += 1
                 final_record = self._parse_jsonl_line(
                     bytes(pending),
-                    batch_id=batch_id,
                     file_kind=file_kind,
                     line_number=line_number,
                 )
@@ -263,7 +289,6 @@ class StreamingBatchAPIClient(BatchAPIClient):
         self,
         line: bytes,
         *,
-        batch_id: str,
         file_kind: str,
         line_number: int,
     ) -> Optional[Dict[str, Any]]:
@@ -291,10 +316,14 @@ class StreamingBatchAPIClient(BatchAPIClient):
                 },
             ) from exc
         try:
-            parsed = json.loads(text)
-        except (json.JSONDecodeError, RecursionError) as exc:
+            parsed = json.loads(
+                text,
+                parse_constant=_reject_non_finite_json_constant,
+                object_pairs_hook=_object_without_duplicate_names,
+            )
+        except (ValueError, RecursionError) as exc:
             raise GatewayError(
-                f"Malformed {file_kind} line {line_number} for batch {batch_id}",
+                f"Malformed {file_kind} line {line_number}",
                 response_data={
                     "file_kind": file_kind,
                     "line_number": line_number,
@@ -302,7 +331,7 @@ class StreamingBatchAPIClient(BatchAPIClient):
             ) from exc
         if not isinstance(parsed, dict):
             raise GatewayError(
-                f"Non-object {file_kind} line {line_number} for batch {batch_id}",
+                f"Non-object {file_kind} line {line_number}",
                 response_data={
                     "file_kind": file_kind,
                     "line_number": line_number,
