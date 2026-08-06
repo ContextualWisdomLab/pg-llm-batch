@@ -93,16 +93,31 @@ timeout, no-redirect, identifier, retry, and decoded-byte controls while parsing
 JSONL incrementally.
 
 The streaming client validates one terminal status snapshot, then consumes the
-output file before the error file. It holds at most one transport chunk, one
-bounded physical line, and one decoded JSON object in library-owned memory. A
-strict per-file decoded-byte limit, per-line byte limit, and combined record
-limit fail closed before excessive data is yielded. Non-success file responses
-are rejected before provider body consumption, and every nonblank line must be
-strict UTF-8 containing one JSON object.
+output file before the error file. It holds at most one non-empty bounded
+transport chunk, one bounded physical line, and one decoded JSON object in
+library-owned memory. A strict per-file decoded-byte limit, per-line byte limit,
+and combined record limit fail closed before excessive data is yielded. Missing
+streams, non-byte chunks, zero-progress chunks, and chunks above the requested
+ceiling are rejected before package-owned line buffering. Non-success file
+responses are rejected before provider body consumption, and every nonblank line
+must be strict UTF-8 containing one unambiguous JSON object.
+
+Decoder failures are translated after the provider decoder's active exception
+handler exits. The sanitized public error therefore does not retain the decoder
+exception—and its provider-controlled bytes or text—through `__cause__` or
+`__context__`.
+
+Stream lifetime is a separate control-plane boundary. The outer public iterator
+owns each nested provider-file iterator through `contextlib.aclosing`.
+`open_batch_records()` owns the outer iterator and closes it in `finally`, making
+it the supported API when a consumer may stop early. A bare `async for` break
+does not call `aclose()` and is not a deterministic HTTP-response release
+mechanism.
 
 This boundary does not provide durable downstream backpressure. Embedding hosts
-own record persistence, queue capacity, cancellation, and consumer memory. A host
-that accumulates every yielded record recreates aggregate memory use.
+own record persistence, queue capacity, cancellation, explicit iterator
+lifecycle, and consumer memory. A host that accumulates every yielded record
+recreates aggregate memory use.
 
 ## Modular interoperability
 
@@ -117,8 +132,8 @@ publication authority, or an integrated-release attestation.
 
 Streaming retrieval also remains standalone. Host modules may persist each
 `BatchResultRecord` into their own tenant-qualified queue or database, but must
-preserve the package's file ordering and resource limits or define and test a
-stricter local contract.
+preserve the package's file ordering, resource limits, and deterministic cleanup
+contract or define and test a stricter local boundary.
 
 ## Verification boundary
 
@@ -137,7 +152,8 @@ replacement after enumeration, in-place mutation during streaming hash,
 directory-membership and same-name identity drift, bounded scan and error
 behavior, descriptor capability failure, Python compatibility, and 100%
 production statement and branch coverage. Streaming tests cover split chunks,
-CRLF and final-line parsing, invalid streams, encoding and JSON failures,
+CRLF and final-line parsing, invalid and zero-progress streams, encoding and JSON
+failures, exception-context sanitization, nested and early-close lifecycle,
 non-object records, non-success responses, total-download, line, and record
 limits, deterministic result/error ordering, and 100% production statement and
 branch coverage. Final merge evidence must be regenerated against the integrated
