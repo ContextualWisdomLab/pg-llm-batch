@@ -8,6 +8,7 @@ import json
 import os
 import re
 from collections.abc import Mapping, Sequence
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,8 @@ _VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}\Z")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 _HASH_CHUNK_BYTES = 1024 * 1024
+_RELEASE_ARTIFACT_COUNT = 2
+_RELEASE_DIRECTORY_SCAN_LIMIT = _RELEASE_ARTIFACT_COUNT + 1
 
 
 class ReleaseEvidenceError(ValueError):
@@ -50,18 +53,21 @@ def _validate_metadata(
 
 
 def _bounded_directory_entries(paths: Sequence[Path]) -> str:
-    """Return at most eight truncated entry names for safe failure diagnosis."""
-    return ", ".join(repr(path.name[:128]) for path in paths[:8])
+    """Return truncated names from the already bounded directory scan."""
+    return ", ".join(repr(path.name[:128]) for path in paths)
 
 
 def _release_paths(directory: Path) -> tuple[Path, Path]:
-    """Return the single regular wheel and sdist from a trusted directory boundary."""
+    """Return one wheel and sdist after scanning at most three directory entries."""
     if directory.is_symlink() or not directory.is_dir():
         raise ReleaseEvidenceError("release directory must be a regular directory")
 
-    paths = sorted(directory.iterdir(), key=lambda path: path.name)
+    paths = sorted(
+        islice(directory.iterdir(), _RELEASE_DIRECTORY_SCAN_LIMIT),
+        key=lambda path: path.name,
+    )
     entries = _bounded_directory_entries(paths)
-    if len(paths) != 2:
+    if len(paths) != _RELEASE_ARTIFACT_COUNT:
         raise ReleaseEvidenceError(
             "release directory must contain exactly one wheel and one sdist; "
             f"entries=[{entries}]"
@@ -156,9 +162,9 @@ def verify_reproducible_release(
     """Verify two exact-source builds and return their canonical release manifest.
 
     Both directories must contain exactly one regular wheel and one regular source
-    distribution for the requested project version. The function streams SHA-256
-    calculation, compares bounded filename/size/digest records, and never reads
-    artifact contents into memory as a whole.
+    distribution for the requested project version. The function bounds directory
+    enumeration, streams SHA-256 calculation, compares filename/size/digest records,
+    and never reads artifact contents into memory as a whole.
     """
     _validate_metadata(
         distribution_name,
