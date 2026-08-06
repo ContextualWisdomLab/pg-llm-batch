@@ -19,6 +19,14 @@ def test_release_evidence_adr_separates_acceptance_from_publication() -> None:
     assert "independent approval" in text
 
 
+def test_release_evidence_documents_exact_build_toolchain() -> None:
+    for path in (ADR, DOCTORING):
+        text = path.read_text(encoding="utf-8")
+        assert "`uv` 0.12.1" in text
+        assert "`uv_build==0.12.1`" in text
+        assert "build-system requirements are not pinned by `uv.lock`" in text
+
+
 def test_release_evidence_doctoring_defines_bounded_operator_evidence() -> None:
     text = DOCTORING.read_text(encoding="utf-8")
 
