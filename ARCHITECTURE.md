@@ -102,6 +102,13 @@ ceiling are rejected before package-owned line buffering. Non-success file
 responses are rejected before provider body consumption, and every nonblank line
 must be strict UTF-8 containing one unambiguous JSON object.
 
+`max_jsonl_physical_lines` establishes one batch-wide physical line budget
+shared by result and error files. Every newline-terminated line and any final
+unterminated line consumes the budget before UTF-8 decoding or JSON parsing;
+blank lines count even though they do not yield records. This closes a bounded
+CPU-amplification gap that per-line bytes and yielded-record limits alone do not
+cover.
+
 Decoder failures are translated after the provider decoder's active exception
 handler exits. The sanitized public error therefore does not retain the decoder
 exception—and its provider-controlled bytes or text—through `__cause__` or
@@ -154,7 +161,9 @@ behavior, descriptor capability failure, Python compatibility, and 100%
 production statement and branch coverage. Streaming tests cover split chunks,
 CRLF and final-line parsing, invalid and zero-progress streams, encoding and JSON
 failures, exception-context sanitization, nested and early-close lifecycle,
-non-object records, non-success responses, total-download, line, and record
-limits, deterministic result/error ordering, and 100% production statement and
-branch coverage. Final merge evidence must be regenerated against the integrated
-base; successful stacked-base runs are not reusable release evidence.
+non-object records, non-success responses, total-download, byte-line, combined
+record, and batch-wide physical line limits across result and error files,
+including blank lines, deterministic result/error ordering, and 100% production
+statement and branch coverage. Final merge evidence must be regenerated against
+the integrated base; successful stacked-base runs are not reusable release
+evidence.
