@@ -16,6 +16,7 @@ async with StreamingBatchAPIClient(
     max_download_bytes=128 * 1024 * 1024,
     max_jsonl_line_bytes=1 * 1024 * 1024,
     max_jsonl_records=100_000,
+    max_jsonl_physical_lines=100_000,
 ) as client:
     async with client.open_batch_records("batch-123", "default") as records:
         async for item in records:
@@ -43,6 +44,10 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
   parsing, including a final line without a newline.
 - `max_jsonl_records` caps the combined output-plus-error record count for one
   iterator.
+- `max_jsonl_physical_lines` caps the batch-wide physical line count shared by
+  result and error files. Every newline-terminated line and a final unterminated
+  line count before decoding; blank lines consume this budget even though they
+  do not yield records.
 - Response data is consumed only through `content.iter_chunked(64 KiB)`. An
   adapter that omits the interface, emits a non-byte or empty chunk, or yields a
   chunk larger than the requested 64 KiB fails closed before package-owned line
