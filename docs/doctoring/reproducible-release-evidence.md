@@ -116,10 +116,10 @@ or replace an untrusted symlink.
 
 The gate narrows buyer diligence from “the package built once” to “two clean
 builds of the same reviewed source and exact build toolchain produced the same
-named bytes.” This supports repeatable incident reconstruction and future SLSA
-v1.2 provenance without mixing pull-request validation with release authority.
-Top-level permissions remain read-only, credentials are not persisted, action
-sources are immutably pinned, and the evidence payload is bounded.
+named bytes.” This supports repeatable incident reconstruction and future
+SLSA v1.2 provenance without mixing pull-request validation with release
+authority. Top-level permissions remain read-only, credentials are not persisted,
+action sources are immutably pinned, and the evidence payload is bounded.
 
 ## References (APA 7)
 
