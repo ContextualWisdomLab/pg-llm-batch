@@ -81,9 +81,15 @@ digest. HTTP chunk boundaries do not.
 Resume performs a bounded rescan from byte zero. No later record is delivered
 until the supplied checkpoint is reproduced exactly. A changed prefix, changed
 provider file identity, inserted or removed framing, unexpected record at the
-checkpoint position, or truncation fails closed. The rescan preserves all
-existing byte, line, physical-line, record, timeout, identifier, retry-handoff,
-parser, and deterministic-close controls.
+checkpoint position, or truncation at or before the checkpoint fails closed. The
+rescan preserves all existing byte, line, physical-line, record, timeout,
+identifier, retry-handoff, parser, and deterministic-close controls.
+
+This checkpoint verifies only the reproduced prefix. Mutation or truncation
+strictly after the acknowledged checkpoint is outside that evidence and can end
+a resumed stream without a mismatch. Hosts requiring whole-stream immutability
+must use a stable provider validator or authenticated digest, or perform a
+separate full-stream manifest pass before accepting the stream as complete.
 
 The checkpoint is change-detection evidence, not authentication. SHA-256 does
 not protect a checkpoint store from an actor able to rewrite both checkpoint and
