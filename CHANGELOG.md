@@ -39,6 +39,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded release-artifact directory enumeration to three entries, so a third
   unexpected artifact fails closed without materializing an unbounded output
   directory in verifier memory.
+- Refused direct and nested parent symlinks before writing reproducible-release
+  manifests, preventing pull-request-controlled workspace paths from redirecting
+  the temporary file or atomic replacement outside the evidence directory.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
