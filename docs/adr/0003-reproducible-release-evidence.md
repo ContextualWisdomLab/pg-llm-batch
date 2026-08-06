@@ -25,6 +25,11 @@ backend requirement to `uv_build==0.12.1`. The exact frontend can use its
 compatible bundled backend, while external PEP 517 frontends are constrained to
 the same backend version instead of silently selecting a later patch release.
 
+The artifact verifier must fail on a third directory entry without materializing
+an unbounded output directory. Because directory iteration order is not a stable
+evidence source, count failures must not embed whichever filenames happened to
+appear in the bounded sample.
+
 The canonical evidence writer runs against pull-request-controlled workspace
 paths. Rejecting only a symlink at the final manifest filename is insufficient:
 a symlink in any existing parent component can redirect both the temporary file
@@ -39,7 +44,9 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
 3. creates two clean source trees from the same Git object;
 4. performs two clean exact-head builds with the exact `uv` 0.12.1 frontend and
    `uv_build==0.12.1` backend contract;
-5. requires one wheel and one source distribution in each result;
+5. reads at most three output-directory entries, requires exactly one wheel and
+   one source distribution, and uses a fixed filesystem-order-independent
+   diagnostic for missing or extra counts;
 6. verifies regular non-symlink files, expected distribution/version identity,
    byte size, and streaming SHA-256 equality;
 7. rejects a symlink at the manifest destination or in any existing parent path
@@ -61,6 +68,8 @@ approval, branch protection, exact-head security, packaging, and release gates.
   external PEP 517 builds without an explicit reviewed source change.
 - Artifact identity evidence is machine-readable, bounded, and free of source
   payloads, credentials, provider data, and environment dumps.
+- Missing and extra artifact-count failures produce stable evidence even when
+  filesystem iteration order changes.
 - Pull-request-controlled parent symlinks cannot redirect manifest writes or the
   temporary atomic-replacement file outside the selected evidence directory.
 - The manifest is evidence for review, not a signature, SBOM, provenance
@@ -83,6 +92,12 @@ Rejected for the governed release contract because an external PEP 517 frontend
 could resolve a later compatible `uv_build` patch independently of `uv.lock`.
 Patch upgrades remain straightforward, but they require an explicit reviewed pin
 change and fresh exact-head evidence.
+
+### Include sampled filenames in extra-artifact count failures
+
+Rejected because the verifier intentionally stops after the third entry and the
+bounded sample depends on filesystem iteration order. A fixed count diagnostic
+is sufficient to fail closed and preserves deterministic incident evidence.
 
 ### Follow parent symlinks and validate only the final filename
 
