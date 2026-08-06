@@ -34,6 +34,12 @@ def test_authoritative_documents_define_checkpoint_telemetry_boundary() -> None:
             "OpenTelemetry-compatible checkpoint spans and metrics",
             "checkpoint_conflict, validation_error, and internal_error",
         ),
+        "docs/checkpoint-observability.md": (
+            "The wrapper delegates all arguments and returns unchanged",
+            "Package-owned telemetry never contains tenant scope",
+            "The wrapper supplies `(None, None, None)` when closing the span context",
+            "Non-cancellation process-control exceptions remain outside this observer-failure guarantee",
+        ),
     }
     for path, phrases in required.items():
         text = normalized(path)
