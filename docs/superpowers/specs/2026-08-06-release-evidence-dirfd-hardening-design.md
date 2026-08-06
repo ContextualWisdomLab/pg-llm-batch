@@ -10,9 +10,9 @@ PR #55 makes reproducible-release evidence bounded, canonical, atomic, and
 symlink-aware. Its manifest writer still checks parent paths before opening the
 temporary file by pathname. A same-UID concurrent process can rename a checked
 parent directory and replace its lexical path with a symlink between the check
-and `os.open()`. The temporary file and `os.replace()` can then operate through
-the replacement path. This is a time-of-check/time-of-use boundary rather than
-a missing static symlink check.
+and `os.open()`. The temporary file and atomic replacement can then operate
+through the replacement path. This is a time-of-check/time-of-use boundary
+rather than a missing static symlink check.
 
 The release acceptance job is read-only and does not expose publication or
 attestation authority, but buyer-facing evidence must not be writable outside
@@ -31,23 +31,24 @@ platforms that provide the required POSIX primitives.
 4. Walk each parent component relative to a held directory descriptor. Create a
    missing directory with mode `0700`, then open it with `O_DIRECTORY` and
    `O_NOFOLLOW` before closing the previous descriptor.
-5. Inspect the destination and temporary entry relative to the final parent
-   descriptor without following links. Permit replacement only of an existing
-   regular destination; reject every existing temporary entry and every
-   non-regular destination.
+5. Inspect the destination relative to the final parent descriptor without
+   following links. Permit replacement only of an existing regular destination;
+   reject every non-regular destination.
 6. Create the temporary file relative to the held descriptor with
    `O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW`, mode `0600`, and close-on-exec
-   where available. Confirm the opened object is a regular file.
+   where available. Exclusive creation rejects every pre-existing temporary
+   entry atomically.
 7. Write, flush, and `fsync()` the temporary file. Atomically replace the
-   destination using source and destination directory descriptors, then
-   `fsync()` the parent directory.
+   destination with descriptor-relative `os.rename()` source and destination
+   names, then `fsync()` the final parent directory.
 8. If a failure occurs after this invocation created the temporary file, remove
    only that descriptor-relative entry. Never remove a pre-existing entry.
 9. Close every descriptor on every path.
 
-The writer fails closed with `ReleaseEvidenceError` when `dir_fd`,
-`O_DIRECTORY`, or `O_NOFOLLOW` support is unavailable. It does not silently
-fall back to the predecessor check-then-use implementation.
+The writer fails closed with `ReleaseEvidenceError` when descriptor-relative
+open, directory creation, no-follow status inspection, unlink, or rename support,
+`O_DIRECTORY`, or `O_NOFOLLOW` is unavailable. It does not silently fall back to
+the predecessor check-then-use implementation.
 
 ## Scope boundary
 
@@ -87,7 +88,7 @@ text, or resolved external path targets.
 
 ## Test strategy
 
-Strict red-green-refactor TDD will add deterministic tests before implementation.
+Strict red-green-refactor TDD adds deterministic tests before implementation.
 The principal RED test swaps the manifest parent for a symlink immediately when
 temporary-file creation begins. The predecessor implementation writes outside
 the selected directory; the descriptor-relative implementation must keep all
@@ -102,6 +103,9 @@ Additional tests cover:
 - pre-existing regular, symlink, and directory temporary entries;
 - unavailable descriptor/no-follow primitives failing closed;
 - owned-temporary cleanup after write or replacement failure;
+- bounded errors for root-open, directory-create, destination-stat, temporary
+  creation, text-stream creation, file-sync, rename, cleanup, and directory-sync
+  failures;
 - file and parent-directory synchronization;
 - descriptor closure on success and failure;
 - 100% production statement, branch, and public-docstring coverage.
