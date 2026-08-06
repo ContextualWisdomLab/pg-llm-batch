@@ -65,6 +65,9 @@
   than the requested transport ceiling before package-owned buffering.
 - Enforce total bytes, physical-line bytes, and the combined result-plus-error
   record count before excessive data is yielded.
+- Validate and enforce `max_jsonl_physical_lines` as a batch-wide physical line
+  ceiling shared across result and error files. Count blank and nonblank lines,
+  including a final unterminated line, before decoding or parsing.
 - Decode each nonblank physical line as strict UTF-8 and require one unambiguous
   JSON object. Preserve output-before-error order, CRLF handling, and final
   records without a terminating newline; reject non-finite numbers and duplicate
@@ -81,4 +84,5 @@
 - Maintain 100% production statement, branch, and public-docstring coverage with
   deterministic split-chunk, invalid-stream, zero-progress, invalid-encoding,
   malformed-JSON, exception-sanitization, early-close, nested-close,
-  record-limit, line-limit, download-limit, compatibility, and error tests.
+  record-limit, byte-line-limit, batch-wide physical-line-limit, download-limit,
+  compatibility, and error tests.
