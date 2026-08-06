@@ -79,11 +79,11 @@ def test_write_release_manifest_cleans_owned_temporary_after_replace_failure(
     destination.write_text("trusted predecessor", encoding="utf-8")
     temporary = destination.parent / ".release-manifest.json.tmp"
 
-    def fail_replace(*args: object, **kwargs: object) -> None:
+    def fail_rename(*args: object, **kwargs: object) -> None:
         del args, kwargs
-        raise OSError("synthetic replace failure")
+        raise OSError("synthetic replacement failure")
 
-    monkeypatch.setattr(release_evidence.os, "replace", fail_replace)
+    monkeypatch.setattr(release_evidence.os, "rename", fail_rename)
 
     with pytest.raises(ReleaseEvidenceError, match="replace"):
         write_release_manifest({"schema_version": 1}, destination)
