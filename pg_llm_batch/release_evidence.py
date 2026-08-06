@@ -50,6 +50,8 @@ _MANIFEST_DIRECTORY_FLAGS = _ARTIFACT_DIRECTORY_FLAGS
 _MANIFEST_TEMPORARY_FLAGS = (
     os.O_CREAT | os.O_EXCL | os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0) | _CLOSE_ON_EXEC
 )
+_ArtifactIdentity = tuple[int, int, int, int, int, int]
+_ReleaseDirectoryEntry = tuple[str, _ArtifactIdentity]
 
 
 class ReleaseEvidenceError(ValueError):
@@ -138,15 +140,33 @@ def _open_release_directory(directory: Path) -> int:
         raise
 
 
-def _scan_release_names(directory_descriptor: int) -> tuple[str, ...]:
-    """Return at most three sorted names from one descriptor-pinned directory."""
+def _artifact_identity(status: os.stat_result) -> _ArtifactIdentity:
+    """Return metadata that identifies one stable regular-file directory entry."""
+    return (
+        status.st_dev,
+        status.st_ino,
+        stat.S_IFMT(status.st_mode),
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+
+
+def _scan_release_entries(
+    directory_descriptor: int,
+) -> tuple[_ReleaseDirectoryEntry, ...]:
+    """Return at most three sorted names and identities from one pinned directory."""
     try:
         with os.scandir(directory_descriptor) as entries:
-            return tuple(
-                sorted(
-                    (entry.name for entry in islice(entries, _RELEASE_DIRECTORY_SCAN_LIMIT))
+            snapshots = []
+            for entry in islice(entries, _RELEASE_DIRECTORY_SCAN_LIMIT):
+                snapshots.append(
+                    (
+                        entry.name,
+                        _artifact_identity(entry.stat(follow_symlinks=False)),
+                    )
                 )
-            )
+            return tuple(sorted(snapshots, key=lambda snapshot: snapshot[0]))
     except (OSError, ValueError):
         raise ReleaseEvidenceError("release directory could not be inspected") from None
 
@@ -198,20 +218,12 @@ def _validate_artifact_filename(
         )
 
 
-def _artifact_identity(status: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    """Return inode metadata that must remain stable while artifact bytes are read."""
-    return (
-        status.st_dev,
-        status.st_ino,
-        stat.S_IFMT(status.st_mode),
-        status.st_size,
-        status.st_mtime_ns,
-        status.st_ctime_ns,
-    )
-
-
-def _artifact_record(directory_descriptor: int, name: str) -> dict[str, Any]:
-    """Read one regular non-symlink artifact through its pinned directory descriptor."""
+def _artifact_record(
+    directory_descriptor: int,
+    name: str,
+    expected_identity: _ArtifactIdentity,
+) -> dict[str, Any]:
+    """Read the exact regular artifact observed during the pinned directory scan."""
     try:
         artifact_descriptor = os.open(
             name,
@@ -232,6 +244,8 @@ def _artifact_record(directory_descriptor: int, name: str) -> dict[str, Any]:
             raise ReleaseEvidenceError(
                 "release artifacts must be regular non-symlink files"
             )
+        if _artifact_identity(initial_status) != expected_identity:
+            raise ReleaseEvidenceError("release artifact changed during verification")
 
         digest = hashlib.sha256()
         bytes_read = 0
@@ -266,8 +280,10 @@ def _artifact_records(
     """Return source-distribution then wheel records from one pinned directory."""
     directory_descriptor = _open_release_directory(directory)
     try:
-        initial_names = _scan_release_names(directory_descriptor)
+        initial_entries = _scan_release_entries(directory_descriptor)
+        initial_names = tuple(name for name, _identity in initial_entries)
         wheel, sdist = _release_names(initial_names)
+        expected_identities = dict(initial_entries)
         records: list[dict[str, Any]] = []
         for name in (sdist, wheel):
             _validate_artifact_filename(
@@ -275,8 +291,14 @@ def _artifact_records(
                 distribution_name=distribution_name,
                 version=version,
             )
-            records.append(_artifact_record(directory_descriptor, name))
-        if _scan_release_names(directory_descriptor) != initial_names:
+            records.append(
+                _artifact_record(
+                    directory_descriptor,
+                    name,
+                    expected_identities[name],
+                )
+            )
+        if _scan_release_entries(directory_descriptor) != initial_entries:
             raise ReleaseEvidenceError("release directory changed during verification")
         return records
     finally:
