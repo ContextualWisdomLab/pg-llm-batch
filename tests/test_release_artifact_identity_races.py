@@ -60,7 +60,7 @@ def test_verifier_refuses_same_bytes_regular_replacement_before_open(
         if dir_fd is not None and os.fspath(path) == WHEEL:
             directory = next(replacement_directories)
             target = directory / WHEEL
-            target.rename(directory / "original.whl")
+            target.rename(tmp_path / f"{directory.name}-original.whl")
             target.write_bytes(b"wheel")
         return original_open(path, flags, mode, dir_fd=dir_fd)
 
@@ -88,7 +88,7 @@ def test_verifier_refuses_same_name_replacement_before_final_rescan(
             descriptor_scans += 1
             if descriptor_scans == 2:
                 target = first / WHEEL
-                target.rename(first / "original.whl")
+                target.rename(tmp_path / "first-original.whl")
                 target.write_bytes(b"wheel")
         return original_scandir(path)
 
