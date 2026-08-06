@@ -48,8 +48,10 @@ def test_release_evidence_doctoring_explains_operations_and_recovery() -> None:
 
 def test_release_evidence_documents_authoritative_toctou_references() -> None:
     """Require current primary standards and CWE evidence in authoritative docs."""
-    combined = "\n".join(
-        path.read_text(encoding="utf-8") for path in (ADR, DOCTORING)
+    combined = " ".join(
+        "\n".join(
+            path.read_text(encoding="utf-8") for path in (ADR, DOCTORING)
+        ).split()
     )
 
     required = (
