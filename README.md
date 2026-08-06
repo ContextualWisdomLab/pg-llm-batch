@@ -53,6 +53,7 @@ BatchAPIClient
 
 Optional bounded result iterator:
     StreamingBatchAPIClient
+        ├─ open_batch_records → deterministic lifecycle owner
         └─ iter_batch_records → BatchResultRecord
 
 Optional durable projection:
@@ -284,7 +285,7 @@ produce body-free structured diagnostics.
 
 `download_results()` retains its aggregate compatibility contract and therefore
 materializes each complete bounded file and parsed record list. For large or
-shared workloads, use the opt-in iterator instead:
+shared workloads, use the opt-in context-managed iterator instead:
 
 ```python
 from pg_llm_batch import StreamingBatchAPIClient
@@ -296,15 +297,25 @@ async with StreamingBatchAPIClient(
     max_jsonl_line_bytes=1 * 1024 * 1024,
     max_jsonl_records=100_000,
 ) as client:
-    async for item in client.iter_batch_records("batch-123", "default"):
-        await persist_record(item.file_kind, item.record)
+    async with client.open_batch_records("batch-123", "default") as records:
+        async for item in records:
+            await persist_record(item.file_kind, item.record)
+            if consumer_should_stop(item):
+                break
 ```
+
+The context-managed API explicitly closes the public iterator, its active nested
+file iterator, and the response when the loop exits early. A bare `async for`
+over `iter_batch_records()` must be exhausted or explicitly closed; Python does
+not call `aclose()` merely because the loop uses `break`.
 
 The iterator reads output records before provider error records, accepts CRLF
 and final lines without a newline, skips blank lines, and requires every other
 line to be strict UTF-8 containing one JSON object. The per-file total byte cap,
 per-line byte cap, and combined result-plus-error record cap are enforced before
-excessive data is yielded. Downstream persistence and backpressure remain host
+excessive data is yielded. Empty, non-byte, and oversized adapter chunks fail
+closed, and sanitized parser exceptions do not retain provider bytes or text in
+cause/context links. Downstream persistence and backpressure remain host
 responsibilities; collecting every yielded record recreates aggregate memory
 use. See [`docs/result-streaming.md`](docs/result-streaming.md).
 
