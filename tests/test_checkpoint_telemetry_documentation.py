@@ -23,11 +23,11 @@ def test_authoritative_documents_define_checkpoint_telemetry_boundary() -> None:
             "OpenTelemetry checkpoint signals",
             "record_exception=False",
             "set_status_on_exception=False",
-            "finite low-cardinality error.type",
+            "finite low-cardinality `error.type`",
         ),
         "CLAUDE.md": (
             "OpenTelemetry checkpoint signals",
-            "never add tenant, consumer, batch, endpoint, file, digest, cursor, or DSN values",
+            "Never add tenant, consumer, batch, endpoint, file, digest, cursor, or DSN values",
             "telemetry failures must not mask or replace application results or exceptions",
         ),
         "CHANGELOG.md": (
