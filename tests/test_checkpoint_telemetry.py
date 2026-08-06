@@ -269,7 +269,6 @@ def test_successful_load_emits_fixed_low_cardinality_signals() -> None:
         (
             "pg_llm_batch.checkpoint.load",
             {
-                "db.system.name": "postgresql",
                 "pg_llm_batch.checkpoint.operation": "load",
                 "pg_llm_batch.checkpoint.transaction_owner": "package",
             },
