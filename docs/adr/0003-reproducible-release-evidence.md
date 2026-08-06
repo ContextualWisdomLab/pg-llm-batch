@@ -31,9 +31,11 @@ evidence source, count failures must not embed whichever filenames happened to
 appear in the bounded sample.
 
 The canonical evidence writer runs against pull-request-controlled workspace
-paths. Rejecting only a symlink at the final manifest filename is insufficient:
-a symlink in any existing parent component can redirect both the temporary file
-and the atomic replacement outside the intended evidence directory.
+paths. Rejecting a symlink and then later opening the same pathname is a
+CWE-367 time-of-check/time-of-use boundary: a same-UID process can rename a
+checked parent and put a symlink at its former pathname before temporary-file
+creation. Repeating a lexical check, shortening the interval, or resolving the
+pathname does not bind later operations to the object that was checked.
 
 ## Decision
 
@@ -49,10 +51,29 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
    diagnostic for missing or extra counts;
 6. verifies regular non-symlink files, expected distribution/version identity,
    byte size, and streaming SHA-256 equality;
-7. rejects a symlink at the manifest destination or in any existing parent path
-   component before creating the evidence directory, then writes one canonical
-   bounded `release-manifest.json` atomically; and
-8. retains only that manifest for 14 days as review evidence.
+7. serializes one bounded canonical `release-manifest.json` payload before any
+   filesystem mutation;
+8. fails closed on unsupported platforms unless Python exposes the required
+   descriptor-relative operations, `O_DIRECTORY`, `O_NOFOLLOW`, and no-follow
+   status inspection;
+9. opens the filesystem root or current directory, then walks or creates every
+   parent component relative to a held directory descriptor using
+   `O_DIRECTORY` and `O_NOFOLLOW`;
+10. inspects the final destination without following a link and permits only an
+    absent or regular file;
+11. creates the temporary entry relative to the final parent descriptor with
+    exclusive creation, `O_NOFOLLOW`, mode `0600`, and close-on-exec where
+    available;
+12. writes the payload, synchronizes the file and final parent directory, and
+    performs the atomic replacement with descriptor-relative `os.rename()`;
+13. removes only the temporary entry created by the current invocation if a
+    later write or replacement step fails; and
+14. retains only the completed manifest for 14 days as review evidence.
+
+New evidence directories request mode `0700`. Errors use bounded operation
+categories and do not include manifest contents, source files, credentials,
+environment variables, provider identifiers, resolved external targets, or
+arbitrary operating-system exception text.
 
 The pull-request workflow has only `contents: read`. It does not publish,
 does not attest, does not request an OpenID Connect token, and does not receive
@@ -70,8 +91,18 @@ approval, branch protection, exact-head security, packaging, and release gates.
   payloads, credentials, provider data, and environment dumps.
 - Missing and extra artifact-count failures produce stable evidence even when
   filesystem iteration order changes.
-- Pull-request-controlled parent symlinks cannot redirect manifest writes or the
-  temporary atomic-replacement file outside the selected evidence directory.
+- Parent traversal, direct or nested symlinks, and concurrent lexical parent
+  replacement cannot redirect a write that is anchored to held directory
+  descriptors.
+- The temporary file and destination replacement remain in the originally
+  opened final parent even when another process changes its pathname during the
+  operation.
+- Synchronizing the file and final parent directory gives operators explicit
+  evidence of both byte and directory-entry durability boundaries.
+- The function does not reserve or preserve the human-readable lexical pathname
+  after the function returns. Another same-UID process may rename directories or
+  entries later; callers requiring post-return ownership must enforce a separate
+  workspace-isolation boundary.
 - The manifest is evidence for review, not a signature, SBOM, provenance
   attestation, release authorization, or substitute for independent approval.
 - A future release workflow may consume the same verified artifact set and add
@@ -99,11 +130,29 @@ Rejected because the verifier intentionally stops after the third entry and the
 bounded sample depends on filesystem iteration order. A fixed count diagnostic
 is sufficient to fail closed and preserves deterministic incident evidence.
 
-### Follow parent symlinks and validate only the final filename
+### Repeat lexical symlink checks immediately before use
 
-Rejected because an otherwise ordinary destination path can traverse a parent
-symlink before the final filename exists. The evidence writer must fail before
-creating directories or bytes through that redirected path.
+Rejected because the filesystem object can still change after the check. This
+narrows but does not remove the CWE-367 interval and creates a false security
+claim.
+
+### Resolve the destination with `Path.resolve()` or `realpath()`
+
+Rejected because resolution follows links and produces another mutable pathname.
+It also changes the contract from refusing links to accepting their targets.
+
+### Descriptor-relative no-follow traversal and rename
+
+Selected because openat-style operations bind component lookup to held directory
+objects and renameat-style replacement keeps source and destination in that
+opened final directory. POSIX explicitly defines these interfaces to avoid path
+replacement races.
+
+### Fall back to the predecessor pathname writer on unsupported platforms
+
+Rejected. Silent fallback would make the security property platform-dependent
+while preserving the same success signal. Unsupported platforms receive one
+fixed fail-closed error instead.
 
 ### Upload both complete build directories from every pull request
 
@@ -125,12 +174,27 @@ GitHub. (n.d.). *Using artifact attestations to establish provenance for builds*
 GitHub Docs. Retrieved August 6, 2026, from
 https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
 
+MITRE. (2026). *CWE-367: Time-of-check time-of-use (TOCTOU) race condition*
+(Version 4.20). https://cwe.mitre.org/data/definitions/367.html
+
 Python Packaging Authority. (n.d.). *Source distribution format*.
 Python Packaging User Guide. Retrieved August 6, 2026, from
 https://packaging.python.org/en/latest/specifications/source-distribution-format/
+
+Python Software Foundation. (2026). *os—Miscellaneous operating system
+interfaces*. Python 3.14 documentation. Retrieved August 6, 2026, from
+https://docs.python.org/3.14/library/os.html
 
 Reproducible Builds. (n.d.). *SOURCE_DATE_EPOCH specification*. Retrieved
 August 6, 2026, from https://reproducible-builds.org/specs/source-date-epoch/
 
 Supply-chain Levels for Software Artifacts. (2025). *SLSA specification,
 version 1.2*. https://slsa.dev/spec/v1.2/
+
+The Open Group. (2024). *open, openat—Open file*. In *The Open Group Base
+Specifications Issue 8, IEEE Std 1003.1-2024*.
+https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html
+
+The Open Group. (2024). *rename, renameat—Rename file*. In *The Open Group Base
+Specifications Issue 8, IEEE Std 1003.1-2024*.
+https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html
