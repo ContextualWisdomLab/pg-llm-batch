@@ -66,15 +66,14 @@ def _release_paths(directory: Path) -> tuple[Path, Path]:
         islice(directory.iterdir(), _RELEASE_DIRECTORY_SCAN_LIMIT),
         key=lambda path: path.name,
     )
-    entries = _bounded_directory_entries(paths)
     if len(paths) != _RELEASE_ARTIFACT_COUNT:
         raise ReleaseEvidenceError(
-            "release directory must contain exactly one wheel and one sdist; "
-            f"entries=[{entries}]"
+            "release directory must contain exactly one wheel and one sdist"
         )
     if any(path.is_symlink() or not path.is_file() for path in paths):
         raise ReleaseEvidenceError("release artifacts must be regular non-symlink files")
 
+    entries = _bounded_directory_entries(paths)
     wheels = [path for path in paths if path.name.endswith(".whl")]
     sdists = [path for path in paths if path.name.endswith(".tar.gz")]
     if len(wheels) != 1 or len(sdists) != 1:
