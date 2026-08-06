@@ -18,6 +18,8 @@ def test_authoritative_documents_define_checkpoint_telemetry_boundary() -> None:
             "OpenTelemetryCheckpointStore",
             "tenant, consumer, batch, endpoint, file, digest, cursor, and DSN values",
             "best-effort telemetry cannot change checkpoint operation semantics",
+            "storage-agnostic",
+            "does not emit `db.system.name`",
         ),
         "AGENTS.md": (
             "OpenTelemetry checkpoint signals",
@@ -39,6 +41,8 @@ def test_authoritative_documents_define_checkpoint_telemetry_boundary() -> None:
             "Package-owned telemetry never contains tenant scope",
             "The wrapper supplies `(None, None, None)` when closing the span context",
             "Non-cancellation process-control exceptions remain outside this observer-failure guarantee",
+            "Package operation spans are deliberately storage-agnostic",
+            "do not emit `db.system.name`",
         ),
     }
     for path, phrases in required.items():
@@ -55,10 +59,12 @@ def test_adr_and_doctoring_record_operator_and_standards_contracts() -> None:
     )
     for phrase in (
         "dependency-injected OpenTelemetry-compatible tracer and meter",
-        "package-owned spans and metrics never contain resource identifiers",
+        "Package-owned spans and metrics never contain resource identifiers",
         "histogram unit is seconds",
-        "exporter, processor, sampler, and provider ownership remains with the host",
-        "rollback",
+        "Exporter, processor, sampler, and provider ownership remains with the host",
+        "storage-agnostic",
+        "do not emit `db.system.name`",
+        "Rollback",
     ):
         assert phrase in adr
     for phrase in (
@@ -66,8 +72,9 @@ def test_adr_and_doctoring_record_operator_and_standards_contracts() -> None:
         "Semantic conventions for database client spans",
         "Recording errors",
         "error.type SHOULD be predictable and SHOULD have low cardinality",
-        "db.system.name",
+        "does **not** emit `db.system.name`",
         "postgresql",
+        "storage-agnostic",
         "APA 7",
     ):
         assert phrase in doctoring
