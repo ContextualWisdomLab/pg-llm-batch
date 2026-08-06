@@ -17,9 +17,19 @@ async with StreamingBatchAPIClient(
     max_jsonl_line_bytes=1 * 1024 * 1024,
     max_jsonl_records=100_000,
 ) as client:
-    async for item in client.iter_batch_records("batch-123", "default"):
-        persist(item.file_kind, item.record)
+    async with client.open_batch_records("batch-123", "default") as records:
+        async for item in records:
+            persist(item.file_kind, item.record)
+            if consumer_should_stop():
+                break
 ```
+
+`open_batch_records()` is the supported lifecycle boundary when a consumer may
+stop early. Leaving its `async with` block explicitly closes the outer iterator,
+the active provider-file iterator, and the HTTP response context. A bare
+`async for` loop over `iter_batch_records()` does not receive an automatic
+`aclose()` call from Python when the loop breaks; callers using that lower-level
+method must exhaust it or close it explicitly.
 
 Records are emitted in deterministic provider-file order: all output records,
 then all error records. A failed batch that exposes only an error file is valid.
@@ -34,14 +44,18 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
 - `max_jsonl_records` caps the combined output-plus-error record count for one
   iterator.
 - Response data is consumed only through `content.iter_chunked(64 KiB)`. An
-  adapter that omits the interface, emits a non-byte chunk, or yields a chunk
-  larger than the requested 64 KiB fails closed before package-owned line
-  buffering.
+  adapter that omits the interface, emits a non-byte or empty chunk, or yields a
+  chunk larger than the requested 64 KiB fails closed before package-owned line
+  buffering. Empty chunks are rejected because they make no byte progress and
+  could otherwise sustain an unbounded adapter loop without reaching a byte cap.
 - Redirects remain disabled, provider identifiers remain validated before URL
   construction, and only idempotent GET transport operations use bounded retry.
 - Every nonblank line must be strict UTF-8 and decode to one interoperable JSON
   object. Arrays, scalars, non-finite number extensions, duplicate object names,
   malformed JSON, and invalid UTF-8 are rejected with body-free diagnostics.
+- Sanitized parser errors are raised outside the provider decoder's active
+  exception handler, so their exported cause and context do not retain decoder
+  exceptions that reference provider-controlled bytes or text.
 - Parser diagnostics exclude provider batch and file identifiers as well as
   record content.
 - Non-success file responses are rejected before reading the provider-controlled
@@ -49,8 +63,9 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
 
 The iterator bounds library-owned buffering, not downstream consumer behavior.
 A caller that appends every yielded record to a list recreates aggregate memory
-use and must size its own process accordingly. Cancellation and early loop exit
-close the active response context through normal asynchronous-generator cleanup.
+use and must size its own process accordingly. Cancellation closes active
+response contexts through generator cleanup; planned early exit should use
+`open_batch_records()` for deterministic closure.
 
 ## Compatibility and observability
 
