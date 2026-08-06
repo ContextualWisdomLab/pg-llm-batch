@@ -134,6 +134,45 @@ own record persistence, queue capacity, cancellation, explicit iterator
 lifecycle, and consumer memory. A host that accumulates every yielded record
 recreates aggregate memory use.
 
+## Resumable result checkpoint boundary
+
+`iter_checkpointed_batch_records()` and
+`open_checkpointed_batch_records()` add an opt-in application-recovery boundary
+without changing aggregate or non-checkpointed streaming behavior. Each validated
+record is paired with an immutable versioned `BatchResultCheckpoint` that a host
+may persist after its corresponding record effects are durable.
+
+Checkpoint identity is SHA-256 over a domain-separated, explicitly
+length-prefixed frame sequence. The sequence binds the exact validated batch
+identifier and pre-normalized endpoint alias, ordered result/error file kind and
+validated provider file identifier, every raw physical line byte sequence, its
+file-local line number, and whether LF terminated the line. Blank lines and CR
+bytes in CRLF input affect checkpoint identity; transport chunk boundaries do
+not. The checkpoint also carries batch-wide physical-line and record positions
+for bounded reconciliation and diagnostics.
+
+Resume deliberately starts at byte zero instead of depending on HTTP Range,
+ETag, or provider-specific validator behavior. It rereads and parses the prefix
+under all existing total-byte, line-byte, physical-line, record, timeout,
+retry-handoff, strict-JSON, and deterministic-close controls. The iterator yields
+nothing until the supplied checkpoint is reproduced exactly. Changed content,
+changed file identity, inserted or removed framing, a different record at the
+expected position, or end-of-stream before the position fails closed before any
+later record is delivered.
+
+The digest is deterministic change-detection evidence under FIPS 180-4, not an
+authentication or authorization mechanism. It is not a signature, MAC, provider
+attestation, tenant credential, or complete exactly-once protocol. The embedding
+host owns caller authentication, tenant and endpoint authorization, checkpoint
+store tamper/rollback protection, and atomic coordination between record effects
+and checkpoint advancement. A host needing authenticated checkpoint storage may
+wrap the serialized checkpoint in its own HMAC, signature, append-only log, or
+transactional database control.
+
+An incompatible framing change requires a new checkpoint schema version and an
+explicit compatibility/migration decision. The current feature adds no database
+object and preserves standalone and modular MSA deployment.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
@@ -149,6 +188,9 @@ Streaming retrieval also remains standalone. Host modules may persist each
 `BatchResultRecord` into their own tenant-qualified queue or database, but must
 preserve the package's file ordering, resource limits, retry-handoff boundary,
 and deterministic cleanup contract or define and test a stricter local boundary.
+For checkpointed delivery, hosts must persist the complete checkpoint in the
+same trusted tenant and endpoint context as the record effects and must not
+advance it after a failed or partially committed consumer transaction.
 
 ## Verification boundary
 
@@ -173,6 +215,10 @@ post-handoff payload and response-close failures, no-retry/no-replay behavior,
 non-object records, non-success responses, total-download, byte-line, combined
 record, and batch-wide physical line limits across result and error files,
 including blank lines, deterministic result/error ordering, and 100% production
-statement and branch coverage. Final merge evidence must be regenerated against
-the integrated base; successful stacked-base runs are not reusable release
-evidence.
+statement and branch coverage. Checkpoint tests additionally cover chunk
+independence, exact resume without acknowledged-record replay, final-checkpoint
+completion, result-prefix binding across error-file checkpoints, content and
+framing mutation, changed file identity, truncation, strict pre-network identity
+validation, context-managed early close, and SHA-256 framing sensitivity. Final
+merge evidence must be regenerated against the integrated base; successful
+stacked-base runs are not reusable release evidence.
