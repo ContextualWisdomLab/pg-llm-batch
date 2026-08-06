@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in `StreamingBatchAPIClient` and immutable `BatchResultRecord` for
+  output-then-error JSONL iteration without whole-body or whole-result-list
+  materialization, with strict per-file decoded-byte, physical-line byte, and
+  combined record-count limits; split UTF-8, CRLF, blank lines, and final lines
+  without a newline are handled deterministically, while invalid streams,
+  encodings, JSON, non-object records, and non-success file responses fail closed
+  with body-free diagnostics.
 - Read-only exact-head release acceptance that builds one wheel and source
   distribution twice from clean Git archives, proves byte-identical SHA-256
   identity, records bounded canonical evidence, and keeps publication and
@@ -90,6 +97,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Exposed `ValidationError.field`, `.value`, and `.reason` as direct stable
+  attributes while retaining the existing structured `details` dictionary.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, the `uv_build` backend, and exact
   `uv`/`uv_build` 0.12.1 governed build pins so PEP 517 backend selection cannot
