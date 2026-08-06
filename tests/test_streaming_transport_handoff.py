@@ -127,6 +127,7 @@ async def test_post_handoff_payload_failure_is_not_retried(
         "timeout_seconds": client.request_timeout_seconds,
     }
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert "mid-stream payload failure" not in str(exc_info.value)
     assert len(session.calls) == 1
     assert sleeps == []
@@ -172,6 +173,7 @@ async def test_post_handoff_close_failure_is_not_retried(
         "timeout_seconds": client.request_timeout_seconds,
     }
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert "response close failure" not in str(exc_info.value)
     assert len(session.calls) == 1
     assert sleeps == []
@@ -228,6 +230,7 @@ async def test_streaming_payload_failure_never_restarts_or_duplicates(
         "timeout_seconds": client.request_timeout_seconds,
     }
     assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
     assert "mid-stream payload failure" not in str(exc_info.value)
     assert len(session.calls) == 1
     assert sleeps == []
