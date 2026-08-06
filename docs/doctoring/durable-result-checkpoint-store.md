@@ -46,9 +46,15 @@ advancement commit or roll back together. The standalone `save()` method owns it
 transaction for simpler deployments. External side effects still require a
 transactional outbox, stable idempotency key, or explicit reconciliation.
 
-The rollback script checks for any acknowledgement row and raises SQLSTATE 55000
-before `DROP TABLE`. Operators must export, reconcile, or explicitly remove
-checkpoint evidence before schema rollback.
+A non-empty rollback guard cannot query through forced RLS with no tenant setting:
+that context sees no rows and could falsely authorize destruction. The rollback
+therefore executes as one atomic `DO` block, temporarily applies
+`NO FORCE ROW LEVEL SECURITY`, and performs an owner-visible table-wide emptiness
+check. If any acknowledgement exists, SQLSTATE 55000 aborts the transaction, so
+the owner-enforcement relaxation is rolled back with the failed drop attempt. A
+role lacking table-owner authority fails before it can relax RLS or drop the
+table. Operators must export, reconcile, or explicitly remove checkpoint evidence
+before schema rollback.
 
 ## Threat and failure matrix
 
@@ -60,7 +66,7 @@ checkpoint evidence before schema rollback.
 | Regressive logical or physical position | Both `record_count` and `batch_line_count` must increase | A malicious database administrator can alter rows |
 | Cross-tenant lookup or write | Forced RLS, transaction-local scope, tenant-qualified predicates | Superuser, `BYPASSRLS`, arbitrary SQL, and bad authorization mapping are excluded |
 | Malformed database row | Reconstruct and revalidate `BatchResultCheckpoint`; invalid shape fails closed | Recovery requires operator repair |
-| Accidental destructive rollback | Non-empty table raises SQLSTATE 55000 | Authorized explicit deletion remains possible |
+| Forced RLS hides rows during rollback | Atomic owner-visible `NO FORCE ROW LEVEL SECURITY` check; non-empty evidence raises SQLSTATE 55000 and restores RLS by rollback | An authorized owner can still explicitly delete evidence before rerunning rollback |
 | Provider suffix changes after checkpoint | Explicitly not attested by the prefix digest | Requires provider validator, authenticated digest, or full-stream manifest |
 | Side effect and checkpoint split across systems | No false exactly-once claim | Requires outbox/idempotency/reconciliation at the host boundary |
 
@@ -74,9 +80,10 @@ installation, and 100% production statement and branch coverage.
 
 Static migration tests require byte-identical package and container SQL, forced
 RLS, tenant policy text, bounded digest and position constraints, descriptive
-snake_case object names, no `BYPASSRLS`, and destructive rollback refusal. A live
-PostgreSQL integration test exercises idempotent creation, exact advancement,
-load, stale-writer rejection, and cleanup when `PG_LLM_BATCH_TEST_DSN` is set.
+snake_case object names, no `BYPASSRLS`, and an owner-visible destructive rollback
+guard ordered before both the evidence check and table drop. A live PostgreSQL
+integration test exercises idempotent creation, exact advancement, load,
+stale-writer rejection, and cleanup when `PG_LLM_BATCH_TEST_DSN` is set.
 
 Final merge evidence must be regenerated on the integrated exact head and base.
 A successful stacked-branch run is development evidence only and cannot authorize
