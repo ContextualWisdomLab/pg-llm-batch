@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from asyncio import CancelledError
 from typing import Any, Callable, Optional, TypeVar
@@ -117,7 +118,7 @@ def _create_histogram(meter: Any) -> Any:
         return _NO_OP_INSTRUMENT
 
 
-def _read_clock(clock: Callable[[], int]) -> Optional[int]:
+def _read_clock(clock: Callable[[], Any]) -> Any:
     """Read a monotonic clock without making telemetry a business dependency."""
     try:
         return clock()
@@ -125,11 +126,17 @@ def _read_clock(clock: Callable[[], int]) -> Optional[int]:
         return None
 
 
-def _duration_seconds(start_ns: Optional[int], end_ns: Optional[int]) -> float:
-    """Return a nonnegative duration or zero when clock evidence is unavailable."""
+def _duration_seconds(start_ns: Any, end_ns: Any) -> float:
+    """Return a finite nonnegative duration or zero for invalid clock evidence."""
     if start_ns is None or end_ns is None:
         return 0.0
-    return max(0.0, (end_ns - start_ns) / 1_000_000_000)
+    try:
+        duration = (end_ns - start_ns) / 1_000_000_000
+        if not math.isfinite(duration):
+            return 0.0
+        return max(0.0, float(duration))
+    except _TELEMETRY_FAILURES:
+        return 0.0
 
 
 def _classify_failure(error: BaseException) -> tuple[str, str]:
@@ -185,7 +192,7 @@ class OpenTelemetryCheckpointStore:
         *,
         tracer: Any,
         meter: Any,
-        monotonic_ns: Callable[[], int] = time.monotonic_ns,
+        monotonic_ns: Callable[[], Any] = time.monotonic_ns,
     ) -> None:
         """Bind one store and host-owned OpenTelemetry-compatible instruments."""
         self._store = store
