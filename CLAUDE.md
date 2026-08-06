@@ -58,17 +58,27 @@
   redirects, bounded idempotent GET retry, timeouts, provider identifier
   validation, and decoded-byte limits.
 - Check the final provider-file HTTP status before consuming its body. Keep
-  failure diagnostics body-free and free of credentials, URLs, identifiers, and
-  record data.
-- Consume only `iter_chunked` byte streams and count `memoryview.nbytes`.
-  Enforce total bytes, physical-line bytes, and the combined result-plus-error
+  failure diagnostics body-free and free of credentials, URLs, identifiers,
+  record data, and retained decoder exception payloads.
+- Consume only `iter_chunked` byte streams and count `memoryview.nbytes`. Reject
+  absent streams, non-byte chunks, empty zero-progress chunks, and chunks larger
+  than the requested transport ceiling before package-owned buffering.
+- Enforce total bytes, physical-line bytes, and the combined result-plus-error
   record count before excessive data is yielded.
-- Decode each nonblank physical line as strict UTF-8 and require one JSON object.
-  Preserve output-before-error order, CRLF handling, and final records without a
-  terminating newline.
+- Decode each nonblank physical line as strict UTF-8 and require one unambiguous
+  JSON object. Preserve output-before-error order, CRLF handling, and final
+  records without a terminating newline; reject non-finite numbers and duplicate
+  object names.
+- Translate decoder failures after leaving the active provider exception handler
+  so exported `GatewayError` objects have no cause or context retaining provider
+  bytes or text.
+- Use `open_batch_records()` when a consumer may stop early. It owns and closes
+  the public iterator, each nested file iterator, and the active HTTP response.
+  Never rely on a bare `async for` break to call `aclose()` automatically.
 - Keep library-owned memory bounded to one line and one decoded record. Treat
-  downstream collection, persistence, transformation, and backpressure as host
-  responsibilities.
+  downstream collection, persistence, transformation, lifecycle ownership, and
+  backpressure as host responsibilities.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  deterministic split-chunk, invalid-stream, invalid-encoding, malformed-JSON,
+  deterministic split-chunk, invalid-stream, zero-progress, invalid-encoding,
+  malformed-JSON, exception-sanitization, early-close, nested-close,
   record-limit, line-limit, download-limit, compatibility, and error tests.
