@@ -33,14 +33,18 @@ Add `StreamingBatchAPIClient`, a source-compatible subclass of
 4. preserve the inherited HTTPS, no-redirect, timeout, credential, identifier,
    total-download, and idempotent-GET retry controls;
 5. reject non-success file responses before body consumption;
-6. consume only bounded byte chunks and count `memoryview.nbytes` accurately;
+6. consume only byte chunks no larger than the requested 64 KiB transport bound,
+   reject adapters that violate that contract, and count `memoryview.nbytes`
+   accurately;
 7. split physical lines incrementally, cap an unterminated or complete line
    before decoding, accept CRLF and a final line without a newline, and ignore
    blank lines;
-8. decode each nonblank line with strict UTF-8 and require one JSON object;
+8. decode each nonblank line with strict UTF-8 and require one interoperable JSON
+   object without non-finite number extensions or duplicate object names;
 9. cap the combined number of output and error records before yielding the
    record that exceeds the limit; and
-10. expose only bounded, body-free error metadata.
+10. expose only bounded, body-free metadata without provider identifiers or
+    record content in parser diagnostics.
 
 The aggregate `download_results()` API remains unchanged. Streaming is explicit
 because it changes the caller contract from one returned aggregate to an async
@@ -48,15 +52,19 @@ iterator whose consumption and persistence policy belongs to the host.
 
 ## Consequences
 
-- Library-owned memory is bounded by the configured line buffer, transport chunk,
-  decoded control response, and one decoded record at a time rather than the
-  complete provider file and record list.
+- Library-owned input buffering is bounded by the configured line buffer,
+  requested transport chunk, decoded control response, and one decoded record at
+  a time rather than the complete provider file and record list. A custom adapter
+  has allocated a returned object before the client can reject it, so adapter
+  internals remain outside the package memory claim.
 - Hosts can persist or transform records incrementally while retaining standalone
   package operation and modular MSA interoperability.
 - Callers remain responsible for downstream backpressure and must not collect all
   yielded records unless they intentionally accept aggregate memory use.
 - The file-level total byte limit remains independent for output and error files;
   the record-count limit applies to the combined iterator.
+- Duplicate JSON object names and Python-compatible `NaN`/infinity extensions are
+  rejected to avoid ambiguous or non-interoperable durable records.
 - Existing OpenTelemetry operation wrappers do not implicitly instrument this new
   iterator. Consumer telemetry must remain low-cardinality and payload-free.
 - Version `0.1.0` is unchanged; this decision does not authorize publication.
@@ -78,10 +86,17 @@ the transport budget through object expansion.
 Rejected because the field may be absent, malformed, or describe encoded rather
 than decoded bytes. Observed bytes remain authoritative.
 
-### Permit arbitrary JSON values per line
+### Trust custom adapters to honor `iter_chunked(n)`
 
-Rejected because downstream batch processing expects keyed records and object-only
-validation prevents ambiguous arrays and scalars from entering durable workflows.
+Rejected because the client can cheaply validate each observed chunk before
+copying it into package-owned line buffering. The check does not control memory
+already allocated inside the adapter, but it preserves the package boundary.
+
+### Permit arbitrary or ambiguous JSON values per line
+
+Rejected because downstream batch processing expects keyed records. Object-only,
+finite-number, and unique-name validation prevents ambiguous arrays, scalars, or
+implementation-specific objects from entering durable workflows.
 
 ## References
 
