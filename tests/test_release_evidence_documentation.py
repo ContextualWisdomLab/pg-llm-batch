@@ -34,3 +34,17 @@ def test_release_evidence_doctoring_defines_bounded_operator_evidence() -> None:
     )
     for phrase in required:
         assert phrase in text
+
+
+def test_release_evidence_doctoring_rejects_stale_stacked_base_proof() -> None:
+    text = DOCTORING.read_text(encoding="utf-8")
+
+    required = (
+        "current stacked base",
+        "GitHub-generated merge commit",
+        "stale-base",
+        "retarget",
+        "integrated main",
+    )
+    for phrase in required:
+        assert phrase in text
