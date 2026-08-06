@@ -1,13 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright (c) ContextualWisdomLab.
-"""pg-llm-batch: standalone + submodule Postgres LLM batch engine.
+"""pg-llm-batch: standalone and embeddable Postgres LLM batch engine.
 
 Public API:
-    TokenCounter, BatchAccumulator   -- pg_tiktoken token counting
-    PostgresBatchOrchestrator        -- assemble/persist JSONL payloads
-    BatchAPIClient                   -- submit/poll/retrieve
-    DurableBatchAPIClient            -- submit/poll/retrieve with lifecycle state
-    PostgresConfigStore, SecretStore -- KV config + secrets (no os.getenv)
+    TokenCounter, BatchAccumulator      -- pg_tiktoken token counting
+    PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
+    BatchAPIClient                      -- submit, poll, and retrieve
+    DurableBatchAPIClient               -- standalone durable lifecycle state
+    TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
+    PostgresConfigStore, SecretStore    -- database configuration and secrets
 """
 
 from __future__ import annotations
@@ -18,7 +19,17 @@ from .batch_api_client import (
     config_credentials_provider,
 )
 from .config import PostgresConfigStore, SecretStore, get_config_store
-from .durable_client import DurableBatchAPIClient
+from .db import (
+    DEFAULT_TENANT_SCOPE,
+    get_remote_batch_state,
+    get_tenant_remote_batch_state,
+    persist_tenant_remote_batch_state,
+    validate_tenant_scope,
+)
+from .durable_client import (
+    DurableBatchAPIClient,
+    TenantDurableBatchAPIClient,
+)
 from .exceptions import (
     ConfigError,
     GatewayError,
@@ -35,6 +46,12 @@ __version__ = "0.1.0"
 __all__ = [
     "BatchAPIClient",
     "DurableBatchAPIClient",
+    "TenantDurableBatchAPIClient",
+    "DEFAULT_TENANT_SCOPE",
+    "validate_tenant_scope",
+    "persist_tenant_remote_batch_state",
+    "get_tenant_remote_batch_state",
+    "get_remote_batch_state",
     "GatewayCredentials",
     "config_credentials_provider",
     "PostgresConfigStore",
