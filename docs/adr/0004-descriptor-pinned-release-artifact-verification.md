@@ -32,20 +32,24 @@ The release artifact verifier shall:
    from an opened `.` descriptor;
 4. open each release-directory component relative to the currently held
    descriptor with `O_DIRECTORY | O_NOFOLLOW`;
-5. enumerate at most three names from the held final directory descriptor,
-   require exactly one wheel and one source distribution, and preserve fixed
-   filesystem-order-independent count diagnostics;
+5. enumerate at most three entries from the held final directory descriptor,
+   record each bounded entry's device, inode, file type, size, modification time,
+   and change time without following symlinks, require exactly one wheel and one
+   source distribution, and preserve fixed filesystem-order-independent count
+   diagnostics;
 6. validate expected distribution and version from the bounded names before
    opening artifacts;
 7. open each artifact relative to the held directory descriptor with
-   `O_NOFOLLOW | O_NONBLOCK`, require a regular file from `fstat`, and never
-   reopen it by pathname;
+   `O_NOFOLLOW | O_NONBLOCK`, require a regular file from `fstat`, require its
+   identity to equal the corresponding initial directory-entry identity, and
+   never reopen it by pathname;
 8. stream SHA-256 with bounded `os.read` calls and derive byte size from that same
    open file description;
 9. compare device, inode, file type, size, modification time, and change time
    before and after streaming, rejecting any drift;
 10. re-enumerate the same held directory descriptor after both artifact reads and
-    reject membership changes; and
+    compare the complete bounded name-and-identity snapshot, rejecting membership
+    changes and same-name inode replacements; and
 11. expose only bounded operation-category errors, never arbitrary operating-
     system exception text or resolved external targets.
 
@@ -57,17 +61,16 @@ because a same-UID process can modify objects after the function returns.
 ## Consequences
 
 - Parent symlinks and parent traversal cannot redirect artifact lookup.
-- Artifact replacement after enumeration fails at no-follow open rather than
-  hashing a substituted target.
+- Artifact replacement after enumeration is rejected whether it becomes a
+  symlink or another regular file with the same name and bytes.
 - Size and digest always describe the same open file description.
 - In-place mutation detected through byte-count or stable-inode metadata drift
   invalidates the evidence.
-- Added or removed directory entries invalidate the bounded artifact set before
-  a manifest is accepted.
+- Added, removed, or same-name-replaced directory entries invalidate the bounded
+  artifact set before a manifest is accepted.
 - FIFO, socket, device, directory, and symlink substitutions cannot block or
   masquerade as regular release artifacts.
-- Unsupported platforms receive one fail-closed capability error. No pathname
-  fallback is permitted.
+- Unsupported platforms receive one fail-closed capability error. No pathname fallback is permitted.
 - Version `0.1.0` remains unchanged and this decision does not publish a release.
 
 ## Alternatives considered
@@ -86,10 +89,10 @@ pathname rather than a held filesystem object.
 Rejected because a parent component can be replaced before the artifact open.
 All component lookup must be relative to held directory descriptors.
 
-### Ignore directory changes after artifacts are opened
+### Compare only final directory names
 
-Rejected because reproducibility evidence covers an exact two-artifact output
-set, not only two byte streams selected from a mutable directory.
+Rejected because a regular file can be replaced by a new inode with the same
+name and bytes. The final bounded snapshot must include object identity.
 
 ### Permit a compatibility fallback
 
