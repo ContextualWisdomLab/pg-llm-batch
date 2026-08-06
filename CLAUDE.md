@@ -109,9 +109,14 @@
 - Revalidate from byte zero under existing byte, line, physical-line, record,
   timeout, retry-handoff, parser, and response-lifecycle limits. Do not yield
   records before exact checkpoint reproduction.
-- Fail closed on prefix mutation, changed file identity, truncation, inserted or
-  removed framing, or a different record at the checkpoint position. Keep
-  diagnostics body-free and free of provider identifiers and checkpoint digests.
+- Fail closed on prefix mutation, changed file identity, truncation at or before
+  the checkpoint, inserted or removed prefix framing, or a different record at
+  the checkpoint position. Keep diagnostics body-free and free of provider
+  identifiers and checkpoint digests.
+- Do not claim detection of mutation or truncation strictly after the
+  acknowledged checkpoint. Successful prefix reproduction is not a whole-stream
+  attestation; stronger suffix guarantees require a stable provider validator,
+  authenticated digest, or separate full-stream manifest.
 - Describe SHA-256 checkpoints only as deterministic change-detection evidence.
   They are not authentication, signatures, provider attestations, tenant
   credentials, or exactly-once delivery by themselves.
@@ -121,5 +126,6 @@
 - Use the context-managed checkpoint API for early exits so all nested iterators
   and active responses close deterministically.
 - Maintain 100% statement, branch, and public-docstring coverage across chunk
-  independence, no-replay, file transitions, mutation, truncation, identity,
-  framing, local validation, and cleanup behavior.
+  independence, no-replay, file transitions, prefix mutation, truncation at or
+  before the checkpoint, explicit unseen-suffix limitations, identity, framing,
+  local validation, and cleanup behavior.
