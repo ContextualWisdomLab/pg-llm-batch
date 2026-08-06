@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional durable result-checkpoint store through
+  `PostgresBatchResultCheckpointStore` and
+  `llm_result_stream_checkpoints`, with tenant-qualified consumer identity,
+  strict checkpoint revalidation, exact `expected_previous` compare-and-swap,
+  idempotent repeats, locked reconciliation for concurrent first writers,
+  caller-owned transaction methods for atomic local PostgreSQL effects, forced
+  row-level security, byte-identical package/container migrations, a fail-closed
+  rollback that refuses to erase acknowledgement evidence, deterministic live
+  PostgreSQL and concurrency tests, and no false distributed exactly-once or
+  unseen-suffix immutability claim. Version `0.1.0` remains unchanged.
 - Immutable, versioned `BatchResultCheckpoint` and
   `CheckpointedBatchResultRecord` contracts plus opt-in
   `iter_checkpointed_batch_records()` and
