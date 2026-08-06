@@ -409,13 +409,18 @@ class BatchAPIClient:
                     retry_reason = type(exc).__name__
 
             if post_handoff_error is not None:
-                raise GatewayError(
+                sanitized_error = GatewayError(
                     f"{operation} transport failed",
                     response_data={
                         "error_type": type(post_handoff_error).__name__,
                         "timeout_seconds": self.request_timeout_seconds,
                     },
                 )
+                try:
+                    raise sanitized_error from None
+                except GatewayError:
+                    sanitized_error.__context__ = None
+                    raise
 
             logger.warning(
                 "%s retrying idempotent GET after %s "
