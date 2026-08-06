@@ -10,7 +10,15 @@ provenance attestation.
 The workflow checks out the exact pull-request head and refuses a checkout SHA
 mismatch. It derives `SOURCE_DATE_EPOCH` from the checked-out commit, exports a
 fixed hash seed, timezone, and locale, and creates two clean source trees with
-`git archive`. Each tree is built independently from the locked project input.
+`git archive`.
+
+PEP 517 build-system requirements are resolved separately from ordinary project
+dependencies: build-system requirements are not pinned by `uv.lock`. The
+governed acceptance path therefore uses the exact `uv` 0.12.1 frontend and
+requires `uv_build==0.12.1`. The exact uv frontend can use its compatible bundled
+backend, and external PEP 517 frontends must resolve the same backend version.
+Any frontend or backend patch upgrade requires an explicit reviewed source
+change and fresh exact-head evidence.
 
 Each build directory must contain exactly one wheel and exactly one source distribution.
 Every artifact must be a regular non-symlink file. The filename must identify the
@@ -53,12 +61,14 @@ final main-branch merge evidence.
 1. Open the exact-head **Release Acceptance / Reproducible wheel and sdist**
    check.
 2. Confirm the checkout assertion names the current pull-request head.
-3. Confirm both clean builds complete under the same `SOURCE_DATE_EPOCH`.
-4. Confirm the verifier reports no missing, extra, symlinked, identity-mismatched,
+3. Confirm the workflow uses `uv` 0.12.1 and `uv_build==0.12.1` from the exact
+   reviewed source.
+4. Confirm both clean builds complete under the same `SOURCE_DATE_EPOCH`.
+5. Confirm the verifier reports no missing, extra, symlinked, identity-mismatched,
    or non-reproducible artifact.
-5. Download the bounded manifest only when diligence requires independent digest
+6. Download the bounded manifest only when diligence requires independent digest
    inspection.
-6. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
+7. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
    stale-base result.
 
 A successful manifest does not prove who built the package. It is not a digital
@@ -80,6 +90,14 @@ evidence files; route those files outside the build directories.
 Confirm `project.name` and `project.version` in `pyproject.toml` match the wheel
 and source-distribution filenames. Do not rename artifacts after build.
 
+### Build-toolchain failure
+
+Confirm the workflow frontend remains exactly `uv` 0.12.1 and the project
+backend requirement remains exactly `uv_build==0.12.1`. Do not treat
+`uv.lock` as evidence for PEP 517 build-system requirements. A deliberate
+upgrade must change both governed pins, rerun the packaging and release tests,
+and produce new exact-head evidence.
+
 ### Reproducibility failure
 
 Compare the two bounded manifest records locally. Common causes include build
@@ -97,13 +115,16 @@ or replace an untrusted symlink.
 ## Security and acquisition rationale
 
 The gate narrows buyer diligence from “the package built once” to “two clean
-builds of the same reviewed source produced the same named bytes.” This supports
-repeatable incident reconstruction and future SLSA v1.2 provenance without
-mixing pull-request validation with release authority. Top-level permissions
-remain read-only, credentials are not persisted, action sources are immutably
-pinned, and the evidence payload is bounded.
+builds of the same reviewed source and exact build toolchain produced the same
+named bytes.” This supports repeatable incident reconstruction and future SLSA
+v1.2 provenance without mixing pull-request validation with release authority.
+Top-level permissions remain read-only, credentials are not persisted, action
+sources are immutably pinned, and the evidence payload is bounded.
 
 ## References (APA 7)
+
+Astral. (n.d.). *The uv build backend*. uv documentation. Retrieved August 6,
+2026, from https://docs.astral.sh/uv/concepts/build-backend/
 
 GitHub. (n.d.). *Using artifact attestations to establish provenance for builds*.
 GitHub Docs. Retrieved August 6, 2026, from
