@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Immutable, versioned `BatchResultCheckpoint` and
+  `CheckpointedBatchResultRecord` contracts plus opt-in
+  `iter_checkpointed_batch_records()` and
+  `open_checkpointed_batch_records()` APIs. Each checkpoint binds the exact
+  validated batch and endpoint identity, ordered provider file kind and file
+  identifier, physical and logical positions, raw line framing, and a
+  domain-separated length-prefixed SHA-256 stream-prefix digest. Resume performs
+  a fully bounded rescan from byte zero, suppresses acknowledged records only
+  after exact checkpoint reproduction, and fails closed before later delivery
+  on prefix mutation, file replacement, inserted or removed framing, or
+  truncation. The host retains tenant authorization, tamper/rollback protection,
+  and atomic sink/checkpoint responsibilities; no schema or release version
+  change is included.
 - Opt-in `StreamingBatchAPIClient` and immutable `BatchResultRecord` for
   output-then-error JSONL iteration without whole-body or whole-result-list
   materialization, with strict per-file decoded-byte, physical-line byte,
