@@ -49,3 +49,45 @@
 - Maintain test-first concurrency, unsupported-platform, bounded-enumeration,
   identity, documentation, and rollback contracts with 100% production
   statement, branch, and public-docstring coverage.
+
+## Provider result streaming invariants
+
+- Preserve the aggregate `BatchAPIClient.download_results()` contract; use the
+  opt-in `StreamingBatchAPIClient` for incremental output.
+- Inherit and preserve credential lookup, HTTPS URL validation, disabled
+  redirects, bounded idempotent GET retry, timeouts, provider identifier
+  validation, and decoded-byte limits.
+- Finish request-acquisition and retryable-status decisions before response
+  handoff. Once body iteration starts, a transport or response-close failure
+  closes the active response exactly once and must never reopen the file or
+  duplicate records already yielded.
+- Check the final provider-file HTTP status before consuming its body. Keep
+  failure diagnostics body-free and free of credentials, URLs, identifiers,
+  record data, and retained decoder exception payloads.
+- Consume only `iter_chunked` byte streams and count `memoryview.nbytes`. Reject
+  absent streams, non-byte chunks, empty zero-progress chunks, and chunks larger
+  than the requested transport ceiling before package-owned buffering.
+- Enforce total bytes, physical-line bytes, and the combined result-plus-error
+  record count before excessive data is yielded.
+- Validate and enforce `max_jsonl_physical_lines` as a batch-wide physical line
+  ceiling shared across result and error files. Count blank and nonblank lines,
+  including a final unterminated line, before decoding or parsing.
+- Decode each nonblank physical line as strict UTF-8 and require one unambiguous
+  JSON object. Preserve output-before-error order, CRLF handling, and final
+  records without a terminating newline; reject non-finite numbers and duplicate
+  object names.
+- Translate decoder failures after leaving the active provider exception handler
+  so exported `GatewayError` objects have no cause or context retaining provider
+  bytes or text.
+- Use `open_batch_records()` when a consumer may stop early. It owns and closes
+  the public iterator, each nested file iterator, and the active HTTP response.
+  Never rely on a bare `async for` break to call `aclose()` automatically.
+- Keep library-owned memory bounded to one line and one decoded record. Treat
+  downstream collection, persistence, transformation, lifecycle ownership, and
+  backpressure as host responsibilities.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  deterministic split-chunk, invalid-stream, zero-progress, invalid-encoding,
+  malformed-JSON, exception-sanitization, early-close, nested-close,
+  post-handoff payload and close failure, no-replay, record-limit,
+  byte-line-limit, batch-wide physical-line-limit, download-limit,
+  compatibility, and error tests.
