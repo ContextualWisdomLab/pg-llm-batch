@@ -275,6 +275,30 @@ def test_write_release_manifest_refuses_symlink_destination(tmp_path: Path) -> N
     assert target.read_text(encoding="utf-8") == "trusted"
 
 
+@pytest.mark.parametrize("nested_parent", [False, True])
+def test_write_release_manifest_refuses_symlinked_parent_component(
+    tmp_path: Path,
+    nested_parent: bool,
+) -> None:
+    """Never write manifest bytes through a direct or nested parent symlink."""
+    target = tmp_path / "outside"
+    target.mkdir()
+    linked_parent = tmp_path / "evidence"
+    linked_parent.symlink_to(target, target_is_directory=True)
+    parent = linked_parent / "nested" if nested_parent else linked_parent
+    destination = parent / "release-manifest.json"
+
+    with pytest.raises(ReleaseEvidenceError, match="parent.*symlink"):
+        write_release_manifest({"schema_version": 1}, destination)
+
+    escaped_destination = (
+        target / "nested" / "release-manifest.json"
+        if nested_parent
+        else target / "release-manifest.json"
+    )
+    assert not escaped_destination.exists()
+
+
 def test_write_release_manifest_refuses_existing_temporary_file(tmp_path: Path) -> None:
     destination = tmp_path / "manifest.json"
     temporary = tmp_path / ".manifest.json.tmp"
