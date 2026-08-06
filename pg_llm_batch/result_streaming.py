@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -90,6 +91,24 @@ class StreamingBatchAPIClient(BatchAPIClient):
         self.max_jsonl_line_bytes = validated_line_bytes
         self.max_jsonl_records = validated_records
 
+    @asynccontextmanager
+    async def open_batch_records(
+        self,
+        batch_id: str,
+        endpoint_alias: str,
+    ) -> AsyncIterator[AsyncIterator[BatchResultRecord]]:
+        """Open a record iterator that deterministically closes provider responses.
+
+        Use this context manager when a consumer may stop before exhausting the
+        iterator. Leaving the ``async with`` block closes the outer iterator,
+        which in turn closes any active provider-file response exactly once.
+        """
+        records = self.iter_batch_records(batch_id, endpoint_alias)
+        try:
+            yield records
+        finally:
+            await records.aclose()
+
     async def iter_batch_records(
         self,
         batch_id: str,
@@ -99,7 +118,9 @@ class StreamingBatchAPIClient(BatchAPIClient):
 
         The batch status is retrieved once before file access. Iteration is
         permitted only for a terminal batch that exposes at least one provider
-        output or error file identifier.
+        output or error file identifier. Consumers that may exit early should
+        use :meth:`open_batch_records` so the active response closes
+        deterministically.
         """
         validated_batch_id = _validate_resource_id(batch_id, "batch_id")
         status = await self.get_batch_status(validated_batch_id, endpoint_alias)
@@ -127,22 +148,25 @@ class StreamingBatchAPIClient(BatchAPIClient):
         for file_kind, file_id in files:
             if not file_id:
                 continue
-            async for record in self._iter_jsonl_file(
-                file_id,
-                endpoint_alias,
-                file_kind=file_kind,
-            ):
-                record_count += 1
-                if record_count > self.max_jsonl_records:
-                    raise GatewayError(
-                        "Provider JSONL record limit exceeded",
-                        response_data={
-                            "file_kind": file_kind,
-                            "limit_records": self.max_jsonl_records,
-                            "record_count": record_count,
-                        },
-                    )
-                yield BatchResultRecord(validated_batch_id, file_kind, record)
+            async with aclosing(
+                self._iter_jsonl_file(
+                    file_id,
+                    endpoint_alias,
+                    file_kind=file_kind,
+                )
+            ) as file_records:
+                async for record in file_records:
+                    record_count += 1
+                    if record_count > self.max_jsonl_records:
+                        raise GatewayError(
+                            "Provider JSONL record limit exceeded",
+                            response_data={
+                                "file_kind": file_kind,
+                                "limit_records": self.max_jsonl_records,
+                                "record_count": record_count,
+                            },
+                        )
+                    yield BatchResultRecord(validated_batch_id, file_kind, record)
 
     async def _iter_jsonl_file(
         self,
@@ -210,6 +234,12 @@ class StreamingBatchAPIClient(BatchAPIClient):
                         f"{operation} response yielded a non-byte stream chunk",
                         status_code=response.status,
                         response_data={"error_type": "InvalidByteChunk"},
+                    )
+                if chunk_bytes == 0:
+                    raise GatewayError(
+                        f"{operation} response yielded an empty stream chunk",
+                        status_code=response.status,
+                        response_data={"error_type": "NoForwardProgress"},
                     )
                 if chunk_bytes > DOWNLOAD_CHUNK_BYTES:
                     raise GatewayError(
@@ -303,10 +333,12 @@ class StreamingBatchAPIClient(BatchAPIClient):
             line = line[:-1]
         if not line:
             return None
+
+        decode_error: Optional[GatewayError] = None
         try:
             text = line.decode("utf-8")
         except UnicodeDecodeError as exc:
-            raise GatewayError(
+            decode_error = GatewayError(
                 f"{file_kind.capitalize()} file returned invalid UTF-8",
                 response_data={
                     "file_kind": file_kind,
@@ -314,21 +346,28 @@ class StreamingBatchAPIClient(BatchAPIClient):
                     "error_type": type(exc).__name__,
                     "byte_offset": exc.start,
                 },
-            ) from exc
+            )
+        if decode_error is not None:
+            raise decode_error
+
+        parse_error: Optional[GatewayError] = None
         try:
             parsed = json.loads(
                 text,
                 parse_constant=_reject_non_finite_json_constant,
                 object_pairs_hook=_object_without_duplicate_names,
             )
-        except (ValueError, RecursionError) as exc:
-            raise GatewayError(
+        except (ValueError, RecursionError):
+            parse_error = GatewayError(
                 f"Malformed {file_kind} line {line_number}",
                 response_data={
                     "file_kind": file_kind,
                     "line_number": line_number,
                 },
-            ) from exc
+            )
+        if parse_error is not None:
+            raise parse_error
+
         if not isinstance(parsed, dict):
             raise GatewayError(
                 f"Non-object {file_kind} line {line_number}",
