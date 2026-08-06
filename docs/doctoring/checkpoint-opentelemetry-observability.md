@@ -18,14 +18,14 @@ Deterministic tests prove exact delegation, caller-versus-package transaction la
 
 ## References (APA 7)
 
-OpenTelemetry Authors. (2026). *OpenTelemetry semantic conventions 1.43.0*. OpenTelemetry. https://opentelemetry.io/docs/specs/semconv/
+OpenTelemetry Authors. (n.d.). *OpenTelemetry semantic conventions 1.43.0*. OpenTelemetry. Retrieved August 7, 2026, from https://opentelemetry.io/docs/specs/semconv/
 
-OpenTelemetry Authors. (2026). *Semantic conventions for database client spans*. OpenTelemetry. https://opentelemetry.io/docs/specs/semconv/database/database-spans/
+OpenTelemetry Authors. (n.d.). *Semantic conventions for database client spans*. OpenTelemetry. Retrieved August 7, 2026, from https://opentelemetry.io/docs/specs/semconv/database/database-spans/
 
-OpenTelemetry Authors. (2026). *Recording errors*. OpenTelemetry. https://opentelemetry.io/docs/specs/semconv/general/recording-errors/
+OpenTelemetry Authors. (n.d.). *Recording errors*. OpenTelemetry. Retrieved August 7, 2026, from https://opentelemetry.io/docs/specs/semconv/general/recording-errors/
 
-OpenTelemetry Authors. (2026). *General error attributes*. OpenTelemetry. https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
+OpenTelemetry Authors. (n.d.). *General error attributes*. OpenTelemetry. Retrieved August 7, 2026, from https://opentelemetry.io/docs/specs/semconv/registry/attributes/error/
 
-OpenTelemetry Authors. (2026). *Trace API*. OpenTelemetry. https://opentelemetry.io/docs/specs/otel/trace/api/
+OpenTelemetry Authors. (n.d.). *Trace API*. OpenTelemetry. Retrieved August 7, 2026, from https://opentelemetry.io/docs/specs/otel/trace/api/
 
 These references are recorded in APA 7 form. The quoted normative boundary is that `error.type SHOULD be predictable and SHOULD have low cardinality`; the implementation narrows that further to a package-owned three-value vocabulary.
