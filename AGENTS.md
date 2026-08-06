@@ -121,8 +121,13 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   provider file identity alone, or transport chunk boundaries.
 - Resume from byte zero under every existing streaming limit and lifecycle
   control. Yield nothing until the supplied checkpoint is reproduced exactly;
-  changed prefixes, changed file identity, truncation, or unexpected framing
-  fail closed with bounded body-free diagnostics.
+  changed prefixes, changed file identity, truncation at or before the
+  checkpoint, or unexpected framing fail closed with bounded body-free
+  diagnostics.
+- Never claim that prefix evidence detects mutation or truncation strictly after
+  the acknowledged checkpoint. Whole-stream immutability requires a stable
+  provider validator or authenticated digest, or a separate full-stream
+  manifest under a separately tested bounded lifecycle.
 - Do not claim authentication, signature, attestation, provider integrity, or
   automatic exactly-once delivery. The host owns tenant authorization,
   tamper/rollback protection for checkpoint storage, and atomic coordination of
@@ -134,6 +139,7 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   version, an explicit compatibility decision, architecture and ADR updates,
   operator migration guidance, and deterministic old/new-version tests.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  chunk-independence, mutation, truncation, file-identity, blank-line, CRLF,
+  chunk-independence, prefix mutation, truncation at or before the checkpoint,
+  explicit unseen-suffix limitations, file-identity, blank-line, CRLF,
   final-line, pre-network validation, cleanup, compatibility, and no-replay
   tests.
