@@ -34,13 +34,15 @@ class Response:
         self.headers: dict[str, str] = {}
         self.content_length = None
         self.content = ByteStream(chunks)
+        self.exit_count = 0
 
     async def __aenter__(self):
         """Enter the fake response context."""
         return self
 
     async def __aexit__(self, *_exc: Any) -> None:
-        """Leave the fake response context."""
+        """Leave the fake response context and record deterministic cleanup."""
+        self.exit_count += 1
         return None
 
 
@@ -64,12 +66,12 @@ def credentials(_alias: str) -> GatewayCredentials:
     return GatewayCredentials(url="https://gw.example/v1", api_key="secret")
 
 
-def client_for_file(
+def client_and_response_for_file(
     file_chunks: list[bytes],
     *,
     max_jsonl_line_bytes: int = 1024,
-) -> StreamingBatchAPIClient:
-    """Build a client with one completed result file."""
+) -> tuple[StreamingBatchAPIClient, Response]:
+    """Build a client and expose its provider-file response for lifecycle checks."""
     status = json.dumps(
         {
             "id": "batch-1",
@@ -83,11 +85,25 @@ def client_for_file(
         credentials,
         max_jsonl_line_bytes=max_jsonl_line_bytes,
     )
+    file_response = Response(file_chunks)
     client._session = Session(
         {
             "https://gw.example/v1/batches/batch-1": [Response([status])],
-            "https://gw.example/v1/files/out-1/content": [Response(file_chunks)],
+            "https://gw.example/v1/files/out-1/content": [file_response],
         }
+    )
+    return client, file_response
+
+
+def client_for_file(
+    file_chunks: list[bytes],
+    *,
+    max_jsonl_line_bytes: int = 1024,
+) -> StreamingBatchAPIClient:
+    """Build a client with one completed result file."""
+    client, _response = client_and_response_for_file(
+        file_chunks,
+        max_jsonl_line_bytes=max_jsonl_line_bytes,
     )
     return client
 
@@ -162,3 +178,47 @@ async def test_malformed_line_error_does_not_disclose_provider_batch_identifier(
         _ = [record async for record in client.iter_batch_records("batch-1", "default")]
 
     assert "batch-1" not in str(exc_info.value)
+
+
+async def test_context_managed_records_close_active_response_after_early_exit():
+    """The supported context manager closes a provider response after loop break."""
+    client, response = client_and_response_for_file([b'{"id":1}\n{"id":2}\n'])
+
+    async with client.open_batch_records("batch-1", "default") as records:
+        async for record in records:
+            assert record.record == {"id": 1}
+            assert response.exit_count == 0
+            break
+
+    assert response.exit_count == 1
+
+
+async def test_empty_stream_chunk_fails_closed_without_spinning():
+    """A custom adapter must make positive byte progress on every yielded chunk."""
+    client = client_for_file([b"", b'{"id":1}\n'])
+
+    with pytest.raises(GatewayError, match="empty stream chunk") as exc_info:
+        _ = [record async for record in client.iter_batch_records("batch-1", "default")]
+
+    assert exc_info.value.response_data == {"error_type": "NoForwardProgress"}
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"\xff\n", "invalid UTF-8"),
+        (b'{"secret":"distinctive-value"\n', "Malformed result line 1"),
+    ],
+)
+async def test_parser_errors_do_not_retain_provider_exception_context(
+    payload: bytes,
+    message: str,
+):
+    """Sanitized parser errors do not retain provider bytes through exception links."""
+    client = client_for_file([payload])
+
+    with pytest.raises(GatewayError, match=message) as exc_info:
+        _ = [record async for record in client.iter_batch_records("batch-1", "default")]
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
