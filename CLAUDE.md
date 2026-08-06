@@ -91,3 +91,35 @@
   post-handoff payload and close failure, no-replay, record-limit,
   byte-line-limit, batch-wide physical-line-limit, download-limit,
   compatibility, and error tests.
+
+## Resumable checkpoint invariants
+
+- Preserve all aggregate and non-checkpointed streaming APIs. Checkpointed
+  delivery is opt-in through `iter_checkpointed_batch_records()` or
+  `open_checkpointed_batch_records()`.
+- Validate checkpoint structure and request identity without trimming,
+  coercion, credential lookup, provider access, or database access.
+- Treat the checkpoint schema version and digest framing as an authoritative
+  compatibility contract. Incompatible framing requires a new version; never
+  reinterpret an old digest under new rules.
+- Hash a domain-separated, length-prefixed sequence that binds batch identity,
+  endpoint alias, ordered file kind and file identifier, file-local line number,
+  exact physical line bytes, and newline-termination state. Keep blank lines and
+  CRLF framing significant and transport chunks insignificant.
+- Revalidate from byte zero under existing byte, line, physical-line, record,
+  timeout, retry-handoff, parser, and response-lifecycle limits. Do not yield
+  records before exact checkpoint reproduction.
+- Fail closed on prefix mutation, changed file identity, truncation, inserted or
+  removed framing, or a different record at the checkpoint position. Keep
+  diagnostics body-free and free of provider identifiers and checkpoint digests.
+- Describe SHA-256 checkpoints only as deterministic change-detection evidence.
+  They are not authentication, signatures, provider attestations, tenant
+  credentials, or exactly-once delivery by themselves.
+- Require the embedding host to protect checkpoint storage from tampering and
+  rollback and to atomically coordinate checkpoint advancement with record
+  effects or a proven idempotency boundary.
+- Use the context-managed checkpoint API for early exits so all nested iterators
+  and active responses close deterministically.
+- Maintain 100% statement, branch, and public-docstring coverage across chunk
+  independence, no-replay, file transitions, mutation, truncation, identity,
+  framing, local validation, and cleanup behavior.
