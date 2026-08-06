@@ -143,3 +143,34 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   explicit unseen-suffix limitations, file-identity, blank-line, CRLF,
   final-line, pre-network validation, cleanup, compatibility, and no-replay
   tests.
+
+## Durable result-checkpoint persistence contract
+
+- Keep `PostgresBatchResultCheckpointStore` opt-in and preserve host-owned
+  checkpoint stores. The package implementation is a durable interoperability
+  path, not a mandatory dependency of streaming.
+- Derive tenant scope and `checkpoint_consumer_name` only from a trusted host
+  boundary. Never derive either from provider metadata, identifiers, record
+  content, model output, or transport data.
+- Store the complete validated immutable checkpoint under the tenant-qualified
+  consumer, endpoint, and remote batch identity. Do not persist record bodies or
+  credentials in the checkpoint table or conflict diagnostics.
+- Require exact `expected_previous` compare-and-swap for every non-idempotent
+  advancement. Lock existing rows, require both logical and physical positions
+  to increase, and reconcile missing-row races with the unique key and
+  `ON CONFLICT ... DO NOTHING`; never allow last-writer-wins overwrite.
+- Use `save_in_transaction` when local PostgreSQL record effects and checkpoint
+  advancement must commit or roll back together. Never commit or roll back a
+  caller-owned cursor. Cross-system effects still require an outbox,
+  idempotency key, or explicit reconciliation protocol.
+- Keep row-level security enabled and forced. Application roles must be
+  `NOSUPERUSER NOBYPASSRLS`, and generic tenant-controlled SQL remains outside
+  the isolation guarantee.
+- Keep package and container migrations byte-identical. Rollback must fail closed
+  while acknowledgement evidence exists; never silently drop a non-empty
+  checkpoint table.
+- Do not claim distributed exactly-once delivery, checkpoint authentication, or
+  full-stream immutability after the reproduced prefix.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  deterministic unit, concurrency, migration, rollback, integration, and
+  documentation tests.
