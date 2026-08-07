@@ -17,6 +17,8 @@ Protected against within the reviewed application role:
   role uses the trusted package boundary;
 - unbounded audit reads;
 - silent loss of audit evidence after a checkpoint save succeeds;
+- transaction-start timestamps misrepresented as the later accepted-save event
+  time in long caller-owned transactions;
 - destructive rollback while retained evidence exists; and
 - fresh-container deployments that silently omit the audit schema.
 
@@ -26,6 +28,7 @@ Explicitly outside this assurance claim:
   administrators, or direct physical database tampering;
 - cryptographic non-repudiation, signed events, immutable remote/WORM storage,
   or complete detection of administrator deletion;
+- trusted database/server clock correctness or cryptographic time attestation;
 - rejected save attempts, authentication failures, or a general-purpose
   security-event log;
 - retention duration, legal hold, SIEM forwarding, and tenant identity mapping,
@@ -43,13 +46,22 @@ exception messages, and arbitrary free-form log text.
 The `prefix_sha256` is deterministic checkpoint change-detection evidence. It is
 not a signature or authentication tag and must not be represented as one.
 
-## Transaction semantics
+## Transaction and event-time semantics
 
 `AuditedPostgresBatchResultCheckpointStore.save_in_transaction()` delegates to
 the existing compare-and-swap implementation and inserts the audit row only
 after that call accepts the checkpoint. Both statements remain in the caller's
 transaction. `save()` owns one connection and commits only after both operations
 complete.
+
+PostgreSQL documents `NOW()` and `CURRENT_TIMESTAMP` as the start time of the
+current transaction. That value is stable during a transaction and therefore is
+not an accurate accepted-save event time when a caller keeps a transaction open
+before checkpoint persistence. `recorded_at` instead defaults to
+`clock_timestamp()`, which PostgreSQL documents as the actual current time when
+the function is called. The migration explicitly reapplies that default after
+`CREATE TABLE IF NOT EXISTS` so rerunning the reviewed migration repairs earlier
+development applications that used `NOW()` without mutating historical rows.
 
 An idempotent repeated checkpoint creates another `checkpoint_save_accepted`
 event. This is intentional: the row describes an accepted API action, not a
@@ -79,6 +91,10 @@ a new PostgreSQL data directory, the container orders durable checkpoint schema
 before checkpoint audit schema. Existing data directories do not replay Docker
 entrypoint initialization; operators apply
 `apply_result_checkpoint_audit_schema()` or the exact reviewed SQL explicitly.
+Reapplication is intentionally idempotent and resets the `recorded_at` default to
+`clock_timestamp()` so a database that consumed an earlier development revision
+of migration 0008 receives the corrected future-event timestamp semantics. It
+does not rewrite retained audit records.
 
 Rollback first removes FORCE RLS inside the same transaction so an owner-level
 emptiness check can see rows for every tenant. If any audit row exists, rollback
@@ -105,6 +121,13 @@ The owner-level rollback must also fail with SQLSTATE `55000` while any tenant's
 audit evidence remains, after which both tenants' retained events must still be
 readable through their authorized package scopes.
 
+The same live test starts a caller-owned application transaction, observes the
+transaction start, waits briefly, captures the wall clock immediately before an
+audited save, and requires the retained event timestamp to fall between that
+pre-save wall-clock observation and a post-save observation. This deterministically
+rejects transaction-start `NOW()` semantics while preserving transaction
+atomicity.
+
 The test cleanup is bounded to the unique temporary database and role it created.
 Creation flags guard partial setup, so a failure after role creation but before
 database creation does not silently leave a test login behind. The CI token is
@@ -130,18 +153,25 @@ has no repository write permission and is not a branch-writing repair agent.
   `CREATE ROLE ... PASSWORD`. The setup was changed to psycopg's composable
   identifier/literal API and partial-provision cleanup was made fail-safe before
   re-verification.
+- Event-time RED: test-only heads `9e43420097faabd97deab079c34c5e4e0207eb86`,
+  `19b39a23dc7e29a467cc6c0d6817f06b5da1e880`, and
+  `78184f6202d06831800ef3e90db498e9e04e26b5` require wall-clock insert-time
+  semantics, a realistic long caller-owned transaction, and idempotent repair of
+  the old transaction-start default before the migration implementation.
 - Public model: immutable accepted-save event; invalid identifiers, action,
   checkpoint fields, event identity, and timestamp fail closed.
 - Read bound: integers 1 through 1,000 only; booleans and coercible values are
   rejected.
 - Transaction coupling: owned saves commit once after checkpoint and audit;
   caller-owned saves do not commit.
+- Event time: `clock_timestamp()` is evaluated at accepted-save row insertion;
+  transaction-start `NOW()`/`CURRENT_TIMESTAMP` is prohibited for `recorded_at`.
 - Failure semantics: a rejected delegated save creates no success event.
 - Query semantics: tenant-qualified exact checkpoint key, newest-first order,
   parameterized `LIMIT`, and malformed database row/collection rejection.
 - Migration: forced RLS, fixed action CHECK, descriptive snake_case objects,
-  UPDATE/DELETE and TRUNCATE rejection, package/container byte identity, and
-  ordered image installation.
+  event-time default repair, UPDATE/DELETE and TRUNCATE rejection,
+  package/container byte identity, and ordered image installation.
 - Rollback: non-empty evidence blocks destructive rollback across tenants.
 - Quality target: 100% production statement, branch, and public-docstring
   coverage plus exact-head CI, live PostgreSQL integration, release acceptance,
@@ -152,8 +182,8 @@ has no repository write permission and is not a branch-writing repair agent.
 NIST SP 800-53 Rev. 5 AU-3 motivates retaining enough structured information to
 reconstruct what happened, when, where, source, and outcome. This slice supplies
 those fields at the package's checkpoint-storage boundary: fixed action, database
-time, package/database location, tenant/consumer source identity, and successful
-acceptance outcome.
+event time, package/database location, tenant/consumer source identity, and
+successful acceptance outcome.
 
 OWASP's Logging Cheat Sheet distinguishes application audit trails from generic
 infrastructure logs, recommends recording business/security-relevant actions,
@@ -167,6 +197,13 @@ PostgreSQL 18 `CREATE TRIGGER` defines TRUNCATE as a supported trigger event and
 states that TRUNCATE triggers are statement-level. The migration uses a separate
 statement trigger rather than pretending a row trigger can intercept TRUNCATE.
 
+PostgreSQL 18 date/time documentation distinguishes transaction time from actual
+current time: `CURRENT_TIMESTAMP`/`NOW()` are fixed at transaction start, while
+`clock_timestamp()` changes with the actual clock even within a statement. Audit
+`recorded_at` therefore uses `clock_timestamp()` because this record represents
+when the accepted-save insert occurred, not when an enclosing caller transaction
+began.
+
 ## APA 7 references
 
 National Institute of Standards and Technology. (2020). *Security and privacy
@@ -178,3 +215,7 @@ https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
 
 PostgreSQL Global Development Group. (2026). *CREATE TRIGGER* (PostgreSQL 18
 documentation). https://www.postgresql.org/docs/18/sql-createtrigger.html
+
+PostgreSQL Global Development Group. (2026). *Date/time functions and operators*
+(PostgreSQL 18 documentation).
+https://www.postgresql.org/docs/18/functions-datetime.html
