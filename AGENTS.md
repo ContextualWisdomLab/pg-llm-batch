@@ -306,10 +306,12 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Keep `CheckpointAuditSnapshotManifest` and
   `build_audit_snapshot_manifest_in_transaction()` opt-in; preserve bounded
   one-page reads and keyset pagination unchanged.
-- Require a caller-owned PostgreSQL `REPEATABLE READ` or `SERIALIZABLE`
-  transaction selected before its first query or data-modification statement.
-  Reject `READ COMMITTED`, malformed isolation evidence, and unknown modes; do
-  not silently alter host-owned transaction isolation.
+- Require one active PostgreSQL transaction owned by the caller and then require
+  that transaction to use `REPEATABLE READ` or `SERIALIZABLE`, selected before
+  its first query or data-modification statement. Reject autocommit even when a
+  session-level default advertises `REPEATABLE READ`; reject `READ COMMITTED`,
+  malformed isolation evidence, and unknown modes; do not silently alter
+  host-owned transaction state or isolation.
 - Keep `page_size` a strict 1..1,000 integer and `max_events` a strict
   1..100,000 integer. Buffer only one bounded page plus fixed digest state and
   fail closed instead of silently truncating if a continuation remains after the
@@ -333,5 +335,6 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   exporter, or background scheduler for this manifest slice. Preserve standalone
   and modular MSA operation.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  strict validation, isolation, overflow, digest sensitivity, page-partition,
-  public-export, fixed-vector, and live concurrent-insert verification.
+  strict validation, isolation, active-transaction, autocommit, overflow, digest
+  sensitivity, page-partition, public-export, fixed-vector, and live
+  concurrent-insert verification.
