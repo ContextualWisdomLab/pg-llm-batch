@@ -89,6 +89,50 @@ action, a database-generated event identity, and an insert-time database
 wall-clock timestamp. It does not include provider bodies, prompts, model output,
 credentials, DSNs, transport headers, or exception text.
 
+## Export more than one bounded page
+
+Use keyset pagination rather than `OFFSET` when an operator needs to walk older
+audit evidence for export to separately governed retention storage:
+
+```python
+before = None
+while True:
+    page = store.list_audit_event_page(
+        "invoice-worker",
+        "batch-123",
+        "default",
+        before_audit_event_id=before,
+        limit=500,
+    )
+    export_to_governed_storage(page.events)
+    before = page.next_before_audit_event_id
+    if before is None:
+        break
+```
+
+`before_audit_event_id` is either `None` or a strict positive PostgreSQL `BIGINT`
+identity. The query requests at most `limit + 1` rows; the extra row is used only
+to determine whether a continuation exists. At most `limit` events are exposed.
+The next cursor, when present, is exactly the final returned event identity, and
+the following query uses `checkpoint_audit_event_id < before_audit_event_id`.
+Rows inserted later with larger identities therefore cannot shift rows already
+walked or create the duplicate/skip behavior associated with offset pagination.
+
+This is **not** a multi-page database snapshot. Package-owned calls may observe
+changes committed between page requests. A caller that requires all pages from
+one PostgreSQL snapshot should start a caller-owned `REPEATABLE READ` or stricter
+transaction and repeatedly call `list_audit_event_page_in_transaction()` on that
+same cursor. PostgreSQL documents that `REPEATABLE READ` keeps statements in the
+transaction on the snapshot established by its first query. The package does not
+silently change caller transaction isolation.
+
+The cursor is a navigation boundary, not evidence of completeness, authenticity,
+retention, or non-repudiation. Sequence identities can contain gaps and commit
+order need not equal identity allocation order. An export consumer must persist
+its own export receipt or manifest if it needs evidence that a particular export
+set was delivered to immutable storage. A later row that was not visible during
+an earlier read belongs to a later export/reconciliation pass.
+
 ## Retention and rollback
 
 The database blocks ordinary `UPDATE`, `DELETE`, and `TRUNCATE` against the audit
@@ -101,12 +145,15 @@ These controls are not cryptographic non-repudiation and do not protect against 
 PostgreSQL owner, superuser, `BYPASSRLS` role, disabled triggers, or physical
 storage administrator. Deployments that require administrator-tamper detection
 should replicate or export events to separately governed immutable storage or a
-signed/hash-chained evidence system.
+signed/hash-chained evidence system. Stable bounded pagination makes that export
+operationally tractable but does not itself strengthen the database tamper model.
 
 ## Standards and evidence
 
-See [ADR 0009](adr/0009-append-only-checkpoint-audit-trail.md) for the decision
-boundary and
-[the assurance record](doctoring/checkpoint-audit-trail.md) for threat model,
-verification evidence, and APA 7 references to NIST SP 800-53 Rev. 5 AU-3, the
-OWASP Logging Cheat Sheet, and PostgreSQL 18 trigger and current-time semantics.
+See [ADR 0009](adr/0009-append-only-checkpoint-audit-trail.md) for the base audit
+decision, [ADR 0010](adr/0010-bounded-checkpoint-audit-export-pagination.md) for
+the export pagination boundary, and
+[the export assurance record](doctoring/checkpoint-audit-export-pagination.md)
+for failure modes, concurrency semantics, verification evidence, and APA 7
+references to NIST SP 800-53 Rev. 5 AU-9 and PostgreSQL 18 transaction-isolation
+documentation.
