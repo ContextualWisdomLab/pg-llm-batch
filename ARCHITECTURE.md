@@ -374,8 +374,9 @@ controls where required. Hosts may use the checkpoint migration operator as a
 standalone deployment primitive and retain its bounded descriptors in a
 change-management record, but must not reinterpret them as tenant authorization
 or release provenance. Hosts may also build a checkpoint-audit snapshot manifest
-inside a caller-owned stable PostgreSQL transaction; the digest is content
-identity only, while external retention, signing, delivery evidence, and
+inside one caller-owned active PostgreSQL transaction at `REPEATABLE READ` or
+stricter isolation; autocommit is not a snapshot-stable substitute. The digest is
+content identity only, while external retention, signing, delivery evidence, and
 reconciliation remain host boundaries.
 
 ## Verification boundary
@@ -430,12 +431,13 @@ statement, branch, and public-docstring coverage. Checkpoint-audit export tests
 prove strict keyset cursor semantics, one-row lookahead, row-key revalidation,
 strict ordering, driver-overrun failure, no package commit, and live
 concurrent-insert continuation behavior. Snapshot-manifest tests prove strict
-schema/count/range validation, stable-transaction isolation requirements,
-bounded traversal and overflow failure, page-partition invariance, every-event
-content sensitivity, a fixed schema-version-1 digest vector, package-root exports,
-and live `REPEATABLE READ` behavior across a concurrently committed newer event.
-Final merge evidence must be regenerated against the integrated base; successful
-stacked-base runs are not reusable release evidence.
+schema/count/range validation, active-transaction and stable-isolation
+requirements, autocommit rejection, bounded traversal and overflow failure,
+page-partition invariance, every-event content sensitivity, a fixed
+schema-version-1 digest vector, package-root exports, and live `REPEATABLE READ`
+behavior across a concurrently committed newer event. Final merge evidence must
+be regenerated against the integrated base; successful stacked-base runs are not
+reusable release evidence.
 
 ## Bounded checkpoint-audit export boundary
 
@@ -473,15 +475,22 @@ export service.
 `build_audit_snapshot_manifest_in_transaction()` add an opt-in deterministic
 identity for one bounded, snapshot-stable traversal without adding a database
 object or replacing the existing page APIs. The method is caller-transaction-only
-because transaction isolation is an explicit part of the evidence boundary.
+because transaction ownership and isolation are explicit parts of the evidence
+boundary.
 
-Before traversal, the package checks `SHOW transaction_isolation` and accepts
-only PostgreSQL `REPEATABLE READ` or `SERIALIZABLE`. `READ COMMITTED` takes a new
+Before traversal, the package requires one **active PostgreSQL transaction** by
+checking the caller cursor's Psycopg/libpq transaction status. Only the `INTRANS`
+state proceeds. It then checks `SHOW transaction_isolation` and accepts only
+PostgreSQL `REPEATABLE READ` or `SERIALIZABLE`. `READ COMMITTED` takes a new
 snapshot for each command and is rejected because a multi-page hash could
-otherwise combine rows that never coexisted in one database snapshot. The host
-must select the stable isolation level before the transaction's first query or
-data-modification statement; the library does not silently rewrite host-owned
-transaction semantics.
+otherwise combine rows that never coexisted in one database snapshot.
+
+Session-level isolation is not sufficient: **autocommit** is rejected even when
+the session default advertises `REPEATABLE READ`, because each page statement may
+otherwise run in a separate transaction and snapshot. The host must begin the
+active transaction and select stable isolation before its first query or
+data-modification statement; the library does not silently begin, commit, roll
+back, or rewrite host-owned transaction semantics.
 
 The traversal reuses keyset pagination with a strict page size from 1 through
 1,000 and adds a strict `max_events` ceiling from 1 through 100,000. Package-owned
