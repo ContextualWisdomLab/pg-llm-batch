@@ -47,16 +47,35 @@ def _sequence_items(source: str, item_indent: int) -> tuple[str, ...]:
 
 
 def _scalar_value(source: str, key: str) -> str:
-    """Read one scalar from an already bounded block, excluding inline comments."""
+    """Read one reviewed plain or single-paragraph folded YAML scalar."""
     prefix = f"{key}:"
-    matches = []
-    for line in source.splitlines():
+    lines = source.splitlines()
+    matches: list[str] = []
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if stripped.startswith("- "):
             stripped = stripped[2:].lstrip()
-        if stripped.startswith(prefix):
-            value = stripped[len(prefix) :].strip()
-            matches.append(value.split(" #", 1)[0].strip())
+        if not stripped.startswith(prefix):
+            continue
+
+        value = stripped[len(prefix) :].strip()
+        inline = value.split(" #", 1)[0].strip()
+        if inline not in {">", ">-"}:
+            matches.append(inline)
+            continue
+
+        key_indent = len(line) - len(line.lstrip())
+        folded_lines: list[str] = []
+        for continuation in lines[index + 1 :]:
+            if not continuation.strip():
+                raise AssertionError("blank folded-scalar paragraphs are unsupported")
+            continuation_indent = len(continuation) - len(continuation.lstrip())
+            if continuation_indent <= key_indent:
+                break
+            folded_lines.append(continuation.strip())
+        assert folded_lines, f"expected folded content for scalar {key!r}"
+        matches.append(" ".join(folded_lines))
+
     assert len(matches) == 1, f"expected one scalar {key!r} in bounded block"
     return matches[0]
 
@@ -112,7 +131,21 @@ def test_ci_runs_checkpoint_storage_against_ephemeral_postgres() -> None:
     )
     assert _scalar_value(integration, "run") == (
         "uv run pytest -q tests/test_checkpoint_audit_integration.py "
+        "tests/test_checkpoint_audit_snapshot_integration.py "
         "tests/test_checkpoint_migration_operator_integration.py -m integration"
+    )
+
+
+def test_scalar_parser_folds_reviewed_multiline_command() -> None:
+    """A folded workflow command is compared by its executed single paragraph."""
+    step = """      - name: Example
+        run: >-
+          uv run pytest -q
+          tests/test_one.py
+          tests/test_two.py
+"""
+    assert _scalar_value(step, "run") == (
+        "uv run pytest -q tests/test_one.py tests/test_two.py"
     )
 
 
