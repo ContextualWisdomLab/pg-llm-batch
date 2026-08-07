@@ -35,7 +35,7 @@ regressions and are not reused as success evidence.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` to current `.github#782` head
-      `70fd801523893ba2c51ad9bd859b2d3c408d5839` for Draft verification.
+      `8ab55aa29ce41aafe5f0f5c4195c7726861bf518` for Draft verification.
 - [x] Update `canonical_ref` to the same immutable SHA.
 - [x] Remove the review-fix job permission elevation.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
@@ -47,6 +47,17 @@ regressions and are not reused as success evidence.
       failed CI run `31201274230` only because the caller still referenced the
       predecessor central SHA. Implementation then moved the caller and both
       governance contracts to the same current prerequisite identity.
+- [x] When `.github#782` advanced again from
+      `70fd801523893ba2c51ad9bd859b2d3c408d5839` to
+      `8ab55aa29ce41aafe5f0f5c4195c7726861bf518`, update the focused contract
+      before production. Test-only head
+      `07bb189b3f554195eba48bcc0124aca50a6f5faf` failed exact-head CI
+      `31218680794` with the intended single scheduler-pin assertion
+      (`1 failed, 352 passed, 3 deselected` on Python 3.10); security and SAST
+      remained successful. Governance alignment head
+      `8478fbf75a3533ddd4871c7ee488b223fd68d754` then required the same identity,
+      and implementation head `82892548ad11360a0e22c4b8ea0e4ff819867dbc`
+      moved both workflow references to that exact prerequisite SHA.
 
 ## Task 3: Bind CI to the exact source head
 
