@@ -30,6 +30,8 @@ def test_authoritative_documents_define_durable_checkpoint_contract() -> None:
         "CHANGELOG.md": (
             "durable result-checkpoint store",
             "fail-closed rollback",
+            "fresh bundled PostgreSQL image",
+            "04_result_stream_checkpoints.sql",
         ),
         "docs/result-streaming.md": (
             "apply_result_checkpoint_schema",
@@ -46,6 +48,8 @@ def test_authoritative_documents_define_durable_checkpoint_contract() -> None:
             "PostgreSQL 18",
             "NIST SP 800-53 Rev. 5",
             "Retrieved August 6, 2026",
+            "04_result_stream_checkpoints.sql",
+            "after the cron initialization script",
         ),
     }
     for path, required_phrases in contracts.items():
