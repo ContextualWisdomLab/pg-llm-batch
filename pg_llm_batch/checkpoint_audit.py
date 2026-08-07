@@ -22,6 +22,7 @@ from .result_streaming import BatchResultCheckpoint
 AUDIT_ACTION_CHECKPOINT_SAVE_ACCEPTED = "checkpoint_save_accepted"
 MAX_CHECKPOINT_AUDIT_EVENTS = 1000
 DEFAULT_CHECKPOINT_AUDIT_EVENTS = 100
+MAX_CHECKPOINT_AUDIT_EVENT_ID = 9_223_372_036_854_775_807
 AUDIT_MIGRATION_PATH = (
     Path(__file__).with_name("migrations") / "0008_result_checkpoint_audit_events.sql"
 )
@@ -81,6 +82,35 @@ class CheckpointAuditEvent:
             raise ValueError("recorded_at must be a timezone-aware datetime")
 
 
+@dataclass(frozen=True, slots=True)
+class CheckpointAuditPage:
+    """One immutable newest-first bounded audit page and its older-row cursor."""
+
+    events: tuple[CheckpointAuditEvent, ...]
+    next_before_audit_event_id: Optional[int]
+
+    def __post_init__(self) -> None:
+        """Reject mutable, oversized, unordered, or cursor-inconsistent pages."""
+        if not isinstance(self.events, tuple):
+            raise ValueError("events must be an immutable tuple")
+        if len(self.events) > MAX_CHECKPOINT_AUDIT_EVENTS:
+            raise ValueError(
+                f"events must contain at most {MAX_CHECKPOINT_AUDIT_EVENTS} records"
+            )
+        if any(not isinstance(event, CheckpointAuditEvent) for event in self.events):
+            raise ValueError("events must contain only CheckpointAuditEvent values")
+        if any(
+            current.audit_event_id >= previous.audit_event_id
+            for previous, current in zip(self.events, self.events[1:])
+        ):
+            raise ValueError("events must be strictly descending by audit_event_id")
+        cursor = validate_checkpoint_audit_cursor(self.next_before_audit_event_id)
+        if cursor is not None and (
+            not self.events or cursor != self.events[-1].audit_event_id
+        ):
+            raise ValueError("next_before_audit_event_id must equal the final event id")
+
+
 def validate_checkpoint_audit_limit(value: Any) -> int:
     """Validate the bounded number of audit rows one public read may return."""
     if (
@@ -93,6 +123,26 @@ def validate_checkpoint_audit_limit(value: Any) -> int:
             field="limit",
             value=value,
             reason=f"must be an integer from 1 through {MAX_CHECKPOINT_AUDIT_EVENTS}",
+        )
+    return value
+
+
+def validate_checkpoint_audit_cursor(value: Any) -> Optional[int]:
+    """Validate an optional positive PostgreSQL BIGINT audit-event keyset cursor."""
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        or value > MAX_CHECKPOINT_AUDIT_EVENT_ID
+    ):
+        raise ValidationError(
+            field="before_audit_event_id",
+            value=value,
+            reason=(
+                "must be a positive integer no greater than PostgreSQL BIGINT maximum"
+            ),
         )
     return value
 
@@ -267,3 +317,105 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
         if not isinstance(rows, (tuple, list)):
             raise RuntimeError("checkpoint audit query returned an invalid row collection")
         return tuple(_audit_event_from_row(row) for row in rows)
+
+    def list_audit_event_page(
+        self,
+        consumer_name: str,
+        batch_id: str,
+        endpoint_alias: str,
+        *,
+        before_audit_event_id: Optional[int] = None,
+        limit: int = DEFAULT_CHECKPOINT_AUDIT_EVENTS,
+    ) -> CheckpointAuditPage:
+        """Return one stable bounded newest-first page for durable audit export."""
+        _require_psycopg()
+        with psycopg.connect(self.postgres_dsn) as conn:
+            with conn.cursor() as cur:
+                return self.list_audit_event_page_in_transaction(
+                    cur,
+                    consumer_name,
+                    batch_id,
+                    endpoint_alias,
+                    before_audit_event_id=before_audit_event_id,
+                    limit=limit,
+                )
+
+    def list_audit_event_page_in_transaction(
+        self,
+        cursor: Any,
+        consumer_name: str,
+        batch_id: str,
+        endpoint_alias: str,
+        *,
+        before_audit_event_id: Optional[int] = None,
+        limit: int = DEFAULT_CHECKPOINT_AUDIT_EVENTS,
+    ) -> CheckpointAuditPage:
+        """Read one keyset page through a caller-owned PostgreSQL transaction.
+
+        The continuation cursor is the final returned audit-event identity. A
+        subsequent page uses a strict ``<`` predicate, so rows inserted later
+        with larger identities cannot shift already traversed older rows. Hosts
+        needing one database snapshot across multiple pages should call this
+        method repeatedly inside their own PostgreSQL REPEATABLE READ or stricter
+        transaction.
+        """
+        consumer = validate_checkpoint_consumer_name(consumer_name)
+        remote_batch_id = _validated_batch_id(batch_id)
+        alias = _validated_exact_endpoint_alias(endpoint_alias)
+        bounded_limit = validate_checkpoint_audit_limit(limit)
+        before = validate_checkpoint_audit_cursor(before_audit_event_id)
+        fetch_size = bounded_limit + 1
+        _set_transaction_tenant_scope(cursor, self.tenant_scope)
+
+        query = (
+            f"SELECT {_AUDIT_COLUMNS} "
+            "FROM llm_result_checkpoint_audit_events "
+            "WHERE tenant_scope = %s "
+            "AND checkpoint_consumer_name = %s "
+            "AND endpoint_alias = %s "
+            "AND remote_batch_id = %s "
+        )
+        params: list[Any] = [
+            self.tenant_scope,
+            consumer,
+            alias,
+            remote_batch_id,
+        ]
+        if before is not None:
+            query += "AND checkpoint_audit_event_id < %s "
+            params.append(before)
+        query += "ORDER BY checkpoint_audit_event_id DESC LIMIT %s"
+        params.append(fetch_size)
+        cursor.execute(query, tuple(params))
+
+        rows = cursor.fetchall()
+        if not isinstance(rows, (tuple, list)):
+            raise RuntimeError("checkpoint audit query returned an invalid row collection")
+        if len(rows) > fetch_size:
+            raise RuntimeError("checkpoint audit query exceeded its bounded query size")
+
+        events = tuple(_audit_event_from_row(row) for row in rows)
+        for event in events:
+            if (
+                event.tenant_scope != self.tenant_scope
+                or event.consumer_name != consumer
+                or event.endpoint_alias != alias
+                or event.batch_id != remote_batch_id
+            ):
+                raise RuntimeError("checkpoint audit query returned a row outside the requested key")
+        if any(
+            current.audit_event_id >= previous.audit_event_id
+            for previous, current in zip(events, events[1:])
+        ):
+            raise RuntimeError("checkpoint audit query was not strictly descending")
+
+        page_events = events[:bounded_limit]
+        next_before = (
+            page_events[-1].audit_event_id
+            if len(events) > bounded_limit and page_events
+            else None
+        )
+        return CheckpointAuditPage(
+            events=page_events,
+            next_before_audit_event_id=next_before,
+        )
