@@ -176,6 +176,7 @@ def test_live_snapshot_manifest_uses_one_repeatable_read_view() -> None:
 
         with psycopg.connect(application_role_dsn) as read_committed_connection:
             with read_committed_connection.cursor() as cursor:
+                cursor.execute("BEGIN ISOLATION LEVEL READ COMMITTED")
                 with pytest.raises(
                     RuntimeError,
                     match="REPEATABLE READ or SERIALIZABLE",
@@ -187,6 +188,23 @@ def test_live_snapshot_manifest_uses_one_repeatable_read_view() -> None:
                         "default",
                     )
             read_committed_connection.rollback()
+
+        with psycopg.connect(
+            application_role_dsn,
+            autocommit=True,
+        ) as autocommit_connection:
+            with autocommit_connection.cursor() as cursor:
+                cursor.execute("SET default_transaction_isolation TO 'repeatable read'")
+                with pytest.raises(
+                    RuntimeError,
+                    match="active PostgreSQL transaction",
+                ):
+                    store.build_audit_snapshot_manifest_in_transaction(
+                        cursor,
+                        consumer,
+                        batch_id,
+                        "default",
+                    )
     finally:
         with psycopg.connect(ADMIN_DSN, autocommit=True) as cluster_admin:
             with cluster_admin.cursor() as cursor:
