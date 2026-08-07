@@ -13,6 +13,8 @@ from pg_llm_batch import db
 from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 
+from tests.bounded_response_double import bind_bounded_json_response
+
 
 class _MetadataCursor:
     """Capture lifecycle SQL and bound parameters without a real database."""
@@ -73,6 +75,7 @@ class _MetadataResponse:
         self.status = 201
         self.payload = payload
         self.headers: dict[str, str] = {}
+        bind_bounded_json_response(self, payload)
 
     async def json(self) -> dict[str, Any]:
         """Return the configured provider response object."""
