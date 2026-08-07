@@ -130,8 +130,75 @@ an export that must observe one PostgreSQL snapshot, begin a caller-owned
 The cursor is navigation state, not completeness, chronology, delivery,
 authenticity, or non-repudiation evidence. PostgreSQL identity sequences may have
 gaps and allocation order can differ from commit order. Destination credentials,
-immutable/WORM storage, retention, legal hold, delivery receipts, cryptographic
-manifests, and reconciliation remain host/operator responsibilities.
+immutable/WORM storage, retention, legal hold, delivery receipts, signed or
+authenticated manifests, and reconciliation remain host/operator responsibilities.
+
+## Build a bounded snapshot manifest
+
+For a compact deterministic identity of one complete stable traversal, begin one
+**active PostgreSQL transaction** and select a **read-only** `REPEATABLE READ` or
+`SERIALIZABLE` transaction before its first query. Build the manifest on that
+same cursor:
+
+```python
+import psycopg
+
+with psycopg.connect(POSTGRES_DSN) as connection:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        )
+        manifest = store.build_audit_snapshot_manifest_in_transaction(
+            cursor,
+            "invoice-worker",
+            "batch-123",
+            "default",
+            max_events=100_000,
+            page_size=1_000,
+        )
+```
+
+The method requires the caller's cursor to remain inside one active PostgreSQL
+transaction for the complete traversal. It accepts only `REPEATABLE READ` or
+`SERIALIZABLE` with `transaction_read_only` set to `on`. **autocommit** is
+rejected even when the session-level `default_transaction_isolation` reports
+`REPEATABLE READ`, because successive page statements would otherwise be free to
+execute in separate transactions and therefore separate snapshots. Active `READ
+COMMITTED`, read-write transactions, malformed transaction status, malformed
+isolation or read-only evidence, and unknown modes also fail closed before page
+traversal.
+
+The read-only requirement keeps the manifest tied to a non-mutating stable view
+of retained evidence. PostgreSQL transactions can observe their own uncommitted
+writes; without this gate a caller could insert an accepted-save audit row, hash
+it into an exported manifest, and later roll the transaction back so that the
+identified row was never durably retained.
+
+PostgreSQL requires transaction characteristics to be selected before the
+transaction's first query or data-modification statement; the package verifies
+transaction state, isolation, and read-only mode instead of silently beginning,
+committing, rolling back, or changing a caller-owned transaction after work has
+started.
+
+The builder walks the existing keyset pages incrementally, keeps no more than one
+bounded page plus fixed digest state in package-owned memory, and fails closed if
+more than `max_events` would be required. `page_size` is a strict integer from 1
+through 1,000 and `max_events` is a strict integer from 1 through 100,000.
+Changing the page size does not change the digest for the same database snapshot.
+
+`CheckpointAuditSnapshotManifest` schema version 1 contains the trusted tenant,
+consumer, endpoint, and batch key, the event count, the newest and oldest event
+identities, and a lowercase SHA-256 digest. The digest binds every retained audit
+event field in newest-first order with a domain-separated, length-framed
+compatibility contract. Event timestamps are normalized to UTC with fixed
+microsecond precision before hashing.
+
+The SHA-256 value is deterministic content-identity and change-detection
+evidence. It is not a MAC, signature, credential, trusted timestamp, delivery
+receipt, provenance statement, or non-repudiation mechanism. A host that needs
+administrator-independent preservation should export the events and manifest to
+separately governed immutable or write-once storage and may sign or authenticate
+the exported manifest under its own key-management policy.
 
 ## Retention and rollback
 
@@ -151,8 +218,12 @@ signed/hash-chained evidence system.
 
 See [ADR 0009](adr/0009-append-only-checkpoint-audit-trail.md) for the accepted-save
 audit boundary, [ADR 0011](adr/0011-bounded-checkpoint-audit-export-pagination.md)
-for the pagination decision, [the audit assurance record](doctoring/checkpoint-audit-trail.md)
-for audit threat-model evidence, and
-[the export-pagination assurance record](doctoring/checkpoint-audit-export-pagination.md)
-for keyset, isolation, operator, and APA 7 evidence. The latter records NIST SP
-800-53 Rev. 5 AU-9 and PostgreSQL 18 transaction-isolation/concurrency guidance.
+for the pagination decision, and
+[ADR 0012](adr/0012-checkpoint-audit-snapshot-manifests.md) for the deterministic
+snapshot-manifest contract. The
+[audit assurance record](doctoring/checkpoint-audit-trail.md),
+[export-pagination assurance record](doctoring/checkpoint-audit-export-pagination.md),
+and [snapshot-manifest assurance record](doctoring/checkpoint-audit-snapshot-manifests.md)
+record the threat models, operator boundaries, verification evidence, and APA 7
+references to NIST SP 800-53 Rev. 5 Release 5.2.0, FIPS 180-4, PostgreSQL 18
+transaction guidance, and Psycopg 3 `ConnectionInfo.transaction_status`.

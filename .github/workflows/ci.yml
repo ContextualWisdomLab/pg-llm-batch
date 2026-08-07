@@ -132,7 +132,12 @@ jobs:
       - name: Install locked dependencies
         run: uv sync --locked
       - name: Run live checkpoint storage integration
-        run: uv run pytest -q tests/test_checkpoint_audit_integration.py tests/test_checkpoint_migration_operator_integration.py -m integration
+        run: >-
+          uv run pytest -q
+          tests/test_checkpoint_audit_integration.py
+          tests/test_checkpoint_audit_snapshot_integration.py
+          tests/test_checkpoint_migration_operator_integration.py
+          -m integration
 
   container-builds:
     name: Container builds

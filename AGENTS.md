@@ -294,9 +294,47 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   or stricter transaction before the first query and repeatedly call
   `list_audit_event_page_in_transaction()` on the same transaction.
 - Keep export destinations, credentials, retention policy, immutable/WORM
-  storage, delivery receipts, cryptographic manifests, and reconciliation in the
-  host/operator boundary. This package primitive adds no network exporter or
-  write authority.
+  storage, delivery receipts, signed or authenticated manifests, and
+  reconciliation in the host/operator boundary. This package primitive adds no
+  network exporter or write authority.
 - Maintain 100% production statement, branch, and public-docstring coverage with
   strict cursor, page-shape, lookahead, keyset SQL, ordering, row-key,
   malformed-driver, concurrency-semantics, and transaction-ownership tests.
+
+## Checkpoint audit snapshot manifest contract
+
+- Keep `CheckpointAuditSnapshotManifest` and
+  `build_audit_snapshot_manifest_in_transaction()` opt-in; preserve bounded
+  one-page reads and keyset pagination unchanged.
+- Require one active PostgreSQL transaction owned by the caller and then require
+  that transaction to use `REPEATABLE READ` or `SERIALIZABLE`, selected before
+  its first query or data-modification statement. Reject autocommit even when a
+  session-level default advertises `REPEATABLE READ`; reject `READ COMMITTED`,
+  malformed isolation evidence, and unknown modes; do not silently alter
+  host-owned transaction state or isolation.
+- Keep `page_size` a strict 1..1,000 integer and `max_events` a strict
+  1..100,000 integer. Buffer only one bounded page plus fixed digest state and
+  fail closed instead of silently truncating if a continuation remains after the
+  event budget is consumed.
+- Treat manifest schema version 1 framing as immutable compatibility evidence:
+  domain separation, explicit length framing, the exact trusted
+  tenant/consumer/endpoint/batch key, every retained event field in newest-first
+  order, UTC microsecond event time, event count, and newest/oldest identities.
+  Page partitioning must not affect digest identity; incompatible framing needs a
+  new schema version.
+- Revalidate public manifest count, identity range, and lowercase 64-hex digest.
+  Empty manifests carry no identities, one-event manifests carry one equal
+  identity, and multi-event manifests require a strictly descending range.
+- Describe SHA-256 as deterministic content identity and change detection only.
+  It is not a MAC, signature, credential, trusted timestamp, delivery receipt,
+  provenance statement, or non-repudiation mechanism.
+- Keep destination credentials, immutable/WORM storage, retention, legal hold,
+  delivery receipts, external signing/authentication, key management, and
+  reconciliation in the host/operator boundary.
+- Add no database object, migration, provider credential, LLM key, network
+  exporter, or background scheduler for this manifest slice. Preserve standalone
+  and modular MSA operation.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  strict validation, isolation, active-transaction, autocommit, overflow, digest
+  sensitivity, page-partition, public-export, fixed-vector, and live
+  concurrent-insert verification.

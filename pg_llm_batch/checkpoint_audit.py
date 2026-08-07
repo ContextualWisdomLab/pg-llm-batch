@@ -4,8 +4,9 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -23,6 +24,9 @@ AUDIT_ACTION_CHECKPOINT_SAVE_ACCEPTED = "checkpoint_save_accepted"
 MAX_CHECKPOINT_AUDIT_EVENTS = 1000
 DEFAULT_CHECKPOINT_AUDIT_EVENTS = 100
 MAX_CHECKPOINT_AUDIT_EVENT_ID = 9_223_372_036_854_775_807
+MAX_CHECKPOINT_AUDIT_SNAPSHOT_EVENTS = 100_000
+_CHECKPOINT_AUDIT_SNAPSHOT_SCHEMA_VERSION = 1
+_CHECKPOINT_AUDIT_SNAPSHOT_DOMAIN = "pg-llm-batch:checkpoint-audit-snapshot:v1"
 AUDIT_MIGRATION_PATH = (
     Path(__file__).with_name("migrations") / "0008_result_checkpoint_audit_events.sql"
 )
@@ -114,6 +118,72 @@ class CheckpointAuditPage:
             raise ValueError("next_before_audit_event_id must equal the final event id")
 
 
+@dataclass(frozen=True, slots=True)
+class CheckpointAuditSnapshotManifest:
+    """Compact deterministic identity for one snapshot-stable audit traversal."""
+
+    schema_version: int
+    tenant_scope: str
+    consumer_name: str
+    endpoint_alias: str
+    batch_id: str
+    event_count: int
+    newest_audit_event_id: Optional[int]
+    oldest_audit_event_id: Optional[int]
+    snapshot_sha256: str
+
+    def __post_init__(self) -> None:
+        """Reject malformed or internally inconsistent public manifest values."""
+        if (
+            isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
+            or self.schema_version != _CHECKPOINT_AUDIT_SNAPSHOT_SCHEMA_VERSION
+        ):
+            raise ValueError("unsupported checkpoint audit snapshot manifest schema_version")
+        validate_tenant_scope(self.tenant_scope)
+        validate_checkpoint_consumer_name(self.consumer_name)
+        _validated_exact_endpoint_alias(self.endpoint_alias)
+        _validated_batch_id(self.batch_id)
+        if (
+            isinstance(self.event_count, bool)
+            or not isinstance(self.event_count, int)
+            or self.event_count < 0
+            or self.event_count > MAX_CHECKPOINT_AUDIT_SNAPSHOT_EVENTS
+        ):
+            raise ValueError(
+                "event_count must be a non-negative bounded audit snapshot count"
+            )
+        if self.event_count == 0:
+            if self.newest_audit_event_id is not None or self.oldest_audit_event_id is not None:
+                raise ValueError("empty audit snapshot manifests must not contain event ids")
+        else:
+            newest = self.newest_audit_event_id
+            oldest = self.oldest_audit_event_id
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 1
+                or value > MAX_CHECKPOINT_AUDIT_EVENT_ID
+                for value in (newest, oldest)
+            ):
+                raise ValueError(
+                    "non-empty audit snapshot manifests require PostgreSQL BIGINT event ids"
+                )
+            if self.event_count == 1 and newest != oldest:
+                raise ValueError("one-event audit snapshot manifests require one event identity")
+            if self.event_count > 1 and newest <= oldest:
+                raise ValueError(
+                    "multi-event audit snapshot manifests require a descending identity range"
+                )
+        if (
+            not isinstance(self.snapshot_sha256, str)
+            or len(self.snapshot_sha256) != 64
+            or self.snapshot_sha256 != self.snapshot_sha256.lower()
+            or any(character not in "0123456789abcdef" for character in self.snapshot_sha256)
+        ):
+            raise ValueError("snapshot_sha256 must be exactly 64 lowercase hexadecimal characters")
+
+
 def validate_checkpoint_audit_limit(value: Any) -> int:
     """Validate the bounded number of audit rows one public read may return."""
     if (
@@ -145,6 +215,25 @@ def validate_checkpoint_audit_cursor(value: Any) -> Optional[int]:
             value=value,
             reason=(
                 "must be a positive integer no greater than PostgreSQL BIGINT maximum"
+            ),
+        )
+    return value
+
+
+def validate_checkpoint_audit_snapshot_max_events(value: Any) -> int:
+    """Validate the maximum number of events one snapshot manifest may identify."""
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        or value > MAX_CHECKPOINT_AUDIT_SNAPSHOT_EVENTS
+    ):
+        raise ValidationError(
+            field="max_events",
+            value=value,
+            reason=(
+                "must be an integer from 1 through "
+                f"{MAX_CHECKPOINT_AUDIT_SNAPSHOT_EVENTS}"
             ),
         )
     return value
@@ -184,6 +273,84 @@ def _audit_event_from_row(row: Any) -> CheckpointAuditEvent:
         prefix_sha256=row[12],
         recorded_at=row[13],
     )
+
+
+def _audit_snapshot_hash_frame(digest: Any, label: str, value: str) -> None:
+    """Add one unambiguous labeled UTF-8 frame to the snapshot digest."""
+    label_bytes = label.encode("utf-8")
+    value_bytes = value.encode("utf-8")
+    digest.update(len(label_bytes).to_bytes(4, byteorder="big", signed=False))
+    digest.update(label_bytes)
+    digest.update(len(value_bytes).to_bytes(8, byteorder="big", signed=False))
+    digest.update(value_bytes)
+
+
+def _audit_snapshot_recorded_at(value: datetime) -> str:
+    """Return one timezone-independent microsecond event timestamp representation."""
+    return (
+        value.astimezone(timezone.utc)
+        .isoformat(timespec="microseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def _audit_snapshot_event_hash(digest: Any, event: CheckpointAuditEvent) -> None:
+    """Bind every retained audit-event field into one deterministic snapshot hash."""
+    _audit_snapshot_hash_frame(digest, "event_begin", "1")
+    for label, value in (
+        ("audit_event_id", str(event.audit_event_id)),
+        ("tenant_scope", event.tenant_scope),
+        ("consumer_name", event.consumer_name),
+        ("endpoint_alias", event.endpoint_alias),
+        ("batch_id", event.batch_id),
+        ("action", event.action),
+        ("schema_version", str(event.schema_version)),
+        ("file_kind", event.file_kind),
+        ("file_id", event.file_id),
+        ("file_line_number", str(event.file_line_number)),
+        ("batch_line_count", str(event.batch_line_count)),
+        ("record_count", str(event.record_count)),
+        ("prefix_sha256", event.prefix_sha256),
+        ("recorded_at", _audit_snapshot_recorded_at(event.recorded_at)),
+    ):
+        _audit_snapshot_hash_frame(digest, label, value)
+    _audit_snapshot_hash_frame(digest, "event_end", "1")
+
+
+def _require_audit_snapshot_isolation(cursor: Any) -> None:
+    """Fail closed unless all manifest pages share one committed read-only snapshot."""
+    connection = getattr(cursor, "connection", None)
+    info = getattr(connection, "info", None)
+    transaction_status = getattr(info, "transaction_status", None)
+    if getattr(transaction_status, "name", None) != "INTRANS":
+        raise RuntimeError(
+            "checkpoint audit snapshot manifest requires an active PostgreSQL transaction"
+        )
+    cursor.execute("SHOW transaction_isolation")
+    row = cursor.fetchone()
+    if (
+        not isinstance(row, tuple)
+        or len(row) != 1
+        or not isinstance(row[0], str)
+    ):
+        raise RuntimeError("checkpoint audit transaction isolation evidence is invalid")
+    isolation = row[0].strip().lower()
+    if isolation not in {"repeatable read", "serializable"}:
+        raise RuntimeError(
+            "checkpoint audit snapshot manifest requires REPEATABLE READ or SERIALIZABLE"
+        )
+    cursor.execute("SHOW transaction_read_only")
+    read_only_row = cursor.fetchone()
+    if (
+        not isinstance(read_only_row, tuple)
+        or len(read_only_row) != 1
+        or not isinstance(read_only_row[0], str)
+    ):
+        raise RuntimeError("checkpoint audit transaction read-only evidence is invalid")
+    if read_only_row[0].strip().lower() != "on":
+        raise RuntimeError(
+            "checkpoint audit snapshot manifest requires a read-only transaction"
+        )
 
 
 def _record_accepted_save(
@@ -425,4 +592,93 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
         return CheckpointAuditPage(
             events=page_events,
             next_before_audit_event_id=next_before,
+        )
+
+    def build_audit_snapshot_manifest_in_transaction(
+        self,
+        cursor: Any,
+        consumer_name: str,
+        batch_id: str,
+        endpoint_alias: str,
+        *,
+        max_events: int = MAX_CHECKPOINT_AUDIT_SNAPSHOT_EVENTS,
+        page_size: int = MAX_CHECKPOINT_AUDIT_EVENTS,
+    ) -> CheckpointAuditSnapshotManifest:
+        """Hash one bounded audit-key traversal from a stable caller transaction.
+
+        The caller must establish a read-only PostgreSQL ``REPEATABLE READ`` or
+        ``SERIALIZABLE`` transaction before its first query. The method verifies
+        those transaction characteristics, walks bounded keyset pages without
+        materializing the full history, and never commits or rolls back the
+        caller transaction.
+        """
+        consumer = validate_checkpoint_consumer_name(consumer_name)
+        remote_batch_id = _validated_batch_id(batch_id)
+        alias = _validated_exact_endpoint_alias(endpoint_alias)
+        bounded_max = validate_checkpoint_audit_snapshot_max_events(max_events)
+        bounded_page_size = validate_checkpoint_audit_limit(page_size)
+        _require_audit_snapshot_isolation(cursor)
+
+        digest = hashlib.sha256()
+        for label, value in (
+            ("domain", _CHECKPOINT_AUDIT_SNAPSHOT_DOMAIN),
+            ("tenant_scope", self.tenant_scope),
+            ("consumer_name", consumer),
+            ("endpoint_alias", alias),
+            ("batch_id", remote_batch_id),
+        ):
+            _audit_snapshot_hash_frame(digest, label, value)
+
+        event_count = 0
+        newest_audit_event_id: Optional[int] = None
+        oldest_audit_event_id: Optional[int] = None
+        before_audit_event_id: Optional[int] = None
+
+        while True:
+            remaining = bounded_max - event_count
+            page = self.list_audit_event_page_in_transaction(
+                cursor,
+                consumer,
+                remote_batch_id,
+                alias,
+                before_audit_event_id=before_audit_event_id,
+                limit=min(bounded_page_size, remaining),
+            )
+            if page.events:
+                if newest_audit_event_id is None:
+                    newest_audit_event_id = page.events[0].audit_event_id
+                for event in page.events:
+                    _audit_snapshot_event_hash(digest, event)
+                oldest_audit_event_id = page.events[-1].audit_event_id
+                event_count += len(page.events)
+
+            if page.next_before_audit_event_id is None:
+                break
+            if event_count >= bounded_max:
+                raise RuntimeError("checkpoint audit snapshot exceeds max_events")
+            before_audit_event_id = page.next_before_audit_event_id
+
+        for label, value in (
+            ("event_count", str(event_count)),
+            (
+                "newest_audit_event_id",
+                "" if newest_audit_event_id is None else str(newest_audit_event_id),
+            ),
+            (
+                "oldest_audit_event_id",
+                "" if oldest_audit_event_id is None else str(oldest_audit_event_id),
+            ),
+        ):
+            _audit_snapshot_hash_frame(digest, label, value)
+
+        return CheckpointAuditSnapshotManifest(
+            schema_version=_CHECKPOINT_AUDIT_SNAPSHOT_SCHEMA_VERSION,
+            tenant_scope=self.tenant_scope,
+            consumer_name=consumer,
+            endpoint_alias=alias,
+            batch_id=remote_batch_id,
+            event_count=event_count,
+            newest_audit_event_id=newest_audit_event_id,
+            oldest_audit_event_id=oldest_audit_event_id,
+            snapshot_sha256=digest.hexdigest(),
         )
