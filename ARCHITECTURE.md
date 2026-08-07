@@ -261,6 +261,43 @@ existing volumes require explicit reviewed migration because Docker entrypoint
 initialization is not an upgrade mechanism. Audit retention, export, legal hold,
 and disposal remain host/operator policy.
 
+## Bounded checkpoint-audit export boundary
+
+`CheckpointAuditPage`, `list_audit_event_page()`, and
+`list_audit_event_page_in_transaction()` add an opt-in bounded traversal layer
+without changing the existing one-page audit read or database schema. The page
+identity remains the exact tenant, consumer, endpoint, and remote-batch key.
+
+Pagination is primary-key keyset traversal rather than offset traversal. The
+first page orders by `checkpoint_audit_event_id DESC`; a continuation adds
+`checkpoint_audit_event_id < before_audit_event_id` with the same ordering. The
+cursor is strict, non-coercive, positive, and bounded by PostgreSQL signed
+`BIGINT`. Each query requests at most the validated public limit plus one
+lookahead row and exposes at most 1,000 events. The lookahead is used only to
+decide whether an older continuation exists.
+
+Rows are not trusted merely because PostgreSQL returned them. Every row is
+reconstructed through the public event validator, compared to the exact trusted
+request key, and required to be strictly descending by audit identity. A malformed
+collection, impossible driver overrun, cross-key row, duplicate identity, or
+ascending identity fails closed before a page is exposed.
+
+Keyset traversal prevents later higher-identity inserts from shifting an older
+continuation window, but it is not a multi-page database snapshot. Package-owned
+page calls may observe different committed database states. A host that requires
+one snapshot for a long export pass must begin a caller-owned PostgreSQL
+`REPEATABLE READ` or stricter transaction before the first query and repeatedly
+call the in-transaction method on that same transaction. The package never
+silently changes caller isolation.
+
+Audit identities are database navigation keys, not cryptographic chronology.
+Identity sequences may contain gaps and allocation order can differ from commit
+order. A cursor therefore does not prove completeness, delivery, authenticity,
+retention, or non-repudiation. Hosts still own external immutable/WORM storage,
+export receipts, cryptographic manifests where required, reconciliation, legal
+hold, and disposal. This boundary exists so those controls can consume retained
+evidence without unbounded package memory or offset drift.
+
 ## Checkpoint OpenTelemetry observability boundary
 
 `OpenTelemetryCheckpointStore` is an opt-in wrapper around a durable checkpoint
@@ -327,7 +364,10 @@ place local PostgreSQL effects and `save_in_transaction()` on the same caller
 cursor; cross-system effects remain host-owned recovery boundaries. Hosts that
 choose the audited store gain transaction-coupled accepted-save evidence but
 still own identity authorization, retention, export, and stronger tamper-proof
-controls where required.
+controls where required. Hosts may use bounded audit-page keyset traversal as a
+standalone export primitive or embed it into a larger MSA retention workflow;
+package pagination itself does not require `contextual-orchestrator`, `naruon`,
+or a network export service.
 
 ## Verification boundary
 
@@ -367,9 +407,12 @@ insert-time wall-clock semantics, rejected-save no-success evidence, strict even
 revalidation, tenant-qualified bounded reads, package/container migration
 identity and idempotent timestamp-default repair, forced RLS, UPDATE/DELETE and
 TRUNCATE rejection, fresh-image installation order, fail-closed non-empty
-rollback, and explicit administrator-tamper exclusions. Checkpoint telemetry
-tests additionally prove exact delegation, fixed low-cardinality signal
-attributes, storage-agnostic operation spans, seconds-based nonnegative duration,
+rollback, explicit administrator-tamper exclusions, strict PostgreSQL-BIGINT
+identity compatibility, immutable page shape, bounded lookahead, keyset cursor
+validation, trusted-key row revalidation, strict descending order, malformed
+driver output, and package-owned no-commit page reads. Checkpoint telemetry tests
+additionally prove exact delegation, fixed low-cardinality signal attributes,
+storage-agnostic operation spans, seconds-based nonnegative duration,
 confidential failure classification, explicit Error status without descriptions,
 Unset success status, disabled exception recording, and preservation of
 application results and exception identity during ordinary tracer, meter, span,
