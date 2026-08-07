@@ -85,11 +85,51 @@ emptiness check can see rows for every tenant. If any audit row exists, rollback
 raises SQLSTATE `55000`; the transaction restores FORCE RLS automatically. An
 empty table may be dropped together with the trigger function.
 
+## Live PostgreSQL verification boundary
+
+CI contains a permanent read-only-code verification job backed by the exact
+reviewed PostgreSQL 16 Bookworm image digest. The job creates one random isolated
+temporary database and one random application login declared
+`NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`.
+Identifiers are composed with `psycopg.sql.Identifier`; the generated password is
+composed with `psycopg.sql.Literal` because PostgreSQL utility-statement grammar
+does not accept a protocol bind parameter in `CREATE ROLE ... PASSWORD`.
+
+The live test applies the durable checkpoint schema before the audit schema,
+grants only the table and sequence rights needed to exercise the application
+contract, and verifies that identical checkpoint keys in two tenant scopes remain
+independently readable only through their bound scope. An unscoped application
+connection sees zero audit rows. Under a valid tenant scope, ordinary
+`UPDATE`, `DELETE`, and `TRUNCATE` attempts must each fail with SQLSTATE `55000`.
+The owner-level rollback must also fail with SQLSTATE `55000` while any tenant's
+audit evidence remains, after which both tenants' retained events must still be
+readable through their authorized package scopes.
+
+The test cleanup is bounded to the unique temporary database and role it created.
+Creation flags guard partial setup, so a failure after role creation but before
+database creation does not silently leave a test login behind. The CI token is
+`contents: read`; checkout uses `persist-credentials: false`. The integration job
+has no repository write permission and is not a branch-writing repair agent.
+
 ## Deterministic verification matrix
 
-- RED evidence: CI run `31138134741` on test-only head
+- Initial production RED: CI run `31138134741` on test-only head
   `3dfab0d6132e523396d2b2e27125aff34d8565e4` failed unit collection because
   `pg_llm_batch.checkpoint_audit` did not exist.
+- Live-gate RED: CI run `31139284742` on head
+  `467f40e7282b6916c7e681636550c7c215db88e2` failed the permanent workflow
+  contract because the live PostgreSQL audit job did not yet exist.
+- CI-integration refactor RED: after adding the live job, run `31139383985`
+  exposed an older dependency-refresh test that hard-coded exactly two uv setup
+  steps. The contract was generalized to require every setup-uv occurrence to
+  use the same immutable reviewed pin and explicit cache pruning, independent of
+  job count.
+- Live setup RED: exact-head run `31139440808` reached the pinned PostgreSQL
+  service and all ordinary unit/quality/container jobs passed, but the live test
+  correctly exposed invalid use of a protocol bind parameter in PostgreSQL
+  `CREATE ROLE ... PASSWORD`. The setup was changed to psycopg's composable
+  identifier/literal API and partial-provision cleanup was made fail-safe before
+  re-verification.
 - Public model: immutable accepted-save event; invalid identifiers, action,
   checkpoint fields, event identity, and timestamp fail closed.
 - Read bound: integers 1 through 1,000 only; booleans and coercible values are
@@ -104,8 +144,8 @@ empty table may be dropped together with the trigger function.
   ordered image installation.
 - Rollback: non-empty evidence blocks destructive rollback across tenants.
 - Quality target: 100% production statement, branch, and public-docstring
-  coverage plus exact-head CI, release acceptance, security, supply-chain, and
-  independent review before merge.
+  coverage plus exact-head CI, live PostgreSQL integration, release acceptance,
+  security, supply-chain, and independent review before merge.
 
 ## Standards mapping
 
