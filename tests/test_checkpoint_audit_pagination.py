@@ -11,6 +11,7 @@ import pytest
 import pg_llm_batch.checkpoint_audit as checkpoint_audit
 from pg_llm_batch.checkpoint_audit import (
     MAX_CHECKPOINT_AUDIT_EVENT_ID,
+    MAX_CHECKPOINT_AUDIT_EVENTS,
     CheckpointAuditEvent,
     CheckpointAuditPage,
     validate_checkpoint_audit_cursor,
@@ -66,6 +67,14 @@ class FakeCursor:
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
+    def __enter__(self) -> "FakeCursor":
+        """Enter the fake cursor context."""
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Exit the fake cursor context."""
+        return None
+
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
         """Capture one normalized SQL statement and its parameters."""
         self.calls.append((" ".join(sql.split()), params or ()))
@@ -73,6 +82,43 @@ class FakeCursor:
     def fetchall(self) -> Any:
         """Return the configured database rows."""
         return self.rows
+
+
+class FakeConnection:
+    """Expose one cursor without inventing a commit boundary for audit reads."""
+
+    def __init__(self, cursor: FakeCursor) -> None:
+        self.fake_cursor = cursor
+        self.commits = 0
+
+    def __enter__(self) -> "FakeConnection":
+        """Enter the fake connection context."""
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Exit the fake connection context."""
+        return None
+
+    def cursor(self) -> FakeCursor:
+        """Return the deterministic fake cursor."""
+        return self.fake_cursor
+
+    def commit(self) -> None:
+        """Record an unexpected package commit if production attempts one."""
+        self.commits += 1
+
+
+class FakePsycopg:
+    """Return one deterministic connection and record requested DSNs."""
+
+    def __init__(self, connection: FakeConnection) -> None:
+        self.connection = connection
+        self.dsns: list[str] = []
+
+    def connect(self, dsn: str) -> FakeConnection:
+        """Record one DSN and return the configured connection."""
+        self.dsns.append(dsn)
+        return self.connection
 
 
 def test_audit_cursor_is_strict_positive_postgres_bigint_or_none() -> None:
@@ -105,6 +151,17 @@ def test_audit_page_is_immutable_descending_and_cursor_bound() -> None:
     for events, cursor in invalid_pages:
         with pytest.raises(ValueError):
             CheckpointAuditPage(events=events, next_before_audit_event_id=cursor)
+
+
+def test_audit_page_rejects_mutable_wrong_type_and_oversized_event_collections() -> None:
+    """Direct page construction cannot bypass tuple, type, or public-size contracts."""
+    with pytest.raises(ValueError, match="tuple"):
+        CheckpointAuditPage(events=[_event(1)], next_before_audit_event_id=None)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="CheckpointAuditEvent"):
+        CheckpointAuditPage(events=(object(),), next_before_audit_event_id=None)  # type: ignore[arg-type]
+    oversized = tuple(_event(index + 1) for index in range(MAX_CHECKPOINT_AUDIT_EVENTS + 1))
+    with pytest.raises(ValueError, match="at most"):
+        CheckpointAuditPage(events=oversized, next_before_audit_event_id=None)
 
 
 def test_first_export_page_uses_one_bounded_lookahead_row(
@@ -167,19 +224,85 @@ def test_next_export_page_is_keyset_bound_and_ignores_newer_concurrent_rows(
     assert params == ("tenant-a", "worker-a", "default", "batch-1", 8, 3)
 
 
-def test_export_page_fails_closed_on_impossible_driver_overrun(
+def test_export_page_revalidates_database_key_and_descending_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A driver returning more rows than the SQL bound cannot expand page memory silently."""
-    cursor = FakeCursor(rows=(_row(9), _row(8), _row(7), _row(6)))
+    """Corrupt or cross-key database rows cannot become trusted export evidence."""
+    monkeypatch.setattr(checkpoint_audit, "_set_transaction_tenant_scope", lambda *_: None)
+    store = checkpoint_audit.AuditedPostgresBatchResultCheckpointStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+    )
+
+    wrong_key = list(_row(9))
+    wrong_key[1] = "tenant-b"
+    with pytest.raises(RuntimeError, match="outside the requested key"):
+        store.list_audit_event_page_in_transaction(
+            FakeCursor(rows=(tuple(wrong_key),)),
+            "worker-a",
+            "batch-1",
+            "default",
+        )
+
+    with pytest.raises(RuntimeError, match="strictly descending"):
+        store.list_audit_event_page_in_transaction(
+            FakeCursor(rows=(_row(8), _row(9))),
+            "worker-a",
+            "batch-1",
+            "default",
+        )
+
+
+def test_export_page_fails_closed_on_invalid_collection_or_driver_overrun(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected driver output cannot bypass bounded export pagination."""
     monkeypatch.setattr(checkpoint_audit, "_set_transaction_tenant_scope", lambda *_: None)
     store = checkpoint_audit.AuditedPostgresBatchResultCheckpointStore("postgresql://unit")
 
-    with pytest.raises(RuntimeError, match="exceeded its bounded query size"):
+    with pytest.raises(RuntimeError, match="invalid row collection"):
         store.list_audit_event_page_in_transaction(
-            cursor,
+            FakeCursor(rows=object()),
             "worker-a",
             "batch-1",
             "default",
             limit=2,
         )
+
+    with pytest.raises(RuntimeError, match="exceeded its bounded query size"):
+        store.list_audit_event_page_in_transaction(
+            FakeCursor(rows=(_row(9), _row(8), _row(7), _row(6))),
+            "worker-a",
+            "batch-1",
+            "default",
+            limit=2,
+        )
+
+
+def test_owned_export_page_uses_one_connection_without_committing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The package-owned page read preserves the existing read-only transaction boundary."""
+    cursor = FakeCursor(rows=(_row(3),))
+    connection = FakeConnection(cursor)
+    fake_psycopg = FakePsycopg(connection)
+    monkeypatch.setattr(checkpoint_audit, "psycopg", fake_psycopg)
+    monkeypatch.setattr(checkpoint_audit, "_require_psycopg", lambda: None)
+    monkeypatch.setattr(checkpoint_audit, "_set_transaction_tenant_scope", lambda *_: None)
+    store = checkpoint_audit.AuditedPostgresBatchResultCheckpointStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+    )
+
+    page = store.list_audit_event_page(
+        "worker-a",
+        "batch-1",
+        "default",
+        before_audit_event_id=4,
+        limit=2,
+    )
+
+    assert tuple(event.audit_event_id for event in page.events) == (3,)
+    assert page.next_before_audit_event_id is None
+    assert fake_psycopg.dsns == ["postgresql://unit"]
+    assert connection.commits == 0
