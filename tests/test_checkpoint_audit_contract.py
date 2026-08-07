@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,40 @@ from pg_llm_batch.checkpoint_audit import (
     validate_checkpoint_audit_limit,
 )
 from pg_llm_batch.exceptions import ValidationError
+
+
+def _grant_role_bindings(source: str) -> dict[str, str]:
+    """Return each composable GRANT statement and its final role identifier."""
+    bindings: dict[str, str] = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "format" or not node.args:
+            continue
+        sql_call = node.func.value
+        if (
+            not isinstance(sql_call, ast.Call)
+            or not isinstance(sql_call.func, ast.Attribute)
+            or sql_call.func.attr != "SQL"
+            or not sql_call.args
+            or not isinstance(sql_call.args[0], ast.Constant)
+            or not isinstance(sql_call.args[0].value, str)
+        ):
+            continue
+        statement = sql_call.args[0].value
+        if not statement.startswith("GRANT "):
+            continue
+        role_argument = node.args[-1]
+        if (
+            not isinstance(role_argument, ast.Call)
+            or not isinstance(role_argument.func, ast.Attribute)
+            or role_argument.func.attr != "Identifier"
+            or not role_argument.args
+            or not isinstance(role_argument.args[-1], ast.Name)
+        ):
+            continue
+        bindings[statement] = role_argument.args[-1].id
+    return bindings
 
 
 def test_audit_limit_is_strict_bounded_and_noncoercive() -> None:
@@ -82,6 +117,34 @@ def test_checkpoint_audit_rollback_refuses_nonempty_evidence() -> None:
     assert "IF EXISTS ( SELECT 1 FROM llm_result_checkpoint_audit_events LIMIT 1 )" in sql
     assert "refusing to drop non-empty llm_result_checkpoint_audit_events" in sql.lower()
     assert "DROP TABLE IF EXISTS llm_result_checkpoint_audit_events" in sql
+
+
+def test_live_audit_roles_are_separated_by_least_privilege() -> None:
+    """The real integration gate must not normalize mutation rights for the app role."""
+    root = Path(__file__).resolve().parents[1]
+    source = (root / "tests/test_checkpoint_audit_integration.py").read_text(
+        encoding="utf-8"
+    )
+    grants = _grant_role_bindings(source)
+
+    assert grants[
+        "GRANT SELECT, INSERT, UPDATE ON llm_result_stream_checkpoints TO {}"
+    ] == "application_role_name"
+    assert grants[
+        "GRANT SELECT, INSERT ON llm_result_checkpoint_audit_events TO {}"
+    ] == "application_role_name"
+    assert grants[
+        "GRANT USAGE, SELECT ON SEQUENCE {} TO {}"
+    ] == "application_role_name"
+    assert grants[
+        "GRANT SELECT, UPDATE, DELETE, TRUNCATE ON "
+        "llm_result_checkpoint_audit_events TO {}"
+    ] == "mutation_probe_role_name"
+    assert "ALL SEQUENCES IN SCHEMA public" not in source
+    assert (
+        "GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON "
+        "llm_result_checkpoint_audit_events TO {}"
+    ) not in grants
 
 
 def test_postgres_image_installs_audit_migration_after_checkpoint_schema() -> None:
