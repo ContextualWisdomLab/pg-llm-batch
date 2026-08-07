@@ -11,17 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Opt-in bounded checkpoint-audit snapshot manifests through immutable
   `CheckpointAuditSnapshotManifest` and
-  `build_audit_snapshot_manifest_in_transaction()`. The caller must establish
-  PostgreSQL `REPEATABLE READ` or `SERIALIZABLE` before its first transaction
-  query; default `READ COMMITTED` and malformed isolation evidence fail closed.
-  Traversal reuses bounded keyset pages, limits each page to at most 1,000 events
-  and the complete manifest to at most 100,000 events, and refuses silent
-  truncation. Schema version 1 uses domain-separated length-framed SHA-256 over
-  the trusted audit key and every retained event field in newest-first order;
-  page size does not affect digest identity for the same snapshot and a fixed
-  compatibility vector prevents accidental framing drift. A live least-privilege
-  PostgreSQL regression proves snapshot stability across a concurrently committed
-  newer event and page-size changes. The digest is deterministic content identity,
+  `build_audit_snapshot_manifest_in_transaction()`. The caller must own one
+  **active PostgreSQL transaction** using `REPEATABLE READ` or `SERIALIZABLE`
+  before manifest traversal; autocommit is rejected even when a session default
+  advertises `REPEATABLE READ`, and active `READ COMMITTED` or malformed
+  transaction evidence fails closed. Traversal reuses bounded keyset pages,
+  limits each page to at most 1,000 events and the complete manifest to at most
+  100,000 events, and refuses silent truncation. Schema version 1 uses
+  domain-separated length-framed SHA-256 over the trusted audit key and every
+  retained event field in newest-first order; page size does not affect digest
+  identity for the same snapshot and a fixed compatibility vector prevents
+  accidental framing drift. A live least-privilege PostgreSQL regression proves
+  snapshot stability across a concurrently committed newer event and page-size
+  changes, active `READ COMMITTED` rejection, and autocommit rejection under a
+  `REPEATABLE READ` session default. The digest is deterministic content identity,
   not a MAC, signature, trusted timestamp, delivery receipt, provenance statement,
   or non-repudiation mechanism. No migration, version bump, or release is included.
 - Opt-in bounded checkpoint-audit export pagination through immutable
