@@ -84,6 +84,47 @@ jobs:
       - name: Build distribution artifacts without workspace sources
         run: uv build --no-sources
 
+  checkpoint-audit-integration:
+    name: Checkpoint audit PostgreSQL integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-bookworm@sha256:da788743d2060767375896de4d646f7576f5911461444b372616f19ea61db2ec
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      PG_LLM_BATCH_TEST_DSN: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.1"
+          prune-cache: true
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Run live checkpoint audit integration
+        run: uv run pytest -q tests/test_checkpoint_audit_integration.py -m integration
+
   container-builds:
     name: Container builds
     runs-on: ubuntu-latest
