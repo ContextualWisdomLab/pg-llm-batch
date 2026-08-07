@@ -69,6 +69,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Narrowed the hourly review-repair caller to the immutable central OpenCode
+  scheduler prerequisite and only the established `PR_REVIEW_MERGE_TOKEN` and
+  `OPENCODE_APPROVE_TOKEN` secrets; the caller no longer elevates its generated
+  GitHub token or inherits unrelated secrets, while the independent merge plane
+  remains unchanged.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.
