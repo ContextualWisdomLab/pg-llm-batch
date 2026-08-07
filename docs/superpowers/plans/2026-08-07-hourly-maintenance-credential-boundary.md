@@ -35,13 +35,18 @@ regressions and are not reused as success evidence.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` to current `.github#782` head
-      `355d9e545fd971638066e90654fdfaa105431968` for Draft verification.
+      `70fd801523893ba2c51ad9bd859b2d3c408d5839` for Draft verification.
 - [x] Update `canonical_ref` to the same immutable SHA.
 - [x] Remove the review-fix job permission elevation.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
 - [x] Keep cadence, retry floor, dispatch bound, and concurrency unchanged.
 - [x] Keep the merge scheduler pin, permissions, inputs, and secret inheritance
       unchanged.
+- [x] When the prerequisite advanced from the earlier reviewed head, update the
+      exact-pin contract first. RED head `62fb2f2d9251586f37b30f6e24cfa18c11ddf458`
+      failed CI run `31201274230` only because the caller still referenced the
+      predecessor central SHA. Implementation then moved the caller and both
+      governance contracts to the same current prerequisite identity.
 
 ## Task 3: Bind CI to the exact source head
 
