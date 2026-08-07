@@ -199,3 +199,36 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   maintain 100% production statement, branch, and public-docstring coverage for
   success, conflict, validation, internal-error, Error-status, Unset-status,
   caller-transaction, confidentiality, and observer-failure paths.
+
+## Checkpoint accepted-save audit contract
+
+- Keep `AuditedPostgresBatchResultCheckpointStore` opt-in. The base durable store
+  remains available and custom host stores remain compatible.
+- Append exactly one fixed `checkpoint_save_accepted` event after every
+  successful save call, including exact idempotent repeats, inside the same
+  PostgreSQL transaction as checkpoint persistence. Rejected validation or CAS
+  operations must never create a success event.
+- Derive tenant and consumer identity only from the trusted host boundary. Keep
+  audit queries tenant-qualified by consumer, endpoint, and batch and enforce a
+  strict non-coercive maximum of 1,000 returned rows per call.
+- Retain structured checkpoint coordinates and the prefix digest only. Never add
+  prompts, provider bodies, model output, credentials, DSNs, transport headers,
+  exception text, or arbitrary free-form log messages to package-owned audit
+  rows.
+- Keep forced RLS and ordinary application roles `NOSUPERUSER NOBYPASSRLS`.
+  Reject ordinary UPDATE and DELETE through the row trigger and TRUNCATE through
+  the statement trigger. Do not describe these controls as cryptographic
+  non-repudiation or administrator-proof tamper evidence.
+- Treat owners, superusers, `BYPASSRLS` roles, disabled triggers, and physical
+  database administrators as outside the append-only assurance boundary.
+  Stronger deployments need separately governed immutable or cryptographically
+  protected evidence.
+- Keep package and container audit migrations byte-identical and ordered after
+  durable checkpoint schema on fresh PostgreSQL data directories. Existing
+  volumes require explicit migration; Docker entrypoint initialization is not an
+  upgrade mechanism.
+- Rollback must fail closed while any tenant's audit evidence remains. Retention,
+  export, legal hold, and disposal are host/operator responsibilities.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  deterministic transaction, tenant, validation, bounded-read, migration,
+  rollback, immutability-trigger, compatibility, and documentation tests.
