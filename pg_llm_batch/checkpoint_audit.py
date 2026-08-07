@@ -318,7 +318,7 @@ def _audit_snapshot_event_hash(digest: Any, event: CheckpointAuditEvent) -> None
 
 
 def _require_audit_snapshot_isolation(cursor: Any) -> None:
-    """Fail closed unless all manifest pages share one stable PostgreSQL snapshot."""
+    """Fail closed unless all manifest pages share one committed read-only snapshot."""
     connection = getattr(cursor, "connection", None)
     info = getattr(connection, "info", None)
     transaction_status = getattr(info, "transaction_status", None)
@@ -338,6 +338,18 @@ def _require_audit_snapshot_isolation(cursor: Any) -> None:
     if isolation not in {"repeatable read", "serializable"}:
         raise RuntimeError(
             "checkpoint audit snapshot manifest requires REPEATABLE READ or SERIALIZABLE"
+        )
+    cursor.execute("SHOW transaction_read_only")
+    read_only_row = cursor.fetchone()
+    if (
+        not isinstance(read_only_row, tuple)
+        or len(read_only_row) != 1
+        or not isinstance(read_only_row[0], str)
+    ):
+        raise RuntimeError("checkpoint audit transaction read-only evidence is invalid")
+    if read_only_row[0].strip().lower() != "on":
+        raise RuntimeError(
+            "checkpoint audit snapshot manifest requires a read-only transaction"
         )
 
 
@@ -594,10 +606,11 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
     ) -> CheckpointAuditSnapshotManifest:
         """Hash one bounded audit-key traversal from a stable caller transaction.
 
-        The caller must establish PostgreSQL ``REPEATABLE READ`` or
-        ``SERIALIZABLE`` before the transaction's first query. The method verifies
-        that isolation level, walks bounded keyset pages without materializing the
-        full history, and never commits or rolls back the caller transaction.
+        The caller must establish a read-only PostgreSQL ``REPEATABLE READ`` or
+        ``SERIALIZABLE`` transaction before its first query. The method verifies
+        those transaction characteristics, walks bounded keyset pages without
+        materializing the full history, and never commits or rolls back the
+        caller transaction.
         """
         consumer = validate_checkpoint_consumer_name(consumer_name)
         remote_batch_id = _validated_batch_id(batch_id)
