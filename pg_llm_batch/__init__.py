@@ -9,6 +9,7 @@ Public API:
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultCheckpoint               -- host-persistable resume evidence
     PostgresBatchResultCheckpointStore  -- tenant-isolated durable checkpoints
+    OpenTelemetryCheckpointStore        -- confidential checkpoint observability
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
     PostgresConfigStore, SecretStore    -- database configuration and secrets
@@ -27,6 +28,7 @@ from .checkpoint_store import (
     apply_result_checkpoint_schema,
     validate_checkpoint_consumer_name,
 )
+from .checkpoint_telemetry import OpenTelemetryCheckpointStore
 from .config import PostgresConfigStore, SecretStore, get_config_store
 from .db import (
     DEFAULT_TENANT_SCOPE,
@@ -65,6 +67,7 @@ __all__ = [
     "BatchResultCheckpoint",
     "CheckpointedBatchResultRecord",
     "PostgresBatchResultCheckpointStore",
+    "OpenTelemetryCheckpointStore",
     "CheckpointConflictError",
     "apply_result_checkpoint_schema",
     "validate_checkpoint_consumer_name",
