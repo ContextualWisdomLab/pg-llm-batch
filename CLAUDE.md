@@ -214,3 +214,34 @@
 - Maintain test-first transaction, event-time, validation, bounded-read,
   migration, rollback, trigger, compatibility, documentation, and 100%
   production statement/branch/public-docstring coverage.
+
+## Checkpoint audit export pagination invariants
+
+- Preserve `list_audit_events()` and make multi-page export explicit through
+  `CheckpointAuditPage` and the two `list_audit_event_page*` methods.
+- Accept only `None` or a positive signed-PostgreSQL-`BIGINT` continuation
+  identity. Never coerce strings, floats, booleans, or oversized integers.
+- Use strict newest-first keyset pagination with
+  `checkpoint_audit_event_id < before_audit_event_id`; never introduce
+  `OFFSET` into the export path.
+- Fetch only `limit + 1` rows to determine continuation and return at most the
+  validated 1..1,000 public events. Treat a driver that returns more as an
+  integrity failure.
+- Revalidate each row through `CheckpointAuditEvent`, require the exact trusted
+  tenant/consumer/endpoint/batch key, and reject duplicate or non-descending
+  identities before constructing the immutable page.
+- Set `next_before_audit_event_id` only when a lookahead row proves an older
+  continuation, and bind it exactly to the last returned identity.
+- Do not call cursor traversal a snapshot, chronology proof, delivery receipt,
+  completeness proof, or tamper evidence. Identity sequences can contain gaps
+  and commit order can differ from identity allocation order.
+- Leave transaction isolation under caller ownership. A host requiring one
+  export snapshot must establish `REPEATABLE READ` or stronger before its first
+  query and reuse one caller-owned transaction with the in-transaction method.
+- Keep external immutable/WORM retention, exporter credentials, manifests,
+  receipts, and reconciliation outside the package. Pagination adds no network
+  client or database write authority.
+- Maintain deterministic tests for cursor validation, immutable page shape,
+  bounded lookahead, SQL keyset semantics, key/order revalidation, malformed
+  adapter output, owned-read commit behavior, and 100% production
+  statement/branch/public-docstring coverage.
