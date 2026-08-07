@@ -104,7 +104,7 @@ class FakeConnection:
         return self.fake_cursor
 
     def commit(self) -> None:
-        """Record an unexpected package commit if production attempts one."""
+        """Record an unexpected explicit package commit if production attempts one."""
         self.commits += 1
 
 
@@ -194,6 +194,7 @@ def test_first_export_page_uses_one_bounded_lookahead_row(
     query, params = cursor.calls[-1]
     assert "checkpoint_audit_event_id < %s" not in query
     assert "ORDER BY checkpoint_audit_event_id DESC LIMIT %s" in query
+    assert "OFFSET" not in query
     assert params == ("tenant-a", "worker-a", "default", "batch-1", 3)
 
 
@@ -221,7 +222,29 @@ def test_next_export_page_is_keyset_bound_and_ignores_newer_concurrent_rows(
     assert page.next_before_audit_event_id is None
     query, params = cursor.calls[-1]
     assert "checkpoint_audit_event_id < %s" in query
+    assert "OFFSET" not in query
     assert params == ("tenant-a", "worker-a", "default", "batch-1", 8, 3)
+
+
+def test_continuation_page_revalidates_returned_identity_against_cursor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A faulty adapter cannot return an event at or newer than the strict cursor."""
+    monkeypatch.setattr(checkpoint_audit, "_set_transaction_tenant_scope", lambda *_: None)
+    store = checkpoint_audit.AuditedPostgresBatchResultCheckpointStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+    )
+
+    with pytest.raises(RuntimeError, match="violated the continuation cursor"):
+        store.list_audit_event_page_in_transaction(
+            FakeCursor(rows=(_row(8), _row(7))),
+            "worker-a",
+            "batch-1",
+            "default",
+            before_audit_event_id=8,
+            limit=2,
+        )
 
 
 def test_export_page_revalidates_database_key_and_descending_order(
@@ -279,10 +302,10 @@ def test_export_page_fails_closed_on_invalid_collection_or_driver_overrun(
         )
 
 
-def test_owned_export_page_uses_one_connection_without_committing(
+def test_owned_export_page_uses_one_connection_without_explicit_commit(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The package-owned page read preserves the existing read-only transaction boundary."""
+    """The package-owned read delegates through one connection without calling commit()."""
     cursor = FakeCursor(rows=(_row(3),))
     connection = FakeConnection(cursor)
     fake_psycopg = FakePsycopg(connection)
