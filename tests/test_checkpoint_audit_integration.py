@@ -145,9 +145,7 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
                     raise RuntimeError("audit identity sequence could not be resolved")
                 audit_sequence_parts = tuple(sequence_row[0])
                 cursor.execute(
-                    sql.SQL(
-                        "GRANT USAGE, SELECT ON SEQUENCE {} TO {}"
-                    ).format(
+                    sql.SQL("GRANT USAGE, SELECT ON SEQUENCE {} TO {}").format(
                         sql.Identifier(*audit_sequence_parts),
                         sql.Identifier(application_role_name),
                     )
@@ -181,6 +179,47 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
         assert len(events_b) == 1
         assert {event.tenant_scope for event in events_a} == {"tenant-a"}
         assert {event.tenant_scope for event in events_b} == {"tenant-b"}
+
+        # Real separate transactions exercise the operational export case: page
+        # one is read, a newer accepted-save event commits, and page two continues
+        # strictly toward older identities without OFFSET drift.
+        assert tenant_a.save(consumer, first_a) == first_a
+        assert tenant_a.save(consumer, first_a) == first_a
+        first_page = tenant_a.list_audit_event_page(
+            consumer,
+            batch_id,
+            "default",
+            limit=2,
+        )
+        first_page_ids = tuple(event.audit_event_id for event in first_page.events)
+        assert len(first_page_ids) == 2
+        assert first_page_ids[0] > first_page_ids[1]
+        assert first_page.next_before_audit_event_id == first_page_ids[-1]
+
+        assert tenant_a.save(consumer, first_a) == first_a
+        newest_after_first_page = tenant_a.list_audit_events(
+            consumer,
+            batch_id,
+            "default",
+            limit=1,
+        )[0].audit_event_id
+        assert newest_after_first_page > first_page_ids[0]
+
+        second_page = tenant_a.list_audit_event_page(
+            consumer,
+            batch_id,
+            "default",
+            before_audit_event_id=first_page.next_before_audit_event_id,
+            limit=2,
+        )
+        second_page_ids = tuple(event.audit_event_id for event in second_page.events)
+        assert len(second_page_ids) == 2
+        assert set(first_page_ids).isdisjoint(second_page_ids)
+        assert newest_after_first_page not in second_page_ids
+        assert all(
+            event_id < first_page.next_before_audit_event_id
+            for event_id in second_page_ids
+        )
 
         timed_batch_id = f"timed-{suffix}"
         timed_checkpoint = _checkpoint(timed_batch_id, "c" * 64)
@@ -258,7 +297,7 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
                 assert rollback_error.value.sqlstate == "55000"
             database_admin.rollback()
 
-        assert len(tenant_a.list_audit_events(consumer, batch_id, "default")) == 2
+        assert len(tenant_a.list_audit_events(consumer, batch_id, "default")) == 5
         assert len(tenant_b.list_audit_events(consumer, batch_id, "default")) == 1
     finally:
         with psycopg.connect(ADMIN_DSN, autocommit=True) as cluster_admin:

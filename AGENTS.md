@@ -270,3 +270,33 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Update README, architecture, ADR, operator documentation, doctoring, and
   CHANGELOG whenever migration ordering, locking, evidence, failure, or
   compatibility semantics change.
+
+## Checkpoint audit export pagination contract
+
+- Keep pagination opt-in and preserve `list_audit_events()` behavior. Do not
+  replace the existing bounded convenience read with an unbounded iterator.
+- Use `checkpoint_audit_event_id` as a strict positive signed-PostgreSQL-`BIGINT`
+  keyset cursor. Do not use `OFFSET` for multi-page audit traversal.
+- Query at most the validated public limit plus one lookahead row and expose at
+  most the requested 1..1,000 events. A driver returning more than the SQL bound
+  fails closed.
+- Continuations must use `checkpoint_audit_event_id < before_audit_event_id` in
+  exact newest-first order. When more rows exist, the next cursor is exactly the
+  final returned event identity.
+- Revalidate every database row through `CheckpointAuditEvent`, compare its
+  tenant/consumer/endpoint/batch key to the trusted request, and require strict
+  descending identities before exposing a page.
+- Treat the cursor as navigation state only. It is not proof of completeness,
+  chronology, authenticity, delivery, or non-repudiation; identity allocation
+  can contain gaps and commit ordering can differ from allocation ordering.
+- Package-owned page calls do not promise a single historic snapshot. Hosts
+  requiring one export snapshot must begin their own PostgreSQL `REPEATABLE READ`
+  or stricter transaction before the first query and repeatedly call
+  `list_audit_event_page_in_transaction()` on the same transaction.
+- Keep export destinations, credentials, retention policy, immutable/WORM
+  storage, delivery receipts, cryptographic manifests, and reconciliation in the
+  host/operator boundary. This package primitive adds no network exporter or
+  write authority.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  strict cursor, page-shape, lookahead, keyset SQL, ordering, row-key,
+  malformed-driver, concurrency-semantics, and transaction-ownership tests.
