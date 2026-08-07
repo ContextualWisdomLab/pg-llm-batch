@@ -45,6 +45,8 @@ def _optional_scalar_value(source: str, key: str) -> str | None:
     matches = []
     for line in source.splitlines():
         stripped = line.strip()
+        if stripped.startswith("- "):
+            stripped = stripped[2:].lstrip()
         if stripped.startswith(prefix):
             value = stripped[len(prefix) :].strip()
             matches.append(value.split(" #", 1)[0].strip())
@@ -89,8 +91,7 @@ def test_setup_uv_controls_cannot_be_borrowed_from_a_sibling_step() -> None:
     workflow = """jobs:
   example:
     steps:
-      - name: Set up uv
-        uses: astral-sh/setup-uv@reviewed-pin
+      - uses: astral-sh/setup-uv@reviewed-pin
       - name: Decoy values
         version: "0.12.1"
         prune-cache: true
