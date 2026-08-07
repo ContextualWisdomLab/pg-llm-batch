@@ -59,7 +59,7 @@ class _Connection:
 
 
 class IsolationCursor:
-    """Expose one active transaction, isolation row, and captured SQL."""
+    """Expose one active read-only transaction, isolation row, and captured SQL."""
 
     def __init__(self, isolation: Any = ("repeatable read",)) -> None:
         self.connection = _Connection()
@@ -71,7 +71,9 @@ class IsolationCursor:
         self.calls.append((" ".join(sql.split()), params or ()))
 
     def fetchone(self) -> Any:
-        """Return the configured transaction-isolation evidence."""
+        """Return the configured isolation or read-only transaction evidence."""
+        if self.calls and self.calls[-1][0] == "SHOW transaction_read_only":
+            return ("on",)
         return self.isolation
 
 
