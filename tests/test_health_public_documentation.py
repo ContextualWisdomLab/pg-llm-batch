@@ -7,6 +7,7 @@ from pathlib import Path
 DOCTORING = Path("docs/doctoring/public-healthz-readiness.md")
 ADR = Path("docs/adr/0014-public-healthz-readiness.md")
 CHANGELOG = Path("CHANGELOG.md")
+AGENTS = Path("AGENTS.md")
 
 
 def _normalized(path: Path) -> str:
@@ -39,6 +40,17 @@ def test_public_healthz_security_boundary_is_authoritative():
     assert "redact" in changelog.lower()
     assert "/healthz" in changelog
     assert "diagnostic" in changelog.lower()
+
+
+def test_contributor_contract_preserves_healthz_redaction_boundary():
+    """Contributor guidance must prevent local diagnostics from becoming public."""
+    agents = _normalized(AGENTS)
+
+    assert "HTTP readiness confidentiality" in agents
+    assert "check_health()" in agents
+    assert "public_health_report()" in agents
+    assert "diagnostic detail" in agents
+    assert "Never serialize the detailed local report directly" in agents
 
 
 def test_public_healthz_references_are_recorded_in_apa_style():
