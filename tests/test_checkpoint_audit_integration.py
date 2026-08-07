@@ -42,25 +42,34 @@ def _checkpoint(batch_id: str, digest: str) -> BatchResultCheckpoint:
 
 @skip_no_db
 def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
-    """A real non-bypass role cannot cross tenants or mutate retained evidence."""
+    """Real least-privilege roles prove application and mutation boundaries."""
     import psycopg
     from psycopg import sql
     from psycopg.conninfo import make_conninfo
 
     suffix = uuid.uuid4().hex[:12]
     database_name = f"audit_integration_{suffix}"
-    role_name = f"audit_application_{suffix}"
-    password = uuid.uuid4().hex
+    application_role_name = f"audit_application_{suffix}"
+    mutation_probe_role_name = f"audit_mutation_probe_{suffix}"
+    application_password = uuid.uuid4().hex
+    mutation_probe_password = uuid.uuid4().hex
     consumer = f"worker-{suffix}"
     batch_id = f"batch-{suffix}"
     database_dsn = make_conninfo(ADMIN_DSN, dbname=database_name)
-    role_dsn = make_conninfo(
+    application_role_dsn = make_conninfo(
         ADMIN_DSN,
         dbname=database_name,
-        user=role_name,
-        password=password,
+        user=application_role_name,
+        password=application_password,
     )
-    role_created = False
+    mutation_probe_role_dsn = make_conninfo(
+        ADMIN_DSN,
+        dbname=database_name,
+        user=mutation_probe_role_name,
+        password=mutation_probe_password,
+    )
+    application_role_created = False
+    mutation_probe_role_created = False
     database_created = False
 
     try:
@@ -74,9 +83,23 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
                         "CREATE ROLE {} LOGIN PASSWORD {} "
                         "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
                         "NOREPLICATION NOBYPASSRLS"
-                    ).format(sql.Identifier(role_name), sql.Literal(password))
+                    ).format(
+                        sql.Identifier(application_role_name),
+                        sql.Literal(application_password),
+                    )
                 )
-                role_created = True
+                application_role_created = True
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE ROLE {} LOGIN PASSWORD {} "
+                        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
+                        "NOREPLICATION NOBYPASSRLS"
+                    ).format(
+                        sql.Identifier(mutation_probe_role_name),
+                        sql.Literal(mutation_probe_password),
+                    )
+                )
+                mutation_probe_role_created = True
                 cursor.execute(
                     sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
                 )
@@ -93,29 +116,56 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
             with database_admin.cursor() as cursor:
                 cursor.execute(
                     sql.SQL(
-                        "GRANT SELECT, INSERT, UPDATE, DELETE ON "
+                        "GRANT SELECT, INSERT, UPDATE ON "
                         "llm_result_stream_checkpoints TO {}"
-                    ).format(sql.Identifier(role_name))
+                    ).format(sql.Identifier(application_role_name))
                 )
                 cursor.execute(
                     sql.SQL(
-                        "GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE ON "
+                        "GRANT SELECT, INSERT ON "
                         "llm_result_checkpoint_audit_events TO {}"
-                    ).format(sql.Identifier(role_name))
+                    ).format(sql.Identifier(application_role_name))
+                )
+                cursor.execute(
+                    "SELECT parse_ident(pg_get_serial_sequence(%s, %s))",
+                    (
+                        "llm_result_checkpoint_audit_events",
+                        "checkpoint_audit_event_id",
+                    ),
+                )
+                sequence_row = cursor.fetchone()
+                if (
+                    not sequence_row
+                    or not isinstance(sequence_row[0], (list, tuple))
+                    or not sequence_row[0]
+                    or not all(
+                        isinstance(part, str) and part for part in sequence_row[0]
+                    )
+                ):
+                    raise RuntimeError("audit identity sequence could not be resolved")
+                audit_sequence_parts = tuple(sequence_row[0])
+                cursor.execute(
+                    sql.SQL(
+                        "GRANT USAGE, SELECT ON SEQUENCE {} TO {}"
+                    ).format(
+                        sql.Identifier(*audit_sequence_parts),
+                        sql.Identifier(application_role_name),
+                    )
                 )
                 cursor.execute(
                     sql.SQL(
-                        "GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO {}"
-                    ).format(sql.Identifier(role_name))
+                        "GRANT SELECT, UPDATE, DELETE, TRUNCATE ON "
+                        "llm_result_checkpoint_audit_events TO {}"
+                    ).format(sql.Identifier(mutation_probe_role_name))
                 )
             database_admin.commit()
 
         tenant_a = AuditedPostgresBatchResultCheckpointStore(
-            role_dsn,
+            application_role_dsn,
             tenant_scope="tenant-a",
         )
         tenant_b = AuditedPostgresBatchResultCheckpointStore(
-            role_dsn,
+            application_role_dsn,
             tenant_scope="tenant-b",
         )
         first_a = _checkpoint(batch_id, "a" * 64)
@@ -134,7 +184,7 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
 
         timed_batch_id = f"timed-{suffix}"
         timed_checkpoint = _checkpoint(timed_batch_id, "c" * 64)
-        with psycopg.connect(role_dsn) as timed_connection:
+        with psycopg.connect(application_role_dsn) as timed_connection:
             with timed_connection.cursor() as cursor:
                 cursor.execute("SELECT transaction_timestamp()")
                 transaction_started_at = cursor.fetchone()[0]
@@ -164,12 +214,12 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
                 assert before_save <= timed_events[0].recorded_at <= after_save
             timed_connection.rollback()
 
-        with psycopg.connect(role_dsn) as unscoped_connection:
+        with psycopg.connect(application_role_dsn) as unscoped_connection:
             with unscoped_connection.cursor() as cursor:
                 cursor.execute("SELECT COUNT(*) FROM llm_result_checkpoint_audit_events")
                 assert cursor.fetchone()[0] == 0
 
-        with psycopg.connect(role_dsn) as scoped_connection:
+        with psycopg.connect(mutation_probe_role_dsn) as scoped_connection:
             with scoped_connection.cursor() as cursor:
                 cursor.execute(
                     "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
@@ -224,7 +274,15 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
                             sql.Identifier(database_name)
                         )
                     )
-                if role_created:
+                if mutation_probe_role_created:
                     cursor.execute(
-                        sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name))
+                        sql.SQL("DROP ROLE IF EXISTS {}").format(
+                            sql.Identifier(mutation_probe_role_name)
+                        )
+                    )
+                if application_role_created:
+                    cursor.execute(
+                        sql.SQL("DROP ROLE IF EXISTS {}").format(
+                            sql.Identifier(application_role_name)
+                        )
                     )
