@@ -214,3 +214,35 @@
 - Maintain test-first transaction, event-time, validation, bounded-read,
   migration, rollback, trigger, compatibility, documentation, and 100%
   production statement/branch/public-docstring coverage.
+
+## Checkpoint migration operator invariants
+
+- Keep the **Checkpoint migration operator** explicit and opt-in through
+  `init-checkpoint-storage`; never expand `init-db` to install optional checkpoint
+  objects silently.
+- Bounded-read, strict UTF-8 decode, and SHA-256 identify
+  `0007_result_stream_checkpoints` and
+  `0008_result_checkpoint_audit_events` before database access. The maximum
+  package read is 1 MiB plus one oversize-detection byte per file.
+- Acquire the fixed two-key transaction-level advisory lock with
+  `pg_advisory_xact_lock`, execute 0007 before 0008 in one transaction, and issue
+  one commit only after both succeed.
+- A second-migration failure must roll back the first migration from the same
+  invocation. Transaction exit must release the transaction-level advisory lock;
+  do not add a persistent lock table or migration ledger for this slice.
+- Public and CLI evidence contains only configured migration IDs, bounded byte
+  counts, SHA-256, and schema version after commit. SHA-256 is
+  change-identification evidence and **not a signature**, provenance, remote
+  attestation, or release approval.
+- Preserve source compatibility for `apply_result_checkpoint_schema()` and
+  `apply_result_checkpoint_audit_schema()`. They remain available to hosts that
+  intentionally coordinate independent transactions.
+- Treat advisory locking as cooperative serialization, not authorization. An
+  administrator, superuser, owner, or unrelated SQL client remains outside the
+  lock assurance boundary.
+- Preserve standalone and modular MSA use without requiring `naruon`,
+  `contextual-orchestrator`, provider credentials, or an LLM key.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  strict red-green-refactor tests for bounded input, exact order, one lock, one
+  transaction, one commit, rollback, concurrency, compatibility, CLI output,
+  documentation, and body-free diagnostics.
