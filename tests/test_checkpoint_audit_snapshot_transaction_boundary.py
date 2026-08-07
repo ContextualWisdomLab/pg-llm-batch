@@ -177,7 +177,7 @@ def test_snapshot_manifest_rejects_active_read_write_transaction_before_page_tra
 
 
 def test_authoritative_snapshot_docs_reject_autocommit_session_isolation() -> None:
-    """Authoritative contracts must state the active-transaction requirement."""
+    """Authoritative contracts must require one stable read-only active transaction."""
     paths = (
         Path("AGENTS.md"),
         Path("CLAUDE.md"),
@@ -192,6 +192,7 @@ def test_authoritative_snapshot_docs_reject_autocommit_session_isolation() -> No
         assert "active postgresql transaction" in text, path
         assert "autocommit" in text, path
         assert "repeatable read" in text, path
+        assert "read-only" in text, path
 
 
 def test_snapshot_doctoring_cites_psycopg_transaction_status() -> None:
