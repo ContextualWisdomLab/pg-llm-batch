@@ -189,6 +189,10 @@
   in the same PostgreSQL transaction as checkpoint persistence. Exact idempotent
   repeats are separate accepted-call events; validation/CAS failures create no
   success event.
+- Use PostgreSQL `clock_timestamp()` for `recorded_at` so accepted-save event time
+  reflects the insert itself, not transaction-start `NOW()`/`CURRENT_TIMESTAMP`
+  in a long caller-owned transaction. Migration reapplication must reset that
+  default idempotently without rewriting retained audit rows.
 - Validate tenant, consumer, endpoint, batch, event, checkpoint, timestamp, and
   read limit without coercion. Keep reads tenant-qualified, newest-first, and
   bounded to at most 1,000 rows.
@@ -207,6 +211,6 @@
 - Rollback must refuse to erase non-empty audit evidence across tenant scopes.
   Retention, export, legal hold, disposal, and stronger immutable evidence are
   host/operator concerns.
-- Maintain test-first transaction, validation, bounded-read, migration,
-  rollback, trigger, compatibility, documentation, and 100% production
-  statement/branch/public-docstring coverage.
+- Maintain test-first transaction, event-time, validation, bounded-read,
+  migration, rollback, trigger, compatibility, documentation, and 100%
+  production statement/branch/public-docstring coverage.
