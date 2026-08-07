@@ -176,6 +176,57 @@ def test_snapshot_manifest_rejects_active_read_write_transaction_before_page_tra
     assert page_called is False
 
 
+@pytest.mark.parametrize(
+    "read_only",
+    (
+        None,
+        (),
+        ("on", "extra"),
+        (1,),
+        ["on"],
+    ),
+)
+def test_snapshot_manifest_rejects_malformed_read_only_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    read_only: Any,
+) -> None:
+    """Malformed transaction-read-only evidence fails before any audit page read."""
+    store = checkpoint_audit.AuditedPostgresBatchResultCheckpointStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+    )
+    page_called = False
+
+    def page(*_args: Any, **_kwargs: Any) -> CheckpointAuditPage:
+        nonlocal page_called
+        page_called = True
+        return CheckpointAuditPage(events=(), next_before_audit_event_id=None)
+
+    monkeypatch.setattr(
+        checkpoint_audit.AuditedPostgresBatchResultCheckpointStore,
+        "list_audit_event_page_in_transaction",
+        page,
+    )
+    cursor = _IsolationCursor(
+        transaction_status=_TransactionStatus("INTRANS"),
+        read_only=read_only,
+    )
+
+    with pytest.raises(RuntimeError, match="transaction read-only evidence"):
+        store.build_audit_snapshot_manifest_in_transaction(
+            cursor,
+            "worker-a",
+            "batch-1",
+            "default",
+        )
+
+    assert cursor.calls == [
+        ("SHOW transaction_isolation", ()),
+        ("SHOW transaction_read_only", ()),
+    ]
+    assert page_called is False
+
+
 def test_authoritative_snapshot_docs_reject_autocommit_session_isolation() -> None:
     """Authoritative contracts must require one stable read-only active transaction."""
     paths = (
