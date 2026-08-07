@@ -12,26 +12,12 @@ from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError
 
-from tests.bounded_response_double import bind_bounded_json_response
-
 
 class _Response:
     """Expose one successful provider response through the aiohttp contract."""
 
     status = 200
     headers: dict[str, str] = {}
-
-    def __init__(self) -> None:
-        payload = {
-            "id": "batch-other",
-            "status": "in_progress",
-            "request_counts": {
-                "total": 2,
-                "completed": 1,
-                "failed": 0,
-            },
-        }
-        bind_bounded_json_response(self, payload)
 
     async def json(self) -> dict[str, Any]:
         """Return a syntactically valid but identity-mismatched provider payload."""
