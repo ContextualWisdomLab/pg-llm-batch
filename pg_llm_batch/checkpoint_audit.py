@@ -408,6 +408,10 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
             )
             if event_key != expected_key:
                 raise RuntimeError("checkpoint audit query returned a row outside the requested key")
+        if before is not None and any(
+            event.audit_event_id >= before for event in events
+        ):
+            raise RuntimeError("checkpoint audit query violated the continuation cursor")
         if any(
             current.audit_event_id >= previous.audit_event_id
             for previous, current in zip(events, events[1:])
