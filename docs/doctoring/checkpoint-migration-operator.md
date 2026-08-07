@@ -100,21 +100,42 @@ volumes, which use the explicit operator command.
   100% public docstrings, 100% production line coverage, lock freshness, and
   package build before the next test-first commit superseded the run. Superseded
   workflow evidence is not final merge evidence.
-- Bounded-read RED contract head `049e6aab513494b114fddfe2e0679dc1ff19e921`
-  rejects `Path.read_bytes()` and any negative-size read. The implementation now
-  reads at most 1 MiB plus one byte.
-- Workflow RED contract head `6a7ac0125ea67ee60b88d41d3a6a9d56cf8cef75`
-  requires the permanent PostgreSQL job to run both audit and migration operator
-  integration suites.
+- Bounded-read contract head `049e6aab513494b114fddfe2e0679dc1ff19e921`
+  introduced a test that rejects `Path.read_bytes()` and any negative-size read.
+  Its workflow was superseded before completion, so it is retained only as
+  test-first source history and is not counted as executed RED or GREEN evidence.
+- Live-workflow contract head `6a7ac0125ea67ee60b88d41d3a6a9d56cf8cef75`
+  required the permanent PostgreSQL job to run both audit and migration operator
+  integration suites. Its workflow was likewise superseded before completion and
+  is not counted as a successful or failed gate.
+- Exact-head checkout RED head `2cb3607a7b9c696c58fa0df72743cd3667822685`:
+  CI run `31152186361`, quality job `92783956312`, passed 423 deterministic tests
+  and then failed the newly added workflow contract because the required CI jobs
+  still checked out GitHub's pull-request merge ref rather than the exact source
+  head. That failure is not reused as success.
+- Exact-head GREEN head `25e8e493695c227e4510647305574025c0ec58eb`:
+  CI run `31152516949` checked out and asserted this exact SHA independently in
+  every required unit, quality, live PostgreSQL, and container job. All jobs
+  completed successfully. The quality job `92784969375` reported 658 passed and
+  8 deselected, 2,514 production statements and 628 production branches at 100%,
+  100% public docstrings, Ruff success, a fresh lockfile, and successful wheel and
+  source-distribution builds. The live PostgreSQL job proved both accepted-save
+  audit behavior and migration rollback/advisory-lock serialization. Release
+  Acceptance run `31152516946`, job `92784969354`, independently checked out the
+  exact head and proved reproducible wheel and source-distribution identity.
 - Unit tests prove immutable descriptors, strict non-coercive field validation,
   exact order/digests, empty/oversized/non-UTF-8 rejection, pre-connection input
   failure, one advisory lock, exact SQL order, one commit, and failure propagation
   without success evidence.
 - Live PostgreSQL tests prove an invalid second migration rolls back the first and
   a concurrent worker has an ungranted advisory lock until the holder commits.
-- CI contract tests bind the pinned PostgreSQL image, DSN, credential-free
-  checkout, and exact integration command to the reviewed job rather than a
+- CI contract tests bind the pinned PostgreSQL image, DSN, credential-free exact-
+  head checkout, and exact integration command to the reviewed job rather than a
   repository-wide string search.
+- Every later documentation or review-fix commit still requires fresh exact-head
+  CI and release acceptance. Final integration also requires reconciliation onto
+  the actual integrated base; successful stacked-base evidence is not reusable as
+  final release evidence.
 - Final acceptance requires fresh exact-head/current-base CI, security,
   dependency, packaging, migration, rollback, concurrency, container,
   reproducibility, review, and branch-protection evidence. Queued, pending,
