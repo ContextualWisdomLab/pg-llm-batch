@@ -108,7 +108,7 @@ def test_snapshot_manifest_requires_one_active_transaction_before_isolation_prob
 def test_snapshot_manifest_accepts_libpq_intrans_before_checking_isolation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """An already-active transaction may proceed to the existing isolation-level gate."""
+    """An active stable read-only transaction may proceed to bounded traversal."""
     store = checkpoint_audit.AuditedPostgresBatchResultCheckpointStore(
         "postgresql://unit",
         tenant_scope="tenant-a",
@@ -130,7 +130,10 @@ def test_snapshot_manifest_accepts_libpq_intrans_before_checking_isolation(
     )
 
     assert manifest.event_count == 0
-    assert cursor.calls == [("SHOW transaction_isolation", ())]
+    assert cursor.calls == [
+        ("SHOW transaction_isolation", ()),
+        ("SHOW transaction_read_only", ()),
+    ]
 
 
 def test_snapshot_manifest_rejects_active_read_write_transaction_before_page_traversal(
