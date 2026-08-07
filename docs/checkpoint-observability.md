@@ -63,13 +63,13 @@ Fixed attributes:
 - `error.type=checkpoint_conflict|validation_error|internal_error` on failures
 
 Success omits `error.type`. The duration is measured with a monotonic clock and
-is never negative. Failed checkpoint spans explicitly set OpenTelemetry status
-Error without a description, while successful checkpoint spans leave status
-Unset. This keeps failure discovery interoperable without copying exception
-messages into span status descriptions. The wrapper resolves the host
-OpenTelemetry API's `StatusCode.ERROR` only when that optional API is available;
-if status resolution or mutation fails, the checkpoint result or exact
-application exception remains authoritative.
+is never negative. By contract, failed checkpoint spans explicitly set
+OpenTelemetry status Error without a description, while successful checkpoint
+spans leave status Unset. This keeps failure discovery interoperable without
+copying exception messages into span status descriptions. The wrapper resolves
+the host OpenTelemetry API's `StatusCode.ERROR` only when that optional API is
+available; if status resolution or mutation fails, the checkpoint result or
+exact application exception remains authoritative.
 
 Package operation spans are deliberately storage-agnostic and do not emit
 `db.system.name`. They describe the checkpoint abstraction, not a database client
