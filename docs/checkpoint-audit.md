@@ -136,15 +136,18 @@ authenticated manifests, and reconciliation remain host/operator responsibilitie
 ## Build a bounded snapshot manifest
 
 For a compact deterministic identity of one complete stable traversal, begin one
-**active PostgreSQL transaction** and select `REPEATABLE READ` or `SERIALIZABLE`
-before its first query. Build the manifest on that same cursor:
+**active PostgreSQL transaction** and select a **read-only** `REPEATABLE READ` or
+`SERIALIZABLE` transaction before its first query. Build the manifest on that
+same cursor:
 
 ```python
 import psycopg
 
 with psycopg.connect(POSTGRES_DSN) as connection:
     with connection.cursor() as cursor:
-        cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        cursor.execute(
+            "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+        )
         manifest = store.build_audit_snapshot_manifest_in_transaction(
             cursor,
             "invoice-worker",
@@ -156,17 +159,26 @@ with psycopg.connect(POSTGRES_DSN) as connection:
 ```
 
 The method requires the caller's cursor to remain inside one active PostgreSQL
-transaction for the complete traversal. It then accepts only `REPEATABLE READ`
-or `SERIALIZABLE`. **autocommit** is rejected even when the session-level
-`default_transaction_isolation` reports `REPEATABLE READ`, because successive
-page statements would otherwise be free to execute in separate transactions and
-therefore separate snapshots. Active `READ COMMITTED`, malformed transaction
-status, malformed isolation evidence, and unknown modes also fail closed.
+transaction for the complete traversal. It accepts only `REPEATABLE READ` or
+`SERIALIZABLE` with `transaction_read_only` set to `on`. **autocommit** is
+rejected even when the session-level `default_transaction_isolation` reports
+`REPEATABLE READ`, because successive page statements would otherwise be free to
+execute in separate transactions and therefore separate snapshots. Active `READ
+COMMITTED`, read-write transactions, malformed transaction status, malformed
+isolation or read-only evidence, and unknown modes also fail closed before page
+traversal.
 
-PostgreSQL requires isolation selection before the transaction's first query or
-data-modification statement; the package verifies transaction state and isolation
-instead of silently beginning, committing, rolling back, or changing a
-caller-owned transaction after work has started.
+The read-only requirement keeps the manifest tied to a non-mutating stable view
+of retained evidence. PostgreSQL transactions can observe their own uncommitted
+writes; without this gate a caller could insert an accepted-save audit row, hash
+it into an exported manifest, and later roll the transaction back so that the
+identified row was never durably retained.
+
+PostgreSQL requires transaction characteristics to be selected before the
+transaction's first query or data-modification statement; the package verifies
+transaction state, isolation, and read-only mode instead of silently beginning,
+committing, rolling back, or changing a caller-owned transaction after work has
+started.
 
 The builder walks the existing keyset pages incrementally, keeps no more than one
 bounded page plus fixed digest state in package-owned memory, and fails closed if
