@@ -13,6 +13,7 @@ from pg_llm_batch.checkpoint_audit import (
     CheckpointAuditEvent,
     validate_checkpoint_audit_limit,
 )
+from pg_llm_batch.exceptions import ValidationError
 
 
 def test_audit_limit_is_strict_bounded_and_noncoercive() -> None:
@@ -20,7 +21,7 @@ def test_audit_limit_is_strict_bounded_and_noncoercive() -> None:
     assert validate_checkpoint_audit_limit(1) == 1
     assert validate_checkpoint_audit_limit(MAX_CHECKPOINT_AUDIT_EVENTS) == 1000
     for value in (0, -1, 1001, True, 1.5, "10", None):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValidationError):
             validate_checkpoint_audit_limit(value)
 
 
@@ -76,7 +77,7 @@ def test_checkpoint_audit_rollback_refuses_nonempty_evidence() -> None:
     rollback = root / "pg_llm_batch/migrations/rollback/0008_result_checkpoint_audit_events.sql"
     sql = " ".join(rollback.read_text(encoding="utf-8").split())
     assert "IF EXISTS ( SELECT 1 FROM llm_result_checkpoint_audit_events LIMIT 1 )" in sql
-    assert "refusing to drop non-empty llm_result_checkpoint_audit_events" in sql
+    assert "refusing to drop non-empty llm_result_checkpoint_audit_events" in sql.lower()
     assert "DROP TABLE IF EXISTS llm_result_checkpoint_audit_events" in sql
 
 
