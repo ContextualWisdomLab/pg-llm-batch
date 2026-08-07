@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""CI contract for the live checkpoint-audit PostgreSQL verification gate."""
+"""CI contract for live checkpoint-storage PostgreSQL verification."""
 
 from __future__ import annotations
 
@@ -79,8 +79,8 @@ def _single_step_with_scalar(
     return matches[0]
 
 
-def test_ci_runs_checkpoint_audit_against_ephemeral_postgres() -> None:
-    """The exact audit job must bind every required service and step setting."""
+def test_ci_runs_checkpoint_storage_against_ephemeral_postgres() -> None:
+    """The exact storage job binds its service, credentials, and live command."""
     workflow = (
         Path(__file__).resolve().parents[1] / ".github/workflows/ci.yml"
     ).read_text(encoding="utf-8")
@@ -108,22 +108,22 @@ def test_ci_runs_checkpoint_audit_against_ephemeral_postgres() -> None:
     integration = _single_step_with_scalar(
         steps,
         "name",
-        "Run live checkpoint audit integration",
+        "Run live checkpoint storage integration",
     )
-    assert (
-        _scalar_value(integration, "run")
-        == "uv run pytest -q tests/test_checkpoint_audit_integration.py -m integration"
+    assert _scalar_value(integration, "run") == (
+        "uv run pytest -q tests/test_checkpoint_audit_integration.py "
+        "tests/test_checkpoint_migration_operator_integration.py -m integration"
     )
 
 
 def test_ci_scope_parser_excludes_settings_from_other_jobs() -> None:
-    """A decoy outside the audit job cannot satisfy its bounded contract."""
+    """A decoy outside the storage job cannot satisfy its bounded contract."""
     workflow = """jobs:
   decoy:
     env:
       PG_LLM_BATCH_TEST_DSN: decoy-only-dsn
     steps:
-      - name: Run live checkpoint audit integration
+      - name: Run live checkpoint storage integration
         run: decoy-only-command
   checkpoint-audit-integration:
     services:
@@ -132,7 +132,7 @@ def test_ci_scope_parser_excludes_settings_from_other_jobs() -> None:
     env:
       PG_LLM_BATCH_TEST_DSN: target-only-dsn
     steps:
-      - name: Run live checkpoint audit integration
+      - name: Run live checkpoint storage integration
         run: target-only-command
 """
     job = _single_mapping_block(workflow, "checkpoint-audit-integration", 2)
