@@ -72,10 +72,12 @@ an event that was invisible to an earlier export pass.
 ## Security and privacy boundary
 
 NIST SP 800-53 Rev. 5 AU-9 requires protection of audit information against
-unauthorized access, modification, and deletion. The underlying audit table
-implements tenant-qualified RLS and mutation rejection for ordinary application
-roles. This pagination feature does not weaken those controls and does not add a
-write-capable database permission.
+unauthorized access, modification, and deletion. NIST Release 5.2.0, issued on
+August 27, 2025, remains the current minor release of Revision 5 and does not
+remove this AU-9 protection boundary. The underlying audit table implements
+tenant-qualified RLS and mutation rejection for ordinary application roles. This
+pagination feature does not weaken those controls and does not add a write-capable
+database permission.
 
 NIST also describes stronger audit-protection enhancements such as write-once
 media. This package does not claim that PostgreSQL alone provides administrator-
@@ -129,7 +131,7 @@ Permanent tests cover:
 - trusted tenant/consumer/endpoint/batch revalidation on returned rows;
 - fail-closed malformed collection, impossible driver overrun, and row-order
   behavior;
-- package-owned reads that do not create a commit boundary; and
+- package-owned reads that do not create an explicit package commit; and
 - a live least-privilege PostgreSQL pass proving that a newer committed row
   between pages cannot drift into the older continuation window.
 
@@ -140,9 +142,9 @@ the protected base.
 
 ## APA 7 references
 
-National Institute of Standards and Technology. (2020, updated 2025). *Security
-and privacy controls for information systems and organizations* (NIST Special
-Publication 800-53, Revision 5). U.S. Department of Commerce.
+Joint Task Force. (2020, updated 2025). *Security and privacy controls for
+information systems and organizations* (NIST Special Publication 800-53,
+Revision 5, Release 5.2.0). National Institute of Standards and Technology.
 https://doi.org/10.6028/NIST.SP.800-53r5
 
 PostgreSQL Global Development Group. (2026). *SET TRANSACTION*. PostgreSQL 18
