@@ -29,15 +29,21 @@ class _Connection:
 
 
 class IsolationCursor:
-    """Expose active stable transaction-isolation evidence for one manifest build."""
+    """Expose active stable read-only transaction evidence for one manifest build."""
 
     connection = _Connection()
 
-    def execute(self, _sql: str, _params: tuple[Any, ...] | None = None) -> None:
-        """Accept the isolation query used by the manifest builder."""
+    def __init__(self) -> None:
+        self.last_sql = ""
+
+    def execute(self, sql: str, _params: tuple[Any, ...] | None = None) -> None:
+        """Capture the transaction characteristic queried by the manifest builder."""
+        self.last_sql = " ".join(sql.split())
 
     def fetchone(self) -> tuple[str]:
-        """Report a snapshot-stable PostgreSQL transaction isolation level."""
+        """Report stable isolation and read-only transaction characteristics."""
+        if self.last_sql == "SHOW transaction_read_only":
+            return ("on",)
         return ("repeatable read",)
 
 
