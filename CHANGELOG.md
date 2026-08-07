@@ -9,21 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Optional append-only checkpoint accepted-save audit evidence through
-  `AuditedPostgresBatchResultCheckpointStore` and
-  `llm_result_checkpoint_audit_events`. Successful save calls append a fixed
-  `checkpoint_save_accepted` event in the same PostgreSQL transaction as the
-  checkpoint operation, including idempotent repeats; rejected saves create no
-  success event. Audit reads are tenant-qualified, newest-first, and bounded to
-  1,000 rows. Forced RLS plus row UPDATE/DELETE and statement TRUNCATE rejection
-  protect retained evidence; the ordinary application role is limited to
-  checkpoint SELECT/INSERT/UPDATE, audit SELECT/INSERT, and the exact audit
-  identity sequence, while a separate non-production mutation-probe role
-  verifies trigger rejection. Owner/superuser/trigger-disabling administration
-  remains explicitly outside the tamper-resistance claim. Package/container
-  migrations are byte-identical, fresh PostgreSQL images install audit schema
-  after checkpoint schema, non-empty rollback fails closed, and existing volumes
-  require explicit migration. No version bump or release is included.
 - Optional OpenTelemetry-compatible checkpoint spans and metrics through
   `OpenTelemetryCheckpointStore`, with dependency-injected tracer and meter,
   fixed low-cardinality operation and transaction-owner labels, a seconds-based
@@ -105,19 +90,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   as `/docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql`, after the cron
   initialization script, so new container deployments cannot silently omit the
   checkpoint persistence schema.
-- Separated live checkpoint-audit verification into a least-privilege ordinary
-  application role and an isolated mutation-probe role. The application role no
-  longer receives audit UPDATE, DELETE, or TRUNCATE rights or blanket access to
-  all `public` sequences; only the exact identity sequence is resolved and
-  granted. Workflow contracts now bind PostgreSQL, DSN, checkout, live command,
-  and every setup-uv control to the exact job or step instead of relying on
-  repository-wide text counts.
-- Timestamp checkpoint accepted-save audit rows with PostgreSQL
-  `clock_timestamp()` at insert time instead of transaction-start `NOW()`, so a
-  long caller-owned transaction cannot misstate when the package accepted a
-  checkpoint. Reapplying migration 0008 repairs the future-row default without
-  rewriting retained evidence; package and container migrations remain
-  byte-identical.
 - Stopped idempotent GET retries at response handoff so post-handoff payload or
   response-close failures close once and cannot reopen provider files, duplicate
   already-yielded records, or violate the asynchronous-context-manager protocol.
