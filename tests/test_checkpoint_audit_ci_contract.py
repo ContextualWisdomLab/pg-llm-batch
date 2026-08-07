@@ -52,6 +52,8 @@ def _scalar_value(source: str, key: str) -> str:
     matches = []
     for line in source.splitlines():
         stripped = line.strip()
+        if stripped.startswith("- "):
+            stripped = stripped[2:].lstrip()
         if stripped.startswith(prefix):
             value = stripped[len(prefix) :].strip()
             matches.append(value.split(" #", 1)[0].strip())
@@ -119,23 +121,23 @@ def test_ci_scope_parser_excludes_settings_from_other_jobs() -> None:
     workflow = """jobs:
   decoy:
     env:
-      PG_LLM_BATCH_TEST_DSN: reviewed-dsn
+      PG_LLM_BATCH_TEST_DSN: decoy-only-dsn
     steps:
       - name: Run live checkpoint audit integration
-        run: reviewed-command
+        run: decoy-only-command
   checkpoint-audit-integration:
     services:
       postgres:
-        image: unreviewed-image
+        image: target-only-image
     env:
-      PG_LLM_BATCH_TEST_DSN: unreviewed-dsn
+      PG_LLM_BATCH_TEST_DSN: target-only-dsn
     steps:
       - name: Run live checkpoint audit integration
-        run: unreviewed-command
+        run: target-only-command
 """
     job = _single_mapping_block(workflow, "checkpoint-audit-integration", 2)
-    assert "reviewed-dsn" not in job
-    assert "reviewed-command" not in job
+    assert "decoy-only-dsn" not in job
+    assert "decoy-only-command" not in job
     assert _scalar_value(_single_mapping_block(job, "postgres", 6), "image") == (
-        "unreviewed-image"
+        "target-only-image"
     )
