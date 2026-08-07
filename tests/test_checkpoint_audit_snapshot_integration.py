@@ -137,7 +137,9 @@ def test_live_snapshot_manifest_uses_one_repeatable_read_view() -> None:
 
         with psycopg.connect(application_role_dsn) as snapshot_connection:
             with snapshot_connection.cursor() as cursor:
-                cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+                cursor.execute(
+                    "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
+                )
                 baseline = store.list_audit_events_in_transaction(
                     cursor,
                     consumer,
