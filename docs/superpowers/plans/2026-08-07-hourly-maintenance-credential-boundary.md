@@ -43,7 +43,7 @@ requires the protected merge SHA from central `main` and fresh exact-head gates.
 - [x] Add ADR 0013 with GitHub primary-documentation references in APA 7 form.
 - [x] Keep the existing secret names as the operator contract; no new credential
       or model-secret setup is introduced by this caller-only migration.
-- [ ] Record the change under `CHANGELOG.md` Unreleased.
+- [x] Record the change under `CHANGELOG.md` Unreleased.
 
 ## Task 4: Verify and promote
 
