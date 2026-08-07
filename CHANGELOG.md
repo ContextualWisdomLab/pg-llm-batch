@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Explicit opt-in `init-checkpoint-storage` operator for existing PostgreSQL
+  volumes. It bounded-reads, validates, and SHA-256 identifies
+  `0007_result_stream_checkpoints` and
+  `0008_result_checkpoint_audit_events` before database access, obtains one
+  fixed two-key `pg_advisory_xact_lock`, executes both migrations in canonical
+  order inside one transaction, and issues one commit only after both succeed.
+  Failure in migration 0008 rolls back migration 0007 from the same invocation.
+  Success output contains only stable migration identifiers, byte counts,
+  SHA-256, and schema version; the digest is change-identification evidence, not
+  a signature, attestation, provenance statement, or release authority.
+  `init-db` and the two independent migration helpers remain compatible. Live
+  PostgreSQL tests prove rollback and advisory-lock serialization. No migration
+  ledger, downgrade, destructive retained-evidence rollback, version bump, or
+  release is included.
 - Optional append-only checkpoint accepted-save audit evidence through
   `AuditedPostgresBatchResultCheckpointStore` and
   `llm_result_checkpoint_audit_events`. Successful save calls append a fixed
