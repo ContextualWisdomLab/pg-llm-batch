@@ -10,9 +10,12 @@ RLS, or transaction contracts.
 
 ## Threat model and exclusions
 
-Protected against within the reviewed application role:
+Protected against within the reviewed application deployment boundary:
 
-- overwriting or deleting retained accepted-save audit rows through ordinary SQL;
+- granting ordinary checkpoint workers audit UPDATE, DELETE, or TRUNCATE rights;
+- overwriting or deleting retained accepted-save audit rows through ordinary SQL,
+  with a separately scoped mutation-probe role exercising trigger rejection as
+  defense-in-depth evidence;
 - tenant-crossing reads or inserts when an ordinary `NOSUPERUSER NOBYPASSRLS`
   role uses the trusted package boundary;
 - unbounded audit reads;
@@ -105,21 +108,35 @@ empty table may be dropped together with the trigger function.
 
 CI contains a permanent read-only-code verification job backed by the exact
 reviewed PostgreSQL 16 Bookworm image digest. The job creates one random isolated
-temporary database and one random application login declared
+temporary database and two random logins, each declared
 `NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`.
-Identifiers are composed with `psycopg.sql.Identifier`; the generated password is
+Identifiers are composed with `psycopg.sql.Identifier`; generated passwords are
 composed with `psycopg.sql.Literal` because PostgreSQL utility-statement grammar
 does not accept a protocol bind parameter in `CREATE ROLE ... PASSWORD`.
 
-The live test applies the durable checkpoint schema before the audit schema,
-grants only the table and sequence rights needed to exercise the application
-contract, and verifies that identical checkpoint keys in two tenant scopes remain
-independently readable only through their bound scope. An unscoped application
-connection sees zero audit rows. Under a valid tenant scope, ordinary
-`UPDATE`, `DELETE`, and `TRUNCATE` attempts must each fail with SQLSTATE `55000`.
-The owner-level rollback must also fail with SQLSTATE `55000` while any tenant's
-audit evidence remains, after which both tenants' retained events must still be
-readable through their authorized package scopes.
+The application role receives only `SELECT`, `INSERT`, and `UPDATE` on
+`llm_result_stream_checkpoints`, `SELECT` and `INSERT` on
+`llm_result_checkpoint_audit_events`, and `USAGE` plus `SELECT` on the exact
+identity sequence returned by `pg_get_serial_sequence()` and safely decomposed
+with `parse_ident()`. It receives no audit UPDATE, DELETE, or TRUNCATE right and
+no blanket permission over other sequences in `public`.
+
+A separate mutation-probe role receives only the audit-table rights needed to
+exercise `SELECT`, `UPDATE`, `DELETE`, and `TRUNCATE` rejection. It receives no
+checkpoint-table or audit-identity-sequence permission and is never used for
+normal checkpoint persistence or audit reads. This separation proves both the
+least-privilege application contract and the trigger defense-in-depth contract
+without normalizing mutation authority for production workers.
+
+The live test applies the durable checkpoint schema before the audit schema and
+verifies that identical checkpoint keys in two tenant scopes remain
+independently readable only through the application role's bound scope. An
+unscoped application connection sees zero audit rows. Under a valid tenant
+scope, the mutation-probe role's ordinary `UPDATE`, `DELETE`, and `TRUNCATE`
+attempts must each fail with SQLSTATE `55000`. The owner-level rollback must also
+fail with SQLSTATE `55000` while any tenant's audit evidence remains, after which
+both tenants' retained events must still be readable through their authorized
+application package scopes.
 
 The same live test starts a caller-owned application transaction, observes the
 transaction start, waits briefly, captures the wall clock immediately before an
@@ -128,11 +145,12 @@ pre-save wall-clock observation and a post-save observation. This deterministica
 rejects transaction-start `NOW()` semantics while preserving transaction
 atomicity.
 
-The test cleanup is bounded to the unique temporary database and role it created.
-Creation flags guard partial setup, so a failure after role creation but before
-database creation does not silently leave a test login behind. The CI token is
-`contents: read`; checkout uses `persist-credentials: false`. The integration job
-has no repository write permission and is not a branch-writing repair agent.
+The test cleanup is bounded to the unique temporary database and two roles it
+created. Independent creation flags guard partial setup, so a failure after either
+role creation or before database creation does not silently leave a test login
+behind. The CI token is `contents: read`; checkout uses
+`persist-credentials: false`. The integration job has no repository write
+permission and is not a branch-writing repair agent.
 
 ## Deterministic verification matrix
 
@@ -153,6 +171,12 @@ has no repository write permission and is not a branch-writing repair agent.
   `CREATE ROLE ... PASSWORD`. The setup was changed to psycopg's composable
   identifier/literal API and partial-provision cleanup was made fail-safe before
   re-verification.
+- Least-privilege RED: exact-head run `31148349909` on
+  `5dfdecfaf1fb7a4d88be338bd44eddb69814a174` failed the permanent role-binding
+  contract because one application role still held audit mutation rights and a
+  blanket public-schema sequence grant. The repaired integration separates a
+  normal application role from a bounded mutation-probe role and resolves only
+  the exact audit identity sequence.
 - Event-time RED: test-only heads `9e43420097faabd97deab079c34c5e4e0207eb86`,
   `19b39a23dc7e29a467cc6c0d6817f06b5da1e880`, and
   `78184f6202d06831800ef3e90db498e9e04e26b5` require wall-clock insert-time
@@ -169,6 +193,12 @@ has no repository write permission and is not a branch-writing repair agent.
 - Failure semantics: a rejected delegated save creates no success event.
 - Query semantics: tenant-qualified exact checkpoint key, newest-first order,
   parameterized `LIMIT`, and malformed database row/collection rejection.
+- Least privilege: application and mutation-probe roles are separate, application
+  audit rights are `SELECT`/`INSERT` only, sequence rights target only the exact
+  audit identity sequence, and mutation checks cannot borrow production rights.
+- Workflow contracts: PostgreSQL service, DSN, credential-free checkout, live
+  command, and every setup-uv version/cache control are asserted inside their
+  exact job or step rather than through repository-wide string counts.
 - Migration: forced RLS, fixed action CHECK, descriptive snake_case objects,
   event-time default repair, UPDATE/DELETE and TRUNCATE rejection,
   package/container byte identity, and ordered image installation.
