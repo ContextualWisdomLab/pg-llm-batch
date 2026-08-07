@@ -135,9 +135,9 @@ authenticated manifests, and reconciliation remain host/operator responsibilitie
 
 ## Build a bounded snapshot manifest
 
-For a compact deterministic identity of one complete stable traversal, establish
-a caller-owned snapshot transaction before its first query and build the manifest
-on that same cursor:
+For a compact deterministic identity of one complete stable traversal, begin one
+**active PostgreSQL transaction** and select `REPEATABLE READ` or `SERIALIZABLE`
+before its first query. Build the manifest on that same cursor:
 
 ```python
 import psycopg
@@ -155,11 +155,18 @@ with psycopg.connect(POSTGRES_DSN) as connection:
         )
 ```
 
-The method accepts only PostgreSQL `REPEATABLE READ` or `SERIALIZABLE` and
-rejects the default `READ COMMITTED` isolation. PostgreSQL requires the isolation
-selection before the transaction's first query or data-modification statement;
-the package verifies that boundary instead of silently changing a caller-owned
-transaction after work has started.
+The method requires the caller's cursor to remain inside one active PostgreSQL
+transaction for the complete traversal. It then accepts only `REPEATABLE READ`
+or `SERIALIZABLE`. **autocommit** is rejected even when the session-level
+`default_transaction_isolation` reports `REPEATABLE READ`, because successive
+page statements would otherwise be free to execute in separate transactions and
+therefore separate snapshots. Active `READ COMMITTED`, malformed transaction
+status, malformed isolation evidence, and unknown modes also fail closed.
+
+PostgreSQL requires isolation selection before the transaction's first query or
+data-modification statement; the package verifies transaction state and isolation
+instead of silently beginning, committing, rolling back, or changing a
+caller-owned transaction after work has started.
 
 The builder walks the existing keyset pages incrementally, keeps no more than one
 bounded page plus fixed digest state in package-owned memory, and fails closed if
@@ -206,5 +213,5 @@ snapshot-manifest contract. The
 [export-pagination assurance record](doctoring/checkpoint-audit-export-pagination.md),
 and [snapshot-manifest assurance record](doctoring/checkpoint-audit-snapshot-manifests.md)
 record the threat models, operator boundaries, verification evidence, and APA 7
-references to NIST SP 800-53 Rev. 5 Release 5.2.0, FIPS 180-4, and PostgreSQL 18
-transaction-isolation/concurrency guidance.
+references to NIST SP 800-53 Rev. 5 Release 5.2.0, FIPS 180-4, PostgreSQL 18
+transaction guidance, and Psycopg 3 `ConnectionInfo.transaction_status`.
