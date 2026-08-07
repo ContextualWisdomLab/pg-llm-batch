@@ -59,8 +59,11 @@ class CheckpointAuditEvent:
             isinstance(self.audit_event_id, bool)
             or not isinstance(self.audit_event_id, int)
             or self.audit_event_id <= 0
+            or self.audit_event_id > MAX_CHECKPOINT_AUDIT_EVENT_ID
         ):
-            raise ValueError("audit_event_id must be a positive integer")
+            raise ValueError(
+                "audit_event_id must be a positive PostgreSQL BIGINT-compatible integer"
+            )
         validate_tenant_scope(self.tenant_scope)
         validate_checkpoint_consumer_name(self.consumer_name)
         _validated_exact_endpoint_alias(self.endpoint_alias)
@@ -395,13 +398,15 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
             raise RuntimeError("checkpoint audit query exceeded its bounded query size")
 
         events = tuple(_audit_event_from_row(row) for row in rows)
+        expected_key = (self.tenant_scope, consumer, alias, remote_batch_id)
         for event in events:
-            if (
-                event.tenant_scope != self.tenant_scope
-                or event.consumer_name != consumer
-                or event.endpoint_alias != alias
-                or event.batch_id != remote_batch_id
-            ):
+            event_key = (
+                event.tenant_scope,
+                event.consumer_name,
+                event.endpoint_alias,
+                event.batch_id,
+            )
+            if event_key != expected_key:
                 raise RuntimeError("checkpoint audit query returned a row outside the requested key")
         if any(
             current.audit_event_id >= previous.audit_event_id
@@ -411,9 +416,7 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
 
         page_events = events[:bounded_limit]
         next_before = (
-            page_events[-1].audit_event_id
-            if len(events) > bounded_limit and page_events
-            else None
+            page_events[-1].audit_event_id if len(events) > bounded_limit else None
         )
         return CheckpointAuditPage(
             events=page_events,
