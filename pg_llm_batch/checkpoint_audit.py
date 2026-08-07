@@ -136,6 +136,7 @@ class CheckpointAuditSnapshotManifest:
         """Reject malformed or internally inconsistent public manifest values."""
         if (
             isinstance(self.schema_version, bool)
+            or not isinstance(self.schema_version, int)
             or self.schema_version != _CHECKPOINT_AUDIT_SNAPSHOT_SCHEMA_VERSION
         ):
             raise ValueError("unsupported checkpoint audit snapshot manifest schema_version")
@@ -156,19 +157,24 @@ class CheckpointAuditSnapshotManifest:
             if self.newest_audit_event_id is not None or self.oldest_audit_event_id is not None:
                 raise ValueError("empty audit snapshot manifests must not contain event ids")
         else:
-            ids = (self.newest_audit_event_id, self.oldest_audit_event_id)
+            newest = self.newest_audit_event_id
+            oldest = self.oldest_audit_event_id
             if any(
                 isinstance(value, bool)
                 or not isinstance(value, int)
                 or value < 1
                 or value > MAX_CHECKPOINT_AUDIT_EVENT_ID
-                for value in ids
+                for value in (newest, oldest)
             ):
                 raise ValueError(
                     "non-empty audit snapshot manifests require PostgreSQL BIGINT event ids"
                 )
-            if self.newest_audit_event_id < self.oldest_audit_event_id:  # type: ignore[operator]
-                raise ValueError("newest_audit_event_id must not precede oldest_audit_event_id")
+            if self.event_count == 1 and newest != oldest:
+                raise ValueError("one-event audit snapshot manifests require one event identity")
+            if self.event_count > 1 and newest <= oldest:
+                raise ValueError(
+                    "multi-event audit snapshot manifests require a descending identity range"
+                )
         if (
             not isinstance(self.snapshot_sha256, str)
             or len(self.snapshot_sha256) != 64
