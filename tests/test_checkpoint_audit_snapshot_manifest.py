@@ -40,10 +40,29 @@ def _event(event_id: int, *, digest_seed: int | None = None) -> CheckpointAuditE
     )
 
 
+class _InTransactionStatus:
+    """Expose the libpq transaction-status name required by snapshot callers."""
+
+    name = "INTRANS"
+
+
+class _ConnectionInfo:
+    """Expose deterministic connection transaction metadata to cursor tests."""
+
+    transaction_status = _InTransactionStatus()
+
+
+class _Connection:
+    """Minimal connection double carrying libpq-style transaction metadata."""
+
+    info = _ConnectionInfo()
+
+
 class IsolationCursor:
-    """Expose one transaction-isolation row and capture executed SQL."""
+    """Expose one active transaction, isolation row, and captured SQL."""
 
     def __init__(self, isolation: Any = ("repeatable read",)) -> None:
+        self.connection = _Connection()
         self.isolation = isolation
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
