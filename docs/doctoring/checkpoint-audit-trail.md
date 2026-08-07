@@ -1,0 +1,140 @@
+# Checkpoint audit trail assurance record
+
+## Assurance objective
+
+Provide a bounded, tenant-isolated, transaction-coupled audit trail for every
+checkpoint value that the opt-in audited store successfully accepts. The trail
+must support operator reconstruction without reclassifying telemetry as durable
+audit evidence and without weakening the existing checkpoint compare-and-swap,
+RLS, or transaction contracts.
+
+## Threat model and exclusions
+
+Protected against within the reviewed application role:
+
+- overwriting or deleting retained accepted-save audit rows through ordinary SQL;
+- tenant-crossing reads or inserts when an ordinary `NOSUPERUSER NOBYPASSRLS`
+  role uses the trusted package boundary;
+- unbounded audit reads;
+- silent loss of audit evidence after a checkpoint save succeeds;
+- destructive rollback while retained evidence exists; and
+- fresh-container deployments that silently omit the audit schema.
+
+Explicitly outside this assurance claim:
+
+- PostgreSQL owners, superusers, `BYPASSRLS` roles, disabled triggers, storage
+  administrators, or direct physical database tampering;
+- cryptographic non-repudiation, signed events, immutable remote/WORM storage,
+  or complete detection of administrator deletion;
+- rejected save attempts, authentication failures, or a general-purpose
+  security-event log;
+- retention duration, legal hold, SIEM forwarding, and tenant identity mapping,
+  all of which remain host/operator policy; and
+- Docker entrypoint scripts as an upgrade mechanism for an existing data volume.
+
+## Data minimization
+
+The audit table retains only the trusted tenant/consumer key, endpoint and remote
+batch identity, one fixed event action, validated checkpoint coordinates and
+prefix digest, a database identity, and database timestamp. It excludes prompts,
+provider result bodies, model output, credentials, DSNs, transport headers,
+exception messages, and arbitrary free-form log text.
+
+The `prefix_sha256` is deterministic checkpoint change-detection evidence. It is
+not a signature or authentication tag and must not be represented as one.
+
+## Transaction semantics
+
+`AuditedPostgresBatchResultCheckpointStore.save_in_transaction()` delegates to
+the existing compare-and-swap implementation and inserts the audit row only
+after that call accepts the checkpoint. Both statements remain in the caller's
+transaction. `save()` owns one connection and commits only after both operations
+complete.
+
+An idempotent repeated checkpoint creates another `checkpoint_save_accepted`
+event. This is intentional: the row describes an accepted API action, not a
+unique durable-state transition. A validation or compare-and-swap exception is
+propagated unchanged and produces no success event.
+
+An audit insertion failure is fail-closed for the surrounding save transaction.
+The package does not catch it and then commit the checkpoint alone.
+
+## Database immutability controls
+
+`llm_result_checkpoint_audit_events` uses forced row-level security and a
+single tenant policy based on transaction-local
+`pg_llm_batch.tenant_scope`. `checkpoint_audit_row_immutability` rejects UPDATE
+and DELETE per row. `checkpoint_audit_truncate_immutability` rejects TRUNCATE at
+statement level; PostgreSQL documents TRUNCATE triggers as statement-only.
+
+These triggers are application-level append-only controls, not administrator-
+proof tamper detection. OWASP recommends stronger protection where audit
+trustworthiness requires detection of modification/deletion; such deployments
+should export or replicate events into separately governed immutable evidence.
+
+## Migration and rollback
+
+The package migration and Docker build-context migration are byte-identical. On
+a new PostgreSQL data directory, the container orders durable checkpoint schema
+before checkpoint audit schema. Existing data directories do not replay Docker
+entrypoint initialization; operators apply
+`apply_result_checkpoint_audit_schema()` or the exact reviewed SQL explicitly.
+
+Rollback first removes FORCE RLS inside the same transaction so an owner-level
+emptiness check can see rows for every tenant. If any audit row exists, rollback
+raises SQLSTATE `55000`; the transaction restores FORCE RLS automatically. An
+empty table may be dropped together with the trigger function.
+
+## Deterministic verification matrix
+
+- RED evidence: CI run `31138134741` on test-only head
+  `3dfab0d6132e523396d2b2e27125aff34d8565e4` failed unit collection because
+  `pg_llm_batch.checkpoint_audit` did not exist.
+- Public model: immutable accepted-save event; invalid identifiers, action,
+  checkpoint fields, event identity, and timestamp fail closed.
+- Read bound: integers 1 through 1,000 only; booleans and coercible values are
+  rejected.
+- Transaction coupling: owned saves commit once after checkpoint and audit;
+  caller-owned saves do not commit.
+- Failure semantics: a rejected delegated save creates no success event.
+- Query semantics: tenant-qualified exact checkpoint key, newest-first order,
+  parameterized `LIMIT`, and malformed database row/collection rejection.
+- Migration: forced RLS, fixed action CHECK, descriptive snake_case objects,
+  UPDATE/DELETE and TRUNCATE rejection, package/container byte identity, and
+  ordered image installation.
+- Rollback: non-empty evidence blocks destructive rollback across tenants.
+- Quality target: 100% production statement, branch, and public-docstring
+  coverage plus exact-head CI, release acceptance, security, supply-chain, and
+  independent review before merge.
+
+## Standards mapping
+
+NIST SP 800-53 Rev. 5 AU-3 motivates retaining enough structured information to
+reconstruct what happened, when, where, source, and outcome. This slice supplies
+those fields at the package's checkpoint-storage boundary: fixed action, database
+time, package/database location, tenant/consumer source identity, and successful
+acceptance outcome.
+
+OWASP's Logging Cheat Sheet distinguishes application audit trails from generic
+infrastructure logs, recommends recording business/security-relevant actions,
+minimizing sensitive content, restricting log access, and protecting retained
+logs from modification/deletion. This design therefore keeps audit evidence in a
+separate table, omits payload/secrets, applies tenant RLS, and rejects ordinary
+row mutation while explicitly documenting the stronger administrator-tamper
+controls it does not provide.
+
+PostgreSQL 18 `CREATE TRIGGER` defines TRUNCATE as a supported trigger event and
+states that TRUNCATE triggers are statement-level. The migration uses a separate
+statement trigger rather than pretending a row trigger can intercept TRUNCATE.
+
+## APA 7 references
+
+National Institute of Standards and Technology. (2020). *Security and privacy
+controls for information systems and organizations* (NIST Special Publication
+800-53, Revision 5). https://doi.org/10.6028/NIST.SP.800-53r5
+
+OWASP Foundation. (n.d.). *Logging cheat sheet*. OWASP Cheat Sheet Series.
+https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+
+PostgreSQL Global Development Group. (2026). *CREATE TRIGGER* (PostgreSQL 18
+documentation). https://www.postgresql.org/docs/18/sql-createtrigger.html
