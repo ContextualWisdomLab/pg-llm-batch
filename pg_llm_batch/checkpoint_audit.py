@@ -319,6 +319,13 @@ def _audit_snapshot_event_hash(digest: Any, event: CheckpointAuditEvent) -> None
 
 def _require_audit_snapshot_isolation(cursor: Any) -> None:
     """Fail closed unless all manifest pages share one stable PostgreSQL snapshot."""
+    connection = getattr(cursor, "connection", None)
+    info = getattr(connection, "info", None)
+    transaction_status = getattr(info, "transaction_status", None)
+    if getattr(transaction_status, "name", None) != "INTRANS":
+        raise RuntimeError(
+            "checkpoint audit snapshot manifest requires an active PostgreSQL transaction"
+        )
     cursor.execute("SHOW transaction_isolation")
     row = cursor.fetchone()
     if (
