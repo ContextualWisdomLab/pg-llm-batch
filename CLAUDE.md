@@ -281,11 +281,14 @@
   `build_audit_snapshot_manifest_in_transaction()` opt-in and preserve the
   existing one-page and keyset-pagination APIs.
 - Require one active PostgreSQL transaction owned by the caller before any
-  manifest page is read, then require `REPEATABLE READ` or `SERIALIZABLE`.
-  Session-level isolation defaults do not satisfy this boundary: reject
-  autocommit even when it advertises `REPEATABLE READ`, reject `READ COMMITTED`,
-  malformed isolation evidence, and unknown modes, and never alter caller-owned
-  transaction state or isolation.
+  manifest page is read, then require a **read-only** `REPEATABLE READ` or
+  `SERIALIZABLE` transaction. Session-level isolation defaults do not satisfy
+  this boundary: reject autocommit even when it advertises `REPEATABLE READ`,
+  reject `READ COMMITTED`, malformed isolation or read-only evidence, unknown
+  modes, and read-write transactions before page traversal. This prevents a
+  manifest from identifying the caller's own uncommitted accepted-save rows
+  that could disappear on rollback. Never alter caller-owned transaction state,
+  isolation, or read-only mode.
 - Validate `page_size` as a strict integer from 1 through 1,000 and `max_events`
   as a strict integer from 1 through 100,000. Keep only one bounded page plus
   fixed digest state in package-owned memory and fail closed rather than silently
@@ -308,5 +311,5 @@
   credential, LLM key, network exporter, or background scheduler.
 - Maintain 100% production statement, branch, and public-docstring coverage with
   strict manifest validation, isolation, active-transaction, autocommit,
-  overflow, digest-sensitivity, page-partition, public-export, fixed-vector, and
-  live concurrent-insert tests.
+  read-only, rollback-risk, overflow, digest-sensitivity, page-partition,
+  public-export, fixed-vector, and live concurrent-insert tests.
