@@ -26,6 +26,13 @@ official PostgreSQL entrypoint initializes a **new** data directory. Existing
 volumes are not upgraded by entrypoint scripts; run the reviewed migration or the
 package helper explicitly during deployment.
 
+Reapplying the audit migration also repairs the `recorded_at` column default to
+`clock_timestamp()`. PostgreSQL `NOW()`/`CURRENT_TIMESTAMP` represent the start
+of the current transaction, so a long caller-owned transaction could otherwise
+stamp an accepted save with a time materially earlier than the save itself.
+Existing audit rows are never rewritten; only subsequent inserts use the repaired
+wall-clock event-time default.
+
 Production application roles remain `NOSUPERUSER NOBYPASSRLS`. Tenant scope and
 consumer name must come from the host's authenticated and authorized control
 plane, never from provider data or model output.
@@ -53,7 +60,9 @@ checkpoint without required audit evidence.
 
 For local record effects that must share the same PostgreSQL transaction, use
 `save_in_transaction()` with the caller's cursor. The method never commits or
-rolls back that cursor.
+rolls back that cursor. Audit `recorded_at` is evaluated with PostgreSQL
+`clock_timestamp()` when the accepted-save row is inserted, not when that
+caller-owned transaction began.
 
 An exact idempotent repeat produces another audit event. Audit rows describe
 successful package calls, not necessarily unique durable state transitions. A
@@ -76,9 +85,9 @@ The query is tenant-qualified by the store's trusted scope and exact consumer,
 endpoint, and batch key.
 
 The event contains structured checkpoint identity and coordinates, the fixed
-action, a database-generated event identity, and a database timestamp. It does
-not include provider bodies, prompts, model output, credentials, DSNs, transport
-headers, or exception text.
+action, a database-generated event identity, and an insert-time database
+wall-clock timestamp. It does not include provider bodies, prompts, model output,
+credentials, DSNs, transport headers, or exception text.
 
 ## Retention and rollback
 
@@ -100,4 +109,4 @@ See [ADR 0009](adr/0009-append-only-checkpoint-audit-trail.md) for the decision
 boundary and
 [the assurance record](doctoring/checkpoint-audit-trail.md) for threat model,
 verification evidence, and APA 7 references to NIST SP 800-53 Rev. 5 AU-3, the
-OWASP Logging Cheat Sheet, and PostgreSQL 18 trigger semantics.
+OWASP Logging Cheat Sheet, and PostgreSQL 18 trigger and current-time semantics.
