@@ -18,24 +18,29 @@ pagination cursor for completeness or integrity evidence.
 `build_audit_snapshot_manifest_in_transaction()` first requires one **active
 PostgreSQL transaction** owned by the caller. The runtime uses Psycopg 3
 `ConnectionInfo.transaction_status` and accepts only libpq `INTRANS` before it
-issues any manifest-owned isolation probe or audit page query. Missing connection
-metadata, `IDLE`, `ACTIVE`, `INERROR`, `UNKNOWN`, and malformed status evidence
-fail closed.
+issues any manifest-owned transaction-characteristic probe or audit page query.
+Missing connection metadata, `IDLE`, `ACTIVE`, `INERROR`, `UNKNOWN`, and malformed
+status evidence fail closed.
 
 After active-transaction evidence succeeds, `SHOW transaction_isolation` must be
-`repeatable read` or `serializable`. PostgreSQL `READ COMMITTED` takes a fresh
-snapshot for each command, so a multi-page digest under that isolation level
-could combine rows that never belonged to one database snapshot. The package
-therefore rejects `READ COMMITTED`, malformed isolation evidence, and unknown
-modes rather than silently producing a misleading manifest.
+`repeatable read` or `serializable`, and `SHOW transaction_read_only` must be
+`on`. PostgreSQL `READ COMMITTED` takes a fresh snapshot for each command, so a
+multi-page digest under that isolation level could combine rows that never
+belonged to one database snapshot. A read-write stable transaction is also
+insufficient for retained-evidence identity because a transaction can observe its
+own uncommitted writes. Without a **read-only** gate, a caller could insert an
+accepted-save audit row, include it in a manifest, export that manifest, and then
+roll back so the identified row was never durably retained. The package therefore
+rejects `READ COMMITTED`, read-write transactions, malformed isolation or read-
+only evidence, and unknown modes before page traversal.
 
 A session-level isolation default is not enough. **autocommit** is rejected even
 when `default_transaction_isolation` advertises `REPEATABLE READ`, because without
 one active PostgreSQL transaction successive page statements can execute in
-separate transactions and therefore separate snapshots. The host must begin the
-stable transaction and select its isolation before its first query or
-data-modification statement. The package does not begin, commit, roll back, or
-change a caller-owned transaction.
+separate transactions and therefore separate snapshots. The host must begin a
+read-only stable transaction and select its characteristics before its first
+query. The package does not begin, commit, roll back, or change a caller-owned
+transaction, isolation level, or read-only mode.
 
 Traversal reuses the exact tenant-qualified keyset page API. `page_size` remains
 a strict integer from 1 through 1,000 and `max_events` is a strict integer from 1
@@ -107,16 +112,16 @@ DSNs, transport headers, or arbitrary exception text.
 
 1. Select the tenant, consumer, endpoint, and batch key only after host
    authentication and authorization.
-2. Begin one active PostgreSQL transaction with `REPEATABLE READ` or
-   `SERIALIZABLE` before its first query or data-modification statement. Do not
-   use autocommit for a snapshot manifest, even if the session default is
-   `REPEATABLE READ`.
+2. Begin one active **read-only** PostgreSQL transaction with `REPEATABLE READ` or
+   `SERIALIZABLE` before its first query. Do not use autocommit for a snapshot
+   manifest, even if the session default is `REPEATABLE READ`, and do not perform
+   data modification in the manifest transaction.
 3. Call `build_audit_snapshot_manifest_in_transaction()` with a reviewed
    `page_size` and `max_events` budget. An overflow is an operational condition to
    handle explicitly, not permission to truncate evidence silently.
 4. Export the corresponding retained events and the returned manifest under the
-   same stable transaction when the destination workflow requires one coherent
-   database snapshot.
+   same stable read-only transaction when the destination workflow requires one
+   coherent database snapshot.
 5. Persist destination-side immutable retention evidence and delivery receipts as
    required. Sign or authenticate the manifest externally when the assurance
    requirement needs producer authenticity.
@@ -134,6 +139,11 @@ migration continues to refuse removal while retained events exist. Any exported
 manifest or signed external evidence remains subject to the host's retention and
 legal-hold policy.
 
+The read-only manifest gate specifically prevents a different rollback hazard:
+manifest construction cannot include caller-local audit rows created in the same
+transaction and then lost on caller rollback. This is an evidence-validity
+boundary, not a substitute for durable external retention.
+
 ## Verification contract
 
 Permanent deterministic tests cover:
@@ -143,7 +153,8 @@ Permanent deterministic tests cover:
 - rejection unless `ConnectionInfo.transaction_status` proves `INTRANS`;
 - rejection of autocommit even with a `REPEATABLE READ` session default;
 - rejection of active `READ COMMITTED` and malformed isolation evidence;
-- acceptance of active `REPEATABLE READ` and `SERIALIZABLE`;
+- rejection of active read-write transactions and malformed read-only evidence;
+- acceptance of active read-only `REPEATABLE READ` and `SERIALIZABLE`;
 - incremental keyset traversal without whole-history materialization;
 - fail-closed traversal overflow instead of silent truncation;
 - digest sensitivity to retained event fields;
@@ -151,12 +162,12 @@ Permanent deterministic tests cover:
 - the fixed schema-version-1 digest compatibility vector; and
 - public package-root exports.
 
-The live least-privilege PostgreSQL test establishes an active `REPEATABLE READ`
-view, commits a newer accepted-save event from another connection, and proves
-that manifests built with different page sizes keep the same earlier event set
-and digest. It separately verifies active `READ COMMITTED` rejection and
-autocommit rejection under a `REPEATABLE READ` session default. The repository
-CI explicitly executes this integration test alongside the existing
+The live least-privilege PostgreSQL test establishes an active read-only
+`REPEATABLE READ` view, commits a newer accepted-save event from another
+connection, and proves that manifests built with different page sizes keep the
+same earlier event set and digest. It separately verifies active `READ COMMITTED`
+rejection and autocommit rejection under a `REPEATABLE READ` session default. The
+repository CI explicitly executes this integration test alongside the existing
 checkpoint-audit and migration-operator PostgreSQL tests.
 
 Final merge evidence is valid only after the stacked dependency chain has
@@ -184,6 +195,14 @@ PostgreSQL Global Development Group. (2026). *Transaction isolation*. PostgreSQL
 PostgreSQL Global Development Group. (2026). *SET TRANSACTION*. PostgreSQL 18
 documentation. https://www.postgresql.org/docs/18/sql-set-transaction.html
 
+PostgreSQL Global Development Group. (2026). *Client connection defaults*.
+PostgreSQL 18 documentation.
+https://www.postgresql.org/docs/18/runtime-config-client.html
+
 Psycopg Team. (2026). *ConnectionInfo.transaction_status*. Psycopg 3 API
 documentation.
 https://www.psycopg.org/psycopg3/docs/api/objects.html#psycopg.ConnectionInfo.transaction_status
+
+This assurance record uses APA 7 reference formatting for the authoritative
+sources that define the implemented transaction, audit-protection, and digest
+boundaries.
