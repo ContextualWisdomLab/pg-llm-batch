@@ -280,10 +280,12 @@
 - Keep `CheckpointAuditSnapshotManifest` and
   `build_audit_snapshot_manifest_in_transaction()` opt-in and preserve the
   existing one-page and keyset-pagination APIs.
-- Accept only a caller-owned PostgreSQL `REPEATABLE READ` or `SERIALIZABLE`
-  transaction. Reject `READ COMMITTED`, malformed isolation evidence, and unknown
-  modes; do not silently alter caller-owned isolation after transaction work has
-  begun.
+- Require one active PostgreSQL transaction owned by the caller before any
+  manifest page is read, then require `REPEATABLE READ` or `SERIALIZABLE`.
+  Session-level isolation defaults do not satisfy this boundary: reject
+  autocommit even when it advertises `REPEATABLE READ`, reject `READ COMMITTED`,
+  malformed isolation evidence, and unknown modes, and never alter caller-owned
+  transaction state or isolation.
 - Validate `page_size` as a strict integer from 1 through 1,000 and `max_events`
   as a strict integer from 1 through 100,000. Keep only one bounded page plus
   fixed digest state in package-owned memory and fail closed rather than silently
@@ -305,5 +307,6 @@
 - Preserve standalone and modular MSA operation without a new migration, provider
   credential, LLM key, network exporter, or background scheduler.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  strict manifest validation, isolation, overflow, digest-sensitivity,
-  page-partition, public-export, fixed-vector, and live concurrent-insert tests.
+  strict manifest validation, isolation, active-transaction, autocommit,
+  overflow, digest-sensitivity, page-partition, public-export, fixed-vector, and
+  live concurrent-insert tests.
