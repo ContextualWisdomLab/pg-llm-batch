@@ -89,6 +89,50 @@ action, a database-generated event identity, and an insert-time database
 wall-clock timestamp. It does not include provider bodies, prompts, model output,
 credentials, DSNs, transport headers, or exception text.
 
+## Export longer retained history
+
+Use the opt-in keyset page API instead of `OFFSET` or an unbounded fetch:
+
+```python
+page = store.list_audit_event_page(
+    "invoice-worker",
+    "batch-123",
+    "default",
+    limit=250,
+)
+
+while True:
+    persist_to_governed_retention(page.events)
+    if page.next_before_audit_event_id is None:
+        break
+    page = store.list_audit_event_page(
+        "invoice-worker",
+        "batch-123",
+        "default",
+        before_audit_event_id=page.next_before_audit_event_id,
+        limit=250,
+    )
+```
+
+`before_audit_event_id` is `None` or a strict positive signed PostgreSQL `BIGINT`.
+Each SQL request reads at most `limit + 1` rows and returns at most `limit` events.
+Continuation uses `checkpoint_audit_event_id < before_audit_event_id` in strict
+newest-first order. Returned rows are revalidated against the exact trusted
+tenant, consumer, endpoint, and batch key before exposure.
+
+A committed event with a larger identity between page calls cannot shift the
+older continuation window. Separate package-owned calls are still separate
+transactions, however, so they do not form one historic database snapshot. For
+an export that must observe one PostgreSQL snapshot, begin a caller-owned
+`REPEATABLE READ` or stricter transaction **before the first query** and reuse
+`list_audit_event_page_in_transaction()` on that transaction's cursor.
+
+The cursor is navigation state, not completeness, chronology, delivery,
+authenticity, or non-repudiation evidence. PostgreSQL identity sequences may have
+gaps and allocation order can differ from commit order. Destination credentials,
+immutable/WORM storage, retention, legal hold, delivery receipts, cryptographic
+manifests, and reconciliation remain host/operator responsibilities.
+
 ## Retention and rollback
 
 The database blocks ordinary `UPDATE`, `DELETE`, and `TRUNCATE` against the audit
@@ -105,8 +149,10 @@ signed/hash-chained evidence system.
 
 ## Standards and evidence
 
-See [ADR 0009](adr/0009-append-only-checkpoint-audit-trail.md) for the decision
-boundary and
-[the assurance record](doctoring/checkpoint-audit-trail.md) for threat model,
-verification evidence, and APA 7 references to NIST SP 800-53 Rev. 5 AU-3, the
-OWASP Logging Cheat Sheet, and PostgreSQL 18 trigger and current-time semantics.
+See [ADR 0009](adr/0009-append-only-checkpoint-audit-trail.md) for the accepted-save
+audit boundary, [ADR 0011](adr/0011-bounded-checkpoint-audit-export-pagination.md)
+for the pagination decision, [the audit assurance record](doctoring/checkpoint-audit-trail.md)
+for audit threat-model evidence, and
+[the export-pagination assurance record](doctoring/checkpoint-audit-export-pagination.md)
+for keyset, isolation, operator, and APA 7 evidence. The latter records NIST SP
+800-53 Rev. 5 AU-9 and PostgreSQL 18 transaction-isolation/concurrency guidance.

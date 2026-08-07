@@ -246,3 +246,31 @@
   strict red-green-refactor tests for bounded input, exact order, one lock, one
   transaction, one commit, rollback, concurrency, compatibility, CLI output,
   documentation, and body-free diagnostics.
+
+## Checkpoint audit export pagination invariants
+
+- Keep `list_audit_events()` source-compatible and make multi-page traversal
+  opt-in through `CheckpointAuditPage` and the `list_audit_event_page*` methods.
+- Validate `before_audit_event_id` as `None` or a strict positive signed
+  PostgreSQL `BIGINT`; reject booleans, coercible strings/floats, zero, negative,
+  and out-of-range identities before database access.
+- Use primary-key keyset pagination only: newest-first ordering and strict
+  `checkpoint_audit_event_id < before_audit_event_id` continuation. Never use
+  `OFFSET` for retained audit traversal.
+- Fetch no more than the validated limit plus one lookahead row and expose no
+  more than 1,000 events. Treat a driver overrun as an integrity failure.
+- Revalidate every database row through `CheckpointAuditEvent`, require the
+  exact trusted tenant/consumer/endpoint/batch key, and require strictly
+  descending unique identities before exposing a page.
+- The continuation cursor is navigation evidence only. It is not a completeness,
+  chronology, delivery, authenticity, or non-repudiation attestation; identity
+  gaps and allocation/commit reordering remain valid PostgreSQL behavior.
+- Package-owned page calls do not provide one cross-page snapshot. Hosts needing
+  snapshot-stable export must begin a caller-owned `REPEATABLE READ` or stricter
+  transaction before the first query and reuse the in-transaction method.
+- Keep destination credentials, immutable/WORM storage, retention, legal hold,
+  export receipts, cryptographic manifests, and reconciliation outside package
+  write authority.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  strict cursor, immutable-page, lookahead, keyset SQL, trusted-key, ordering,
+  malformed-driver, no-commit, and live concurrent-insert pagination tests.
