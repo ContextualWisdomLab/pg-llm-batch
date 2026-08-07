@@ -7,3 +7,10 @@ protection, `require_code_owner_review` in rulesets) are disabled across the Con
 org: there is a single maintainer (solo developer), so a code-owner approval gate can never be
 satisfied. This is ON HOLD until the org has multiple maintainers — do NOT re-enable these
 settings or add CODEOWNERS-based merge gates before then.
+
+## HTTP readiness confidentiality
+
+- `check_health()` is the trusted local operator diagnostics surface and may contain diagnostic detail needed for troubleshooting.
+- `serve_healthz()` must publish only `public_health_report()`, which allow-lists `ready`, `component`, and `is_ready` for the public readiness representation.
+- Never serialize the detailed local report directly from `/healthz`, copy database exception text into the public readiness response, or widen that response without deterministic tests and a reviewed security contract.
+- `Cache-Control: no-store` is a caching control, not authentication; network exposure, ingress, and authorization remain deployment concerns.
