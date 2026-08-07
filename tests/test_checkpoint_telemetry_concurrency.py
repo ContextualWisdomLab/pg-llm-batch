@@ -151,25 +151,23 @@ def test_concurrent_operations_do_not_share_mutable_telemetry_attributes() -> No
     assert len(meter.counter.measurements) == 32
     assert len(meter.histogram.measurements) == 32
 
+    expected_attributes = {
+        "pg_llm_batch.checkpoint.operation",
+        "pg_llm_batch.checkpoint.transaction_owner",
+        "pg_llm_batch.checkpoint.outcome",
+    }
     for measurement in meter.counter.measurements + meter.histogram.measurements:
         assert measurement["pg_llm_batch.checkpoint.operation"] in {"load", "save"}
         assert measurement["pg_llm_batch.checkpoint.transaction_owner"] == "package"
         assert measurement["pg_llm_batch.checkpoint.outcome"] == "success"
         assert "error.type" not in measurement
-        assert set(measurement) == {
-            "pg_llm_batch.checkpoint.operation",
-            "pg_llm_batch.checkpoint.transaction_owner",
-            "pg_llm_batch.checkpoint.outcome",
-        }
+        assert "db.system.name" not in measurement
+        assert set(measurement) == expected_attributes
 
     for attributes in tracer.completed:
-        assert attributes["db.system.name"] == "postgresql"
         assert attributes["pg_llm_batch.checkpoint.operation"] in {"load", "save"}
         assert attributes["pg_llm_batch.checkpoint.transaction_owner"] == "package"
         assert attributes["pg_llm_batch.checkpoint.outcome"] == "success"
-        assert set(attributes) == {
-            "db.system.name",
-            "pg_llm_batch.checkpoint.operation",
-            "pg_llm_batch.checkpoint.transaction_owner",
-            "pg_llm_batch.checkpoint.outcome",
-        }
+        assert "error.type" not in attributes
+        assert "db.system.name" not in attributes
+        assert set(attributes) == expected_attributes
