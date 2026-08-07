@@ -42,15 +42,17 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
 
 
 def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None:
-    """Required CI evidence must execute the exact PR head rather than a merge ref."""
+    """Every CI checkout must bind and verify the exact source head."""
     workflow = _read(".github/workflows/ci.yml")
     exact_source_expression = "${{ github.event.pull_request.head.sha || github.sha }}"
+    checkout_count = workflow.count("uses: actions/checkout@")
 
-    assert workflow.count(f"ref: {exact_source_expression}") == 4
-    assert workflow.count("name: Verify exact source head") == 4
+    assert checkout_count > 0
+    assert workflow.count(f"ref: {exact_source_expression}") == checkout_count
+    assert workflow.count("name: Verify exact source head") == checkout_count
     assert workflow.count(
         f'test "$(git rev-parse HEAD)" = "{exact_source_expression}"'
-    ) == 4
+    ) == checkout_count
 
 
 def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
