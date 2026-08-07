@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS llm_result_checkpoint_audit_events (
     batch_line_count BIGINT NOT NULL,
     record_count BIGINT NOT NULL,
     prefix_sha256 TEXT NOT NULL,
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT ck_llm_result_checkpoint_audit_events_tenant_scope
         CHECK (tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
     CONSTRAINT ck_llm_result_checkpoint_audit_events_consumer_name
@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS llm_result_checkpoint_audit_events (
     CONSTRAINT ck_llm_result_checkpoint_audit_events_prefix_sha256
         CHECK (prefix_sha256 ~ '^[0-9a-f]{64}$')
 );
+
+-- NOW()/CURRENT_TIMESTAMP are fixed at transaction start in PostgreSQL. Repair
+-- prior development applications of this idempotent migration and ensure each
+-- accepted-save row records wall-clock time at the insert itself.
+ALTER TABLE llm_result_checkpoint_audit_events
+    ALTER COLUMN recorded_at SET DEFAULT clock_timestamp();
 
 ALTER TABLE llm_result_checkpoint_audit_events ENABLE ROW LEVEL SECURITY;
 ALTER TABLE llm_result_checkpoint_audit_events FORCE ROW LEVEL SECURITY;
