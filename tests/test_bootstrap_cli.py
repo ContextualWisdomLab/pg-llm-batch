@@ -97,6 +97,49 @@ def test_init_and_config_commands(monkeypatch, capsys):
     assert "secret" not in output
 
 
+def test_checkpoint_storage_initialization_emits_bounded_json(monkeypatch, capsys):
+    """The opt-in migration command emits only canonical descriptor evidence."""
+    calls = []
+
+    class Descriptor:
+        def __init__(self, migration_id, byte_count, digest):
+            self.migration_id = migration_id
+            self.byte_count = byte_count
+            self.sha256 = digest
+
+        def as_dict(self):
+            return {
+                "migration_id": self.migration_id,
+                "byte_count": self.byte_count,
+                "sha256": self.sha256,
+            }
+
+    plan = (
+        Descriptor("0007_result_stream_checkpoints", 123, "a" * 64),
+        Descriptor("0008_result_checkpoint_audit_events", 456, "b" * 64),
+    )
+    monkeypatch.setattr(
+        cli,
+        "apply_checkpoint_schema_migrations",
+        lambda dsn: calls.append(dsn) or plan,
+    )
+
+    assert cli._dispatch(
+        ["init-checkpoint-storage", "--dsn", "postgresql://secret@database"]
+    ) == 0
+
+    assert calls == ["postgresql://secret@database"]
+    report = json.loads(capsys.readouterr().out)
+    assert report == {
+        "schema_version": 1,
+        "applied_migrations": [item.as_dict() for item in plan],
+    }
+    serialized = json.dumps(report)
+    assert "postgresql://" not in serialized
+    assert "secret" not in serialized
+    assert "SELECT" not in serialized
+
+
 def test_count_health_and_server_commands(monkeypatch, capsys):
     """Synchronous operational commands emit machine-readable results."""
     class Counter:

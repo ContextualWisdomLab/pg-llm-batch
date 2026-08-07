@@ -10,6 +10,8 @@ Public API:
     BatchResultCheckpoint               -- host-persistable resume evidence
     PostgresBatchResultCheckpointStore  -- tenant-isolated durable checkpoints
     AuditedPostgresBatchResultCheckpointStore -- append-only accepted-save audit
+    CheckpointSchemaMigration           -- bounded migration identity evidence
+    apply_checkpoint_schema_migrations  -- atomic checkpoint schema operator
     OpenTelemetryCheckpointStore        -- confidential checkpoint observability
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
@@ -28,6 +30,11 @@ from .checkpoint_audit import (
     CheckpointAuditEvent,
     apply_result_checkpoint_audit_schema,
     validate_checkpoint_audit_limit,
+)
+from .checkpoint_migrations import (
+    CheckpointSchemaMigration,
+    apply_checkpoint_schema_migrations,
+    plan_checkpoint_schema_migrations,
 )
 from .checkpoint_store import (
     CheckpointConflictError,
@@ -76,6 +83,9 @@ __all__ = [
     "PostgresBatchResultCheckpointStore",
     "AuditedPostgresBatchResultCheckpointStore",
     "CheckpointAuditEvent",
+    "CheckpointSchemaMigration",
+    "apply_checkpoint_schema_migrations",
+    "plan_checkpoint_schema_migrations",
     "OpenTelemetryCheckpointStore",
     "CheckpointConflictError",
     "apply_result_checkpoint_schema",

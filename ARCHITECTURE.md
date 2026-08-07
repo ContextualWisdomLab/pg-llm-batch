@@ -303,6 +303,49 @@ the surrounding transaction later committed. The host owns telemetry retention,
 access control, alerting, collector availability, database-client
 instrumentation, and any correlation outside this confidential package boundary.
 
+## Checkpoint schema migration operator boundary
+
+`init-checkpoint-storage` is an explicit opt-in operator command for existing
+PostgreSQL volumes. It preserves `init-db` as the core-schema command and keeps
+the independent `apply_result_checkpoint_schema()` and
+`apply_result_checkpoint_audit_schema()` helpers compatible for hosts that
+intentionally own separate transactions.
+
+Before database access, the operator bounded-reads, strict UTF-8 decodes, counts,
+and SHA-256 identifies `0007_result_stream_checkpoints` and
+`0008_result_checkpoint_audit_events` in that exact order. Each file is limited
+to 1 MiB plus one oversize-detection byte. The loaded SQL remains private; public
+migration descriptors contain only configured identifiers, positive bounded byte
+counts, and lowercase SHA-256.
+
+After both inputs are valid, one package-owned PostgreSQL transaction obtains the
+fixed two-key `pg_advisory_xact_lock`, executes migration 0007, executes migration
+0008, and issues one commit. A migration 0008 failure rolls back migration 0007
+from the same invocation and transaction end releases the lock automatically.
+The advisory lock serializes cooperating package operators; it is not an
+authorization mechanism and does not constrain an administrator, owner,
+superuser, or unrelated SQL client.
+
+The CLI emits one canonical JSON report only after commit. It excludes DSNs,
+credentials, SQL bodies, tenants, checkpoint values, provider payloads, audit
+rows, and raw database exception text. SHA-256 is deterministic
+change-identification evidence and is not a signature, provenance claim, remote
+attestation, publication authority, or integrated-release approval.
+
+No migration ledger, downgrade path, destructive retained-evidence rollback,
+provider credential, LLM key, `naruon`, or `contextual-orchestrator` dependency is
+introduced. Fresh Docker data directories retain their ordered initialization
+scripts; existing PostgreSQL volumes use the explicit operator command.
+
+```text
+init-checkpoint-storage
+    ├─ bounded load: 0007_result_stream_checkpoints
+    ├─ bounded load: 0008_result_checkpoint_audit_events
+    ├─ pg_advisory_xact_lock(PGLM, BATH)
+    ├─ execute 0007 → 0008
+    └─ one commit → bounded migration identity JSON
+```
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
@@ -327,7 +370,10 @@ place local PostgreSQL effects and `save_in_transaction()` on the same caller
 cursor; cross-system effects remain host-owned recovery boundaries. Hosts that
 choose the audited store gain transaction-coupled accepted-save evidence but
 still own identity authorization, retention, export, and stronger tamper-proof
-controls where required.
+controls where required. Hosts may use the checkpoint migration operator as a
+standalone deployment primitive and retain its bounded descriptors in a
+change-management record, but must not reinterpret them as tenant authorization
+or release provenance.
 
 ## Verification boundary
 
@@ -373,5 +419,10 @@ attributes, storage-agnostic operation spans, seconds-based nonnegative duration
 confidential failure classification, explicit Error status without descriptions,
 Unset success status, disabled exception recording, and preservation of
 application results and exception identity during ordinary tracer, meter, span,
-status, and clock failures. Final merge evidence must be regenerated against the
-integrated base; successful stacked-base runs are not reusable release evidence.
+status, and clock failures. Checkpoint migration operator tests prove strict
+bounded input, canonical identities, load-before-connect, one transaction-level
+advisory lock, exact 0007→0008 order, one commit, second-migration rollback,
+concurrent lock waiting, body-free JSON, unchanged `init-db`, and 100% production
+statement, branch, and public-docstring coverage. Final merge evidence must be
+regenerated against the integrated base; successful stacked-base runs are not
+reusable release evidence.
