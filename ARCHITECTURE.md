@@ -373,7 +373,10 @@ still own identity authorization, retention, export, and stronger tamper-proof
 controls where required. Hosts may use the checkpoint migration operator as a
 standalone deployment primitive and retain its bounded descriptors in a
 change-management record, but must not reinterpret them as tenant authorization
-or release provenance.
+or release provenance. Hosts may also build a checkpoint-audit snapshot manifest
+inside a caller-owned stable PostgreSQL transaction; the digest is content
+identity only, while external retention, signing, delivery evidence, and
+reconciliation remain host boundaries.
 
 ## Verification boundary
 
@@ -423,9 +426,16 @@ status, and clock failures. Checkpoint migration operator tests prove strict
 bounded input, canonical identities, load-before-connect, one transaction-level
 advisory lock, exact 0007→0008 order, one commit, second-migration rollback,
 concurrent lock waiting, body-free JSON, unchanged `init-db`, and 100% production
-statement, branch, and public-docstring coverage. Final merge evidence must be
-regenerated against the integrated base; successful stacked-base runs are not
-reusable release evidence.
+statement, branch, and public-docstring coverage. Checkpoint-audit export tests
+prove strict keyset cursor semantics, one-row lookahead, row-key revalidation,
+strict ordering, driver-overrun failure, no package commit, and live
+concurrent-insert continuation behavior. Snapshot-manifest tests prove strict
+schema/count/range validation, stable-transaction isolation requirements,
+bounded traversal and overflow failure, page-partition invariance, every-event
+content sensitivity, a fixed schema-version-1 digest vector, package-root exports,
+and live `REPEATABLE READ` behavior across a concurrently committed newer event.
+Final merge evidence must be regenerated against the integrated base; successful
+stacked-base runs are not reusable release evidence.
 
 ## Bounded checkpoint-audit export boundary
 
@@ -451,8 +461,60 @@ query and repeatedly call the in-transaction method on that same transaction.
 
 Audit identities are navigation keys, not cryptographic chronology or completeness
 proof. Sequence gaps and allocation/commit reordering are valid. External
-immutable/WORM retention, delivery receipts, cryptographic manifests,
+immutable/WORM retention, delivery receipts, signed or authenticated manifests,
 reconciliation, legal hold, and disposal remain host/operator responsibilities.
 The primitive stays independently deployable and can be embedded into CWL MSA
 workflows without requiring `contextual-orchestrator`, `naruon`, or a network
 export service.
+
+## Checkpoint audit snapshot manifest boundary
+
+`CheckpointAuditSnapshotManifest` and
+`build_audit_snapshot_manifest_in_transaction()` add an opt-in deterministic
+identity for one bounded, snapshot-stable traversal without adding a database
+object or replacing the existing page APIs. The method is caller-transaction-only
+because transaction isolation is an explicit part of the evidence boundary.
+
+Before traversal, the package checks `SHOW transaction_isolation` and accepts
+only PostgreSQL `REPEATABLE READ` or `SERIALIZABLE`. `READ COMMITTED` takes a new
+snapshot for each command and is rejected because a multi-page hash could
+otherwise combine rows that never coexisted in one database snapshot. The host
+must select the stable isolation level before the transaction's first query or
+data-modification statement; the library does not silently rewrite host-owned
+transaction semantics.
+
+The traversal reuses keyset pagination with a strict page size from 1 through
+1,000 and adds a strict `max_events` ceiling from 1 through 100,000. Package-owned
+memory holds at most one bounded page plus fixed digest state. If a continuation
+remains after the event budget is consumed, the builder raises rather than
+issuing a digest for silently truncated evidence.
+
+Manifest schema version 1 uses SHA-256 over a domain-separated, explicit
+length-framed byte contract. The header binds the trusted tenant, consumer,
+endpoint, and batch identity. Each retained `CheckpointAuditEvent` contributes
+every public event field in exact newest-first order; `recorded_at` is normalized
+to UTC with fixed microsecond precision. The trailer binds event count plus
+newest and oldest event identities. Page boundaries are excluded, making digest
+identity independent of a valid page-size choice for the same snapshot. A fixed
+known digest vector freezes version-1 framing; incompatible changes require a new
+schema version.
+
+The manifest revalidates its own bounded count, event range, and lowercase
+64-hex digest. Empty snapshots contain no event identities, one-event snapshots
+use one equal identity, and multi-event snapshots require a strictly descending
+range.
+
+SHA-256 here is deterministic content identity and change-detection evidence
+under FIPS 180-4. It is not a MAC, signature, credential, trusted timestamp,
+delivery receipt, provenance statement, or non-repudiation mechanism. Existing
+forced-RLS and ordinary-role mutation controls still exclude PostgreSQL owners,
+superusers, `BYPASSRLS` roles, disabled triggers, and physical administrators
+from the assurance claim. Hosts needing administrator-independent evidence must
+export the events and manifest to separately governed immutable/WORM storage and
+may sign or authenticate the exported manifest under their own key-management,
+retention, legal-hold, delivery, and reconciliation policies.
+
+The feature introduces no migration, provider credential, LLM key, network
+exporter, or background scheduler. It preserves standalone operation and can be
+embedded in CWL MSA workflows while leaving destination and authenticity controls
+to the host.
