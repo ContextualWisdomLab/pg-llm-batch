@@ -86,6 +86,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installed the durable checkpoint migration in the fresh bundled PostgreSQL image
+  as `/docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql`, after the cron
+  initialization script, so new container deployments cannot silently omit the
+  checkpoint persistence schema.
 - Stopped idempotent GET retries at response handoff so post-handoff payload or
   response-close failures close once and cannot reopen provider files, duplicate
   already-yielded records, or violate the asynchronous-context-manager protocol.
