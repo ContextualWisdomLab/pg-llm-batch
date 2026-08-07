@@ -60,20 +60,28 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
         user=role_name,
         password=password,
     )
-
-    with psycopg.connect(ADMIN_DSN, autocommit=True) as cluster_admin:
-        with cluster_admin.cursor() as cursor:
-            cursor.execute(
-                sql.SQL(
-                    "CREATE ROLE {} LOGIN PASSWORD %s "
-                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
-                    "NOREPLICATION NOBYPASSRLS"
-                ).format(sql.Identifier(role_name)),
-                (password,),
-            )
-            cursor.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name)))
+    role_created = False
+    database_created = False
 
     try:
+        with psycopg.connect(ADMIN_DSN, autocommit=True) as cluster_admin:
+            with cluster_admin.cursor() as cursor:
+                # PostgreSQL utility statements cannot bind PASSWORD through a
+                # protocol parameter. psycopg.sql.Literal performs the required
+                # server-compatible quoting without string interpolation.
+                cursor.execute(
+                    sql.SQL(
+                        "CREATE ROLE {} LOGIN PASSWORD {} "
+                        "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
+                        "NOREPLICATION NOBYPASSRLS"
+                    ).format(sql.Identifier(role_name), sql.Literal(password))
+                )
+                role_created = True
+                cursor.execute(
+                    sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database_name))
+                )
+                database_created = True
+
         with psycopg.connect(database_dsn, autocommit=True) as database_admin:
             with database_admin.cursor() as cursor:
                 cursor.execute('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"')
@@ -173,16 +181,18 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
     finally:
         with psycopg.connect(ADMIN_DSN, autocommit=True) as cluster_admin:
             with cluster_admin.cursor() as cursor:
-                cursor.execute(
-                    "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-                    "WHERE datname = %s AND pid <> pg_backend_pid()",
-                    (database_name,),
-                )
-                cursor.execute(
-                    sql.SQL("DROP DATABASE IF EXISTS {}").format(
-                        sql.Identifier(database_name)
+                if database_created:
+                    cursor.execute(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                        "WHERE datname = %s AND pid <> pg_backend_pid()",
+                        (database_name,),
                     )
-                )
-                cursor.execute(
-                    sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name))
-                )
+                    cursor.execute(
+                        sql.SQL("DROP DATABASE IF EXISTS {}").format(
+                            sql.Identifier(database_name)
+                        )
+                    )
+                if role_created:
+                    cursor.execute(
+                        sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(role_name))
+                    )
