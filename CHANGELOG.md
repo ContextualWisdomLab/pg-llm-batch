@@ -13,9 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `list_audit_event_page()`, and `list_audit_event_page_in_transaction()`. The
   cursor is a strict positive PostgreSQL `BIGINT`; continuation uses
   `checkpoint_audit_event_id < before_audit_event_id` rather than `OFFSET`, the
-  SQL query requests at most one bounded lookahead row, returned rows are
-  revalidated against the exact trusted audit key and strict descending order,
-  and package-owned page reads do not create a commit boundary. Hosts that need
+  SQL query requests at most one bounded lookahead row, and returned rows are
+  revalidated against the exact trusted audit key and strict descending order.
+  Each package-owned page uses its own database transaction; the in-transaction
+  method never commits or rolls back the caller's transaction. Hosts that need
   one database snapshot across pages must own a `REPEATABLE READ` or stricter
   transaction. The cursor is navigation state rather than completeness,
   authenticity, or non-repudiation evidence. No migration, exporter credential,
