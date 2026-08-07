@@ -175,6 +175,7 @@ def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
 
         def serve_forever(self):
             assert self._request("/other") == b""
+            assert self._request("/") == b""
             body = self._request("/healthz/")
             decoded = json.loads(body)
             assert decoded == {
@@ -204,6 +205,7 @@ def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
     health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
     assert ("address", ("127.0.0.1", 8090)) in events
     assert ("/other", "status", 404) in events
+    assert ("/", "status", 404) in events
     assert ("/healthz/", "status", 503) in events
     assert ("/healthz/", "header", "Content-Type", "application/json") in events
     assert ("/healthz/", "header", "Cache-Control", "no-store") in events
