@@ -3,7 +3,8 @@
 """Standalone command-line interface: ``python -m pg_llm_batch ...``.
 
 Subcommands:
-    init-db        apply the batch schema (idempotent)
+    init-db        apply the core batch schema (idempotent)
+    init-checkpoint-storage  atomically apply checkpoint and audit schemas
     config set     set a KV config value
     config get     read a KV config value
     config set-secret   store a secret (Fernet-encrypted when a key is present)
@@ -30,6 +31,7 @@ from typing import List, Optional
 from . import db
 from .batch_api_client import BatchAPIClient, config_credentials_provider
 from .bootstrap import resolve_dsn, resolve_secret_key
+from .checkpoint_migrations import apply_checkpoint_schema_migrations
 from .config import PostgresConfigStore, SecretStore
 from .exceptions import PgLlmBatchError
 from .health import check_health, serve_healthz
@@ -53,8 +55,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_init = sub.add_parser("init-db", help="Apply batch schema (idempotent)")
+    p_init = sub.add_parser("init-db", help="Apply core batch schema (idempotent)")
     _add_common(p_init)
+
+    p_checkpoint = sub.add_parser(
+        "init-checkpoint-storage",
+        help="Atomically apply checkpoint and checkpoint-audit schemas",
+    )
+    _add_common(p_checkpoint)
 
     p_cfg = sub.add_parser("config", help="Manage KV config and secrets")
     cfg_sub = p_cfg.add_subparsers(dest="config_command", required=True)
@@ -136,6 +144,20 @@ def _dispatch(argv: Optional[List[str]]) -> int:
     if args.command == "init-db":
         db.apply_schema(dsn)
         print("Schema applied.")
+        return 0
+
+    if args.command == "init-checkpoint-storage":
+        applied = apply_checkpoint_schema_migrations(dsn)
+        print(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "applied_migrations": [item.as_dict() for item in applied],
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
         return 0
 
     if args.command == "config":
