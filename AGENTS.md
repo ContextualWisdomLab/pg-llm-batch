@@ -208,6 +208,10 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   successful save call, including exact idempotent repeats, inside the same
   PostgreSQL transaction as checkpoint persistence. Rejected validation or CAS
   operations must never create a success event.
+- Timestamp `recorded_at` with PostgreSQL `clock_timestamp()` at accepted-save
+  row insertion. Do not use transaction-start `NOW()`/`CURRENT_TIMESTAMP` as the
+  event time for caller-owned transactions. Keep migration 0008 idempotent by
+  resetting the column default on reapplication without rewriting retained rows.
 - Derive tenant and consumer identity only from the trusted host boundary. Keep
   audit queries tenant-qualified by consumer, endpoint, and batch and enforce a
   strict non-coercive maximum of 1,000 returned rows per call.
@@ -230,5 +234,6 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Rollback must fail closed while any tenant's audit evidence remains. Retention,
   export, legal hold, and disposal are host/operator responsibilities.
 - Maintain 100% production statement, branch, and public-docstring coverage with
-  deterministic transaction, tenant, validation, bounded-read, migration,
-  rollback, immutability-trigger, compatibility, and documentation tests.
+  deterministic transaction, event-time, tenant, validation, bounded-read,
+  migration, rollback, immutability-trigger, compatibility, and documentation
+  tests.
