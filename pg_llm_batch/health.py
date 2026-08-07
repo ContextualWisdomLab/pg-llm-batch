@@ -108,7 +108,7 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
 
         def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
             """Return redacted readiness for ``/healthz``, or 404 elsewhere."""
-            if self.path.rstrip("/") not in ("/healthz", ""):
+            if self.path.rstrip("/") != "/healthz":
                 self.send_response(404)
                 self.end_headers()
                 return
