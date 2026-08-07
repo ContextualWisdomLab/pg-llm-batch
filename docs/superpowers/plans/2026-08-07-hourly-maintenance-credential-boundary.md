@@ -30,7 +30,7 @@ requires the protected merge SHA from central `main` and fresh exact-head gates.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` to current `.github#782` head
-      `b921e26854f1b0fd367c76a32af6db966374bcef` for Draft verification.
+      `355d9e545fd971638066e90654fdfaa105431968` for Draft verification.
 - [x] Update `canonical_ref` to the same immutable SHA.
 - [x] Remove the review-fix job permission elevation.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
@@ -47,14 +47,19 @@ requires the protected merge SHA from central `main` and fresh exact-head gates.
 
 ## Task 4: Verify and promote
 
-- [ ] Run focused workflow-contract tests on the implementation head.
-- [ ] Run the complete non-integration suite.
-- [ ] Require Ruff and 100% production statement/branch coverage.
-- [ ] Require 100% production docstring coverage.
+- [ ] Run focused workflow-contract tests on the exact source head.
+- [ ] Run the complete non-integration suite on the exact source head.
+- [ ] Require Ruff and 100% production statement/branch coverage on the exact
+      source head.
+- [ ] Require 100% production docstring coverage on the exact source head.
 - [ ] Require lock freshness, package builds, Compose validation, and both
-      container builds.
+      container builds on the exact source head.
 - [ ] Require current-head security, SAST, dependency, SBOM, and review gates.
 - [ ] After central #782 merges, replace the temporary SHA with its protected
       merge SHA and rerun every gate.
 - [ ] Merge only with zero unresolved valid findings and a qualifying independent
       non-author approval.
+
+The current pull-request CI may validate GitHub's synthetic merge commit rather
+than the source head. Such runs are useful regression evidence but do not satisfy
+the exact-source-head acceptance items above.
