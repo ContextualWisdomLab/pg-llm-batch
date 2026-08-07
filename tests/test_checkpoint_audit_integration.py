@@ -132,6 +132,38 @@ def test_live_audit_is_tenant_isolated_append_only_and_rollback_safe() -> None:
         assert {event.tenant_scope for event in events_a} == {"tenant-a"}
         assert {event.tenant_scope for event in events_b} == {"tenant-b"}
 
+        timed_batch_id = f"timed-{suffix}"
+        timed_checkpoint = _checkpoint(timed_batch_id, "c" * 64)
+        with psycopg.connect(role_dsn) as timed_connection:
+            with timed_connection.cursor() as cursor:
+                cursor.execute("SELECT transaction_timestamp()")
+                transaction_started_at = cursor.fetchone()[0]
+                cursor.execute("SELECT pg_sleep(0.02)")
+                cursor.execute("SELECT clock_timestamp()")
+                before_save = cursor.fetchone()[0]
+
+                assert (
+                    tenant_a.save_in_transaction(
+                        cursor,
+                        consumer,
+                        timed_checkpoint,
+                    )
+                    == timed_checkpoint
+                )
+                timed_events = tenant_a.list_audit_events_in_transaction(
+                    cursor,
+                    consumer,
+                    timed_batch_id,
+                    "default",
+                )
+                cursor.execute("SELECT clock_timestamp()")
+                after_save = cursor.fetchone()[0]
+
+                assert len(timed_events) == 1
+                assert transaction_started_at < before_save
+                assert before_save <= timed_events[0].recorded_at <= after_save
+            timed_connection.rollback()
+
         with psycopg.connect(role_dsn) as unscoped_connection:
             with unscoped_connection.cursor() as cursor:
                 cursor.execute("SELECT COUNT(*) FROM llm_result_checkpoint_audit_events")
