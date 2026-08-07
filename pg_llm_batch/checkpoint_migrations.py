@@ -25,7 +25,9 @@ _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 
 def _supported_migration_ids() -> frozenset[str]:
     """Return the exact migration identifiers configured for this invocation."""
-    return frozenset(migration_id for migration_id, _path in _CHECKPOINT_SCHEMA_MIGRATION_PATHS)
+    return frozenset(
+        migration_id for migration_id, _path in _CHECKPOINT_SCHEMA_MIGRATION_PATHS
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,7 +59,9 @@ class CheckpointSchemaMigration:
             not isinstance(self.sha256, str)
             or _SHA256_PATTERN.fullmatch(self.sha256) is None
         ):
-            raise ValueError("sha256 must be a lowercase 64-character hexadecimal digest")
+            raise ValueError(
+                "sha256 must be a lowercase 64-character hexadecimal digest"
+            )
 
     def as_dict(self) -> dict[str, int | str]:
         """Return one stable JSON-compatible migration evidence object."""
@@ -81,7 +85,8 @@ def _load_checkpoint_schema_migration(
     migration_path: Path,
 ) -> _LoadedCheckpointSchemaMigration:
     """Load, bound, decode, and identify one migration before database access."""
-    sql_bytes = migration_path.read_bytes()
+    with migration_path.open("rb") as migration_file:
+        sql_bytes = migration_file.read(MAX_CHECKPOINT_SCHEMA_MIGRATION_BYTES + 1)
     byte_count = len(sql_bytes)
     if byte_count < 1 or byte_count > MAX_CHECKPOINT_SCHEMA_MIGRATION_BYTES:
         raise RuntimeError("checkpoint schema migration has an invalid bounded size")
