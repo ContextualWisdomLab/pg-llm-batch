@@ -99,6 +99,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Timestamp checkpoint accepted-save audit rows with PostgreSQL
+  `clock_timestamp()` at insert time instead of transaction-start `NOW()`, so a
+  long caller-owned transaction cannot misstate when the package accepted a
+  checkpoint. Reapplying migration 0008 repairs the future-row default without
+  rewriting retained evidence; package and container migrations remain
+  byte-identical.
 - Stopped idempotent GET retries at response handoff so post-handoff payload or
   response-close failures close once and cannot reopen provider files, duplicate
   already-yielded records, or violate the asynchronous-context-manager protocol.
