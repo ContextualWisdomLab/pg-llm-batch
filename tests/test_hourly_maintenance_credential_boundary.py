@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 WORKFLOW_PATH = Path(".github/workflows/hourly-maintenance.yml")
-FIX_SCHEDULER_SHA = "b921e26854f1b0fd367c76a32af6db966374bcef"
+FIX_SCHEDULER_SHA = "355d9e545fd971638066e90654fdfaa105431968"
 MERGE_SCHEDULER_SHA = "5983b41ace75040c1d81818171ca7d0f3653254e"
 
 
