@@ -101,6 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Installed the durable checkpoint migration in the fresh bundled PostgreSQL image
+  as `/docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql`, after the cron
+  initialization script, so new container deployments cannot silently omit the
+  checkpoint persistence schema.
 - Separated live checkpoint-audit verification into a least-privilege ordinary
   application role and an isolated mutation-probe role. The application role no
   longer receives audit UPDATE, DELETE, or TRUNCATE rights or blanket access to
