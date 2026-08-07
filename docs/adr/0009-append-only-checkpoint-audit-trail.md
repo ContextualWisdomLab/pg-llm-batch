@@ -21,6 +21,12 @@ source, and the outcome. OWASP likewise distinguishes application audit trails
 from ordinary infrastructure logs and recommends protecting retained events
 against unauthorized modification or deletion.
 
+PostgreSQL `NOW()` and `CURRENT_TIMESTAMP` represent the start of the current
+transaction, not the instant an audit insert executes. That distinction matters
+for caller-owned transactions: a checkpoint accepted late in a long transaction
+must not inherit a materially earlier transaction-start timestamp when the audit
+record claims when the accepted-save action occurred.
+
 ## Decision
 
 Add an opt-in `AuditedPostgresBatchResultCheckpointStore` backed by
@@ -36,8 +42,13 @@ operation creates no success row.
 Each event records the trusted tenant and consumer identity, the exact endpoint
 and remote batch key, the complete validated checkpoint coordinates and prefix
 digest, a fixed action vocabulary, a database-generated monotonic identity, and
-a database timestamp. It deliberately excludes provider payloads, prompts,
-model output, credentials, DSNs, transport headers, and exception text.
+a database timestamp. `recorded_at` uses PostgreSQL `clock_timestamp()` so it
+reflects wall-clock time when the accepted-save row is inserted rather than the
+start of a possibly long caller-owned transaction. The idempotent migration also
+resets the column default on reapplication so an earlier development application
+using `NOW()` is repaired without rewriting retained rows. The event deliberately
+excludes provider payloads, prompts, model output, credentials, DSNs, transport
+headers, and exception text.
 
 Audit reads are tenant-qualified, newest-first, and bounded to at most 1,000
 rows per call. The package exposes caller-owned and package-owned transaction
@@ -73,11 +84,17 @@ authorization. Hosts still derive tenant and consumer identity only after their
 own authentication and authorization boundary and must not expose arbitrary SQL
 to tenant-controlled callers.
 
+`clock_timestamp()` provides database wall-clock event time, not cryptographic
+time attestation. PostgreSQL administrators and the underlying host clock remain
+inside the operational trust boundary.
+
 ## Consequences
 
 - Enterprise operators gain durable, transaction-coupled reconstruction of
   successful checkpoint acceptance.
 - Accepted idempotent retries are visible rather than silently collapsed.
+- Caller-owned transactions retain atomicity while audit timestamps identify the
+  insert-time event rather than transaction start.
 - Audit retention consumes database storage and therefore requires explicit
   capacity, retention, export, and disposal policy at the host layer.
 - A failed audit insert causes the surrounding checkpoint transaction to fail
@@ -90,9 +107,12 @@ to tenant-controlled callers.
 Deterministic tests require strict bounded read limits, immutable public event
 values, tenant-qualified SQL, transaction coupling, no success event after a
 rejected save, forced RLS, row and TRUNCATE mutation rejection, byte-identical
-package/container migrations, ordered fresh-image installation, and fail-closed
-non-empty rollback. Production statement, branch, and public-docstring coverage
-remain 100%.
+package/container migrations, insert-time `clock_timestamp()` defaults including
+idempotent default repair, ordered fresh-image installation, and fail-closed
+non-empty rollback. Live PostgreSQL verification proves an accepted-save event
+inside a caller-owned transaction is timestamped after an intentionally earlier
+wall-clock observation in that same transaction. Production statement, branch,
+and public-docstring coverage remain 100%.
 
 ## References
 
@@ -105,3 +125,7 @@ https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
 
 PostgreSQL Global Development Group. (2026). *CREATE TRIGGER* (PostgreSQL 18
 documentation). https://www.postgresql.org/docs/18/sql-createtrigger.html
+
+PostgreSQL Global Development Group. (2026). *Date/time functions and operators*
+(PostgreSQL 18 documentation).
+https://www.postgresql.org/docs/18/functions-datetime.html
