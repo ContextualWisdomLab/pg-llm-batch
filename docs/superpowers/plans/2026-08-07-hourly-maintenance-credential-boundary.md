@@ -35,7 +35,7 @@ regressions and are not reused as success evidence.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` to current `.github#782` head
-      `8ab55aa29ce41aafe5f0f5c4195c7726861bf518` for Draft verification.
+      `9b4acb7e3cc65ea31cbb8c18b2b1a3d60015eef5` for Draft verification.
 - [x] Update `canonical_ref` to the same immutable SHA.
 - [x] Remove the review-fix job permission elevation.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
@@ -58,6 +58,18 @@ regressions and are not reused as success evidence.
       `8478fbf75a3533ddd4871c7ee488b223fd68d754` then required the same identity,
       and implementation head `82892548ad11360a0e22c4b8ea0e4ff819867dbc`
       moved both workflow references to that exact prerequisite SHA.
+- [x] When `.github#782` advanced from
+      `8ab55aa29ce41aafe5f0f5c4195c7726861bf518` to
+      `9b4acb7e3cc65ea31cbb8c18b2b1a3d60015eef5`, update the focused contract
+      before production. Test-only head
+      `76c9e86cbcd6ba5885bf28a3a96037b0a56d27d5` failed exact-head CI
+      `31222806064` with exactly the intended scheduler-pin assertion
+      (`1 failed, 352 passed, 3 deselected` on Python 3.10), while Security Scan
+      and SAST Semgrep remained successful. Implementation head
+      `f142a29eb1b16ccd20d92928e743edfa385dc93b` moved the workflow `uses` and
+      `canonical_ref`; governance-alignment head
+      `6738aa6bb14a03549d7bb75aaccd45d5bab8197c` moved the duplicate workflow
+      contract to the same immutable prerequisite identity.
 
 ## Task 3: Bind CI to the exact source head
 
