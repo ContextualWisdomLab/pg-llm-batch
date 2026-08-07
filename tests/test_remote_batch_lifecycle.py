@@ -15,6 +15,8 @@ from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError
 
+from tests.bounded_response_double import bind_bounded_json_response
+
 
 class _Cursor:
     """Record SQL executions and return configured rows for database tests."""
@@ -77,6 +79,7 @@ class _Response:
         self.status = status
         self.payload = payload
         self.headers: dict[str, str] = {}
+        bind_bounded_json_response(self, payload)
 
     async def json(self) -> dict[str, Any]:
         return self.payload

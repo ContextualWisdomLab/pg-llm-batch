@@ -13,6 +13,8 @@ from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError, ValidationError
 
+from tests.bounded_response_double import bind_bounded_json_response
+
 
 class _Cursor:
     """Capture SQL submitted by the lifecycle helper."""
@@ -73,6 +75,7 @@ class _ProviderResponse:
 
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
+        bind_bounded_json_response(self, payload)
 
     async def __aenter__(self) -> "_ProviderResponse":
         return self
