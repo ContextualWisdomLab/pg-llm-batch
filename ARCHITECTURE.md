@@ -180,6 +180,42 @@ An incompatible framing change requires a new checkpoint schema version and an
 explicit compatibility/migration decision. The current feature adds no database
 object and preserves standalone and modular MSA deployment.
 
+## Durable result-checkpoint persistence boundary
+
+`PostgresBatchResultCheckpointStore` adds an optional package-owned persistence
+path without changing the streaming client. The durable identity in
+`llm_result_stream_checkpoints` is:
+
+```text
+(tenant_scope, checkpoint_consumer_name, endpoint_alias, remote_batch_id)
+```
+
+The host selects tenant and consumer identity after authentication and
+authorization. Provider data never selects either value. Forced row-level
+security and tenant-qualified predicates establish defense in depth for ordinary
+`NOSUPERUSER NOBYPASSRLS` application roles; generic tenant-controlled SQL and
+administrative bypass identities remain outside the isolation claim.
+
+Advancement is compare-and-swap rather than last-writer-wins. Existing state is
+read with `FOR UPDATE`; an unequal update must present the exact
+`expected_previous` value and increase both logical record and physical-line
+positions. Initial missing-row concurrency uses the compound unique key,
+`ON CONFLICT ... DO NOTHING`, and locked reconciliation. An identical race is
+idempotent, while a different first checkpoint fails as a bounded conflict.
+
+Simple `load()` and `save()` operations own their PostgreSQL transaction.
+`load_in_transaction()` and `save_in_transaction()` use a caller-owned
+transaction and never commit or roll it back. A host can therefore make local
+PostgreSQL record effects and checkpoint advancement atomic. That boundary does
+not extend to another database, queue, object store, or external API and is not a
+distributed exactly-once protocol; those effects require an outbox, idempotency
+key, or explicit reconciliation design.
+
+The package and container migrations are byte-identical. Their object names are
+descriptive snake_case, RLS is enabled and forced, and the rollback refuses to
+drop a non-empty table. The stored digest remains prefix evidence only; durable
+storage does not add provider authentication or full-stream immutability.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
@@ -199,7 +235,9 @@ For checkpointed delivery, hosts must persist the complete checkpoint in the
 same trusted tenant and endpoint context as the record effects and must not
 advance it after a failed or partially committed consumer transaction. Hosts
 must also avoid treating successful prefix reproduction as evidence that an
-unseen suffix is complete or immutable.
+unseen suffix is complete or immutable. Hosts using the package-owned store may
+place local PostgreSQL effects and `save_in_transaction()` on the same caller
+cursor; cross-system effects remain host-owned recovery boundaries.
 
 ## Verification boundary
 
@@ -229,6 +267,10 @@ independence, exact resume without acknowledged-record replay, final-checkpoint
 completion, result-prefix binding across error-file checkpoints, content and
 framing mutation, changed file identity, truncation at or before the checkpoint,
 explicit unseen-suffix limitations, strict pre-network identity validation,
-context-managed early close, and SHA-256 framing sensitivity. Final merge
+context-managed early close, and SHA-256 framing sensitivity. Durable-store tests
+cover strict consumer identity, caller-owned transaction behavior, idempotent
+repeat, exact compare-and-swap, stale and regressive writers, equal and unequal
+first-writer races, disappearing conflict rows, forced-RLS migration text,
+fail-closed rollback, documentation, and live PostgreSQL persistence. Final merge
 evidence must be regenerated against the integrated base; successful stacked-base
 runs are not reusable release evidence.

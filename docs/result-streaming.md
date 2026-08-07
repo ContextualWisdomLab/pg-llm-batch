@@ -99,6 +99,87 @@ mismatch as an operator reconciliation event rather than silently advancing it.
 See [ADR 0006](adr/0006-resumable-result-checkpoints.md) and the
 [assurance record](doctoring/resumable-result-checkpoints.md).
 
+## Package-owned durable checkpoint storage
+
+Apply the dedicated migration after the base package schema:
+
+```python
+from pg_llm_batch import (
+    PostgresBatchResultCheckpointStore,
+    apply_result_checkpoint_schema,
+)
+
+apply_result_checkpoint_schema(dsn)
+checkpoint_store = PostgresBatchResultCheckpointStore(
+    dsn,
+    tenant_scope="tenant-a",
+)
+```
+
+For simple standalone processing, `load()` and `save()` own their PostgreSQL
+transactions:
+
+```python
+resume_after = checkpoint_store.load("invoice-worker", "batch-123", "default")
+
+async with client.open_checkpointed_batch_records(
+    "batch-123",
+    "default",
+    resume_after=resume_after,
+) as records:
+    async for item in records:
+        apply_idempotent_record(item.record)
+        resume_after = checkpoint_store.save(
+            "invoice-worker",
+            item.checkpoint,
+            expected_previous=resume_after,
+        )
+```
+
+When record effects are stored in the same PostgreSQL database, use a
+caller-owned transaction so the effect and acknowledgement cannot split:
+
+```python
+import psycopg
+
+with psycopg.connect(dsn) as connection:
+    with connection.cursor() as cursor:
+        apply_record_with_cursor(cursor, item.record)
+        resume_after = checkpoint_store.save_in_transaction(
+            cursor,
+            "invoice-worker",
+            item.checkpoint,
+            expected_previous=resume_after,
+        )
+    connection.commit()
+```
+
+`save_in_transaction()` never commits or rolls back the caller's cursor. An exact
+repeat is idempotent. Every different durable row requires the exact
+`expected_previous` value and strictly increasing record and physical-line
+positions. A stale, forked, regressive, missing, or conflicting first writer
+raises `CheckpointConflictError` without overwrite.
+
+Tenant scope and consumer identity must come from the host's authenticated and
+authorized control plane. Production application roles must be
+`NOSUPERUSER NOBYPASSRLS`, must not expose arbitrary tenant-controlled SQL, and
+must have only the table and schema privileges required by the deployment.
+Forced row-level security is defense in depth, not a credential or substitute for
+authorization.
+
+This is not a distributed exactly-once protocol. A queue, another database,
+object store, webhook, or provider-side effect cannot share the local PostgreSQL
+transaction and still requires a stable idempotency key, transactional outbox, or
+operator reconciliation. Durable storage also does not authenticate the
+checkpoint or prove full-stream immutability after the reproduced prefix.
+
+The rollback file
+`pg_llm_batch/migrations/rollback/0007_result_stream_checkpoints.sql` refuses to
+drop a non-empty table. Export or reconcile acknowledgement evidence before an
+operator deliberately removes it. See
+[ADR 0007](adr/0007-durable-result-checkpoint-store.md) and the
+[durable-store assurance record](doctoring/durable-result-checkpoint-store.md).
+
 ## Resource and trust boundaries
 
 - The inherited total decoded-byte limit is enforced independently for each
@@ -148,16 +229,18 @@ verification.
 
 The streaming client subclasses `BatchAPIClient`, so credentials, gateway URL
 validation, timeouts, pre-handoff retry policy, and session lifecycle remain
-identical. The checkpoint feature does not require PostgreSQL schema changes or
-another CWL service. Embedding hosts may store each record and checkpoint in
-their own durable queue, tenant-qualified database, transactional outbox, or
-bounded transformation pipeline.
+identical. The package-owned checkpoint store is optional; custom host stores
+remain supported, and the streaming client itself does not open the checkpoint
+table.
 
-The existing OpenTelemetry subclass does not automatically wrap this opt-in
-iterator. Hosts that need per-record or resume-reconciliation telemetry should
-instrument the consumer boundary with low-cardinality attributes and must not
-attach provider identifiers, checkpoint digests, prompts, response bodies, or
-model output.
+Embedding hosts may store each record and checkpoint in their own durable queue,
+tenant-qualified database, transactional outbox, or bounded transformation
+pipeline. The existing OpenTelemetry subclass does not automatically wrap this
+opt-in iterator or checkpoint store. Hosts that need per-record,
+resume-reconciliation, or checkpoint-conflict telemetry should instrument the
+consumer boundary with low-cardinality attributes and must not attach provider
+identifiers, checkpoint digests, prompts, response bodies, model output, or raw
+database exception text.
 
 ## References
 
