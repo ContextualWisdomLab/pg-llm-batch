@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -126,3 +127,33 @@ def test_snapshot_manifest_accepts_libpq_intrans_before_checking_isolation(
 
     assert manifest.event_count == 0
     assert cursor.calls == [("SHOW transaction_isolation", ())]
+
+
+def test_authoritative_snapshot_docs_reject_autocommit_session_isolation() -> None:
+    """Authoritative contracts must state the active-transaction requirement."""
+    paths = (
+        Path("AGENTS.md"),
+        Path("CLAUDE.md"),
+        Path("ARCHITECTURE.md"),
+        Path("CHANGELOG.md"),
+        Path("docs/adr/0012-checkpoint-audit-snapshot-manifests.md"),
+        Path("docs/checkpoint-audit.md"),
+        Path("docs/doctoring/checkpoint-audit-snapshot-manifests.md"),
+    )
+    for path in paths:
+        text = " ".join(path.read_text(encoding="utf-8").split()).lower()
+        assert "active postgresql transaction" in text, path
+        assert "autocommit" in text, path
+        assert "repeatable read" in text, path
+
+
+def test_snapshot_doctoring_cites_psycopg_transaction_status() -> None:
+    """Doctoring records the primary driver evidence used by the fail-closed gate."""
+    text = " ".join(
+        Path("docs/doctoring/checkpoint-audit-snapshot-manifests.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    assert "ConnectionInfo.transaction_status" in text
+    assert "Psycopg 3" in text
+    assert "APA 7" in text
