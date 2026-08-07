@@ -180,3 +180,33 @@
 - Maintain 100% production statement, branch, and public-docstring coverage for
   success, conflict, validation, internal-error, duration, Error-status,
   Unset-status, confidentiality, delegation, and telemetry-failure paths.
+
+## Checkpoint accepted-save audit invariants
+
+- Keep `AuditedPostgresBatchResultCheckpointStore` optional and preserve the base
+  durable store and custom host persistence contracts.
+- Append one `checkpoint_save_accepted` event only after a save call succeeds,
+  in the same PostgreSQL transaction as checkpoint persistence. Exact idempotent
+  repeats are separate accepted-call events; validation/CAS failures create no
+  success event.
+- Validate tenant, consumer, endpoint, batch, event, checkpoint, timestamp, and
+  read limit without coercion. Keep reads tenant-qualified, newest-first, and
+  bounded to at most 1,000 rows.
+- Store only structured checkpoint audit fields. Do not add provider bodies,
+  prompts, model output, credentials, DSNs, transport headers, exception text,
+  or arbitrary free-form log content.
+- Keep audit RLS enabled and forced. Application roles remain `NOSUPERUSER
+  NOBYPASSRLS`. Reject ordinary UPDATE/DELETE through the row trigger and
+  TRUNCATE through the statement trigger.
+- Never call these controls cryptographic non-repudiation or administrator-proof
+  tamper evidence. Owners, superusers, `BYPASSRLS`, disabled triggers, and
+  physical database administration are outside this boundary.
+- Keep package/container audit migration bytes identical, install them after the
+  durable checkpoint schema on fresh data directories, and require explicit
+  migration for existing PostgreSQL volumes.
+- Rollback must refuse to erase non-empty audit evidence across tenant scopes.
+  Retention, export, legal hold, disposal, and stronger immutable evidence are
+  host/operator concerns.
+- Maintain test-first transaction, validation, bounded-read, migration,
+  rollback, trigger, compatibility, documentation, and 100% production
+  statement/branch/public-docstring coverage.
