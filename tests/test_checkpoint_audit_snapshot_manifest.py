@@ -95,11 +95,14 @@ def test_snapshot_manifest_is_immutable_and_revalidates_public_fields() -> None:
 
     invalid = (
         {"schema_version": 2},
+        {"schema_version": 1.0},
         {"event_count": True},
         {"event_count": -1},
         {"event_count": 0, "newest_audit_event_id": 1, "oldest_audit_event_id": 1},
         {"event_count": 1, "newest_audit_event_id": None, "oldest_audit_event_id": None},
+        {"event_count": 1, "newest_audit_event_id": 9, "oldest_audit_event_id": 8},
         {"event_count": 2, "newest_audit_event_id": 8, "oldest_audit_event_id": 9},
+        {"event_count": 2, "newest_audit_event_id": 9, "oldest_audit_event_id": 9},
         {"snapshot_sha256": "A" * 64},
         {"snapshot_sha256": "a" * 63},
         {"snapshot_sha256": "g" * 64},
