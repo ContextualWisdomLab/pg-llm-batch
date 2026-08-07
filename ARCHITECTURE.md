@@ -228,11 +228,17 @@ operations produce no success event.
 
 The event retains trusted tenant and consumer identity, endpoint and remote batch
 key, the complete validated checkpoint coordinates and prefix digest, a
-database-generated event identity, and a database timestamp. It excludes
-provider payloads, prompts, model output, credentials, DSNs, transport headers,
-exception messages, and arbitrary free-form log text. Public reads are
-tenant-qualified by the exact checkpoint key, newest-first, and bounded to a
-strict maximum of 1,000 rows per call.
+database-generated event identity, and a database timestamp. `recorded_at` uses
+PostgreSQL `clock_timestamp()` at row insertion because `NOW()` and
+`CURRENT_TIMESTAMP` are transaction-start values and can materially predate an
+accepted save in a long caller-owned transaction. Reapplying migration 0008
+idempotently resets the default for future rows without rewriting retained audit
+evidence. The database wall clock remains inside the operational trust boundary
+and is not a cryptographic time attestation. The event excludes provider
+payloads, prompts, model output, credentials, DSNs, transport headers, exception
+messages, and arbitrary free-form log text. Public reads are tenant-qualified by
+the exact checkpoint key, newest-first, and bounded to a strict maximum of 1,000
+rows per call.
 
 `llm_result_checkpoint_audit_events` uses forced row-level security under the
 same trusted transaction-local tenant setting as checkpoint persistence. A row
@@ -356,15 +362,16 @@ cover strict consumer identity, caller-owned transaction behavior, idempotent
 repeat, exact compare-and-swap, stale and regressive writers, equal and unequal
 first-writer races, disappearing conflict rows, forced-RLS migration text,
 fail-closed rollback, documentation, and live PostgreSQL persistence. Checkpoint
-audit tests additionally cover accepted-save transaction coupling, rejected-save
-no-success evidence, strict event revalidation, tenant-qualified bounded reads,
-package/container migration identity, forced RLS, UPDATE/DELETE and TRUNCATE
-rejection, fresh-image installation order, fail-closed non-empty rollback, and
-explicit administrator-tamper exclusions. Checkpoint telemetry tests additionally
-prove exact delegation, fixed low-cardinality signal attributes, storage-agnostic
-operation spans, seconds-based nonnegative duration, confidential failure
-classification, explicit Error status without descriptions, Unset success status,
-disabled exception recording, and preservation of application results and
-exception identity during ordinary tracer, meter, span, status, and clock
-failures. Final merge evidence must be regenerated against the integrated base;
-successful stacked-base runs are not reusable release evidence.
+audit tests additionally cover accepted-save transaction coupling, caller-owned
+insert-time wall-clock semantics, rejected-save no-success evidence, strict event
+revalidation, tenant-qualified bounded reads, package/container migration
+identity and idempotent timestamp-default repair, forced RLS, UPDATE/DELETE and
+TRUNCATE rejection, fresh-image installation order, fail-closed non-empty
+rollback, and explicit administrator-tamper exclusions. Checkpoint telemetry
+tests additionally prove exact delegation, fixed low-cardinality signal
+attributes, storage-agnostic operation spans, seconds-based nonnegative duration,
+confidential failure classification, explicit Error status without descriptions,
+Unset success status, disabled exception recording, and preservation of
+application results and exception identity during ordinary tracer, meter, span,
+status, and clock failures. Final merge evidence must be regenerated against the
+integrated base; successful stacked-base runs are not reusable release evidence.
