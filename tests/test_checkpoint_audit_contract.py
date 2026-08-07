@@ -58,6 +58,7 @@ def test_audit_migration_is_append_only_tenant_isolated_and_descriptive() -> Non
     required = (
         "CREATE TABLE IF NOT EXISTS llm_result_checkpoint_audit_events",
         "checkpoint_audit_event_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY",
+        "recorded_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()",
         "ALTER TABLE llm_result_checkpoint_audit_events ENABLE ROW LEVEL SECURITY",
         "ALTER TABLE llm_result_checkpoint_audit_events FORCE ROW LEVEL SECURITY",
         "CREATE POLICY plc_llm_result_checkpoint_audit_events_tenant_scope",
@@ -69,6 +70,7 @@ def test_audit_migration_is_append_only_tenant_isolated_and_descriptive() -> Non
     )
     for phrase in required:
         assert phrase in sql
+    assert "recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()" not in sql
 
 
 def test_checkpoint_audit_rollback_refuses_nonempty_evidence() -> None:
