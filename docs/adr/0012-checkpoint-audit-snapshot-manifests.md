@@ -33,17 +33,23 @@ The method is intentionally caller-transaction-only. It first requires one
 **active PostgreSQL transaction** and rejects autocommit even when a session-level
 default reports `REPEATABLE READ`. Only after that state check does it verify
 `SHOW transaction_isolation`, accepting PostgreSQL `REPEATABLE READ` or
-`SERIALIZABLE`. `READ COMMITTED`, malformed isolation evidence, unknown modes,
-and inactive transaction states fail closed. Session isolation by itself is not
-snapshot ownership: without an active transaction, autocommit may execute each
-page query in a distinct transaction and therefore a distinct snapshot.
+`SERIALIZABLE`, and `SHOW transaction_read_only`, accepting only `on`. The
+stable transaction must therefore be **read-only**. `READ COMMITTED`, read-write
+transactions, malformed transaction-characteristic evidence, unknown modes, and
+inactive transaction states fail closed before page traversal. Session isolation
+by itself is not snapshot ownership: without an active transaction, autocommit
+may execute each page query in a distinct transaction and therefore a distinct
+snapshot. A read-write stable transaction is also insufficient for retained
+evidence identity because PostgreSQL makes a transaction's own uncommitted writes
+visible to that transaction; a manifest could otherwise bind accepted-save audit
+rows that later disappear when the caller rolls back.
 
 The package does not add a convenience wrapper that silently begins a transaction
-or changes transaction isolation. PostgreSQL requires isolation to be selected
-before the first query or data-modification statement, and the host owns the
-transaction lifecycle. The runtime gate uses Psycopg 3
-`ConnectionInfo.transaction_status` and accepts only the libpq `INTRANS` state
-before probing isolation.
+or changes transaction isolation or read-only mode. PostgreSQL requires these
+transaction characteristics to be selected before the first query or data-
+modification statement, and the host owns the transaction lifecycle. The runtime
+gate uses Psycopg 3 `ConnectionInfo.transaction_status` and accepts only the
+libpq `INTRANS` state before probing the transaction characteristics.
 
 Traversal reuses ADR 0011 keyset pages. `page_size` remains a strict integer from
 1 through 1,000. `max_events` is a separate strict integer from 1 through 100,000.
@@ -103,6 +109,14 @@ Rejected because PostgreSQL takes a new `READ COMMITTED` snapshot for each
 statement. A multi-page digest could therefore describe rows that never belonged
 to one database snapshot while still looking like one manifest.
 
+### Accept a read-write stable transaction
+
+Rejected because a PostgreSQL transaction can observe its own uncommitted writes.
+A caller could save an audit row, build a manifest that includes it, export the
+manifest, and then roll the transaction back. Requiring `transaction_read_only =
+on` keeps snapshot manifests tied to rows visible through a non-mutating stable
+view rather than caller-local evidence that may disappear on rollback.
+
 ### Accept session-level REPEATABLE READ in autocommit
 
 Rejected because the isolation label does not prove that multiple statements
@@ -119,10 +133,11 @@ resource ceilings.
 
 ### Implicitly begin or set transaction isolation
 
-Rejected because PostgreSQL does not permit changing isolation after the first
-query or data-modification statement and because the caller owns the transaction.
-The library verifies active transaction state and required isolation instead of
-trying to repair host-owned transaction semantics after the fact.
+Rejected because PostgreSQL does not permit changing transaction characteristics
+after the first query or data-modification statement and because the caller owns
+the transaction. The library verifies active transaction state, required
+isolation, and read-only mode instead of trying to repair host-owned transaction
+semantics after the fact.
 
 ### Treat SHA-256 as authenticity evidence
 
@@ -133,18 +148,19 @@ a different internally consistent pair.
 ## Verification
 
 Permanent deterministic tests cover strict manifest construction, strict bounded
-limits, active-transaction evidence, autocommit rejection, isolation evidence,
-empty/one/multi-event identity consistency, incremental page traversal, overflow
-failure, retained-field sensitivity, package-root exports, and a fixed
-schema-version-1 digest vector. The existing 100% production statement, branch,
-and public-docstring coverage gate remains mandatory.
+limits, active-transaction evidence, autocommit rejection, isolation and read-
+only evidence, read-write rollback risk, empty/one/multi-event identity
+consistency, incremental page traversal, overflow failure, retained-field
+sensitivity, package-root exports, and a fixed schema-version-1 digest vector.
+The existing 100% production statement, branch, and public-docstring coverage
+gate remains mandatory.
 
-A live least-privilege PostgreSQL test establishes an active `REPEATABLE READ`
-transaction, commits a newer accepted-save event from another connection, and
-proves that two manifest builds with different page sizes retain the same earlier
-snapshot and digest. The same live test verifies active `READ COMMITTED`
-rejection and separately proves that autocommit with a session default of
-`REPEATABLE READ` is rejected. CI explicitly executes this integration test.
+A live least-privilege PostgreSQL test establishes an active read-only
+`REPEATABLE READ` transaction, commits a newer accepted-save event from another
+connection, and proves that two manifest builds with different page sizes retain
+the same earlier snapshot and digest. The same live test verifies active `READ
+COMMITTED` rejection and separately proves that autocommit with a session default
+of `REPEATABLE READ` is rejected. CI explicitly executes this integration test.
 
 Final merge evidence is valid only after the full stack is integrated and fresh
 quality, security, coverage, packaging, provenance, release-acceptance, branch-
@@ -153,8 +169,9 @@ protected head and exact current base.
 
 ## Consequences
 
-Operators gain a bounded deterministic identity for one stable audit snapshot
-without a schema migration or unbounded in-process accumulation. External
-retention, receipts, legal hold, reconciliation, signing, authentication, key
-management, and administrator-independent immutability remain host/operator
-responsibilities. Version `0.1.0` and publication state remain unchanged.
+Operators gain a bounded deterministic identity for one stable read-only audit
+snapshot without a schema migration or unbounded in-process accumulation.
+External retention, receipts, legal hold, reconciliation, signing,
+authentication, key management, and administrator-independent immutability remain
+host/operator responsibilities. Version `0.1.0` and publication state remain
+unchanged.
