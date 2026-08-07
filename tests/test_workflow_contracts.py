@@ -57,7 +57,7 @@ def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None
 
 def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
     workflow = _read(".github/workflows/hourly-maintenance.yml")
-    review_fix_scheduler_sha = "70fd801523893ba2c51ad9bd859b2d3c408d5839"
+    review_fix_scheduler_sha = "8ab55aa29ce41aafe5f0f5c4195c7726861bf518"
     review_merge_scheduler_sha = "5983b41ace75040c1d81818171ca7d0f3653254e"
 
     assert 'cron: "17 * * * *"' in workflow
