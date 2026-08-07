@@ -9,6 +9,7 @@ Public API:
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultCheckpoint               -- host-persistable resume evidence
     PostgresBatchResultCheckpointStore  -- tenant-isolated durable checkpoints
+    AuditedPostgresBatchResultCheckpointStore -- append-only accepted-save audit
     OpenTelemetryCheckpointStore        -- confidential checkpoint observability
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
@@ -21,6 +22,12 @@ from .batch_api_client import (
     BatchAPIClient,
     GatewayCredentials,
     config_credentials_provider,
+)
+from .checkpoint_audit import (
+    AuditedPostgresBatchResultCheckpointStore,
+    CheckpointAuditEvent,
+    apply_result_checkpoint_audit_schema,
+    validate_checkpoint_audit_limit,
 )
 from .checkpoint_store import (
     CheckpointConflictError,
@@ -67,10 +74,14 @@ __all__ = [
     "BatchResultCheckpoint",
     "CheckpointedBatchResultRecord",
     "PostgresBatchResultCheckpointStore",
+    "AuditedPostgresBatchResultCheckpointStore",
+    "CheckpointAuditEvent",
     "OpenTelemetryCheckpointStore",
     "CheckpointConflictError",
     "apply_result_checkpoint_schema",
+    "apply_result_checkpoint_audit_schema",
     "validate_checkpoint_consumer_name",
+    "validate_checkpoint_audit_limit",
     "DurableBatchAPIClient",
     "TenantDurableBatchAPIClient",
     "DEFAULT_TENANT_SCOPE",
