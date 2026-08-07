@@ -128,6 +128,7 @@ def test_migration_descriptor_is_immutable_and_json_safe() -> None:
     ("migration_id", "byte_count", "digest"),
     (
         ("unexpected_migration", 1, "a" * 64),
+        (7, 1, "a" * 64),
         ("0007_result_stream_checkpoints", True, "a" * 64),
         ("0007_result_stream_checkpoints", 0, "a" * 64),
         (
@@ -135,6 +136,7 @@ def test_migration_descriptor_is_immutable_and_json_safe() -> None:
             checkpoint_migrations.MAX_CHECKPOINT_SCHEMA_MIGRATION_BYTES + 1,
             "a" * 64,
         ),
+        ("0007_result_stream_checkpoints", 1, None),
         ("0007_result_stream_checkpoints", 1, "A" * 64),
         ("0007_result_stream_checkpoints", 1, "g" * 64),
         ("0007_result_stream_checkpoints", 1, "a" * 63),
