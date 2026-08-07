@@ -10,8 +10,28 @@ import pg_llm_batch.checkpoint_audit as checkpoint_audit
 from pg_llm_batch.checkpoint_audit import CheckpointAuditEvent, CheckpointAuditPage
 
 
+class _InTransactionStatus:
+    """Expose the libpq transaction state required by the snapshot contract."""
+
+    name = "INTRANS"
+
+
+class _ConnectionInfo:
+    """Expose deterministic libpq transaction metadata to the cursor double."""
+
+    transaction_status = _InTransactionStatus()
+
+
+class _Connection:
+    """Minimal connection double carrying transaction metadata."""
+
+    info = _ConnectionInfo()
+
+
 class IsolationCursor:
-    """Expose stable transaction-isolation evidence for one manifest build."""
+    """Expose active stable transaction-isolation evidence for one manifest build."""
+
+    connection = _Connection()
 
     def execute(self, _sql: str, _params: tuple[Any, ...] | None = None) -> None:
         """Accept the isolation query used by the manifest builder."""
