@@ -85,6 +85,13 @@ guard ordered before both the evidence check and table drop. A live PostgreSQL
 integration test exercises idempotent creation, exact advancement, load,
 stale-writer rejection, and cleanup when `PG_LLM_BATCH_TEST_DSN` is set.
 
+The bundled PostgreSQL image installs that same reviewed checkpoint migration as
+`/docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql`, after the cron
+initialization script and without reusing another init destination. A permanent
+container-installation regression requires both byte identity and this exact
+ordered Dockerfile copy, so a fresh bundled PostgreSQL image cannot silently omit
+the durable checkpoint schema.
+
 Final merge evidence must be regenerated on the integrated exact head and base.
 A successful stacked-branch run is development evidence only and cannot authorize
 release, provenance, or reuse of an older artifact.
