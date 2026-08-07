@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import json
 
 from pg_llm_batch import health
 
@@ -77,7 +78,7 @@ def test_missing_required_component_is_reported_not_ready(monkeypatch):
 
 
 def test_health_dependency_and_database_failures_include_reason(monkeypatch):
-    """Dependency and connection failures are explicit rather than hidden."""
+    """Local diagnostics retain dependency and connection failure reasons."""
     monkeypatch.setattr(health, "psycopg", None)
     report = health.check_health("postgresql://example")
     assert report == {
@@ -114,9 +115,44 @@ def test_health_requires_every_required_component(monkeypatch):
     assert health.check_health("postgresql://example")["ready"] is False
 
 
-def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
-    """The HTTP wrapper emits JSON readiness and a strict 404 elsewhere."""
+def test_public_health_report_removes_diagnostic_details():
+    """Public readiness evidence exposes state but never diagnostic text."""
+    report = {
+        "ready": False,
+        "components": [
+            {
+                "component": "database",
+                "is_ready": False,
+                "detail": "password=super-secret host=db.internal.example",
+                "debug": "provider-controlled-extra-field",
+            },
+            {
+                "component": "pg_tiktoken",
+                "is_ready": True,
+                "detail": "extension version 1.2.3",
+            },
+        ],
+        "internal": "must-not-cross-http-boundary",
+    }
+
+    public_report = health.public_health_report(report)
+
+    assert public_report == {
+        "ready": False,
+        "components": [
+            {"component": "database", "is_ready": False},
+            {"component": "pg_tiktoken", "is_ready": True},
+        ],
+    }
+    assert "super-secret" not in json.dumps(public_report)
+    assert "db.internal.example" not in json.dumps(public_report)
+    assert "provider-controlled-extra-field" not in json.dumps(public_report)
+
+
+def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
+    """The HTTP wrapper emits only redacted readiness and a strict 404 elsewhere."""
     events = []
+    bodies = []
 
     class FakeHTTPServer:
         def __init__(self, address, handler_class):
@@ -133,12 +169,20 @@ def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
             )
             handler.end_headers = lambda: events.append((path, "headers-ended"))
             handler.do_GET()
-            return handler.wfile.getvalue()
+            body = handler.wfile.getvalue()
+            bodies.append((path, body))
+            return body
 
         def serve_forever(self):
             assert self._request("/other") == b""
             body = self._request("/healthz/")
-            assert b'"ready": false' in body
+            decoded = json.loads(body)
+            assert decoded == {
+                "ready": False,
+                "components": [{"component": "database", "is_ready": False}],
+            }
+            assert b"super-secret" not in body
+            assert b"db.internal.example" not in body
             handler = self.handler_class.__new__(self.handler_class)
             assert handler.log_message("ignored") is None
 
@@ -146,10 +190,21 @@ def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
     monkeypatch.setattr(
         health,
         "check_health",
-        lambda _dsn: {"ready": False, "components": []},
+        lambda _dsn: {
+            "ready": False,
+            "components": [
+                {
+                    "component": "database",
+                    "is_ready": False,
+                    "detail": "password=super-secret host=db.internal.example",
+                }
+            ],
+        },
     )
     health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
     assert ("address", ("127.0.0.1", 8090)) in events
     assert ("/other", "status", 404) in events
     assert ("/healthz/", "status", 503) in events
     assert ("/healthz/", "header", "Content-Type", "application/json") in events
+    assert ("/healthz/", "header", "Cache-Control", "no-store") in events
+    assert bodies[-1][0] == "/healthz/"
