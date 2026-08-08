@@ -41,28 +41,44 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     _assert_external_actions_are_pinned(workflow)
 
 
+def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None:
+    """Every CI checkout must bind and verify the exact source head."""
+    workflow = _read(".github/workflows/ci.yml")
+    exact_source_expression = "${{ github.event.pull_request.head.sha || github.sha }}"
+    checkout_count = workflow.count("uses: actions/checkout@")
+
+    assert checkout_count > 0
+    assert workflow.count(f"ref: {exact_source_expression}") == checkout_count
+    assert workflow.count("name: Verify exact source head") == checkout_count
+    assert workflow.count(
+        f'test "$(git rev-parse HEAD)" = "{exact_source_expression}"'
+    ) == checkout_count
+
+
 def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
     workflow = _read(".github/workflows/hourly-maintenance.yml")
-    scheduler_sha = "5983b41ace75040c1d81818171ca7d0f3653254e"
+    review_fix_scheduler_sha = "17bd5e4a98a718012dcb82d5028aa697a4ca8077"
+    review_merge_scheduler_sha = "5983b41ace75040c1d81818171ca7d0f3653254e"
 
     assert 'cron: "17 * * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert (
         "uses: ContextualWisdomLab/.github/.github/workflows/"
-        "pr-review-fix-scheduler.yml@"
+        f"pr-review-fix-scheduler.yml@{review_fix_scheduler_sha}"
     ) in workflow
     assert "target_repository: ContextualWisdomLab/pg-llm-batch" in workflow
     assert 'retry_hours: "1"' in workflow
-    assert f"canonical_ref: {scheduler_sha}" in workflow
+    assert f"canonical_ref: {review_fix_scheduler_sha}" in workflow
     assert (
         "uses: ContextualWisdomLab/.github/.github/workflows/"
-        "pr-review-merge-scheduler.yml@"
+        f"pr-review-merge-scheduler.yml@{review_merge_scheduler_sha}"
     ) in workflow
     assert "merge_mode: direct_or_auto" in workflow
     assert "trigger_reviews: true" in workflow
     assert "enable_auto_merge: true" in workflow
     assert "update_branches: true" in workflow
-    assert workflow.count(f"@{scheduler_sha}") == 2
+    assert workflow.count(f"@{review_fix_scheduler_sha}") == 1
+    assert workflow.count(f"@{review_merge_scheduler_sha}") == 1
     _assert_external_actions_are_pinned(workflow)
 
 

@@ -69,6 +69,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Serialized hourly maintenance with `queue: max` and
+  `cancel-in-progress: false`, so a later trigger cannot discard an active RCA
+  or bounded repair. The operator contract now requires root-cause analysis,
+  candidate-remedy and feasibility evaluation, then execution; only movement of
+  the same `pg-llm-batch` target creates a writer conflict, while read-only
+  dependency drift causes scoped reconciliation and unrelated safe work
+  continues.
+- Narrowed the hourly review-repair caller to the immutable central OpenCode
+  scheduler prerequisite, explicit `PR_REVIEW_MERGE_TOKEN` and
+  `OPENCODE_APPROVE_TOKEN` fallbacks, and the exact read-plus-OIDC permission set
+  required to exchange a short-lived OpenCode GitHub App token. The generated
+  GitHub token retains no repository write authority, unrelated secrets are not
+  inherited, and the independent merge plane remains unchanged.
+- Bound every repository CI checkout to the exact pull-request source head and
+  verify `git rev-parse HEAD` before tests, coverage, packaging, or container
+  gates, so GitHub-generated synthetic merge refs cannot satisfy exact-head
+  acceptance evidence.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.

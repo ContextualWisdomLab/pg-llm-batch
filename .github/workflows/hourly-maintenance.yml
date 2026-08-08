@@ -7,7 +7,8 @@ on:
 
 concurrency:
   group: hourly-commercial-maintenance-${{ github.repository }}
-  cancel-in-progress: true
+  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
@@ -16,20 +17,19 @@ jobs:
   review-fix:
     name: Repair actionable pull-request feedback
     permissions:
-      actions: write
       contents: read
-      issues: write
-      pull-requests: read
-      statuses: read
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@5983b41ace75040c1d81818171ca7d0f3653254e # main
+      id-token: write
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@17bd5e4a98a718012dcb82d5028aa697a4ca8077 # prerequisite .github#782
     with:
       target_repository: ContextualWisdomLab/pg-llm-batch
       base_branch: main
       max_prs: "100"
       max_dispatches: "1"
       retry_hours: "1"
-      canonical_ref: 5983b41ace75040c1d81818171ca7d0f3653254e
-    secrets: inherit
+      canonical_ref: 17bd5e4a98a718012dcb82d5028aa697a4ca8077
+    secrets:
+      PR_REVIEW_MERGE_TOKEN: ${{ secrets.PR_REVIEW_MERGE_TOKEN }}
+      OPENCODE_APPROVE_TOKEN: ${{ secrets.OPENCODE_APPROVE_TOKEN }}
 
   review-merge:
     name: Revalidate and merge eligible pull requests
