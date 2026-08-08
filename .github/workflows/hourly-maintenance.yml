@@ -15,14 +15,14 @@ permissions:
 jobs:
   review-fix:
     name: Repair actionable pull-request feedback
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@9b4acb7e3cc65ea31cbb8c18b2b1a3d60015eef5 # prerequisite .github#782
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@bc76d5a1a93852b45a7e26dc4da966d359aec292 # prerequisite .github#782
     with:
       target_repository: ContextualWisdomLab/pg-llm-batch
       base_branch: main
       max_prs: "100"
       max_dispatches: "1"
       retry_hours: "1"
-      canonical_ref: 9b4acb7e3cc65ea31cbb8c18b2b1a3d60015eef5
+      canonical_ref: bc76d5a1a93852b45a7e26dc4da966d359aec292
     secrets:
       PR_REVIEW_MERGE_TOKEN: ${{ secrets.PR_REVIEW_MERGE_TOKEN }}
       OPENCODE_APPROVE_TOKEN: ${{ secrets.OPENCODE_APPROVE_TOKEN }}
