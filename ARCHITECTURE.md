@@ -55,6 +55,35 @@ Rollback to the former two-column key is unsafe until an operator proves that no
 The packaged schema and Docker initialization schema are maintained as exact
 mirrors and must be reapplied successfully more than once.
 
+## Reproducible release evidence boundary
+
+Release acceptance is a read-only control-plane boundary. Two clean exact-source
+builds are compared before maintainers consider versioning, publication,
+attestation, or release authorization. The verifier accepts exactly one wheel and
+one source distribution and enumerates at most three directory entries.
+
+Release directories and artifact names are concurrent untrusted filesystem
+inputs. The verifier opens `/` for absolute paths or `.` for relative paths and
+walks each component with descriptor-relative `O_DIRECTORY | O_NOFOLLOW`.
+Artifact entries are opened relative to the held final directory with
+`O_NOFOLLOW | O_NONBLOCK`, required to be regular files, and streamed through
+bounded `os.read`. Size and SHA-256 are derived from that same open file
+description. Device, inode, file type, size, modification time, and change time
+must remain stable across the read. The verifier then re-enumerates the same
+held directory descriptor and rejects membership drift.
+
+This openat-style boundary removes pathname check-then-open races from the
+release identity decision. It does not prevent a same-UID process from changing
+an object after verification returns, so the workflow also relies on governed
+runner and workspace isolation. Unsupported runtimes fail closed rather than
+falling back to pathname verification.
+
+The canonical manifest writer remains a separate descriptor-relative operation:
+it creates an owned mode-0600 temporary entry, synchronizes bytes, atomically
+renames within the pinned final parent, and synchronizes the directory entry.
+Neither verifier nor writer publishes, signs, attests, approves, or authorizes
+reuse of pull-request artifacts.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
@@ -62,6 +91,10 @@ only after their own authentication and authorization boundary. The package
 does not require either host and retains standalone operation. When embedded,
 tenant scope is a local control-plane identity and not model- or
 provider-returned data.
+
+Release evidence also remains standalone. Host modules may consume the bounded
+manifest only as review input and must not reinterpret it as provenance,
+publication authority, or an integrated-release attestation.
 
 ## Verification boundary
 
@@ -74,3 +107,10 @@ and prove that identical provider identifiers in different tenants remain
 independently addressable and mutually invisible when access occurs through the
 trusted package boundary. They do not claim isolation after arbitrary SQL is
 granted.
+
+Release security tests cover symlinked parents, parent traversal, artifact
+replacement after enumeration, in-place mutation during streaming hash,
+directory-membership drift, bounded scan and error behavior, descriptor
+capability failure, Python compatibility, and 100% production statement and
+branch coverage. Final merge evidence must be regenerated against the integrated
+base; successful stacked-base runs are not reusable release evidence.
