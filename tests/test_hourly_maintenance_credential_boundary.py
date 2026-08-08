@@ -60,6 +60,21 @@ def test_hourly_scheduler_documents_rca_feasibility_and_scoped_lease_recovery() 
         assert required_contract in contract
 
 
+def test_hourly_scheduler_documents_realistic_oidc_mutation_fallback() -> None:
+    """The operator contract explains how a read-only caller can still repair safely."""
+    contract = _normalized_document(ADR_PATH)
+
+    required_contracts = (
+        "`id-token: write`",
+        "short-lived opencode github app token",
+        "does not grant repository write access",
+        "`pr_review_merge_token` or `opencode_approve_token` remains an explicit fallback",
+        "fails closed only when neither an explicit secret nor the oidc exchange yields mutation authority",
+    )
+    for required_contract in required_contracts:
+        assert required_contract in contract
+
+
 def test_review_fix_uses_immutable_current_central_scheduler() -> None:
     """The repair job pins the reviewed central scheduler prerequisite exactly."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
