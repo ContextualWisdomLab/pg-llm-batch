@@ -129,3 +129,32 @@
   independence, no-replay, file transitions, prefix mutation, truncation at or
   before the checkpoint, explicit unseen-suffix limitations, identity, framing,
   local validation, and cleanup behavior.
+
+## Durable checkpoint-store invariants
+
+- Keep `PostgresBatchResultCheckpointStore` optional and compatible with custom
+  host-owned persistence implementations.
+- Select tenant scope and consumer identity only at a trusted authenticated host
+  boundary. Reject malformed names before database access.
+- Persist the complete immutable checkpoint under a tenant-qualified compound
+  key and reconstruct it through normal checkpoint validation on every load.
+- Treat `expected_previous` as mandatory compare-and-swap evidence for every
+  non-idempotent update. Never replace it with last-writer-wins behavior.
+- Lock existing rows with `FOR UPDATE`. Close the missing-row race with
+  `ON CONFLICT ... DO NOTHING` and locked reconciliation. Classify an unequal
+  first writer as `initial_checkpoint_race`; do not leak raw database errors or
+  checkpoint digests.
+- Require both record and physical-line positions to increase on advancement.
+  Exact repeats are idempotent; stale, forked, missing, and regressive updates
+  fail without overwrite.
+- `save_in_transaction` and `load_in_transaction` operate inside a caller-owned
+  transaction and never commit or roll it back. Use them to coordinate local
+  PostgreSQL record effects with checkpoint advancement.
+- Do not describe this as a distributed exactly-once protocol. External side
+  effects require an outbox, idempotency key, or separately reviewed recovery
+  design.
+- Keep forced RLS and `NOSUPERUSER NOBYPASSRLS` application-role requirements.
+  Preserve byte-identical package/container migrations and fail-closed rollback
+  while any acknowledgement evidence remains.
+- Maintain deterministic concurrency, migration, rollback, live-PostgreSQL,
+  documentation, and 100% production coverage tests.
