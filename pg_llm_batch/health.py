@@ -87,24 +87,40 @@ def check_health(dsn: str) -> Dict[str, Any]:
     return {"ready": ready, "components": components}
 
 
+def _not_ready_public_health_report() -> Dict[str, Any]:
+    """Return the fixed fail-closed public representation for malformed input."""
+    return {"ready": False, "components": []}
+
+
 def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     """Return the HTTP-safe readiness projection without diagnostic details.
 
     Local callers can keep using :func:`check_health` when they need the
     database-provided ``detail`` field. Probe clients only need the overall
-    readiness decision and each component's boolean state, so this projection
-    deliberately copies only those fixed fields and drops every other key.
+    readiness decision and each component's boolean state. This projection
+    therefore accepts only exact boolean readiness fields and string component
+    names, copies those fixed fields, and fails closed on malformed shapes.
     """
-    return {
-        "ready": bool(report["ready"]),
-        "components": [
-            {
-                "component": component["component"],
-                "is_ready": bool(component["is_ready"]),
-            }
-            for component in report["components"]
-        ],
-    }
+    ready = report.get("ready")
+    components = report.get("components")
+    if type(ready) is not bool or type(components) is not list:
+        return _not_ready_public_health_report()
+
+    public_components: List[Dict[str, Any]] = []
+    for component in components:
+        if type(component) is not dict:
+            return _not_ready_public_health_report()
+        component_name = component.get("component")
+        is_ready = component.get("is_ready")
+        if type(component_name) is not str:
+            return _not_ready_public_health_report()
+        if type(is_ready) is not bool:
+            return _not_ready_public_health_report()
+        public_components.append(
+            {"component": component_name, "is_ready": is_ready}
+        )
+
+    return {"ready": ready, "components": public_components}
 
 
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
@@ -121,8 +137,9 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
                 self.end_headers()
                 return
             report = check_health(dsn)
-            body = json.dumps(public_health_report(report)).encode("utf-8")
-            self.send_response(200 if report["ready"] else 503)
+            public_report = public_health_report(report)
+            body = json.dumps(public_report).encode("utf-8")
+            self.send_response(200 if public_report["ready"] else 503)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
