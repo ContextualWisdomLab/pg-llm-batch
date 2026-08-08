@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Redacted public `/healthz` readiness output to omit database exceptions and
   other local diagnostic detail while preserving detailed operator diagnostics,
   component readiness state, HTTP status semantics, and `Cache-Control: no-store`.
+- Bounded the PostgreSQL readiness function with a parameterized transaction-local
+  statement timeout so a connected but stalled health query cannot wait without
+  a database-side execution limit.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
