@@ -61,6 +61,22 @@ def test_health_query_timeout_boundary_is_authoritative():
     assert "statement_timeout" in agents
 
 
+def test_malformed_public_readiness_fails_closed_authoritatively():
+    """Authoritative docs must forbid truth coercion at the public probe boundary."""
+    doctoring = _normalized(DOCTORING)
+    adr = _normalized(ADR)
+    changelog = _normalized(CHANGELOG)
+    agents = _normalized(AGENTS)
+
+    for document in (doctoring, adr, agents):
+        assert "non-coercive" in document
+        assert "malformed readiness" in document
+        assert "HTTP 503" in document
+
+    assert "malformed readiness" in changelog.lower()
+    assert "truth coercion" in changelog.lower()
+
+
 def test_contributor_contract_preserves_healthz_redaction_boundary():
     """Contributor guidance must prevent local diagnostics from becoming public."""
     agents = _normalized(AGENTS)
