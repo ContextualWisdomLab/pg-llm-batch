@@ -41,7 +41,7 @@ DOWNLOAD_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
 DEFAULT_RETRY_MAX_DELAY_SECONDS = 30.0
-RETRYABLE_GET_STATUSES = frozenset({408, 429, 502, 503, 504})
+RETRYABLE_GET_STATUSES = frozenset({408, 425, 429, 502, 503, 504})
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
@@ -355,7 +355,7 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        """Yield a response, retrying only bounded idempotent GET failures."""
+        """Yield a response, retrying bounded GET failures except permanent TLS errors."""
         session = self._get_session()
         normalized_method = method.lower()
         request = getattr(session, normalized_method)
@@ -364,6 +364,7 @@ class BatchAPIClient:
         while True:
             delay: Optional[float] = None
             retry_reason = ""
+            terminal_error_type: Optional[str] = None
             try:
                 async with request(
                     url,
@@ -387,16 +388,24 @@ class BatchAPIClient:
             except GatewayError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                if not retry_safe or attempt >= self.max_retry_attempts:
-                    raise GatewayError(
-                        f"{operation} transport failed",
-                        response_data={
-                            "error_type": type(exc).__name__,
-                            "timeout_seconds": self.request_timeout_seconds,
-                        },
-                    ) from exc
-                delay = self._fallback_retry_delay(attempt)
-                retry_reason = type(exc).__name__
+                if (
+                    not retry_safe
+                    or attempt >= self.max_retry_attempts
+                    or isinstance(exc, aiohttp.ClientSSLError)
+                ):
+                    terminal_error_type = type(exc).__name__
+                else:
+                    delay = self._fallback_retry_delay(attempt)
+                    retry_reason = type(exc).__name__
+
+            if terminal_error_type is not None:
+                raise GatewayError(
+                    f"{operation} transport failed",
+                    response_data={
+                        "error_type": terminal_error_type,
+                        "timeout_seconds": self.request_timeout_seconds,
+                    },
+                )
 
             logger.warning(
                 "%s retrying idempotent GET after %s "
