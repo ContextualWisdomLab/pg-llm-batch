@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -104,3 +105,10 @@ async def test_internal_server_error_remains_outside_closed_retry_set(
 def test_retryable_get_status_set_is_closed_and_reviewable() -> None:
     """The default HTTP retry set exactly matches the reviewed safe contract."""
     assert client_mod.RETRYABLE_GET_STATUSES == frozenset({408, 425, 429, 502, 503, 504})
+
+
+def test_readme_lists_too_early_in_closed_retry_contract() -> None:
+    """The public README must expose the same closed retry-status contract."""
+    readme = " ".join(Path("README.md").read_text(encoding="utf-8").split())
+
+    assert "for transient `408`, `425`, `429`, `502`, `503`, and `504` responses" in readme
