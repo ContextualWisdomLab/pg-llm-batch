@@ -10,10 +10,11 @@ from pg_llm_batch import health
 
 
 class _Cursor:
-    """Return a fixed set of health-check rows."""
+    """Return fixed health-check rows while recording executed statements."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, executions):
         self._rows = rows
+        self._executions = executions
 
     def __enter__(self):
         return self
@@ -21,7 +22,8 @@ class _Cursor:
     def __exit__(self, *exc):
         return None
 
-    def execute(self, _sql):
+    def execute(self, sql, params=None):
+        self._executions.append((sql, params))
         return None
 
     def fetchall(self):
@@ -31,8 +33,9 @@ class _Cursor:
 class _Connection:
     """Minimal context-managed connection for health checks."""
 
-    def __init__(self, rows):
+    def __init__(self, rows, executions):
         self._rows = rows
+        self._executions = executions
 
     def __enter__(self):
         return self
@@ -41,7 +44,7 @@ class _Connection:
         return None
 
     def cursor(self):
-        return _Cursor(self._rows)
+        return _Cursor(self._rows, self._executions)
 
 
 class _Psycopg:
@@ -49,10 +52,11 @@ class _Psycopg:
 
     def __init__(self, rows):
         self._rows = rows
+        self.executions = []
 
     def connect(self, _dsn, *, connect_timeout):
         assert connect_timeout == 5
-        return _Connection(self._rows)
+        return _Connection(self._rows, self.executions)
 
 
 def test_missing_required_component_is_reported_not_ready(monkeypatch):
@@ -113,6 +117,30 @@ def test_health_requires_every_required_component(monkeypatch):
     rows[1] = ("pg_tiktoken", False, "extension unavailable")
     monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
     assert health.check_health("postgresql://example")["ready"] is False
+
+
+def test_health_query_uses_transaction_local_statement_timeout(monkeypatch):
+    """A stalled PostgreSQL health function cannot block readiness indefinitely."""
+    rows = [
+        ("database", True, "connected"),
+        ("pg_tiktoken", True, "installed"),
+        ("com_config", True, "ready"),
+    ]
+    database = _Psycopg(rows)
+    monkeypatch.setattr(health, "psycopg", database)
+
+    report = health.check_health("postgresql://example")
+
+    assert report["ready"] is True
+    assert database.executions[0] == (
+        "SELECT set_config('statement_timeout', %s, true)",
+        (str(health.HEALTH_STATEMENT_TIMEOUT_MILLISECONDS),),
+    )
+    assert database.executions[1] == (
+        "SELECT component, is_ready, detail FROM pg_llm_batch_health_check()",
+        None,
+    )
+    assert len(database.executions) == 2
 
 
 def test_public_health_report_removes_diagnostic_details():
