@@ -156,7 +156,7 @@ ALTER TABLE llm_remote_batch_jobs
     ALTER COLUMN tenant_scope SET NOT NULL;
 ```
 
-Use a `DO $$ ... $$` block to add the named check constraint when absent, drop the superseded unique constraint when present, and add the tenant-qualified unique constraint when absent. Create the tenant/status/observation index. Recreate the package policy idempotently with `DROP POLICY IF EXISTS` followed by `CREATE POLICY ... TO PUBLIC USING (...) WITH CHECK (...)`. Enable and force RLS after the policy is present.
+Use a `DO $$ ... $$` block to add the named check constraint when absent, drop the superseded unique constraint when present, and add the tenant-qualified unique constraint when absent. Create the tenant/status/observation index. Within the same PostgreSQL statement, keep owner-enforcement relaxation, legacy backfill, constraint migration, RLS enable and force, policy recreation under default-deny, and forced-RLS restoration atomic. Enable and force RLS before recreating the package policy. Recreate the package policy idempotently under forced default-deny behavior with `DROP POLICY IF EXISTS` followed by `CREATE POLICY ... TO PUBLIC USING (...) WITH CHECK (...)`, then restore forced RLS before leaving the atomic statement.
 
 - [ ] **Step 4: Synchronize the deployable schema mirror exactly**
 
