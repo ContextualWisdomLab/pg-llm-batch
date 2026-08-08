@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -14,8 +16,6 @@ from pg_llm_batch import db
 from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError
-
-from tests.bounded_response_double import bind_bounded_json_response
 
 
 class _Cursor:
@@ -72,17 +72,30 @@ class _Psycopg:
         return _Connection(self)
 
 
+class _ByteStream:
+    """Expose deterministic provider JSON through a bounded byte stream."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        """Yield response bytes in chunks no larger than the requested size."""
+        for offset in range(0, len(self.body), size):
+            yield self.body[offset : offset + size]
+
+
 class _Response:
     """Async response double for successful or failed provider operations."""
 
     def __init__(self, status: int, payload: dict[str, Any]) -> None:
         self.status = status
-        self.payload = payload
         self.headers: dict[str, str] = {}
-        bind_bounded_json_response(self, payload)
+        self.content = _ByteStream(payload)
+        self.content_length = len(self.content.body)
 
     async def json(self) -> dict[str, Any]:
-        return self.payload
+        """Reject whole-body convenience reads outside the bounded stream."""
+        raise AssertionError("response.json() must not bypass bounded streaming")
 
     async def __aenter__(self):
         return self
@@ -122,17 +135,17 @@ def _credentials(_alias: str) -> GatewayCredentials:
 
 
 def test_schema_defines_an_ordered_terminal_safe_remote_lifecycle_table() -> None:
-    """The schema exposes compound identity, global order, and audit fields."""
+    """The schema exposes tenant identity, global order, and audit fields."""
     schema = Path(db.SCHEMA_PATH).read_text(encoding="utf-8")
     source = Path(db.__file__).read_text(encoding="utf-8")
     assert "CREATE SEQUENCE IF NOT EXISTS llm_remote_batch_observation_sequence" in schema
     assert "CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs" in schema
-    assert "CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id" in schema
-    assert "UNIQUE (endpoint_alias, remote_batch_id)" in schema
+    assert "CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id" in schema
+    assert "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)" in schema
     assert "observation_order BIGINT NOT NULL" in schema
     assert "last_observed_at" in schema
     assert "terminal_at" in schema
-    assert "idx_llm_remote_batch_jobs_status_observed" in schema
+    assert "idx_llm_remote_batch_jobs_tenant_status_observed" in schema
     assert "EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order" in source
     assert "llm_remote_batch_jobs.batch_status NOT IN" in source
     assert "EXCLUDED.batch_status = llm_remote_batch_jobs.batch_status" in source
@@ -211,11 +224,15 @@ def test_persist_remote_batch_state_upserts_curated_terminal_snapshot(
         "observed_at": observed,
         "terminal_at": observed,
     }
-    sql, params = driver.executions[0]
-    assert "ON CONFLICT (endpoint_alias, remote_batch_id) DO UPDATE" in sql
+    assert driver.executions[0] == (
+        "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+        ("standalone",),
+    )
+    sql, params = driver.executions[1]
+    assert "ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE" in sql
     assert "observation_order = EXCLUDED.observation_order" in sql
-    assert "ignored_provider_field" not in params[11]
-    assert params[11] == '{"tenant_id":"tenant-a"}'
+    assert "ignored_provider_field" not in params[12]
+    assert params[12] == '{"tenant_id":"tenant-a"}'
     assert driver.connections == ["postgresql://x"]
     assert driver.commits == 1
 
@@ -242,6 +259,7 @@ def test_persist_remote_batch_state_normalizes_untrusted_optional_fields(
         observation_order=18,
     )
 
+    assert "tenant_scope" not in snapshot
     assert snapshot["endpoint_alias"] == "edge"
     assert snapshot["observation_order"] == 18
     assert snapshot["batch_status"] == "unknown"
@@ -279,7 +297,7 @@ def test_persist_remote_batch_state_normalizes_non_json_metadata(
         observation_order=19,
     )
     assert snapshot["provider_metadata"] == {}
-    assert driver.executions[-1][1][11] == "{}"
+    assert driver.executions[-1][1][12] == "{}"
 
 
 def test_persist_remote_batch_state_normalizes_cyclic_metadata(
@@ -299,7 +317,7 @@ def test_persist_remote_batch_state_normalizes_cyclic_metadata(
     )
 
     assert snapshot["provider_metadata"] == {}
-    assert driver.executions[-1][1][11] == "{}"
+    assert driver.executions[-1][1][12] == "{}"
 
 
 def test_persist_remote_batch_state_bounds_metadata_bytes(
@@ -315,7 +333,7 @@ def test_persist_remote_batch_state_bounds_metadata_bytes(
         observation_order=21,
     )
     assert snapshot["provider_metadata"] == {}
-    assert driver.executions[-1][1][11] == "{}"
+    assert driver.executions[-1][1][12] == "{}"
 
 
 @pytest.mark.parametrize("observation_order", [None, True, 0, -1, 1.5, "1"])
