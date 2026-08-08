@@ -24,8 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and fail-closed handling when a bounded byte stream is unavailable.
 - Bounded retries for transient idempotent provider GET failures, including
   HTTP 425 `Too Early`, RFC `Retry-After` support, and equal-jitter exponential
-  fallback; side-effecting POST operations and HTTP 500 remain single-attempt
-  by default.
+  fallback. TLS handshake and certificate failures are never retried
+  automatically; side-effecting POST operations and HTTP 500 remain
+  single-attempt by default.
 - Durable remote batch lifecycle persistence through `DurableBatchAPIClient`
   and `llm_remote_batch_jobs`, with database-owned pre-request observation
   ordering, immutable terminal status identity, bounded curated metadata, and
