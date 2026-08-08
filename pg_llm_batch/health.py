@@ -2,9 +2,11 @@
 # Copyright (c) ContextualWisdomLab.
 """Readiness checks for the standalone service and Docker healthcheck.
 
-``check_health`` runs the ``pg_llm_batch_health_check()`` SQL function and
-reports per-component readiness. ``serve_healthz`` exposes it over HTTP at
-``/healthz`` (200 when ready, 503 otherwise) so docker-compose can gate on it.
+``check_health`` runs the ``pg_llm_batch_health_check()`` SQL function and keeps
+per-component diagnostic detail for local operator use. ``serve_healthz``
+projects that report to a minimal HTTP-safe representation before serving
+``/healthz`` (200 when ready, 503 otherwise), so probe clients never receive
+connection exceptions or database diagnostic text.
 """
 
 from __future__ import annotations
@@ -23,9 +25,13 @@ logger = logging.getLogger(__name__)
 # Components that must be ready for the service to be considered healthy.
 REQUIRED_COMPONENTS = {"database", "pg_tiktoken", "com_config"}
 
+# Bound the database-side readiness statement independently of connection
+# acquisition. This is transaction-local and does not alter server defaults.
+HEALTH_STATEMENT_TIMEOUT_MILLISECONDS = 4_000
+
 
 def check_health(dsn: str) -> Dict[str, Any]:
-    """Return a readiness report ``{ready: bool, components: [...]}``."""
+    """Return a detailed local readiness report for operators and the CLI."""
     if psycopg is None:
         return {
             "ready": False,
@@ -37,6 +43,10 @@ def check_health(dsn: str) -> Dict[str, Any]:
     try:
         with psycopg.connect(dsn, connect_timeout=5) as conn:
             with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(HEALTH_STATEMENT_TIMEOUT_MILLISECONDS),),
+                )
                 cur.execute(
                     "SELECT component, is_ready, detail FROM pg_llm_batch_health_check()"
                 )
@@ -77,23 +87,61 @@ def check_health(dsn: str) -> Dict[str, Any]:
     return {"ready": ready, "components": components}
 
 
+def _not_ready_public_health_report() -> Dict[str, Any]:
+    """Return the fixed fail-closed public representation for malformed input."""
+    return {"ready": False, "components": []}
+
+
+def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the HTTP-safe readiness projection without diagnostic details.
+
+    Local callers can keep using :func:`check_health` when they need the
+    database-provided ``detail`` field. Probe clients only need the overall
+    readiness decision and each component's boolean state. This projection
+    therefore accepts only exact boolean readiness fields and string component
+    names, copies those fixed fields, and fails closed on malformed shapes.
+    """
+    ready = report.get("ready")
+    components = report.get("components")
+    if type(ready) is not bool or type(components) is not list:
+        return _not_ready_public_health_report()
+
+    public_components: List[Dict[str, Any]] = []
+    for component in components:
+        if type(component) is not dict:
+            return _not_ready_public_health_report()
+        component_name = component.get("component")
+        is_ready = component.get("is_ready")
+        if type(component_name) is not str:
+            return _not_ready_public_health_report()
+        if type(is_ready) is not bool:
+            return _not_ready_public_health_report()
+        public_components.append(
+            {"component": component_name, "is_ready": is_ready}
+        )
+
+    return {"ready": ready, "components": public_components}
+
+
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
-    """Serve a minimal ``/healthz`` endpoint (blocking)."""
+    """Serve a redacted ``/healthz`` readiness endpoint (blocking)."""
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
-        """HTTP request handler that answers ``/healthz`` with the readiness report."""
+        """HTTP request handler that answers ``/healthz`` with redacted readiness."""
 
         def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
-            """Return the readiness report for ``/healthz``, or 404 for other paths."""
-            if self.path.rstrip("/") not in ("/healthz", ""):
+            """Return redacted readiness for ``/healthz``, or 404 elsewhere."""
+            if self.path.rstrip("/") != "/healthz":
                 self.send_response(404)
                 self.end_headers()
                 return
             report = check_health(dsn)
-            body = json.dumps(report).encode("utf-8")
-            self.send_response(200 if report["ready"] else 503)
+            public_report = public_health_report(report)
+            body = json.dumps(public_report).encode("utf-8")
+            self.send_response(200 if public_report["ready"] else 503)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
