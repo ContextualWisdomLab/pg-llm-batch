@@ -177,6 +177,21 @@ def test_public_health_report_removes_diagnostic_details():
     assert "provider-controlled-extra-field" not in json.dumps(public_report)
 
 
+def test_public_health_report_fails_closed_on_coercive_readiness_values():
+    """Malformed truthy readiness values cannot become public success evidence."""
+    report = {
+        "ready": "false",
+        "components": [
+            {"component": "database", "is_ready": "false", "detail": "secret"}
+        ],
+    }
+
+    assert health.public_health_report(report) == {
+        "ready": False,
+        "components": [],
+    }
+
+
 def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
     """The HTTP wrapper emits only redacted readiness and a strict 404 elsewhere."""
     events = []
@@ -238,3 +253,38 @@ def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
     assert ("/healthz/", "header", "Content-Type", "application/json") in events
     assert ("/healthz/", "header", "Cache-Control", "no-store") in events
     assert bodies[-1][0] == "/healthz/"
+
+
+def test_serve_healthz_uses_sanitized_readiness_for_status(monkeypatch):
+    """Malformed local readiness cannot produce an HTTP 200 by truth coercion."""
+    events = []
+    bodies = []
+
+    class FakeHTTPServer:
+        def __init__(self, _address, handler_class):
+            self.handler_class = handler_class
+
+        def serve_forever(self):
+            handler = self.handler_class.__new__(self.handler_class)
+            handler.path = "/healthz"
+            handler.wfile = io.BytesIO()
+            handler.send_response = lambda status: events.append(status)
+            handler.send_header = lambda *_args: None
+            handler.end_headers = lambda: None
+            handler.do_GET()
+            bodies.append(json.loads(handler.wfile.getvalue()))
+
+    monkeypatch.setattr("http.server.HTTPServer", FakeHTTPServer)
+    monkeypatch.setattr(
+        health,
+        "check_health",
+        lambda _dsn: {
+            "ready": "false",
+            "components": [{"component": "database", "is_ready": "false"}],
+        },
+    )
+
+    health.serve_healthz("postgresql://example")
+
+    assert events == [503]
+    assert bodies == [{"ready": False, "components": []}]
