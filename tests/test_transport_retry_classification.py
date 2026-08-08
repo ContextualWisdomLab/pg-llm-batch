@@ -94,7 +94,7 @@ async def test_permanent_tls_failures_are_not_retried(
     monkeypatch: pytest.MonkeyPatch,
     tls_failure: aiohttp.ClientSSLError,
 ) -> None:
-    """TLS handshake and certificate failures fail after exactly one GET."""
+    """TLS failures fail once without exporting the provider exception chain."""
     sleeps: list[float] = []
 
     async def record_sleep(delay: float) -> None:
@@ -117,6 +117,14 @@ async def test_permanent_tls_failures_are_not_retried(
         "error_type": type(tls_failure).__name__,
         "timeout_seconds": client.request_timeout_seconds,
     }
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    for sensitive_detail in (
+        "gateway.example",
+        "tls-handshake-failed",
+        "certificate-verification-failed",
+    ):
+        assert sensitive_detail not in str(caught.value)
     assert session.calls == 1
     assert sleeps == []
 
