@@ -74,12 +74,25 @@ def test_review_fix_uses_immutable_current_central_scheduler() -> None:
     assert f"@{MERGE_SCHEDULER_SHA}" not in review_fix
 
 
-def test_review_fix_never_elevates_or_inherits_workflow_token() -> None:
-    """Repair mutation uses only explicit established secrets, not GITHUB_TOKEN."""
+def test_review_fix_grants_only_read_and_oidc_permissions() -> None:
+    """OIDC fallback works without granting the generated token repository writes."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
     review_fix = _job_block(workflow, "review-fix", "review-merge")
 
-    assert "\n    permissions:\n" not in review_fix
+    assert "\n    permissions:\n" in review_fix
+    permissions = review_fix.split("\n    permissions:\n", 1)[1].split("\n    uses:", 1)[0]
+    assert "      contents: read\n" in permissions
+    assert "      id-token: write\n" in permissions
+    for forbidden_permission in (
+        "actions: write",
+        "checks: write",
+        "contents: write",
+        "issues: write",
+        "pull-requests: write",
+        "statuses: write",
+    ):
+        assert forbidden_permission not in permissions
+
     assert "secrets: inherit" not in review_fix
     assert (
         "PR_REVIEW_MERGE_TOKEN: ${{ secrets.PR_REVIEW_MERGE_TOKEN }}"
