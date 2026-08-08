@@ -36,6 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound release-directory traversal, artifact open, bounded streaming hash, size
+  derivation, and final membership validation to held descriptors; reject parent
+  symlinks, `..` traversal, artifact replacement, in-place identity drift, and
+  unsupported no-follow runtimes before accepting reproducibility evidence.
 - Replaced release-manifest pathname check-then-use writes with
   descriptor-relative no-follow traversal, exclusive temporary creation,
   descriptor-relative atomic rename, and file plus parent-directory
