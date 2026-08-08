@@ -181,7 +181,7 @@ a reviewed deployment requires a larger bounded payload; oversized or invalid
 UTF-8 responses fail with structured errors that do not echo provider content.
 
 Idempotent provider `GET` operations use up to three total attempts by default
-for transient `408`, `429`, `502`, `503`, and `504` responses and for aiohttp
+for transient `408`, `425`, `429`, `502`, `503`, and `504` responses and for aiohttp
 transport failures. A bounded RFC `Retry-After` delta or HTTP-date is honored.
 Delta-seconds accept RFC ASCII digits only. Syntactically valid values above the
 configured maximum are refused; malformed values use equal-jitter exponential
