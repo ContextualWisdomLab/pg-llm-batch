@@ -7,6 +7,7 @@ from pathlib import Path
 
 
 WORKFLOW_PATH = Path(".github/workflows/hourly-maintenance.yml")
+ADR_PATH = Path("docs/adr/0013-hourly-maintenance-credential-boundary.md")
 FIX_SCHEDULER_SHA = "afd33b5d09f331f2b73913c1d4b312be9296a449"
 MERGE_SCHEDULER_SHA = "5983b41ace75040c1d81818171ca7d0f3653254e"
 
@@ -27,6 +28,11 @@ def _top_level_concurrency_block(workflow: str) -> str:
     return workflow[start:end]
 
 
+def _normalized_document(path: Path) -> str:
+    """Return one Markdown contract with layout-only whitespace normalized."""
+    return " ".join(path.read_text(encoding="utf-8").lower().split())
+
+
 def test_hourly_scheduler_queues_single_flight_instead_of_cancelling_recovery() -> None:
     """A later hourly trigger cannot cancel an active diagnosis or repair run."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
@@ -36,6 +42,22 @@ def test_hourly_scheduler_queues_single_flight_instead_of_cancelling_recovery() 
     assert "cancel-in-progress: false" in concurrency
     assert "queue: max" in concurrency
     assert "cancel-in-progress: true" not in concurrency
+
+
+def test_hourly_scheduler_documents_rca_feasibility_and_scoped_lease_recovery() -> None:
+    """The operator contract turns blockers into bounded action rather than broad stops."""
+    contract = _normalized_document(ADR_PATH)
+
+    required_contracts = (
+        "root-cause analysis → candidate remedy → feasibility check → execution",
+        "same `pg-llm-batch` target branch, pull request, or target blob",
+        "read-only dependency movement",
+        "does not create a repository-wide writer-lease conflict",
+        "permissions, branch protection, exact-head checks, dependency integration, blast radius, and rollback",
+        "continue unrelated safe work",
+    )
+    for required_contract in required_contracts:
+        assert required_contract in contract
 
 
 def test_review_fix_uses_immutable_current_central_scheduler() -> None:
