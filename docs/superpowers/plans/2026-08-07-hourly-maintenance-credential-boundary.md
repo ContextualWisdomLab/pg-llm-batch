@@ -35,7 +35,7 @@ regressions and are not reused as success evidence.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` to current `.github#782` head
-      `9b4acb7e3cc65ea31cbb8c18b2b1a3d60015eef5` for Draft verification.
+      `bc76d5a1a93852b45a7e26dc4da966d359aec292` for Draft verification.
 - [x] Update `canonical_ref` to the same immutable SHA.
 - [x] Remove the review-fix job permission elevation.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
@@ -70,6 +70,16 @@ regressions and are not reused as success evidence.
       `canonical_ref`; governance-alignment head
       `6738aa6bb14a03549d7bb75aaccd45d5bab8197c` moved the duplicate workflow
       contract to the same immutable prerequisite identity.
+- [x] When `.github#782` later advanced to
+      `bc76d5a1a93852b45a7e26dc4da966d359aec292`, test-only head
+      `ec3c78cc81a27e30a0dff208f5634fb99ef75da0` moved the focused exact-pin
+      contract first. Its CI run `31234208124` was cancelled after the
+      implementation superseded that head, so the cancelled run is not counted
+      as executed RED evidence. The deterministic mismatch itself remains the
+      test-first contract. Implementation head
+      `0f9dd4119ef55b2ae6bcd028c46c757442a2a747` moved both `uses` and
+      `canonical_ref`; refactor head `6eb9a1445bebac9588550a4f0d1d08f1d2d00348`
+      aligned the duplicate governance contract.
 
 ## Task 3: Bind CI to the exact source head
 
