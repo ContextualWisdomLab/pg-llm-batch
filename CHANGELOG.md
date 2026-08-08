@@ -77,10 +77,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dependency drift causes scoped reconciliation and unrelated safe work
   continues.
 - Narrowed the hourly review-repair caller to the immutable central OpenCode
-  scheduler prerequisite and only the established `PR_REVIEW_MERGE_TOKEN` and
-  `OPENCODE_APPROVE_TOKEN` secrets; the caller no longer elevates its generated
-  GitHub token or inherits unrelated secrets, while the independent merge plane
-  remains unchanged.
+  scheduler prerequisite, explicit `PR_REVIEW_MERGE_TOKEN` and
+  `OPENCODE_APPROVE_TOKEN` fallbacks, and the exact read-plus-OIDC permission set
+  required to exchange a short-lived OpenCode GitHub App token. The generated
+  GitHub token retains no repository write authority, unrelated secrets are not
+  inherited, and the independent merge plane remains unchanged.
 - Bound every repository CI checkout to the exact pull-request source head and
   verify `git rev-parse HEAD` before tests, coverage, packaging, or container
   gates, so GitHub-generated synthetic merge refs cannot satisfy exact-head
