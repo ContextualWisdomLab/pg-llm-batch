@@ -9,7 +9,6 @@ import pytest
 
 from pg_llm_batch import batch_api_client as client_mod
 from pg_llm_batch.batch_api_client import BatchAPIClient, GatewayCredentials
-from pg_llm_batch.exceptions import GatewayError
 
 
 class _Response:
