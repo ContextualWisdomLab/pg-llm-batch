@@ -6,8 +6,9 @@
 ## Goal
 
 Migrate the `pg-llm-batch` hourly review-repair caller to the hardened central
-scheduler contract while preserving the independent merge plane and binding CI
-evidence to the exact pull-request source head.
+scheduler contract while preserving the independent merge plane, binding CI
+evidence to the exact pull-request source head, and ensuring a later hourly
+trigger cannot cancel an active RCA or bounded repair.
 
 ## Dependency
 
@@ -34,52 +35,23 @@ regressions and are not reused as success evidence.
 
 ## Task 2: Implement the bounded caller migration
 
-- [x] Pin `pr-review-fix-scheduler.yml` to current `.github#782` head
-      `bc76d5a1a93852b45a7e26dc4da966d359aec292` for Draft verification.
-- [x] Update `canonical_ref` to the same immutable SHA.
+- [x] Pin `pr-review-fix-scheduler.yml` and `canonical_ref` to the exact current
+      `.github#782` head `afd33b5d09f331f2b73913c1d4b312be9296a449`
+      for Draft verification.
 - [x] Remove the review-fix job permission elevation.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
-- [x] Keep cadence, retry floor, dispatch bound, and concurrency unchanged.
+- [x] Keep the one-hour cadence, one-hour retry floor, and one-dispatch repair
+      bound.
 - [x] Keep the merge scheduler pin, permissions, inputs, and secret inheritance
       unchanged.
-- [x] When the prerequisite advanced from the earlier reviewed head, update the
-      exact-pin contract first. RED head `62fb2f2d9251586f37b30f6e24cfa18c11ddf458`
-      failed CI run `31201274230` only because the caller still referenced the
-      predecessor central SHA. Implementation then moved the caller and both
-      governance contracts to the same current prerequisite identity.
-- [x] When `.github#782` advanced again from
-      `70fd801523893ba2c51ad9bd859b2d3c408d5839` to
-      `8ab55aa29ce41aafe5f0f5c4195c7726861bf518`, update the focused contract
-      before production. Test-only head
-      `07bb189b3f554195eba48bcc0124aca50a6f5faf` failed exact-head CI
-      `31218680794` with the intended single scheduler-pin assertion
-      (`1 failed, 352 passed, 3 deselected` on Python 3.10); security and SAST
-      remained successful. Governance alignment head
-      `8478fbf75a3533ddd4871c7ee488b223fd68d754` then required the same identity,
-      and implementation head `82892548ad11360a0e22c4b8ea0e4ff819867dbc`
-      moved both workflow references to that exact prerequisite SHA.
-- [x] When `.github#782` advanced from
-      `8ab55aa29ce41aafe5f0f5c4195c7726861bf518` to
-      `9b4acb7e3cc65ea31cbb8c18b2b1a3d60015eef5`, update the focused contract
-      before production. Test-only head
-      `76c9e86cbcd6ba5885bf28a3a96037b0a56d27d5` failed exact-head CI
-      `31222806064` with exactly the intended scheduler-pin assertion
-      (`1 failed, 352 passed, 3 deselected` on Python 3.10), while Security Scan
-      and SAST Semgrep remained successful. Implementation head
-      `f142a29eb1b16ccd20d92928e743edfa385dc93b` moved the workflow `uses` and
-      `canonical_ref`; governance-alignment head
-      `6738aa6bb14a03549d7bb75aaccd45d5bab8197c` moved the duplicate workflow
-      contract to the same immutable prerequisite identity.
-- [x] When `.github#782` later advanced to
-      `bc76d5a1a93852b45a7e26dc4da966d359aec292`, test-only head
-      `ec3c78cc81a27e30a0dff208f5634fb99ef75da0` moved the focused exact-pin
-      contract first. Its CI run `31234208124` was cancelled after the
-      implementation superseded that head, so the cancelled run is not counted
-      as executed RED evidence. The deterministic mismatch itself remains the
-      test-first contract. Implementation head
-      `0f9dd4119ef55b2ae6bcd028c46c757442a2a747` moved both `uses` and
-      `canonical_ref`; refactor head `6eb9a1445bebac9588550a4f0d1d08f1d2d00348`
-      aligned the duplicate governance contract.
+- [x] When the prerequisite advanced from earlier reviewed heads, update the
+      exact-pin test before implementation and regenerate exact-head evidence.
+      RED heads `62fb2f2d9251586f37b30f6e24cfa18c11ddf458`,
+      `07bb189b3f554195eba48bcc0124aca50a6f5faf`, and
+      `76c9e86cbcd6ba5885bf28a3a96037b0a56d27d5` each captured a deterministic
+      predecessor-pin mismatch before the workflow moved.
+- [x] Treat the cancelled predecessor run `31234208124` only as superseded
+      diagnostic history; it is not passing or executed RED evidence.
 
 ## Task 3: Bind CI to the exact source head
 
@@ -95,23 +67,54 @@ regressions and are not reused as success evidence.
 - [x] Rebase the bounded slice onto current protected main rather than copying
       stale-base test failures forward.
 
-## Task 4: Document the operator and trust boundary
+## Task 4: Preserve RCA and scope writer-lease recovery
+
+- [x] Add a failing contract requiring queued single-flight maintenance instead
+      of cancellation of the active run.
+- [x] Record exact-head RED CI `31257187170` on
+      `6ef1dd64f2f088f83b9bd975870e4c17c5ecc07d`: one intended scheduler
+      assertion failed on Python 3.10/3.12/3.14 and coverage because the workflow
+      still used `cancel-in-progress: true`.
+- [x] Change the concurrency group to `cancel-in-progress: false` plus
+      `queue: max`, retaining one running maintenance workflow while allowing
+      later hourly triggers to wait rather than discard active work.
+- [x] Record implementation GREEN CI `31257294919`, Security Scan
+      `31257294934`, and SAST Semgrep `31257294909` on exact head
+      `d689750fa4df3fb17b1d82f590da4a52e2754218`.
+- [x] Add a documentation contract requiring root-cause analysis, candidate
+      remedies, feasibility evaluation, execution, and branch-scoped lease
+      recovery.
+- [x] Record exact-head documentation RED CI `31257371090` on
+      `90748552a9a389daac3b4198cd165a69fbfad790`: the intended single contract
+      failed because ADR 0013 did not yet define that recovery behavior.
+- [x] Define actual lease conflict as movement of the same `pg-llm-batch` target
+      branch, PR, or blob, while treating read-only dependency movement as scoped
+      evidence invalidation and reconciliation rather than a repository-wide
+      stop.
+- [x] Record ADR-contract GREEN CI `31257451896`, Security Scan
+      `31257451894`, and SAST Semgrep `31257451900` on exact head
+      `07b6535b0f965b2be8ef4343332ad873df935387`.
+
+## Task 5: Document the operator and trust boundary
 
 - [x] Add ADR 0013 with GitHub primary-documentation references in APA 7 form.
 - [x] Keep the existing secret names as the operator contract; no new credential
       or model-secret setup is introduced by this caller-only migration.
-- [x] Record the scheduler and exact-source CI changes under `CHANGELOG.md`
-      Unreleased.
+- [x] Document the RCA → remedy → feasibility → execution sequence and the
+      distinction between same-target writer conflicts and read-only dependency
+      drift.
+- [x] Record the scheduler, exact-source CI, and queued-recovery changes under
+      `CHANGELOG.md` Unreleased.
 
-## Task 5: Verify and promote
+## Task 6: Verify and promote
 
-- [ ] Run focused workflow-contract tests on the exact source head.
-- [ ] Run the complete non-integration suite on the exact source head.
+- [ ] Run focused workflow-contract tests on the exact final source head.
+- [ ] Run the complete non-integration suite on the exact final source head.
 - [ ] Require Ruff and 100% production statement/branch coverage on the exact
-      source head.
-- [ ] Require 100% production docstring coverage on the exact source head.
+      final source head.
+- [ ] Require 100% production docstring coverage on the exact final source head.
 - [ ] Require lock freshness, package builds, Compose validation, and both
-      container builds on the exact source head.
+      container builds on the exact final source head.
 - [ ] Require current-head security, SAST, dependency, SBOM, and review gates.
 - [ ] After central #782 merges, replace the temporary SHA with its protected
       merge SHA and rerun every gate.
