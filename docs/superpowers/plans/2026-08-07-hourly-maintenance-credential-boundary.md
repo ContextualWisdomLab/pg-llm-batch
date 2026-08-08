@@ -15,8 +15,9 @@ workflow-generated token.
 ## Dependency
 
 The implementation is stacked logically on `ContextualWisdomLab/.github#782`.
-The current prerequisite SHA is used only for Draft verification. Final promotion
-requires the protected merge SHA from central `main` and fresh exact-head gates.
+The exact current green prerequisite head is used only for Draft verification.
+Final promotion requires the protected merge SHA from central `main` and fresh
+exact-head gates.
 
 This replacement branch starts from protected `pg-llm-batch` main
 `bf2cc2e140dc3ff4a56c3203f80f41bb9fed5d10`, which already contains the bounded
@@ -38,9 +39,20 @@ regressions and are not reused as success evidence.
 
 ## Task 2: Implement the bounded caller migration
 
-- [x] Pin `pr-review-fix-scheduler.yml` and `canonical_ref` to the exact current
-      `.github#782` candidate `afd33b5d09f331f2b73913c1d4b312be9296a449`
-      for Draft verification.
+- [x] Pin `pr-review-fix-scheduler.yml` and the compatibility `canonical_ref`
+      input to the exact current `.github#782` green head
+      `17bd5e4a98a718012dcb82d5028aa697a4ca8077` for Draft verification.
+- [x] Treat predecessor central pin
+      `afd33b5d09f331f2b73913c1d4b312be9296a449` only as historical development
+      evidence because its later exact-head Strix contract did not pass.
+- [x] Add the repin test first at exact pg head
+      `97e8e8e9d8be2323c533445a178bf597e2c269cb`; CI `31261523944` failed the
+      intended single scheduler-pin assertion while the workflow still named the
+      predecessor SHA.
+- [x] Move the caller pin only after central head
+      `17bd5e4a98a718012dcb82d5028aa697a4ca8077` had directly observable green
+      Hourly NVIDIA NIM, Strix changed-path, Python Security, Security Scan,
+      Semgrep, CodeQL, Secret Scan, OSV, Scorecard, and SBOM evidence.
 - [x] Remove all repository write elevation from the review-fix caller.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
 - [x] Keep the one-hour cadence, one-hour retry floor, and one-dispatch repair
@@ -76,11 +88,14 @@ regressions and are not reused as success evidence.
       of cancellation of the active run.
 - [x] Record exact-head RED CI `31257187170` on
       `6ef1dd64f2f088f83b9bd975870e4c17c5ecc07d`: one intended scheduler
-      assertion failed on Python 3.10/3.12/3.14 and coverage because the workflow
-      still used `cancel-in-progress: true`.
-- [x] Change the concurrency group to `cancel-in-progress: false` plus
+      assertion failed on Python 3.10/3.12/3.14 and coverage because the product
+      workflow still used `cancel-in-progress: true`.
+- [x] Change the product concurrency group to `cancel-in-progress: false` plus
       `queue: max`, retaining one running maintenance workflow while allowing
-      later hourly triggers to wait rather than discard active work.
+      later hourly triggers to wait rather than discard active work. The central
+      reusable queue scan is a separate short read-only component and may cancel
+      only a superseded scan; separately dispatched per-PR writers remain
+      non-cancelling.
 - [x] Record implementation GREEN CI `31257294919`, Security Scan
       `31257294934`, and SAST Semgrep `31257294909` on exact head
       `d689750fa4df3fb17b1d82f590da4a52e2754218`.
