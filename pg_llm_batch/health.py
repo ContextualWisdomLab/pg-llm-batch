@@ -25,6 +25,10 @@ logger = logging.getLogger(__name__)
 # Components that must be ready for the service to be considered healthy.
 REQUIRED_COMPONENTS = {"database", "pg_tiktoken", "com_config"}
 
+# Bound the database-side readiness statement independently of connection
+# acquisition. This is transaction-local and does not alter server defaults.
+HEALTH_STATEMENT_TIMEOUT_MILLISECONDS = 4_000
+
 
 def check_health(dsn: str) -> Dict[str, Any]:
     """Return a detailed local readiness report for operators and the CLI."""
@@ -39,6 +43,10 @@ def check_health(dsn: str) -> Dict[str, Any]:
     try:
         with psycopg.connect(dsn, connect_timeout=5) as conn:
             with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT set_config('statement_timeout', %s, true)",
+                    (str(HEALTH_STATEMENT_TIMEOUT_MILLISECONDS),),
+                )
                 cur.execute(
                     "SELECT component, is_ready, detail FROM pg_llm_batch_health_check()"
                 )
