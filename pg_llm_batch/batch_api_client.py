@@ -364,6 +364,7 @@ class BatchAPIClient:
         while True:
             delay: Optional[float] = None
             retry_reason = ""
+            terminal_error_type: Optional[str] = None
             try:
                 async with request(
                     url,
@@ -392,15 +393,19 @@ class BatchAPIClient:
                     or attempt >= self.max_retry_attempts
                     or isinstance(exc, aiohttp.ClientSSLError)
                 ):
-                    raise GatewayError(
-                        f"{operation} transport failed",
-                        response_data={
-                            "error_type": type(exc).__name__,
-                            "timeout_seconds": self.request_timeout_seconds,
-                        },
-                    ) from exc
-                delay = self._fallback_retry_delay(attempt)
-                retry_reason = type(exc).__name__
+                    terminal_error_type = type(exc).__name__
+                else:
+                    delay = self._fallback_retry_delay(attempt)
+                    retry_reason = type(exc).__name__
+
+            if terminal_error_type is not None:
+                raise GatewayError(
+                    f"{operation} transport failed",
+                    response_data={
+                        "error_type": terminal_error_type,
+                        "timeout_seconds": self.request_timeout_seconds,
+                    },
+                )
 
             logger.warning(
                 "%s retrying idempotent GET after %s "
