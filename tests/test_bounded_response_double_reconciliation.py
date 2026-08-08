@@ -7,12 +7,12 @@ from pathlib import Path
 
 
 HELPER_PATH = Path("tests/bounded_response_double.py")
-RESPONSE_DOUBLE_PATHS = (
-    Path("tests/test_remote_batch_identity_contract.py"),
-    Path("tests/test_remote_batch_lifecycle.py"),
-    Path("tests/test_remote_batch_metadata_contract.py"),
-    Path("tests/test_remote_batch_state_contracts.py"),
-)
+LOCAL_STREAM_MARKERS = {
+    Path("tests/test_remote_batch_identity_contract.py"): "class _ByteStream:",
+    Path("tests/test_remote_batch_lifecycle.py"): "class _ByteStream:",
+    Path("tests/test_remote_batch_metadata_contract.py"): "class _MetadataByteStream:",
+    Path("tests/test_remote_batch_state_contracts.py"): "class _ProviderByteStream:",
+}
 
 
 def test_shared_bounded_response_double_matches_protected_main_contract() -> None:
@@ -26,12 +26,10 @@ def test_shared_bounded_response_double_matches_protected_main_contract() -> Non
     assert "response.content_length = len(content.payload_bytes)" in helper
 
 
-def test_lifecycle_response_doubles_use_the_shared_bounded_helper() -> None:
-    """Conflicting lifecycle test doubles converge on the protected-main helper."""
-    import_line = (
-        "from tests.bounded_response_double import bind_bounded_json_response"
-    )
-    for path in RESPONSE_DOUBLE_PATHS:
+def test_tenant_specific_doubles_preserve_equivalent_bounded_streaming() -> None:
+    """Conflict resolution may retain stricter local doubles instead of duplicating them."""
+    for path, class_marker in LOCAL_STREAM_MARKERS.items():
         source = path.read_text(encoding="utf-8")
-        assert import_line in source, path
-        assert "bind_bounded_json_response(self, payload)" in source, path
+        assert class_marker in source, path
+        assert "async def iter_chunked(self, size: int)" in source, path
+        assert "response.json() must not bypass bounded streaming" in source, path
