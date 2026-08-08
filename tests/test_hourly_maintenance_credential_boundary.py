@@ -8,7 +8,7 @@ from pathlib import Path
 
 WORKFLOW_PATH = Path(".github/workflows/hourly-maintenance.yml")
 ADR_PATH = Path("docs/adr/0013-hourly-maintenance-credential-boundary.md")
-FIX_SCHEDULER_SHA = "afd33b5d09f331f2b73913c1d4b312be9296a449"
+FIX_SCHEDULER_SHA = "17bd5e4a98a718012dcb82d5028aa697a4ca8077"
 MERGE_SCHEDULER_SHA = "5983b41ace75040c1d81818171ca7d0f3653254e"
 
 
