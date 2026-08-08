@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Replaced release-manifest pathname check-then-use writes with
+  descriptor-relative no-follow traversal, exclusive temporary creation,
+  descriptor-relative atomic rename, and file plus parent-directory
+  synchronization, closing the time-of-check/time-of-use path-replacement window
+  without granting release authority; version `0.1.0` remains unchanged.
 - Bounded release-artifact directory enumeration to three entries, so a third
   unexpected artifact fails closed without materializing an unbounded output
   directory in verifier memory.
