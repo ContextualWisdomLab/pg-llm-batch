@@ -42,6 +42,25 @@ def test_public_healthz_security_boundary_is_authoritative():
     assert "diagnostic" in changelog.lower()
 
 
+def test_health_query_timeout_boundary_is_authoritative():
+    """Docs must preserve the bounded PostgreSQL statement-timeout contract."""
+    doctoring = _normalized(DOCTORING)
+    adr = _normalized(ADR)
+    changelog = _normalized(CHANGELOG)
+    agents = _normalized(AGENTS)
+
+    for document in (doctoring, adr):
+        assert "statement_timeout" in document
+        assert "transaction-local" in document
+        assert "4,000 milliseconds" in document
+        assert "not an end-to-end deadline" in document
+        assert "PostgreSQL 18" in document
+
+    assert "statement timeout" in changelog.lower()
+    assert "transaction-local" in agents
+    assert "statement_timeout" in agents
+
+
 def test_contributor_contract_preserves_healthz_redaction_boundary():
     """Contributor guidance must prevent local diagnostics from becoming public."""
     agents = _normalized(AGENTS)
@@ -63,3 +82,5 @@ def test_public_healthz_references_are_recorded_in_apa_style():
     assert "Configure liveness, readiness and startup probes" in doctoring
     assert "Fielding, R., Nottingham, M., & Reschke, J. (2022)." in doctoring
     assert "RFC 9111: HTTP caching" in doctoring
+    assert "PostgreSQL Global Development Group. (2026)." in doctoring
+    assert "Client connection defaults" in doctoring
