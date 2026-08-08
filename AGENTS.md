@@ -12,7 +12,9 @@ settings or add CODEOWNERS-based merge gates before then.
 
 Automatic provider retries are restricted to idempotent GET operations. The reviewed default
 HTTP status set is exactly `{408, 425, 429, 502, 503, 504}`; HTTP 425 `Too Early` uses the same
-bounded `Retry-After` or equal-jitter delay path as the other statuses. Provider POST operations
-remain single-attempt, and HTTP 500 is not retryable by default without a separately reviewed
-provider-specific contract. Do not widen this replay boundary without deterministic regression
-tests and authoritative protocol/security documentation.
+bounded `Retry-After` or equal-jitter delay path as the other statuses. TLS handshake and
+certificate failures are never retried automatically; a repeated request cannot repair peer
+identity or TLS policy. Provider POST operations remain single-attempt, and HTTP 500 is not
+retryable by default without a separately reviewed provider-specific contract. Do not widen this
+replay boundary without deterministic regression tests and authoritative protocol/security
+documentation.
