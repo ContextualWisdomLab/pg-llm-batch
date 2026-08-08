@@ -177,19 +177,27 @@ def test_public_health_report_removes_diagnostic_details():
     assert "provider-controlled-extra-field" not in json.dumps(public_report)
 
 
-def test_public_health_report_fails_closed_on_coercive_readiness_values():
-    """Malformed truthy readiness values cannot become public success evidence."""
-    report = {
-        "ready": "false",
-        "components": [
-            {"component": "database", "is_ready": "false", "detail": "secret"}
-        ],
-    }
+def test_public_health_report_fails_closed_on_malformed_readiness_shapes():
+    """Malformed readiness shapes return one empty not-ready public projection."""
+    malformed_reports = [
+        {"ready": "false", "components": []},
+        {"ready": False, "components": "not-a-list"},
+        {"ready": False, "components": [None]},
+        {
+            "ready": False,
+            "components": [{"component": 7, "is_ready": False}],
+        },
+        {
+            "ready": False,
+            "components": [{"component": "database", "is_ready": "false"}],
+        },
+    ]
 
-    assert health.public_health_report(report) == {
-        "ready": False,
-        "components": [],
-    }
+    for report in malformed_reports:
+        assert health.public_health_report(report) == {
+            "ready": False,
+            "components": [],
+        }
 
 
 def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
