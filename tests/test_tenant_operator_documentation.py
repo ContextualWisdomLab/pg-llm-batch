@@ -13,6 +13,13 @@ ARCHITECTURE_PATH = REPOSITORY_ROOT / "ARCHITECTURE.md"
 DOCTORING_PATH = (
     REPOSITORY_ROOT / "docs" / "doctoring" / "tenant-scoped-lifecycle.md"
 )
+IMPLEMENTATION_PLAN_PATH = (
+    REPOSITORY_ROOT
+    / "docs"
+    / "superpowers"
+    / "plans"
+    / "2026-08-05-tenant-scoped-lifecycle.md"
+)
 
 
 def _read(path: Path) -> str:
@@ -59,3 +66,17 @@ def test_architecture_and_doctoring_bound_the_custom_guc_claim() -> None:
         assert "set_config" in document
         assert "trusted application boundary" in document
         assert "not a substitute" in document
+
+
+def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
+    """The implementation plan must preserve the reviewed default-deny RLS order."""
+    plan = _normalized(IMPLEMENTATION_PLAN_PATH)
+
+    required_order = (
+        "owner-enforcement relaxation, legacy backfill, constraint migration, "
+        "RLS enable and force, policy recreation under default-deny, and "
+        "forced-RLS restoration"
+    )
+    assert required_order in plan
+    assert "same PostgreSQL statement" in plan
+    assert "Enable and force RLS after the policy is present" not in plan
