@@ -40,3 +40,25 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Maintain 100% production statement, branch, and public-docstring coverage with
   realistic tenant-isolation, migration, rollback, compatibility, and
   concurrency tests.
+
+## Reproducible release evidence security contract
+
+- Treat release build directories and artifact names as untrusted concurrent
+  filesystem inputs. Do not reintroduce pathname check-then-open verification.
+- Require descriptor-relative `os.open`, descriptor-based `os.scandir`,
+  `O_DIRECTORY`, `O_NOFOLLOW`, and `O_NONBLOCK`; unsupported runtimes fail
+  closed before reading an artifact.
+- Walk every release-directory component from an opened root or current
+  directory without following symlinks. Reject `..` traversal.
+- Open wheel and source-distribution entries relative to the held release
+  directory descriptor. Hash with bounded `os.read`, derive size from the same
+  open file description, and compare inode metadata before and after reading.
+- Re-scan the same held directory descriptor after both reads and reject changed
+  membership. Keep missing or extra count diagnostics filesystem-order
+  independent and bounded to at most three enumerated names.
+- Keep the release verifier and descriptor-relative manifest writer read-only
+  with respect to release authority. They do not publish, attest, sign, approve,
+  or authorize reuse of pull-request artifacts.
+- Update architecture, ADR, doctoring, CHANGELOG, and deterministic security
+  tests whenever artifact identity, path traversal, concurrency, portability,
+  or rollback semantics change.
