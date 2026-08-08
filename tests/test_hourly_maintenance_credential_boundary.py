@@ -81,17 +81,12 @@ def test_review_fix_grants_only_read_and_oidc_permissions() -> None:
 
     assert "\n    permissions:\n" in review_fix
     permissions = review_fix.split("\n    permissions:\n", 1)[1].split("\n    uses:", 1)[0]
-    assert "      contents: read\n" in permissions
-    assert "      id-token: write\n" in permissions
-    for forbidden_permission in (
-        "actions: write",
-        "checks: write",
-        "contents: write",
-        "issues: write",
-        "pull-requests: write",
-        "statuses: write",
-    ):
-        assert forbidden_permission not in permissions
+    permission_lines = {
+        line.strip()
+        for line in permissions.splitlines()
+        if line.strip()
+    }
+    assert permission_lines == {"contents: read", "id-token: write"}
 
     assert "secrets: inherit" not in review_fix
     assert (
