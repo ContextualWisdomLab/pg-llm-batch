@@ -20,6 +20,24 @@ def _job_block(workflow: str, job_name: str, next_job_name: str | None) -> str:
     return workflow[start:end]
 
 
+def _top_level_concurrency_block(workflow: str) -> str:
+    """Return the workflow-level concurrency block before permissions."""
+    start = workflow.index("concurrency:\n")
+    end = workflow.index("\npermissions:\n", start)
+    return workflow[start:end]
+
+
+def test_hourly_scheduler_queues_single_flight_instead_of_cancelling_recovery() -> None:
+    """A later hourly trigger cannot cancel an active diagnosis or repair run."""
+    workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
+    concurrency = _top_level_concurrency_block(workflow)
+
+    assert "group: hourly-commercial-maintenance-${{ github.repository }}" in concurrency
+    assert "cancel-in-progress: false" in concurrency
+    assert "queue: max" in concurrency
+    assert "cancel-in-progress: true" not in concurrency
+
+
 def test_review_fix_uses_immutable_current_central_scheduler() -> None:
     """The repair job pins the reviewed central scheduler prerequisite exactly."""
     workflow = WORKFLOW_PATH.read_text(encoding="utf-8")
