@@ -355,7 +355,7 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        """Yield a response, retrying only bounded idempotent GET failures."""
+        """Yield a response, retrying bounded GET failures except permanent TLS errors."""
         session = self._get_session()
         normalized_method = method.lower()
         request = getattr(session, normalized_method)
@@ -387,7 +387,11 @@ class BatchAPIClient:
             except GatewayError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                if not retry_safe or attempt >= self.max_retry_attempts:
+                if (
+                    not retry_safe
+                    or attempt >= self.max_retry_attempts
+                    or isinstance(exc, aiohttp.ClientSSLError)
+                ):
                     raise GatewayError(
                         f"{operation} transport failed",
                         response_data={
