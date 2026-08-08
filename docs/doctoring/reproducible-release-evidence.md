@@ -36,16 +36,44 @@ SHA-256 is calculated in bounded chunks. The verifier compares only:
 - byte size; and
 - SHA-256 digest.
 
-On success, it writes canonical JSON to
-`release-evidence/release-manifest.json`. Before creating that directory or any
-manifest byte, the writer rejects a symlink at the destination and in every
-existing parent path component. This prevents pull-request-controlled workspace
-links from redirecting the temporary file or atomic replacement outside the
-selected evidence directory. The manifest additionally records its schema
-version, distribution name, project version, exact source commit, and
-`SOURCE_DATE_EPOCH`. It never records package contents, source files,
-environment variables, credentials, network headers, provider data, or build
-logs.
+On success, it serializes canonical JSON for
+`release-evidence/release-manifest.json` before changing the filesystem. The
+writer then anchors the output to a directory descriptor rather than trusting a
+previously checked pathname:
+
+1. an absolute destination starts from an opened filesystem-root descriptor and
+   a relative destination starts from an opened current-directory descriptor;
+2. every missing parent is created relative to the currently held descriptor
+   with requested mode `0700`;
+3. every parent is opened descriptor-relative with `O_DIRECTORY`,
+   `O_NOFOLLOW`, and close-on-exec where available;
+4. the destination is inspected without following links and must be absent or a
+   regular file;
+5. the owned temporary entry is exclusively created relative to the final
+   parent descriptor with `O_NOFOLLOW` and requested mode `0600`;
+6. the writer flushes and calls `fsync()` on the temporary file;
+7. descriptor-relative `os.rename()` performs the atomic replacement inside the
+   same opened final parent; and
+8. a second `fsync()` synchronizes the final parent directory entry.
+
+The writer fails closed on an unsupported platform before creating an evidence
+directory. It requires descriptor-relative support for open, directory creation,
+status inspection, unlink, and rename; no-follow status inspection; and both
+`O_DIRECTORY` and `O_NOFOLLOW`. It does not silently fall back to the predecessor
+check-then-use implementation.
+
+If a write, file synchronization, or atomic replacement fails after this call
+created its temporary entry, the writer removes only that owned temporary entry
+relative to the held final parent descriptor. It never removes a pre-existing
+entry. A cleanup failure is a separate fail-closed condition. After a successful
+rename, a final-parent synchronization failure reports that the manifest name is
+already replaced but the durability boundary was not confirmed.
+
+The manifest records its schema version, distribution name, project version,
+exact source commit, `SOURCE_DATE_EPOCH`, artifact names, byte sizes, and
+digests. It never records package contents, source files, environment variables,
+credentials, network headers, provider data, arbitrary operating-system error
+text, resolved external path targets, or build logs.
 
 The workflow preserves only `release-manifest.json` for 14 days. Uploaded
 artifacts are review evidence and are not authorized release inputs.
@@ -77,18 +105,33 @@ final main-branch merge evidence.
    or non-reproducible artifact; stops after the third directory entry when
    rejecting an unexpected artifact count; and emits the same fixed count
    diagnostic regardless of filesystem iteration order.
-6. Confirm `release-evidence` and every existing parent path component are
-   regular non-symlink paths before accepting the manifest upload.
-7. Download the bounded manifest only when diligence requires independent digest
-   inspection.
-8. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
-   stale-base result.
+6. Confirm the runtime reports all descriptor-relative and no-follow capabilities
+   required by the writer. An unsupported platform must fail before
+   `release-evidence` is created.
+7. Confirm parent traversal is rejected and each parent is opened through a held
+   directory descriptor with `O_DIRECTORY` and `O_NOFOLLOW`.
+8. Confirm the destination is absent or regular, the owned temporary is created
+   exclusively with requested mode `0600`, and no pre-existing temporary entry
+   is removed.
+9. Confirm one `fsync()` covers manifest bytes before the atomic replacement and
+   another covers the final parent directory after descriptor-relative
+   `os.rename()`.
+10. Download the bounded manifest only when diligence requires independent
+    digest inspection.
+11. Reject a queued, pending, cancelled, skipped, absent, predecessor-head, or
+    stale-base result.
 
 A successful manifest does not prove who built the package. It is not a digital
 signature, SBOM, SLSA provenance statement, release approval, or publication
 record. A future release workflow must generate provenance for the integrated
 release commit, use independently reviewed release authority, and separately
 satisfy SBOM, vulnerability, package-index, and rollback requirements.
+
+The descriptor binding protects operations during this function call. It does
+not reserve the lexical pathname after the function returns. Another same-UID
+process may later rename the directory or manifest; an environment requiring
+post-return ownership must isolate the workspace and process authority
+separately.
 
 ## Failure triage
 
@@ -122,12 +165,44 @@ state, or a backend that ignores `SOURCE_DATE_EPOCH`. Fix the build input or
 backend determinism and rerun from a new exact head. Never copy the first build
 over the second or compare only extracted contents.
 
-### Manifest path failure
+### Unsupported platform failure
 
-The manifest writer refuses a symlink destination, a direct or nested parent
-symlink, or an existing temporary path. Inspect the path lexically rather than
-following it. Remove only a verified local stale temporary file and rerun. Do
-not follow, replace, or normalize around an untrusted symlink.
+Confirm the runner is a Unix platform whose Python runtime lists `os.open`,
+`os.mkdir`, `os.stat`, `os.unlink`, and `os.rename` in `os.supports_dir_fd`, lists
+`os.stat` in `os.supports_follow_symlinks`, and exposes `O_DIRECTORY` plus
+`O_NOFOLLOW`. Move the acceptance job to a governed compatible runner. Do not
+patch around the error or add a pathname fallback.
+
+### Parent path failure
+
+Inspect the destination lexically. Remove `..` components. Replace no symlink
+with its target; instead, create a regular governed evidence directory. A
+non-directory component, permission failure, or race that changes a component
+must remain fail closed. Do not reuse a manifest from a predecessor head.
+
+### Destination or temporary failure
+
+The destination may be absent or an existing regular file. A directory, device,
+FIFO, socket, or symlink is invalid. Any pre-existing temporary name is invalid
+and must be investigated before manual removal. The function cleans only the
+owned temporary created by its own invocation.
+
+### Atomic replacement or synchronization failure
+
+A replacement failure leaves the previous regular destination unchanged and
+attempts to remove the owned temporary. A file-sync failure occurs before
+replacement. A final-parent `fsync()` failure occurs after the manifest name was
+atomically replaced; treat the output as unaccepted evidence and rerun on healthy
+storage from a new exact-head job.
+
+### Rollback
+
+The rollback for this security slice is to stop the Release Acceptance workflow,
+revert the descriptor-relative writer and its exact tests as one reviewed change,
+and rerun the complete prerequisite stack. The predecessor lexical symlink
+checks are weaker and must not be advertised or used as an equivalent secure
+fallback. Do not publish, attest, or reuse any manifest produced while the
+rollback is in progress.
 
 ## Security and acquisition rationale
 
@@ -136,9 +211,11 @@ builds of the same reviewed source and exact build toolchain produced the same
 named bytes.” Bounded artifact enumeration prevents malformed output directories
 from turning a fail-closed validation decision into unbounded verifier memory
 use. Fixed count diagnostics prevent filesystem ordering from changing incident
-evidence. Parent-chain symlink refusal prevents an untrusted pull-request tree
-from redirecting evidence writes outside the governed workspace location. This
-supports repeatable incident reconstruction and future SLSA v1.2 provenance
+evidence. Descriptor-relative no-follow traversal removes the static parent
+check’s CWE-367 time-of-check/time-of-use interval: later lookup, temporary-file
+creation, cleanup, and rename are bound to opened directory objects. Explicit
+file and directory synchronization makes the durability decision observable.
+This supports repeatable incident reconstruction and future SLSA v1.2 provenance
 without mixing pull-request validation with release authority. Top-level
 permissions remain read-only, credentials are not persisted, action sources are
 immutably pinned, and the evidence payload is bounded.
@@ -152,6 +229,9 @@ GitHub. (n.d.). *Using artifact attestations to establish provenance for builds*
 GitHub Docs. Retrieved August 6, 2026, from
 https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds
 
+MITRE. (2026). *CWE-367: Time-of-check time-of-use (TOCTOU) race condition*
+(Version 4.20). https://cwe.mitre.org/data/definitions/367.html
+
 Python Packaging Authority. (n.d.). *Binary distribution format*.
 Python Packaging User Guide. Retrieved August 6, 2026, from
 https://packaging.python.org/en/latest/specifications/binary-distribution-format/
@@ -160,8 +240,20 @@ Python Packaging Authority. (n.d.). *Source distribution format*.
 Python Packaging User Guide. Retrieved August 6, 2026, from
 https://packaging.python.org/en/latest/specifications/source-distribution-format/
 
+Python Software Foundation. (2026). *os—Miscellaneous operating system
+interfaces*. Python 3.14 documentation. Retrieved August 6, 2026, from
+https://docs.python.org/3.14/library/os.html
+
 Reproducible Builds. (n.d.). *SOURCE_DATE_EPOCH specification*. Retrieved
 August 6, 2026, from https://reproducible-builds.org/specs/source-date-epoch/
 
 Supply-chain Levels for Software Artifacts. (2025). *SLSA specification,
 version 1.2*. https://slsa.dev/spec/v1.2/
+
+The Open Group. (2024). *open, openat—Open file*. In *The Open Group Base
+Specifications Issue 8, IEEE Std 1003.1-2024*.
+https://pubs.opengroup.org/onlinepubs/9799919799/functions/open.html
+
+The Open Group. (2024). *rename, renameat—Rename file*. In *The Open Group Base
+Specifications Issue 8, IEEE Std 1003.1-2024*.
+https://pubs.opengroup.org/onlinepubs/9799919799/functions/rename.html
