@@ -16,6 +16,9 @@ permissions:
 jobs:
   review-fix:
     name: Repair actionable pull-request feedback
+    permissions:
+      contents: read
+      id-token: write
     uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@afd33b5d09f331f2b73913c1d4b312be9296a449 # prerequisite .github#782
     with:
       target_repository: ContextualWisdomLab/pg-llm-batch
