@@ -6,6 +6,7 @@ from __future__ import annotations
 import asyncio
 import ssl
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import aiohttp
@@ -144,3 +145,21 @@ async def test_timeout_remains_retryable_for_idempotent_get(
 
     assert session.calls == 2
     assert sleeps == [0.5]
+
+
+def test_authoritative_docs_define_tls_fail_closed_retry_boundary() -> None:
+    """Public and operator contracts must state that permanent TLS failures do not retry."""
+    required_phrase = (
+        "TLS handshake and certificate failures are never retried automatically"
+    )
+    authoritative_paths = (
+        "README.md",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "docs/adr/0015-http-425-too-early-retry.md",
+        "docs/doctoring/http-425-too-early-retries.md",
+    )
+
+    for path in authoritative_paths:
+        normalized = " ".join(Path(path).read_text(encoding="utf-8").split())
+        assert required_phrase in normalized, path
