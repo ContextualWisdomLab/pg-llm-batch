@@ -7,8 +7,10 @@
 
 Migrate the `pg-llm-batch` hourly review-repair caller to the hardened central
 scheduler contract while preserving the independent merge plane, binding CI
-evidence to the exact pull-request source head, and ensuring a later hourly
-trigger cannot cancel an active RCA or bounded repair.
+evidence to the exact pull-request source head, ensuring a later hourly trigger
+cannot cancel an active RCA or bounded repair, and retaining a realistic
+short-lived mutation-credential path without granting repository writes to the
+workflow-generated token.
 
 ## Dependency
 
@@ -26,7 +28,8 @@ regressions and are not reused as success evidence.
 
 - [x] Add a focused test requiring the exact current central scheduler SHA.
 - [x] Require explicit mapping of only the two established scheduler secrets.
-- [x] Reject job-level GitHub-token write permissions in the review-fix job.
+- [x] Reject repository write permissions for the workflow-generated token in
+      the review-fix job.
 - [x] Reject `secrets: inherit` in the review-fix job.
 - [x] Preserve the existing independent review-merge contract.
 - [x] Record RED CI `31172887367` on test-only predecessor head
@@ -36,9 +39,9 @@ regressions and are not reused as success evidence.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` and `canonical_ref` to the exact current
-      `.github#782` head `afd33b5d09f331f2b73913c1d4b312be9296a449`
+      `.github#782` candidate `afd33b5d09f331f2b73913c1d4b312be9296a449`
       for Draft verification.
-- [x] Remove the review-fix job permission elevation.
+- [x] Remove all repository write elevation from the review-fix caller.
 - [x] Replace inherited secrets with explicit scheduler secret mapping.
 - [x] Keep the one-hour cadence, one-hour retry floor, and one-dispatch repair
       bound.
@@ -95,18 +98,49 @@ regressions and are not reused as success evidence.
       `31257451894`, and SAST Semgrep `31257451900` on exact head
       `07b6535b0f965b2be8ef4343332ad873df935387`.
 
-## Task 5: Document the operator and trust boundary
+## Task 5: Restore realistic short-lived mutation authority
+
+- [x] Inspect the central candidate and prove that its preferred mutation path
+      exchanges a GitHub OIDC assertion for a short-lived OpenCode GitHub App
+      token, with the two explicit secrets as fallbacks.
+- [x] Add a RED caller contract requiring exactly `contents: read` and
+      `id-token: write`, while still rejecting every repository write permission,
+      `secrets: inherit`, `COPILOT_GITHUB_TOKEN`, and caller-side model secrets.
+- [x] Record exact-head RED CI `31258604528` on
+      `63c0def47f48167cb82b89c3e4c0f300b2319f23`: the intended permission
+      assertion failed because the review-fix caller could not request OIDC.
+- [x] Add only the two required caller permissions at implementation head
+      `46e181b48a74465cfb370c71ef80c4b1240aff70`.
+- [x] Replace a newline-sensitive test assertion with an exact structural set
+      comparison at `0fcf4419c75747712bb7fd0d1c1f16ea8e046d63`; CI
+      `31258740858`, Security Scan `31258740833`, and SAST Semgrep
+      `31258740855` then succeeded on that exact source head.
+- [x] Add a RED documentation contract at
+      `94b4ee3c553879485dadd20518f6d0d34f3f350b`; CI `31258829737` failed the
+      intended missing OIDC feasibility statement and is retained only as RED
+      evidence.
+- [x] Document that `id-token: write` authorizes OIDC token issuance rather than
+      repository mutation, that the app token is short-lived, and that repair
+      fails closed only when both OIDC exchange and explicit fallbacks are
+      unavailable.
+- [x] Record documentation GREEN CI `31258889981`, Security Scan
+      `31258889951`, and SAST Semgrep `31258889957` on exact head
+      `9b172f8e271c116386dd4181ccf8b74353d492f1`.
+
+## Task 6: Document the operator and trust boundary
 
 - [x] Add ADR 0013 with GitHub primary-documentation references in APA 7 form.
-- [x] Keep the existing secret names as the operator contract; no new credential
-      or model-secret setup is introduced by this caller-only migration.
+- [x] Keep the existing secret names as fallback operator contracts; no new
+      long-lived credential or model-secret setup is introduced.
+- [x] Document the short-lived OIDC exchange, exact caller permissions, and
+      fail-closed availability boundary.
 - [x] Document the RCA → remedy → feasibility → execution sequence and the
       distinction between same-target writer conflicts and read-only dependency
       drift.
-- [x] Record the scheduler, exact-source CI, and queued-recovery changes under
-      `CHANGELOG.md` Unreleased.
+- [x] Record the scheduler, exact-source CI, queued recovery, and OIDC changes
+      under `CHANGELOG.md` Unreleased.
 
-## Task 6: Verify and promote
+## Task 7: Verify and promote
 
 - [ ] Run focused workflow-contract tests on the exact final source head.
 - [ ] Run the complete non-integration suite on the exact final source head.
