@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in `StreamingBatchAPIClient` and immutable `BatchResultRecord` for
+  output-then-error JSONL iteration without whole-body or whole-result-list
+  materialization, with strict per-file decoded-byte, physical-line byte,
+  batch-wide physical line, and combined record-count limits. Result and error
+  files share the physical-line budget, and blank lines consume it before
+  parsing; split UTF-8, CRLF, and final lines without a newline are handled
+  deterministically, while invalid streams, encodings, JSON, non-object records,
+  and non-success file responses fail closed with body-free diagnostics.
+  `open_batch_records()` provides deterministic context-managed ownership for
+  consumers that may stop before exhaustion.
 - Read-only exact-head release acceptance that builds one wheel and source
   distribution twice from clean Git archives, proves byte-identical SHA-256
   identity, records bounded canonical evidence, and keeps publication and
@@ -36,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Stopped idempotent GET retries at response handoff so post-handoff payload or
+  response-close failures close once and cannot reopen provider files, duplicate
+  already-yielded records, or violate the asynchronous-context-manager protocol.
+- Closed active provider-file responses deterministically after context-managed
+  early exits, explicitly closed nested asynchronous generators, rejected
+  zero-progress empty adapter chunks, and removed provider-controlled decoder
+  bytes and text from sanitized parser exception cause and context links.
 - Bound release-directory traversal, artifact open, bounded streaming hash, size
   derivation, and final membership validation to held descriptors; reject parent
   symlinks, `..` traversal, artifact replacement, in-place identity drift, and
@@ -90,6 +107,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Exposed `ValidationError.field`, `.value`, and `.reason` as direct stable
+  attributes while retaining the existing structured `details` dictionary.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, the `uv_build` backend, and exact
   `uv`/`uv_build` 0.12.1 governed build pins so PEP 517 backend selection cannot

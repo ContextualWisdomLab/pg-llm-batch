@@ -67,13 +67,16 @@ class ValidationError(PgLlmBatchError):
         reason: str = "",
         message: Optional[str] = None,
     ) -> None:
-        """Describe an invalid field value and its reason."""
+        """Describe an invalid field value and expose its structured context."""
         rendered = message or f"Invalid value for '{field}': {value!r} ({reason})"
         super().__init__(
             message=rendered,
             error_code="VALIDATION_ERROR",
             details={"field": field, "value": value, "reason": reason},
         )
+        self.field = field
+        self.value = value
+        self.reason = reason
 
 
 class GatewayError(PgLlmBatchError):
