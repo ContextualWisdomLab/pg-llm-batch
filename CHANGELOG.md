@@ -69,6 +69,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Serialized hourly maintenance with `queue: max` and
+  `cancel-in-progress: false`, so a later trigger cannot discard an active RCA
+  or bounded repair. The operator contract now requires root-cause analysis,
+  candidate-remedy and feasibility evaluation, then execution; only movement of
+  the same `pg-llm-batch` target creates a writer conflict, while read-only
+  dependency drift causes scoped reconciliation and unrelated safe work
+  continues.
 - Narrowed the hourly review-repair caller to the immutable central OpenCode
   scheduler prerequisite and only the established `PR_REVIEW_MERGE_TOKEN` and
   `OPENCODE_APPROVE_TOKEN` secrets; the caller no longer elevates its generated
