@@ -104,3 +104,42 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Update README, architecture, ADR, operator documentation, doctoring, and
   CHANGELOG whenever streaming resource, ordering, lifecycle, validation, or
   compatibility contracts change.
+
+## Resumable result checkpoint contract
+
+- Keep checkpointing opt-in. Preserve `BatchResultRecord`, `iter_batch_records()`,
+  `open_batch_records()`, and aggregate download behavior unchanged.
+- Expose immutable, versioned `BatchResultCheckpoint` values only after one
+  bounded nonblank JSON object has been validated. Persisted fields are strict
+  and non-coercive; request identity mismatch fails before credential resolution
+  or network I/O.
+- Bind the exact validated batch and endpoint alias, ordered file kind and file
+  identifier, file-local physical line, batch-wide physical line and record
+  positions, exact raw physical line bytes, and newline-termination state.
+- Use domain-separated, length-prefixed SHA-256 framing. Never replace it with
+  delimiter concatenation, decoded-JSON canonicalization, record number alone,
+  provider file identity alone, or transport chunk boundaries.
+- Resume from byte zero under every existing streaming limit and lifecycle
+  control. Yield nothing until the supplied checkpoint is reproduced exactly;
+  changed prefixes, changed file identity, truncation at or before the
+  checkpoint, or unexpected framing fail closed with bounded body-free
+  diagnostics.
+- Never claim that prefix evidence detects mutation or truncation strictly after
+  the acknowledged checkpoint. Whole-stream immutability requires a stable
+  provider validator or authenticated digest, or a separate full-stream
+  manifest under a separately tested bounded lifecycle.
+- Do not claim authentication, signature, attestation, provider integrity, or
+  automatic exactly-once delivery. The host owns tenant authorization,
+  tamper/rollback protection for checkpoint storage, and atomic coordination of
+  record effects with checkpoint advancement.
+- Use `open_checkpointed_batch_records()` for planned early exit and preserve
+  deterministic closure of the outer iterator, nested iterator, and active HTTP
+  response.
+- Any incompatible digest framing change requires a new checkpoint schema
+  version, an explicit compatibility decision, architecture and ADR updates,
+  operator migration guidance, and deterministic old/new-version tests.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  chunk-independence, prefix mutation, truncation at or before the checkpoint,
+  explicit unseen-suffix limitations, file-identity, blank-line, CRLF,
+  final-line, pre-network validation, cleanup, compatibility, and no-replay
+  tests.

@@ -36,6 +36,69 @@ Records are emitted in deterministic provider-file order: all output records,
 then all error records. A failed batch that exposes only an error file is valid.
 An incomplete batch or terminal batch with neither file identifier fails closed.
 
+## Resumable checkpoints
+
+Use the checkpointed API when a host durably applies records and may restart
+before the complete provider stream is consumed:
+
+```python
+from pg_llm_batch import BatchResultCheckpoint, StreamingBatchAPIClient
+
+resume_after: BatchResultCheckpoint | None = load_checkpoint()
+
+async with StreamingBatchAPIClient(dsn, credentials_provider) as client:
+    async with client.open_checkpointed_batch_records(
+        "batch-123",
+        "default",
+        resume_after=resume_after,
+    ) as records:
+        async for item in records:
+            with host_transaction():
+                apply_record(item.file_kind, item.record)
+                store_checkpoint(item.checkpoint)
+```
+
+Each `CheckpointedBatchResultRecord` contains the decoded record and an immutable
+`BatchResultCheckpoint`. Persist the complete checkpoint only after the record's
+application effects are durable. Exactly-once behavior requires a host-owned
+transaction, idempotency key, or equivalent proof that atomically coordinates
+record effects and checkpoint advancement.
+
+A checkpoint binds:
+
+- schema version, exact validated batch identifier, and pre-normalized endpoint
+  alias;
+- ordered provider file kind and validated file identifier;
+- file-local physical line, batch-wide physical line, and batch-wide record
+  positions; and
+- a SHA-256 digest of a domain-separated, length-prefixed encoding of the full
+  physical stream prefix through that record.
+
+Physical framing is part of identity. Blank lines, CR bytes in CRLF input,
+newline termination, file transitions, and provider file identifiers affect the
+digest. HTTP chunk boundaries do not.
+
+Resume performs a bounded rescan from byte zero. No later record is delivered
+until the supplied checkpoint is reproduced exactly. A changed prefix, changed
+provider file identity, inserted or removed framing, unexpected record at the
+checkpoint position, or truncation at or before the checkpoint fails closed. The
+rescan preserves all existing byte, line, physical-line, record, timeout,
+identifier, retry-handoff, parser, and deterministic-close controls.
+
+This checkpoint verifies only the reproduced prefix. Mutation or truncation
+strictly after the acknowledged checkpoint is outside that evidence and can end
+a resumed stream without a mismatch. Hosts requiring whole-stream immutability
+must use a stable provider validator or authenticated digest, or perform a
+separate full-stream manifest pass before accepting the stream as complete.
+
+The checkpoint is change-detection evidence, not authentication. SHA-256 does
+not protect a checkpoint store from an actor able to rewrite both checkpoint and
+provider input. Hosts must authenticate callers, authorize tenant and endpoint
+access, protect checkpoint storage against tampering and rollback, and surface a
+mismatch as an operator reconciliation event rather than silently advancing it.
+See [ADR 0006](adr/0006-resumable-result-checkpoints.md) and the
+[assurance record](doctoring/resumable-result-checkpoints.md).
+
 ## Resource and trust boundaries
 
 - The inherited total decoded-byte limit is enforced independently for each
@@ -43,11 +106,11 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
 - `max_jsonl_line_bytes` caps one physical line before UTF-8 decoding or JSON
   parsing, including a final line without a newline.
 - `max_jsonl_records` caps the combined output-plus-error record count for one
-  iterator.
+  iterator, including records rescanned before a supplied checkpoint.
 - `max_jsonl_physical_lines` caps the batch-wide physical line count shared by
   result and error files. Every newline-terminated line and a final unterminated
   line count before decoding; blank lines consume this budget even though they
-  do not yield records.
+  do not yield records. Resumed scans consume the same budget from byte zero.
 - Response data is consumed only through `content.iter_chunked(64 KiB)`. An
   adapter that omits the interface, emits a non-byte or empty chunk, or yields a
   chunk larger than the requested 64 KiB fails closed before package-owned line
@@ -64,40 +127,50 @@ An incomplete batch or terminal batch with neither file identifier fails closed.
 - Sanitized parser errors are raised outside the provider decoder's active
   exception handler, so their exported cause and context do not retain decoder
   exceptions that reference provider-controlled bytes or text.
-- Parser diagnostics exclude provider batch and file identifiers as well as
-  record content.
+- Parser and checkpoint diagnostics exclude provider batch and file identifiers
+  as well as record content.
 - Non-success file responses are rejected before reading the provider-controlled
   body.
 
 The iterator bounds library-owned buffering, not downstream consumer behavior.
 A caller that appends every yielded record to a list recreates aggregate memory
 use and must size its own process accordingly. Cancellation closes active
-response contexts through generator cleanup; planned early exit should use
-`open_batch_records()` for deterministic closure.
+response contexts through generator cleanup; planned early exit should use the
+context-managed API for deterministic closure.
 
 A post-handoff transport failure is terminal for the current iterator. Starting
-a new iterator reads the provider file from byte zero, so a host must use its own
-durable idempotency and checkpoint policy before attempting application-level
-recovery.
+a new non-checkpointed iterator reads the provider file from byte zero and may
+replay records. Starting a checkpointed iterator with the last durably committed
+checkpoint rescans and suppresses acknowledged records only after exact prefix
+verification.
 
 ## Compatibility and observability
 
 The streaming client subclasses `BatchAPIClient`, so credentials, gateway URL
 validation, timeouts, pre-handoff retry policy, and session lifecycle remain
-identical. It does not require PostgreSQL schema changes or another CWL service.
-Embedding hosts may consume each record into their own durable queue,
-tenant-qualified store, or bounded transformation pipeline.
+identical. The checkpoint feature does not require PostgreSQL schema changes or
+another CWL service. Embedding hosts may store each record and checkpoint in
+their own durable queue, tenant-qualified database, transactional outbox, or
+bounded transformation pipeline.
 
 The existing OpenTelemetry subclass does not automatically wrap this opt-in
-iterator. Hosts that need per-record pipeline telemetry should instrument the
-consumer boundary with low-cardinality attributes and must not attach provider
-identifiers, prompts, response bodies, or model output.
+iterator. Hosts that need per-record or resume-reconciliation telemetry should
+instrument the consumer boundary with low-cardinality attributes and must not
+attach provider identifiers, checkpoint digests, prompts, response bodies, or
+model output.
 
 ## References
 
 Bray, T. (2017). *The JavaScript Object Notation (JSON) data interchange format*
 (RFC 8259; STD 90). Internet Engineering Task Force.
 https://doi.org/10.17487/RFC8259
+
+National Institute of Standards and Technology. (2015). *Secure Hash Standard
+(SHS)* (Federal Information Processing Standards Publication 180-4).
+https://doi.org/10.6028/NIST.FIPS.180-4
+
+Python Software Foundation. (2026). *hashlib—Secure hashes and message digests*
+(Python 3.14 documentation). https://docs.python.org/3.14/library/hashlib.html
 
 Yergeau, F. (2003). *UTF-8, a transformation format of ISO 10646* (RFC 3629;
 STD 63). Internet Engineering Task Force. https://doi.org/10.17487/RFC3629
