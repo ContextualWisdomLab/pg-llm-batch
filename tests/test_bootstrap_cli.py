@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import runpy
 from types import SimpleNamespace
@@ -55,12 +56,18 @@ def test_init_and_config_commands(monkeypatch, capsys):
             events.append(("get", category, key))
             return "stored-value"
 
+        def close(self):
+            events.append(("store-close",))
+
     class Secrets:
         def __init__(self, dsn, fernet_key=None):
             events.append(("secrets", dsn, fernet_key))
 
         def set_secret(self, key, value):
             events.append(("set-secret", key, value))
+
+        def close(self):
+            events.append(("secrets-close",))
 
     monkeypatch.setattr(cli, "PostgresConfigStore", Store)
     monkeypatch.setattr(cli, "SecretStore", Secrets)
@@ -89,6 +96,8 @@ def test_init_and_config_commands(monkeypatch, capsys):
     assert ("set", "gateway", "url", "v") in events
     assert ("get", "gateway", "url") in events
     assert ("set-secret", "gateway_api_key.default", "secret") in events
+    assert events.count(("store-close",)) == 2
+    assert events.count(("secrets-close",)) == 1
     output = capsys.readouterr().out
     assert "Schema applied." in output
     assert "stored-value" in output
@@ -99,16 +108,25 @@ def test_init_and_config_commands(monkeypatch, capsys):
 
 def test_count_health_and_server_commands(monkeypatch, capsys):
     """Synchronous operational commands emit machine-readable results."""
+    events = []
+
+    class Config:
+        def close(self):
+            events.append("config-close")
+
     class Counter:
         def __init__(self, dsn, config):
             assert dsn == "postgresql://x"
-            assert config == "config"
+            assert isinstance(config, Config)
 
         def count_tokens(self, text, model):
             assert (text, model) == ("one two", "gpt-4o")
             return 2
 
-    monkeypatch.setattr(cli, "PostgresConfigStore", lambda _dsn: "config")
+        def close(self):
+            events.append("counter-close")
+
+    monkeypatch.setattr(cli, "PostgresConfigStore", lambda _dsn: Config())
     monkeypatch.setattr(cli, "TokenCounter", Counter)
     assert cli._dispatch(
         [
@@ -122,6 +140,7 @@ def test_count_health_and_server_commands(monkeypatch, capsys):
         ]
     ) == 0
     assert json.loads(capsys.readouterr().out) == {"model": "gpt-4o", "tokens": 2}
+    assert events == ["counter-close", "config-close"]
 
     monkeypatch.setattr(cli, "check_health", lambda _dsn: {"ready": False})
     assert cli._dispatch(["health", "--dsn", "postgresql://x"]) == 1
@@ -240,27 +259,56 @@ def test_async_helpers_print_results(monkeypatch, capsys):
 
 
 def test_make_client_uses_database_backed_credentials(monkeypatch):
-    """Client construction wires config and secrets without environment URLs."""
+    """Client construction wires and closes database-backed credential stores."""
     events = []
-    monkeypatch.setattr(cli, "PostgresConfigStore", lambda dsn: ("config", dsn))
-    monkeypatch.setattr(
-        cli,
-        "SecretStore",
-        lambda dsn, fernet_key=None: ("secrets", dsn, fernet_key),
-    )
+
+    class Config:
+        def __init__(self, dsn):
+            events.append(("config", dsn))
+
+        def close(self):
+            events.append(("config-close",))
+
+    class Secrets:
+        def __init__(self, dsn, fernet_key=None):
+            events.append(("secrets", dsn, fernet_key))
+
+        def close(self):
+            events.append(("secrets-close",))
+
+    class Client:
+        def __init__(self, dsn, provider):
+            events.append(("client", dsn, provider))
+
+        async def __aenter__(self):
+            events.append(("client-enter",))
+            return self
+
+        async def __aexit__(self, *exc):
+            events.append(("client-close",))
+
+    monkeypatch.setattr(cli, "PostgresConfigStore", Config)
+    monkeypatch.setattr(cli, "SecretStore", Secrets)
     monkeypatch.setattr(cli, "resolve_secret_key", lambda: "key")
     monkeypatch.setattr(
         cli,
         "config_credentials_provider",
         lambda config, secrets: ("provider", config, secrets),
     )
-    monkeypatch.setattr(
-        cli,
-        "BatchAPIClient",
-        lambda dsn, provider: events.append((dsn, provider)) or "client",
-    )
-    assert cli._make_client("postgresql://x") == "client"
-    assert events[0][0] == "postgresql://x"
+    monkeypatch.setattr(cli, "BatchAPIClient", Client)
+
+    async def exercise():
+        async with cli._make_client("postgresql://x") as client:
+            assert isinstance(client, Client)
+
+    asyncio.run(exercise())
+    assert events[0] == ("config", "postgresql://x")
+    assert events[1] == ("secrets", "postgresql://x", "key")
+    assert events[-3:] == [
+        ("client-close",),
+        ("secrets-close",),
+        ("config-close",),
+    ]
 
 
 def test_unknown_dispatch_branch_returns_two(monkeypatch):
