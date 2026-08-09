@@ -11,7 +11,7 @@ RFC 8470 defines HTTP 425 `Too Early` as a server signal that a request should b
 
 HTTP 500 is different. RFC 9110 defines 500 as an unexpected server condition, not an explicit temporary or rate-limit signal. Automatically treating every 500 as transient would broaden replay policy without a provider-specific contract.
 
-The transport-exception boundary also needs to distinguish request-acquisition failures that can plausibly improve on another bounded attempt from failures that indicate a TLS trust or policy problem. aiohttp exposes certificate-verification and TLS handshake failures through the `ClientSSLError` family. Repeating the same request must not be used as an automatic way to work around peer identity, certificate validation, or TLS policy failures.
+The transport-exception boundary also needs to distinguish request-acquisition failures that can plausibly improve on another bounded attempt from failures that indicate a TLS trust or policy problem. aiohttp exposes certificate-verification and TLS handshake failures through the `ClientSSLError` family. It exposes a certificate fingerprint mismatch separately as `ServerFingerprintMismatch`, which is a peer-identity failure rather than an overload condition. Repeating the same request must not be used as an automatic way to work around peer identity, certificate validation, fingerprint validation, or TLS policy failures.
 
 ## Decision
 
@@ -28,7 +28,7 @@ HTTP 425 uses the same bounded retry machinery as the other reviewed GET statuse
 5. POST operations remain single-attempt.
 6. HTTP 500 remains outside the default retry set unless a future explicit provider contract is reviewed and tested separately.
 
-TLS handshake and certificate failures are never retried automatically. Any `aiohttp.ClientSSLError`, including `ClientConnectorSSLError` and `ClientConnectorCertificateError`, crosses the fail-closed transport boundary after the first acquisition attempt and is translated to the existing bounded `GatewayError`. Request-acquisition timeouts and non-TLS `aiohttp.ClientError` failures retain the existing bounded idempotent-GET retry behavior.
+TLS handshake and certificate failures are never retried automatically. Any `aiohttp.ClientSSLError`, including `ClientConnectorSSLError` and `ClientConnectorCertificateError`, crosses the fail-closed transport boundary after the first acquisition attempt and is translated to the existing bounded `GatewayError`. Certificate fingerprint mismatches are never retried automatically; `aiohttp.ServerFingerprintMismatch` crosses the same fail-closed boundary after the first acquisition attempt. Request-acquisition timeouts and other non-TLS `aiohttp.ClientError` failures retain the existing bounded idempotent-GET retry behavior.
 
 The library does not claim to control TLS early-data negotiation performed outside its HTTP client boundary. Operators or embedding gateways that enable early data remain responsible for ensuring replay safety at that layer.
 
@@ -36,9 +36,9 @@ The library does not claim to control TLS early-data negotiation performed outsi
 
 The change aligns an omitted protocol-defined retry signal with the package's existing idempotent GET retry boundary without widening side-effecting request replay. A provider that legitimately returns 425 for a GET receives a bounded retry instead of an immediate application-level failure. Generic 500 responses continue to surface to the caller without automatic replay.
 
-Certificate-verification and TLS handshake failures surface after one request attempt instead of being hidden behind repeated connection attempts. This preserves a fail-closed trust boundary and keeps operational evidence attributable to the original TLS failure class without exposing provider-controlled exception text.
+Certificate-verification, TLS handshake, and certificate fingerprint failures surface after one request attempt instead of being hidden behind repeated connection attempts. This preserves a fail-closed trust boundary and keeps operational evidence attributable to the original TLS failure class without exposing provider-controlled exception text, endpoint hostnames, or fingerprint bytes.
 
-Permanent regression tests freeze the closed HTTP status set, keep HTTP 500 single-attempt, prove both TLS handshake and certificate failures perform one GET with zero retry sleeps, and prove request-acquisition timeouts remain retryable. Existing 100% production statement and branch coverage, public-docstring, security, and packaging gates remain unchanged.
+Permanent regression tests freeze the closed HTTP status set, keep HTTP 500 single-attempt, prove TLS handshake, certificate-verification, and certificate fingerprint failures perform one GET with zero retry sleeps, and prove request-acquisition timeouts remain retryable. Existing 100% production statement and branch coverage, public-docstring, security, and packaging gates remain unchanged.
 
 ## Rollback
 
