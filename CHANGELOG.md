@@ -29,6 +29,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `llm_remote_batch_jobs`, with database-owned pre-request observation
   ordering, immutable terminal status identity, bounded curated metadata, and
   structured reservation/persistence recovery evidence.
+- Canonical data-governance and privacy authority for content, credentials,
+  provider disclosure, telemetry, retention, erasure, backup, residency, and
+  package-vs-host responsibility, while keeping tenant isolation explicitly
+  ACTIVE-PR and preserving purpose-bound content utility instead of blanket
+  masking.
 
 ### Fixed
 
