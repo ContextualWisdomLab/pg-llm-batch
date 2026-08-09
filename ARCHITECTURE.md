@@ -216,6 +216,48 @@ descriptive snake_case, RLS is enabled and forced, and the rollback refuses to
 drop a non-empty table. The stored digest remains prefix evidence only; durable
 storage does not add provider authentication or full-stream immutability.
 
+## Checkpoint OpenTelemetry observability boundary
+
+`OpenTelemetryCheckpointStore` is an opt-in wrapper around a durable checkpoint
+store. It receives a host-owned tracer and meter through dependency injection and
+does not configure global providers, processors, samplers, exporters,
+collectors, or resources. The wrapped store remains independently usable without
+OpenTelemetry and may be the package-owned PostgreSQL store or a compatible
+host-owned implementation.
+
+Package-owned spans and metrics use only fixed operation, transaction-owner,
+outcome, and finite error-classification attributes. They never contain tenant,
+consumer, batch, endpoint, file, digest, cursor, and DSN values, provider
+payloads, exception messages, or dynamic exception class names. The package
+operation span is deliberately storage-agnostic and does not emit
+`db.system.name` or claim OpenTelemetry database-client semantics. Actual
+database-client spans and database-system attributes belong to the host or
+database instrumentation at the client boundary where the storage technology is
+known.
+
+Automatic exception recording and status-on-exception are disabled because a
+checkpoint exception may retain protected structured state even when its public
+message is bounded. Instead, failed checkpoint spans explicitly set the host
+OpenTelemetry API's `StatusCode.ERROR` without a description when the optional
+API is available, while successful checkpoint spans leave status Unset. This
+preserves standard failure discoverability without exposing exception text in
+status descriptions.
+
+The operation counter records completed loads and saves. The duration histogram
+uses seconds and a monotonic clock, clamping backward or unavailable clock
+evidence to zero. Failures use only `checkpoint_conflict`, `validation_error`, or
+`internal_error`; success omits `error.type`. Tracer, meter, span, export-surface,
+optional status-code resolution, status mutation, and clock failures are
+contained as observer failures. The exact checkpoint return value or application
+exception remains authoritative, so best-effort telemetry cannot change
+checkpoint operation semantics, compare-and-swap, transaction ownership, commit,
+or rollback.
+
+Caller-owned transaction spans cover the package call only and do not claim that
+the surrounding transaction later committed. The host owns telemetry retention,
+access control, alerting, collector availability, database-client
+instrumentation, and any correlation outside this confidential package boundary.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
@@ -271,6 +313,11 @@ context-managed early close, and SHA-256 framing sensitivity. Durable-store test
 cover strict consumer identity, caller-owned transaction behavior, idempotent
 repeat, exact compare-and-swap, stale and regressive writers, equal and unequal
 first-writer races, disappearing conflict rows, forced-RLS migration text,
-fail-closed rollback, documentation, and live PostgreSQL persistence. Final merge
-evidence must be regenerated against the integrated base; successful stacked-base
-runs are not reusable release evidence.
+fail-closed rollback, documentation, and live PostgreSQL persistence. Checkpoint
+telemetry tests additionally prove exact delegation, fixed low-cardinality signal
+attributes, storage-agnostic operation spans, seconds-based nonnegative duration,
+confidential failure classification, explicit Error status without descriptions,
+Unset success status, disabled exception recording, and preservation of
+application results and exception identity during ordinary tracer, meter, span,
+status, and clock failures. Final merge evidence must be regenerated against the
+integrated base; successful stacked-base runs are not reusable release evidence.
