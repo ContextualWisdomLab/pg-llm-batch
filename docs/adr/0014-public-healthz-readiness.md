@@ -18,6 +18,8 @@ The readiness query also needs a database-side execution bound. A PostgreSQL con
 
 The original standalone endpoint also used the serial `HTTPServer`. A delayed database check therefore had to complete before the server could start another request, allowing one slow client or dependency to serialize otherwise independent readiness probes.
 
+Moving to a thread-per-request listener removes that serial queue but introduces a separate availability boundary: every admitted probe can allocate a worker thread and can proceed to its own PostgreSQL connection/check. Python documents that `ThreadingMixIn` dispatches requests using threads, but it does not provide a package-specific admission ceiling. MITRE classifies uncontrolled resource consumption under **CWE-400** and more specifically identifies allocation without limits or throttling as **CWE-770**. The public listener therefore needs a bounded admission policy rather than exchanging serialization for unbounded thread and database pressure.
+
 ## Decision
 
 `check_health()` remains the detailed local contract. It continues to return the overall `ready` value and component records that can contain diagnostic detail for the CLI and local operator diagnostics.
@@ -27,6 +29,8 @@ Before invoking `pg_llm_batch_health_check()`, `check_health()` sets PostgreSQL 
 This database-side limit is **not an end-to-end deadline** for the HTTP request. Connection acquisition retains its separate bounded timeout, process scheduling and HTTP handling add their own latency, and deployment probe timeouts remain operator controls. The contract is narrower: after a connection exists, the health SQL must not execute without a package-owned database-side bound. A timeout exception follows the existing local-diagnostic failure path, and the public endpoint still returns only its redacted readiness projection.
 
 The standalone listener uses a narrow `_ThreadingHealthHTTPServer` that combines `ThreadingMixIn` with `HTTPServer` and enables daemon request threads. Independent readiness probes can therefore begin concurrently when another probe is delayed, rather than being serialized by the server loop. This changes only request scheduling; the same bounded database check, redaction, status, path, header, and shutdown-process contracts remain authoritative.
+
+The listener enforces a **maximum of 32 admitted readiness requests** with a non-blocking bounded semaphore before delegating to `ThreadingMixIn`. Once all 32 slots are occupied, an excess accepted socket is **closed before a worker thread or database check starts**. A slot is **released after request completion or thread-start failure**, including exceptional request termination through the request-thread `finally` boundary. This ceiling is a package-owned defense against unbounded thread/connection allocation; it is not per-client rate limiting, authentication, or a substitute for deployment-layer traffic controls.
 
 The **public /healthz** response is a separate projection. It exposes only:
 
@@ -49,7 +53,7 @@ Standalone operation is unchanged: Docker and Compose can continue probing `/hea
 
 The public projection copies a **fixed required-component allow-list** instead of deleting known sensitive keys or relaying arbitrary local component names. This is fail-closed for future diagnostic fields and identities: new local fields and component names remain private unless the public contract is deliberately reviewed and changed. Malformed or unexpectedly typed readiness fields also remain fail-closed rather than being converted through Python truth coercion.
 
-The transaction-local timeout likewise requires no schema or server-configuration migration. It is scoped to the current health transaction and rolls back automatically with that transaction. Concurrent request handling remains an implementation detail behind the same blocking `serve_healthz()` entrypoint, so callers and container probes need no protocol change.
+The transaction-local timeout likewise requires no schema or server-configuration migration. It is scoped to the current health transaction and rolls back automatically with that transaction. Concurrent request handling and its fixed 32-request admission ceiling remain implementation details behind the same blocking `serve_healthz()` entrypoint, so callers and container probes need no protocol change.
 
 ## Security and operational consequences
 
@@ -64,6 +68,7 @@ The transaction-local timeout likewise requires no schema or server-configuratio
 - Local troubleshooting remains useful because the CLI path is not redacted.
 - A connected but stalled PostgreSQL health statement receives a deterministic database-side execution ceiling instead of relying only on an outer probe timeout.
 - Concurrent daemon request handling prevents one delayed probe from making the listener serially unavailable to independent readiness probes.
+- The 32-request admission ceiling prevents a connection flood from allocating an unbounded number of readiness worker threads or initiating unbounded concurrent database checks.
 
 ### Trade-offs
 
@@ -72,7 +77,7 @@ The transaction-local timeout likewise requires no schema or server-configuratio
 - A network-visible health endpoint still reveals that the service exists and whether the fixed required components are ready; suppressing one `Server header` does not make the implementation anonymous or replace network access control.
 - Unexpected local health-report schema drift is intentionally reported as not ready rather than partially projected, while validly shaped unknown component identities are kept local.
 - The 4,000-millisecond statement limit can classify unusually slow health-function execution as not ready even when it would eventually complete; that is intentional fail-closed readiness behavior, not a query-performance retry mechanism.
-- Thread-per-request handling consumes bounded process resources per simultaneous probe; deployments must still apply appropriate network exposure and probe-frequency controls.
+- At the 32-request ceiling, newly accepted probe sockets are closed instead of queued inside the process. Deployments must still size external probe frequency, ingress queues, file-descriptor limits, and database capacity for their environment.
 
 ## Verification
 
@@ -80,17 +85,21 @@ Deterministic tests prove that secret-like text, internal hostnames, provider-co
 
 A malformed-readiness matrix proves that coercive top-level state, non-list component containers, non-object records, non-string component names, and non-boolean component readiness all produce the same empty not-ready public projection. A dedicated HTTP regression proves that this sanitized projection—not raw local-report truthiness—controls the 200/503 status decision. A separate allow-list regression proves that a valid but unrecognized local component identity is not serialized and cannot alter required-component readiness.
 
-A focused reliability regression records SQL calls and requires the parameterized, transaction-local `statement_timeout` assignment to occur before the health function. A separate server regression verifies that the instantiated listener includes `ThreadingMixIn`, so independent readiness probes are not routed through the former serial request scheduler. Documentation contracts preserve the exact 4,000-millisecond boundary, the PostgreSQL 18 basis, the fixed required-component allow-list, the explicit `Server header`/`Python version` fingerprint boundary, and the explicit statement that the SQL timeout is not an end-to-end deadline.
+A focused reliability regression records SQL calls and requires the parameterized, transaction-local `statement_timeout` assignment to occur before the health function. Separate server regressions verify that the instantiated listener includes `ThreadingMixIn`, that 33 simultaneously offered connections admit only 32 worker allocations, that a failed thread start returns its slot, and that normal request completion returns its slot for the next probe. Documentation contracts preserve the exact 4,000-millisecond boundary, the PostgreSQL 18 basis, the fixed required-component allow-list, the explicit `Server header`/`Python version` fingerprint boundary, the bounded admission contract, and the explicit statement that the SQL timeout is not an end-to-end deadline.
 
 The production suite must retain 100% statement and branch coverage and 100% public docstrings. Synthetic-merge-only CI is not final exact-head merge evidence; the branch must later obtain required exact-source-head evidence under the repository's protected merge policy.
 
 ## Rollback
 
-There is no persistent state or migration to reverse. A code rollback restores the former detailed HTTP payload immediately, so rollback is mechanically simple but reintroduces the confidentiality risk. Reverting the non-coercive projection would also reopen the false-ready boundary for malformed state. Reverting the component-name filter would allow future local component identities to cross the HTTP boundary without deliberate review. Restoring the default `BaseHTTPRequestHandler.send_response()` behavior would reintroduce the stdlib/Python `Server header` and expose the runtime `Python version`. Removing the transaction-local statement bound would restore the unbounded connected-query behavior. Removing `ThreadingMixIn` would restore serial request handling, allowing one delayed readiness check to block independent readiness probes. During an incident, prefer retaining redaction, the fixed required-component allow-list, strict projection validation, runtime-fingerprint suppression, concurrent request handling, and the bounded SQL path while using local operator diagnostics rather than restoring public diagnostic detail or weakening the execution ceiling.
+There is no persistent state or migration to reverse. A code rollback restores the former detailed HTTP payload immediately, so rollback is mechanically simple but reintroduces the confidentiality risk. Reverting the non-coercive projection would also reopen the false-ready boundary for malformed state. Reverting the component-name filter would allow future local component identities to cross the HTTP boundary without deliberate review. Restoring the default `BaseHTTPRequestHandler.send_response()` behavior would reintroduce the stdlib/Python `Server header` and expose the runtime `Python version`. Removing the transaction-local statement bound would restore the unbounded connected-query behavior. Removing `ThreadingMixIn` would restore serial request handling, allowing one delayed readiness check to block independent readiness probes. Removing the 32-request admission ceiling while retaining `ThreadingMixIn` would reintroduce unbounded readiness thread/connection allocation under a connection flood. During an incident, prefer retaining redaction, the fixed required-component allow-list, strict projection validation, runtime-fingerprint suppression, bounded concurrent request handling, and the bounded SQL path while using local operator diagnostics rather than restoring public diagnostic detail or weakening either execution ceiling.
 
 ## References
 
 MITRE. (2026). *CWE-209: Generation of Error Message Containing Sensitive Information* (CWE Version 4.20). https://cwe.mitre.org/data/definitions/209.html
+
+MITRE. (2026). *CWE-400: Uncontrolled Resource Consumption* (CWE Version 4.20). https://cwe.mitre.org/data/definitions/400.html
+
+MITRE. (2026). *CWE-770: Allocation of Resources Without Limits or Throttling* (CWE Version 4.20). https://cwe.mitre.org/data/definitions/770.html
 
 Kubernetes Authors. (2026). *Configure liveness, readiness and startup probes*. Kubernetes Documentation. https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
 
@@ -99,3 +108,5 @@ Fielding, R., Nottingham, M., & Reschke, J. (2022). *RFC 9111: HTTP caching* (ST
 PostgreSQL Global Development Group. (2026). *19.11. Client connection defaults*. PostgreSQL 18 documentation. https://www.postgresql.org/docs/18/runtime-config-client.html
 
 Python Software Foundation. (2026). *http.server — HTTP servers*. Python 3.14.6 documentation. https://docs.python.org/3.14/library/http.server.html
+
+Python Software Foundation. (2026). *socketserver — A framework for network servers*. Python 3.14.6 documentation. https://docs.python.org/3.14/library/socketserver.html
