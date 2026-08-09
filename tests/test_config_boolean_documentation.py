@@ -63,3 +63,14 @@ def test_mutable_default_isolation_contract_is_authoritative() -> None:
     assert "caller mutation" in doctoring.lower()
     assert "unknown caller fallback identity" in doctoring.lower()
     assert "mutable configuration defaults" in changelog.lower()
+
+
+def test_mutable_cache_isolation_contract_is_authoritative() -> None:
+    """Docs must prevent callers from mutating cache-owned configuration state."""
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    assert "cache-owned mutable value" in doctoring.lower()
+    assert "defensive copy" in doctoring.lower()
+    assert "persisted cache state" in doctoring.lower()
+    assert "mutable configuration cache" in changelog.lower()
