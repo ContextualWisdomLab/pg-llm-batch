@@ -269,7 +269,12 @@ class PostgresConfigStore:
 
 
 class SecretStore:
-    """PostgreSQL-backed secret store (``com_secrets`` table)."""
+    """PostgreSQL-backed secret store (``com_secrets`` table).
+
+    Values are Fernet-encrypted at rest when a key is supplied. Without a key,
+    values are base64-obfuscated and a warning is logged; that fallback is
+    acceptable only for local/dev containers and is not encryption.
+    """
 
     TABLE_NAME = "com_secrets"
 
