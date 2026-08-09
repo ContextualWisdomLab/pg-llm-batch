@@ -274,7 +274,11 @@ def test_public_health_report_never_overrides_failed_required_components():
     public_report = health.public_health_report(report)
 
     assert public_report["ready"] is False
-    assert public_report["components"] == report["components"]
+    assert public_report["components"] == [
+        {"component": "database", "is_ready": False},
+        {"component": "pg_tiktoken", "is_ready": True},
+        {"component": "com_config", "is_ready": True},
+    ]
 
 
 def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
