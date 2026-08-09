@@ -129,6 +129,50 @@ async def test_permanent_tls_failures_are_not_retried(
     assert sleeps == []
 
 
+async def test_server_fingerprint_mismatch_is_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Certificate fingerprint mismatches are permanent peer-identity failures."""
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)
+    fingerprint_failure = aiohttp.ServerFingerprintMismatch(
+        b"expected-fingerprint",
+        b"received-fingerprint",
+        "gateway.example",
+        443,
+    )
+    session = _SequenceSession([fingerprint_failure, _Response(), _Response()])
+    client = BatchAPIClient("postgresql://example", _credentials)
+    client._session = session
+
+    with pytest.raises(GatewayError, match="Batch status transport failed") as caught:
+        async with client._request(
+            "get",
+            "https://gateway.example/v1/batches/batch-1",
+            operation="Batch status",
+        ):
+            pytest.fail("a fingerprint mismatch must not hand off a response")
+
+    assert caught.value.response_data == {
+        "error_type": "ServerFingerprintMismatch",
+        "timeout_seconds": client.request_timeout_seconds,
+    }
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    for sensitive_detail in (
+        "gateway.example",
+        "expected-fingerprint",
+        "received-fingerprint",
+    ):
+        assert sensitive_detail not in str(caught.value)
+    assert session.calls == 1
+    assert sleeps == []
+
+
 async def test_timeout_remains_retryable_for_idempotent_get(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
