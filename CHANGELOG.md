@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Released orchestrator-owned configuration and token-counting PostgreSQL
+  connections deterministically after successful and failed preparation, and
+  validated token configuration before acquiring the cached `pg_tiktoken`
+  session.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
