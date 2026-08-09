@@ -54,6 +54,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before another worker/database check starts, and worker slots are returned on
   request completion or thread-start failure. This prevents one delayed check
   from serializing peers without permitting unbounded readiness resource use.
+- Added a 5-second request-read timeout to each admitted `/healthz` connection
+  so a slow or partial request cannot occupy one finite readiness worker slot
+  indefinitely while the handler waits for the request line or headers.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
