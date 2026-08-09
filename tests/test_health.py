@@ -344,6 +344,46 @@ def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
     assert bodies[-1][0] == "/healthz/"
 
 
+def test_serve_healthz_omits_stdlib_server_fingerprint(monkeypatch):
+    """Public readiness headers must not disclose the stdlib or Python version."""
+    headers = []
+
+    class FakeHTTPServer:
+        def __init__(self, _address, handler_class):
+            self.handler_class = handler_class
+
+        def serve_forever(self):
+            handler = self.handler_class.__new__(self.handler_class)
+            handler.path = "/healthz"
+            handler.request_version = "HTTP/1.1"
+            handler.command = "GET"
+            handler.requestline = "GET /healthz HTTP/1.1"
+            handler.wfile = io.BytesIO()
+            handler._headers_buffer = []
+            handler.send_response_only = lambda *_args, **_kwargs: None
+            handler.send_header = lambda key, value: headers.append((key, value))
+            handler.end_headers = lambda: None
+            handler.do_GET()
+
+    monkeypatch.setattr("http.server.HTTPServer", FakeHTTPServer)
+    monkeypatch.setattr(
+        health,
+        "check_health",
+        lambda _dsn: {
+            "ready": True,
+            "components": [
+                {"component": "database", "is_ready": True},
+                {"component": "pg_tiktoken", "is_ready": True},
+                {"component": "com_config", "is_ready": True},
+            ],
+        },
+    )
+
+    health.serve_healthz("postgresql://example")
+
+    assert not any(key.lower() == "server" for key, _value in headers)
+
+
 def test_serve_healthz_uses_sanitized_readiness_for_status(monkeypatch):
     """Malformed local readiness cannot produce an HTTP 200 by truth coercion."""
     events = []
