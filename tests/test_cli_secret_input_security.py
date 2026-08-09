@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import io
+import warnings
 
 import pytest
 
@@ -94,6 +95,30 @@ def test_interactive_secret_uses_no_echo_getpass(
 
     assert cli._read_secret_input() == "interactive-secret"
     assert prompts == ["Secret value: "]
+
+
+def test_interactive_secret_refuses_getpass_echo_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A getpass echo fallback must fail before reading plaintext visibly."""
+    monkeypatch.setattr(cli.sys, "stdin", _InteractiveInput())
+    fallback_reads: list[str] = []
+
+    def insecure_getpass(prompt: str) -> str:
+        assert prompt == "Secret value: "
+        warnings.warn(
+            "Can not control echo on the terminal.",
+            cli.getpass.GetPassWarning,
+            stacklevel=2,
+        )
+        fallback_reads.append("echoed")
+        return "would-have-been-visible"
+
+    monkeypatch.setattr(cli.getpass, "getpass", insecure_getpass)
+
+    with pytest.raises(ConfigError, match="echo"):
+        cli._read_secret_input()
+    assert fallback_reads == []
 
 
 @pytest.mark.parametrize(
