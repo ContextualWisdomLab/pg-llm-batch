@@ -40,4 +40,4 @@ EXPOSE 8080
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
     CMD curl -fsS "http://localhost:${PG_LLM_BATCH_HEALTH_PORT}/healthz" || exit 1
 
-CMD ["sh", "-c", "python -m pg_llm_batch serve-healthz --port ${PG_LLM_BATCH_HEALTH_PORT}"]
+CMD ["sh", "-c", "python -m pg_llm_batch serve-healthz --host 0.0.0.0 --port ${PG_LLM_BATCH_HEALTH_PORT}"]
