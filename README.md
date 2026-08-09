@@ -65,6 +65,15 @@ docker compose up -d --build
 curl -fsS localhost:8080/healthz
 ```
 
+The bundled standalone Compose profile publishes PostgreSQL `5432` and the
+component health port `8080` on IPv4 loopback (`127.0.0.1`) only. This keeps the
+developer-facing DB and readiness surfaces reachable from the Docker host while
+preventing the default profile from listening on every host interface. Remote or
+production ingress must be an explicit deployment decision with its own network,
+authentication, and exposure policy; do not broaden the standalone mappings as a
+shortcut. See [`docs/doctoring/compose-loopback-publishing.md`](docs/doctoring/compose-loopback-publishing.md)
+for the primary Docker networking evidence and verification contract.
+
 ### 2. Point it at your gateway (config + secret in the DB, not env)
 
 ```bash
@@ -223,6 +232,9 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
+- [`docs/doctoring/compose-loopback-publishing.md`](docs/doctoring/compose-loopback-publishing.md)
+  — default standalone host-network boundary, primary Docker evidence, and
+  regression/release verification.
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
