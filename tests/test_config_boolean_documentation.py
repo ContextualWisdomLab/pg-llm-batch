@@ -38,3 +38,16 @@ def test_configuration_write_normalization_is_authoritative() -> None:
     assert "canonical" in doctoring.lower()
     assert "untyped" in doctoring.lower()
     assert "configuration writes" in changelog.lower()
+
+
+def test_declared_collection_shape_contract_is_authoritative() -> None:
+    """Docs must reject valid JSON whose container shape contradicts its type."""
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    assert "declared collection type" in doctoring.lower()
+    assert "valid json" in doctoring.lower()
+    assert "mapping" in doctoring.lower()
+    assert "sequence" in doctoring.lower()
+    assert "container shape" in doctoring.lower()
+    assert "declared collection" in changelog.lower()
