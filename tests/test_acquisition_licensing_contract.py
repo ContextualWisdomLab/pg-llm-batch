@@ -66,3 +66,12 @@ def test_notice_accounts_for_configured_psycopg_binary_distribution() -> None:
     assert "psycopg-binary" in notice
     assert "bundled client libraries" in notice
     assert "release SBOM" in notice
+
+
+def test_release_acceptance_fails_closed_on_unverified_licensing_evidence() -> None:
+    """Release authority must include licensing/IP as a non-substitutable evidence gate."""
+    release = _read("docs/RELEASE_ACCEPTANCE.md").lower()
+    assert "docs/licensing_and_ip.md" in release
+    assert "licensing/ip" in release
+    assert "dependency license" in release
+    assert "unverified ownership" in release
