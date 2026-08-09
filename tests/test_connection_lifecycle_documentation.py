@@ -65,3 +65,19 @@ def test_secret_store_docstring_preserves_fallback_confidentiality_boundary() ->
     assert "fernet-encrypted at rest" in docstring
     assert "base64-obfuscated" in docstring
     assert "local/dev" in docstring
+
+
+def test_configured_fernet_missing_dependency_is_documented_fail_closed() -> None:
+    """Docs must distinguish intentional no-key fallback from failed encryption setup."""
+    docstring = _class_docstring(CONFIG_SOURCE, "SecretStore").lower()
+    doctoring = _normalized(DOCTORING).lower()
+    changelog = _normalized(CHANGELOG).lower()
+
+    assert "configured" in docstring
+    assert "cryptography" in docstring
+    assert "fail" in docstring
+    assert "configured fernet" in doctoring
+    assert "cryptography" in doctoring
+    assert "fail closed" in doctoring
+    assert "configured fernet" in changelog
+    assert "fail closed" in changelog
