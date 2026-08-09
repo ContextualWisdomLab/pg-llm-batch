@@ -20,6 +20,21 @@ def fake_pg(monkeypatch: Any) -> FakePsycopg:
     return fake
 
 
+def _register_mutable_default(monkeypatch: Any) -> None:
+    """Register one nested mapping setting for cache-ownership tests."""
+    monkeypatch.setitem(
+        config_module.DEFAULT_CONFIG_INDEX,
+        "custom.mapping_value",
+        {
+            "category": "custom",
+            "key": "mapping_value",
+            "value": {"nested": {"enabled": True}},
+            "type": dict,
+            "description": "Test-only nested mapping configuration",
+        },
+    )
+
+
 def test_typed_string_write_matches_immediate_and_reloaded_reads(
     fake_pg: FakePsycopg,
 ) -> None:
@@ -55,3 +70,26 @@ def test_malformed_and_untyped_writes_persist_their_canonical_read_value(
     assert fake_pg.store.config["custom.payload"][0] == '{"nested": true}'
     store.cache.clear()
     assert store.get("custom", "payload") == '{"nested": true}'
+
+
+def test_mutable_cache_reads_are_isolated_from_caller_mutation(
+    fake_pg: FakePsycopg,
+    monkeypatch: Any,
+) -> None:
+    """One caller must not mutate cache state that later reads treat as persisted."""
+    _register_mutable_default(monkeypatch)
+    store = PostgresConfigStore("postgresql://example")
+
+    initial = store.get("custom", "mapping_value")
+    initial["nested"]["enabled"] = False
+    assert store.get("custom", "mapping_value") == {"nested": {"enabled": True}}
+
+    store.set("custom", "mapping_value", {"nested": {"enabled": False}})
+    written = store.get("custom", "mapping_value")
+    written["nested"]["enabled"] = True
+    assert store.get("custom", "mapping_value") == {"nested": {"enabled": False}}
+
+    store.cache.clear()
+    reloaded = store.get("custom", "mapping_value")
+    reloaded["nested"]["enabled"] = True
+    assert store.get("custom", "mapping_value") == {"nested": {"enabled": False}}
