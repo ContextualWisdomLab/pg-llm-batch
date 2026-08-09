@@ -66,8 +66,18 @@ def check_health(dsn: str) -> Dict[str, Any]:
             ],
         }
 
-    observed = {c["component"] for c in components}
-    missing = sorted(REQUIRED_COMPONENTS - observed)
+    required_states: Dict[str, bool] = {}
+    duplicate_required = set()
+    for component in components:
+        component_name = component["component"]
+        if component_name not in REQUIRED_COMPONENTS:
+            continue
+        if component_name in required_states:
+            duplicate_required.add(component_name)
+            continue
+        required_states[component_name] = component["is_ready"]
+
+    missing = sorted(REQUIRED_COMPONENTS - set(required_states))
     for component in missing:
         components.append(
             {
@@ -78,11 +88,16 @@ def check_health(dsn: str) -> Dict[str, Any]:
         )
     if missing:
         logger.warning("Health check omitted required components: %s", ", ".join(missing))
+    if duplicate_required:
+        logger.warning(
+            "Health check duplicated required components: %s",
+            ", ".join(sorted(duplicate_required)),
+        )
 
-    ready = not missing and all(
-        c["is_ready"]
-        for c in components
-        if c["component"] in REQUIRED_COMPONENTS
+    ready = (
+        not missing
+        and not duplicate_required
+        and all(required_states.values())
     )
     return {"ready": ready, "components": components}
 
