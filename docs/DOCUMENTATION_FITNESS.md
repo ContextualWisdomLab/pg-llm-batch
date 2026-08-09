@@ -46,6 +46,7 @@ Document fitness is different from capability maturity. Use exactly these maturi
 | Test strategy | PARTIAL | PRESENT-CURRENT | Existing CI/pyproject encoded gates but no explanatory canonical strategy. |
 | Operability / recovery | PARTIAL | PRESENT-CURRENT | README and doctoring covered fragments; a canonical runbook is added. |
 | Release / rollback / provenance acceptance | PARTIAL | PRESENT-CURRENT | Added as `docs/RELEASE_ACCEPTANCE.md`; it keeps descriptor-pinned reproducibility itself ACTIVE-PR (#57) while defining exact integrated-head, migration, rollback, SBOM/provenance, operational and post-publication gates. |
+| Licensing / IP / third-party notices | PARTIAL | PRESENT-CURRENT | Protected main already declares Apache-2.0 through `pyproject.toml`, `LICENSE`, and `NOTICE`; `docs/LICENSING_AND_IP.md` adds the canonical acquisition-diligence boundary, third-party verification rule, and explicit non-substitution for legal/title review. |
 | Traceability | MISSING | PRESENT-CURRENT | Added requirement/decision -> source/schema/test/evidence mapping. |
 | Product ADR index and foundational decisions | MISSING | PRESENT-CURRENT | `docs/adr/README.md` now indexes detailed protected-main foundation records for PostgreSQL/disk-free authority, provider HTTP/replay boundaries, standalone/host composition, and durable lifecycle observation; the new records themselves remain ACTIVE-PR documentation until #93 integrates. |
 | Maintenance-governance ADRs | MISSING | PRESENT-CURRENT | Work conservation, evidence identity, writer lease, canonical-documentation authority, and semantic review vs infrastructure/policy evidence separation are now durable; see `docs/automation/ADR-0004-review-evidence-separation.md` for the fail-closed abstention boundary. |
@@ -67,6 +68,7 @@ This is a **dated classification aid for the current documentation branch**, not
 - Optional host-owned OpenTelemetry operation observability.
 - CLI and standalone Docker Compose deployment.
 - Current `/healthz` readiness implementation and current CI/packaging gates.
+- Apache-2.0 package metadata and root `LICENSE`/`NOTICE` artifacts; release-specific dependency/license verification remains a separate evidence task.
 
 ### ACTIVE-PR
 
@@ -91,7 +93,7 @@ Current material implementation/documentation owners include:
 - #88 — exact source-head CI evidence.
 - #89 — explicit bootstrap-source precedence and blank-DSN rejection.
 - #91 — loopback-only standalone Compose port publishing.
-- #93 — this canonical documentation authority and foundational protected-main ADR record set.
+- #93 — this canonical documentation authority, licensing/IP diligence authority, and foundational protected-main ADR record set.
 
 Issue #90 is a **PLANNED** buyer-visible CLI cancellation slice whose implementation must wait until overlapping CLI/resource-lifecycle changes are protected or superseded.
 
@@ -107,7 +109,7 @@ The queue must be revalidated before any release or acquisition statement. Close
 
 ## Sufficiency judgement
 
-The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, foundational product decisions, threat model, testing, operability, release/rollback/provenance acceptance, traceability, and the maintenance/evidence-governance decisions. The foundational ADR set makes the already-shipped PostgreSQL/disk-free, provider HTTP/replay, standalone/embedding-host, and lifecycle-observation choices reviewable as decisions rather than only as architecture prose. ADR-0004 additionally makes semantic review versus infrastructure/policy evidence separation explicit, so infrastructure-only review failures remain fail-closed merge blockers without being misrepresented as source-code findings. This is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented or that the product is release-ready.
+The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, foundational product decisions, threat model, testing, operability, release/rollback/provenance acceptance, licensing/IP/third-party diligence, traceability, and the maintenance/evidence-governance decisions. The foundational ADR set makes the already-shipped PostgreSQL/disk-free, provider HTTP/replay, standalone/embedding-host, and lifecycle-observation choices reviewable as decisions rather than only as architecture prose. ADR-0004 additionally makes semantic review versus infrastructure/policy evidence separation explicit, so infrastructure-only review failures remain fail-closed merge blockers without being misrepresented as source-code findings. The licensing/IP authority makes Apache-2.0 metadata, project provenance, NOTICE, dependency/SBOM verification, and repository-vs-external legal evidence boundaries explicit. This is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented, that every third-party obligation has been independently cleared for a future release/transaction, or that the product is release-ready.
 
 Two repository-guidance surfaces remain intentionally PARTIAL: `AGENTS.md` and `CLAUDE.md`. Multiple active implementation branches currently modify those shared files, so this docs-only branch does not create a competing canonical rewrite. They must be reconciled after the moving implementation stack stabilizes or merges. The fitness matrix keeps that incompleteness visible instead of hiding it.
 
@@ -119,13 +121,14 @@ Two repository-guidance surfaces remain intentionally PARTIAL: `AGENTS.md` and `
 4. **Checks, reviews, and runtime behavior are separate evidence classes.** A green status is not an independent approval, a review is not a test run, and a synthetic merge commit is not automatically source-head evidence.
 5. **Architecture is timeless; evidence is dated.** Stable contracts belong in PRD/TRD/Architecture/ADR. Run IDs and transient SHAs belong in PR bodies or evidence notes unless a historical incident requires them.
 6. **Do not invent entities.** ERD/data-model documentation may include conceptual ACTIVE-PR entities only when the implementing PR actually contains them, and must label them separately from protected-main persistence.
-7. **Documentation is a release gate, not a release bypass.** A complete graph does not waive CI, security, provenance, operational, or independent-review requirements.
+7. **Documentation is a release gate, not a release bypass.** A complete graph does not waive CI, security, provenance, licensing, operational, or independent-review requirements.
 8. **Volatile queue facts are bounded.** PR numbers in this file are a dated navigation snapshot; architectural meaning lives in capability names and ADR/TRD contracts, not in mutable PR identifiers.
 9. **Semantic review and infrastructure/policy blockers remain distinct.** When required semantic evidence is unavailable, the semantic result abstains or is unavailable; the non-source blocker may still fail merge readiness but does not create a synthetic source finding.
+10. **Licensing scanners do not create legal authority.** Package metadata, NOTICE, SBOMs, and automated license classification are evidence inputs; unknown ownership/license obligations remain unresolved until verified rather than being inferred as approved.
 
 ## Fitness maintenance loop
 
-For every material runtime, schema, security, deployment, workflow, public-API, or release-contract change:
+For every material runtime, schema, security, deployment, workflow, public-API, dependency/license, or release-contract change:
 
 1. refetch protected main and the exact active PR head/base;
 2. identify which canonical document family owns the changed contract;
@@ -135,6 +138,8 @@ For every material runtime, schema, security, deployment, workflow, public-API, 
 6. after the documentation mutation, return to executable product/merge/operational work instead of treating documentation as run completion.
 
 ## References
+
+Apache Software Foundation. (2004). *Apache License, Version 2.0*. https://www.apache.org/licenses/LICENSE-2.0
 
 GitHub. (2026). *Events that trigger workflows*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
 
