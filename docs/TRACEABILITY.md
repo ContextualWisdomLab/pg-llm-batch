@@ -60,6 +60,7 @@ A green check cannot replace independent approval, and an infrastructure failure
 | Work-conserving no-early-stop maintenance | `docs/automation/ADR-0001-work-conserving-maintenance.md` | after every action/defer, select next safe lane; double exit sweep before termination |
 | Branch-local writer lease and read-only dependencies | `docs/automation/ADR-0002-evidence-identity-and-writer-lease.md` | pre-write exact-ref re-read; freeze only conflicting branch; no force push/race |
 | Exact source vs live-base evidence separation | ADR-0002 + ACTIVE-PR #88 | current source head and independently resolved live base must be separately recorded |
+| Semantic review vs infrastructure/policy evidence separation | `docs/automation/ADR-0004-review-evidence-separation.md` | infrastructure-only failure remains a blocker but must not become a synthetic source finding; unavailable semantic review records ABSTAIN/UNAVAILABLE and is rerun after the owning prerequisite materially changes |
 | Central `.github` ownership of reusable review/bootstrap defects | ADR-0002 + repository automation contract | pg-llm-batch treats leased central fixes read-only and does not weaken leaf product code |
 | Prompt/documentation updates are intermediate | ADR-0001 | control-plane change must hand back to executable repository work when safe |
 | Canonical documentation authority and maturity discipline | `docs/automation/ADR-0003-canonical-documentation-authority.md` | protected-main and ACTIVE-PR truth remain separate; machine-checkable fitness catches drift |
