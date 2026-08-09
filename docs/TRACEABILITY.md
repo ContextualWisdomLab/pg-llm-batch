@@ -20,8 +20,12 @@ This matrix makes product and governance claims auditable without relying on cha
 | Durable checkpoint CAS storage | ACTIVE-PR #60 | `llm_result_stream_checkpoints` migration in PR #60 | live PostgreSQL/RLS/CAS/rollback tests | ERD overlay, THREAT_MODEL |
 | Checkpoint observability replacement | ACTIVE-PR #92 | PR #92 checkpoint telemetry | fresh replacement exact-head evidence required | UML, TEST_STRATEGY |
 | Append-only checkpoint audit replacement | ACTIVE-PR #94 | `llm_result_checkpoint_audit_events` migration and audit module | fresh replacement CI/live PostgreSQL evidence required | ERD overlay, THREAT_MODEL |
+| Atomic checkpoint migration operator replacement | ACTIVE-PR #95 | migration operator, CLI/API, CI and live PostgreSQL contracts on #95 | fresh exact-head/exact-base rollback/concurrency evidence required | ADR index, OPERABILITY |
+| Bounded stable checkpoint-audit pagination replacement | ACTIVE-PR #96 | pagination/cursor/public API composition on #96 | fresh exact-head/live PostgreSQL pagination evidence required | ADR index, UML/ERD overlay |
+| Snapshot-manifest assurance | PARTIAL | stale PR #84 contains unique implementation on closed #83 ancestry | historical evidence does not transfer; successor must be rebuilt on #96 | ADR index; checkpoint-audit doctoring |
 | Exact source-head CI evidence | ACTIVE-PR #88 | `.github/workflows/ci.yml` on #88 | exact contributor head checkout/verification tests | ADR-0002, TEST_STRATEGY |
 | Canonical product documentation authority | ACTIVE-PR #93 | this documentation graph | `tests/test_documentation_fitness_contract.py` + normal CI | DOCUMENTATION_FITNESS |
+| Operator CLI batch cancellation | PLANNED | issue #90; existing `BatchAPIClient.cancel_batch()` primitive | implementation blocked until overlapping CLI/resource ownership work settles | PRD/TRD follow-up |
 
 ## Evidence-identity traceability
 
@@ -47,13 +51,25 @@ A green check cannot replace independent approval, and an infrastructure failure
 | Central `.github` ownership of reusable review/bootstrap defects | ADR-0002 + repository automation contract | pg-llm-batch treats leased central fixes read-only and does not weaken leaf product code |
 | Prompt/documentation updates are intermediate | ADR-0001 | control-plane change must hand back to executable repository work when safe |
 
+## Stack-replacement traceability
+
+The checkpoint chain is currently linearized through replacements rather than destructive rewrites:
+
+- #78 -> #92;
+- #79 -> #94;
+- #80 -> #95;
+- #83 -> #96;
+- #84 remains the stale snapshot-manifest implementation and is not authoritative until its unique delta is safely replayed onto the current #96 predecessor.
+
+No check, review, approval, or historical base evidence transfers across a replacement. The successor must prove exact ancestry, preserved unique behavior, and fresh exact-head/exact-base evidence.
+
 ## Security and operability traceability
 
-- Destination, resource-ID, response-bound and retry controls: `pg_llm_batch/batch_api_client.py` → HTTP/security tests → `docs/THREAT_MODEL.md`.
-- Durable state and schema: `pg_llm_batch/schema.sql` → schema/lifecycle integration tests → `docs/architecture/ERD.md`.
-- Runtime readiness: `pg_llm_batch/health.py` + database health helper → health tests → `docs/OPERABILITY.md`.
-- Disclosure policy: `SECURITY.md` → vulnerability-reporting process; threat-model controls do not replace disclosure policy.
-- Exact-source workflow governance: `.github/workflows/ci.yml` → workflow contract tests → ACTIVE-PR #88 + ADR-0002.
+- Destination, resource-ID, response-bound and retry controls: `pg_llm_batch/batch_api_client.py` -> HTTP/security tests -> `docs/THREAT_MODEL.md`.
+- Durable state and schema: `pg_llm_batch/schema.sql` -> schema/lifecycle integration tests -> `docs/architecture/ERD.md`.
+- Runtime readiness: `pg_llm_batch/health.py` + database health helper -> health tests -> `docs/OPERABILITY.md`.
+- Disclosure policy: `SECURITY.md` -> vulnerability-reporting process; threat-model controls do not replace disclosure policy.
+- Exact-source workflow governance: `.github/workflows/ci.yml` -> workflow contract tests -> ACTIVE-PR #88 + ADR-0002.
 
 ## Documentation maintenance
 
