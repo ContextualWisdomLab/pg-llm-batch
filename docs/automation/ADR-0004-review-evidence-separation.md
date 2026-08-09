@@ -1,6 +1,7 @@
 # ADR-0004: Separate semantic source review from infrastructure and policy evidence
 
-- **Status:** ACTIVE-PR
+Status: ACTIVE-PR
+
 - **Scope:** automated and human review evidence, infrastructure/policy merge-readiness, and source-finding authority
 
 ## Context
