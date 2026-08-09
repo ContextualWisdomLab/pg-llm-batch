@@ -83,12 +83,13 @@ URLs containing user information, query parameters, fragments, whitespace, or
 invalid ports are rejected before the API key is read from `com_secrets`.
 
 For the protected-main-compatible credential path, install the optional Fernet
-dependency and use a terminal prompt that fails closed if Python cannot disable
-echo. Do not place the provider key in process argv, shell history, or command
-diagnostics:
+dependency, inject the Fernet key **before** constructing `SecretStore`, and use
+a terminal prompt that fails closed if Python cannot disable echo. Do not place
+the provider key in process argv, shell history, or command diagnostics:
 
 ```bash
 pip install '.[secrets]'
+export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
 python - <<'PY'
 import getpass
 import os
@@ -112,10 +113,14 @@ try:
 finally:
     store.close()
 PY
+unset PG_LLM_BATCH_SECRET_KEY
 ```
 
 This uses the existing database-backed `SecretStore.set_secret()` API and keeps
-provider credential plaintext out of argv. The warning-to-error policy prevents
+provider credential plaintext out of argv. Setting `PG_LLM_BATCH_SECRET_KEY`
+before `SecretStore` construction ensures the example uses Fernet encryption
+instead of the local/dev-only base64-obfuscation fallback; unsetting it after the
+write shortens ambient key lifetime. The warning-to-error policy prevents
 `getpass` from falling back to visibly echoed input when terminal echo control is
 unavailable. ACTIVE-PR #85 adds an equivalent argv-safe `config set-secret` CLI
 input path; until that PR is integrated, do not treat a plaintext positional CLI
@@ -123,18 +128,12 @@ secret example as a production procedure. Non-interactive host applications
 should use their own secret-manager integration and the documented
 `Callable[[str], GatewayCredentials]` boundary instead of weakening this prompt.
 
-Encrypt database-backed secrets at rest by exporting a Fernet key as bootstrap
-transport before running the prompt-based procedure above:
-
-```bash
-export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
-```
-
 `PG_LLM_BATCH_SECRET_KEY` is sensitive bootstrap secret material. Keep it out of
 shell history, logs, source control, images, and other ambient diagnostics; use a
-secret-injection mechanism appropriate to the deployment. Provider API
-credentials remain in `com_secrets` rather than environment variables by
-default in standalone mode.
+secret-injection mechanism appropriate to the deployment. The generated-key
+`export` above is a local bootstrap example, not a production secret-distribution
+mechanism. Provider API credentials remain in `com_secrets` rather than
+environment variables by default in standalone mode.
 
 ### 3. Count, submit, wait, retrieve
 
