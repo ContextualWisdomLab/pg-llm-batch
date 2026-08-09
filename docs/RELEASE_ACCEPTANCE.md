@@ -5,7 +5,7 @@
 
 ## 1. Release authority
 
-A pg-llm-batch release may be created only from one **exact integrated protected head** after every applicable deterministic, security, compatibility, migration, operational, review, packaging, SBOM, provenance, and publication gate has been evaluated for that exact revision.
+A pg-llm-batch release may be created only from one **exact integrated protected head** after every applicable deterministic, security, compatibility, migration, operational, review, packaging, licensing/IP, SBOM, provenance, and publication gate has been evaluated for that exact revision.
 
 A feature PR, stacked branch, synthetic merge commit, predecessor-head check, status-only review, draft release artifact, or locally built package is not release authority.
 
@@ -18,13 +18,14 @@ Release acceptance keeps the following authorities separate:
 - repository CI and test evidence for the commit actually checked out;
 - security/SAST/dependency and supply-chain evidence;
 - package/wheel/sdist identity and installability evidence;
+- licensing/IP, ownership/provenance, NOTICE, and dependency license evidence governed by `docs/LICENSING_AND_IP.md`;
 - migration/rollback/recovery evidence where persistence changed;
 - runtime **operational acceptance** for changed health/deployment/operator paths;
 - formal semantic review and qualifying **independent** non-author approval where required;
 - SBOM and provenance/attestation evidence where the release policy requires them; and
 - final published artifact identity after publication.
 
-One evidence class cannot silently substitute for another.
+One evidence class cannot silently substitute for another. A green scanner or generated SBOM does not prove ownership, title, or satisfaction of a dependency license obligation.
 
 ## 3. Quality gate
 
@@ -62,11 +63,13 @@ When a release changes PostgreSQL persistence, the release candidate must prove:
 
 A Docker initialization script is not an upgrade mechanism for existing volumes unless a reviewed contract explicitly says otherwise.
 
-## 6. Compatibility gate
+## 6. Compatibility and licensing gate
 
-The release candidate must agree with `docs/product/API_CONTRACT.md`, package metadata, README, PRD/TRD, architecture, schema/ERD, and CHANGELOG.
+The release candidate must agree with `docs/product/API_CONTRACT.md`, `docs/LICENSING_AND_IP.md`, package metadata, `LICENSE`, `NOTICE`, README, PRD/TRD, architecture, schema/ERD, and CHANGELOG.
 
 Breaking Python API, CLI, schema, deployment, or evidence-format changes require the versioning/deprecation treatment documented in the API contract. ACTIVE-PR behavior must not be advertised as shipped.
+
+Licensing/IP acceptance is fail-closed. For the exact candidate, verify package license metadata and included license files, the actual direct/transitive/container dependency closure, the release SBOM, required NOTICE/attribution material, and authoritative upstream dependency license metadata. Repository declarations are evidence inputs, not a substitute for legal/title review. Any unverified ownership chain, unknown dependency license, incompatible obligation, or missing required notice keeps release acceptance unresolved until the responsible reviewer verifies or remediates it.
 
 ## 7. Reproducibility and artifact identity
 
@@ -122,7 +125,7 @@ Before publication:
 
 Publication credentials and OIDC/registry authority must be separate from ordinary pull-request verification where practical. Pull-request jobs should remain read-only with respect to package registries and release creation.
 
-The publication step must use the exact accepted artifacts, not silently rebuild from a different source revision. After publication, independently resolve the registry/release artifact and verify expected name, version, hashes, metadata, and provenance links.
+The publication step must use the exact accepted artifacts, not silently rebuild from a different source revision. After publication, independently resolve the registry/release artifact and verify expected name, version, hashes, metadata, license/NOTICE material, and provenance links.
 
 ## 12. Rollback and recovery
 
@@ -133,6 +136,7 @@ A release rollback is a controlled product operation, not `git reset` plus hope.
 - **Irreversible or data-transforming migration:** prefer a forward corrective migration or restore from verified backup according to the migration ADR/runbook.
 - **Published bad artifact:** stop promotion, mark/yank only when registry policy and consumer safety permit, publish a corrected version rather than rewriting an immutable release, and preserve incident evidence.
 - **Credential/security exposure:** rotate/revoke affected credentials, preserve bounded incident evidence, and do not rely on package rollback alone.
+- **Licensing/IP evidence defect:** stop publication/promotion, preserve exact dependency/artifact evidence, correct metadata/NOTICE or dependency selection through a reviewed change, and do not rewrite immutable released artifacts to hide the historical condition.
 
 Rollback must never delete retained checkpoint/audit evidence merely to satisfy an older schema expectation.
 
@@ -146,6 +150,7 @@ Reject release when any of the following is true:
 - required independent approval is absent;
 - migration/rollback or operational evidence is missing for a changed contract;
 - package, SBOM, provenance, or reproducibility evidence refers to a different source/artifact;
+- licensing/IP evidence contains an unknown or incompatible dependency license, missing required notice, or unverified ownership/title chain;
 - documentation advertises ACTIVE-PR behavior as shipped; or
 - publication would rely on invented, over-broad, or unverified credentials/permissions.
 
@@ -155,6 +160,7 @@ After publication, verify the released artifact as a consumer would:
 
 - resolve the release/version from the official registry/release channel;
 - validate package metadata and license/NOTICE inclusion;
+- compare the published dependency/artifact closure with the accepted SBOM and licensing review evidence;
 - compare expected hashes/provenance;
 - install in a clean supported environment;
 - execute a bounded smoke/health path; and
