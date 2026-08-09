@@ -11,7 +11,7 @@ settings or add CODEOWNERS-based merge gates before then.
 ## HTTP readiness confidentiality
 
 - `check_health()` is the trusted local operator diagnostics surface and may contain diagnostic detail needed for troubleshooting.
-- `serve_healthz()` must publish only `public_health_report()`, which allow-lists `ready`, `component`, and `is_ready` for the public readiness representation.
+- `serve_healthz()` must publish only `public_health_report()`, which exposes `ready` plus `component` and `is_ready` only for the fixed required-component allow-list; unrecognized component names remain local and must not cross the public HTTP boundary.
 - Public readiness validation is non-coercive: any malformed readiness shape or non-boolean `ready`/`is_ready` must fail closed to HTTP 503 with an empty public component list; never use truth coercion at this boundary.
 - Never serialize the detailed local report directly from `/healthz`, copy database exception text into the public readiness response, or widen that response without deterministic tests and a reviewed security contract.
 - The PostgreSQL health-function query must retain its parameterized, transaction-local `statement_timeout`; do not replace it with a process- or server-global timeout setting or remove the bound without deterministic reliability tests and an explicit operator-contract review.
