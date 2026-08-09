@@ -42,12 +42,15 @@ are normalized, and unsafe shapes fail closed. `tests/test_bootstrap_cli.py`
 keeps the existing CLI routing test while providing its fixture value through
 stdin.
 
-The development sequence is intentionally test-first. Exact-head CI
-`31298176124` on RED head `e8b256992b34a8651ab5a2f0cef350d5fbde4b75`
-failed the two initial secret-input contracts on Python 3.10, 3.12, and 3.14
-because the old parser still accepted a positional secret and required it when
-stdin-only invocation was attempted. No predecessor-head failure is counted as
-post-fix evidence.
+The development sequence is intentionally test-first. PR CI run `31298176124`
+was triggered from RED source head `e8b256992b34a8651ab5a2f0cef350d5fbde4b75`
+but, under the current protected-main workflow, checked GitHub synthetic merge
+commit `519ada6d67a01e66b877fc48d0b0ae5691a428d9`. It failed the two initial
+secret-input contracts on Python 3.10, 3.12, and 3.14 because the old parser
+still accepted a positional secret and required it when stdin-only invocation
+was attempted. This is valid fail-first development evidence for the behavior,
+but it is not exact-source-head acceptance evidence. No predecessor or
+synthetic-merge-only result is counted as post-fix acceptance.
 
 ## References
 
