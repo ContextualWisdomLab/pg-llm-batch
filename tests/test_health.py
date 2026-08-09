@@ -200,6 +200,24 @@ def test_public_health_report_fails_closed_on_malformed_readiness_shapes():
         }
 
 
+def test_public_health_report_never_overrides_failed_required_components():
+    """Public readiness cannot be true when a required component is not ready."""
+    report = {
+        "ready": True,
+        "components": [
+            {"component": "database", "is_ready": False},
+            {"component": "pg_tiktoken", "is_ready": True},
+            {"component": "com_config", "is_ready": True},
+            {"component": "optional_metrics", "is_ready": False},
+        ],
+    }
+
+    public_report = health.public_health_report(report)
+
+    assert public_report["ready"] is False
+    assert public_report["components"] == report["components"]
+
+
 def test_serve_healthz_reports_redacted_status_body_and_not_found(monkeypatch):
     """The HTTP wrapper emits only redacted readiness and a strict 404 elsewhere."""
     events = []
