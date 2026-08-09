@@ -45,9 +45,9 @@ def test_serve_healthz_cli_allows_explicit_container_binding() -> None:
 
 
 def test_component_image_explicitly_requests_container_wide_binding() -> None:
-    """The executable container command must opt in to all-interface binding."""
+    """The executable top-level Docker CMD must opt in to all-interface binding."""
     lines = (_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
-    cmd_lines = [line.strip() for line in lines if line.lstrip().startswith("CMD ")]
+    cmd_lines = [line for line in lines if line.startswith("CMD ")]
 
     assert len(cmd_lines) == 1
     command = json.loads(cmd_lines[0].removeprefix("CMD "))
