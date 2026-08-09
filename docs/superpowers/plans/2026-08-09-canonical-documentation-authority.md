@@ -30,10 +30,10 @@
 - Consumes: protected-main README, SECURITY, schema, public API, workflows, and active PR metadata.
 - Produces: canonical file inventory, maturity vocabulary, and machine-checkable completeness contract.
 
-- [ ] **Step 1: Write the failing contract test** requiring PRD, TRD, Architecture, UML, ERD, traceability, test strategy, operability, threat model, ADR index, and automation ADR files, plus the exact maturity/status vocabularies.
-- [ ] **Step 2: Verify RED** through the repository CI path; missing canonical files must be the reason for failure.
-- [ ] **Step 3: Add `docs/DOCUMENTATION_FITNESS.md`** with PRESENT-CURRENT/PRESENT-STALE/PARTIAL/MISSING/NOT-APPLICABLE/SUPERSEDED and IMPLEMENTED-ON-PROTECTED-MAIN/ACTIVE-PR/PARTIAL/ACCEPTED-ARCHITECTURE/PLANNED/RESEARCH-ONLY/SUPERSEDED/OUT-OF-SCOPE classifications.
-- [ ] **Step 4: Keep the test RED** until the remaining canonical documents are added.
+- [x] **Step 1: Write the failing contract test** requiring PRD, TRD, Architecture, UML, ERD, traceability, test strategy, operability, threat model, ADR index, and automation ADR files, plus the exact maturity/status vocabularies.
+- [x] **Step 2: Verify RED** through the repository CI path; missing canonical files must be the reason for failure.
+- [x] **Step 3: Add `docs/DOCUMENTATION_FITNESS.md`** with PRESENT-CURRENT/PRESENT-STALE/PARTIAL/MISSING/NOT-APPLICABLE/SUPERSEDED and IMPLEMENTED-ON-PROTECTED-MAIN/ACTIVE-PR/PARTIAL/ACCEPTED-ARCHITECTURE/PLANNED/RESEARCH-ONLY/SUPERSEDED/OUT-OF-SCOPE classifications.
+- [x] **Step 4: Keep the test RED** until the remaining canonical documents are added.
 
 ### Task 2: Product and technical requirements
 
@@ -45,9 +45,9 @@
 - Consumes: README, package public API, schema, existing product behavior, active PR queue.
 - Produces: buyer/user/jobs-to-be-done/non-goals/acceptance requirements and implementation-quality/trust-boundary requirements.
 
-- [ ] **Step 1:** Document product identity, target users, standalone and embedding use cases, buyer-visible outcomes, non-goals, and acceptance criteria.
-- [ ] **Step 2:** Document technical constraints for PostgreSQL, provider HTTP, bounded resources, lifecycle durability, retries, observability, security, migrations, exact evidence, packaging, and release.
-- [ ] **Step 3:** Mark every capability as protected-main, active PR, accepted target, planned, superseded, or out-of-scope.
+- [x] **Step 1:** Document product identity, target users, standalone and embedding use cases, buyer-visible outcomes, non-goals, and acceptance criteria.
+- [x] **Step 2:** Document technical constraints for PostgreSQL, provider HTTP, bounded resources, lifecycle durability, retries, observability, security, migrations, exact evidence, packaging, and release.
+- [x] **Step 3:** Mark every capability as protected-main, active PR, accepted target, planned, superseded, or out-of-scope.
 
 ### Task 3: Architecture, UML, and ERD
 
@@ -60,10 +60,10 @@
 - Consumes: `pg_llm_batch/schema.sql`, public package API, CLI/runtime modules, Docker/health/readiness behavior.
 - Produces: as-built component/deployment/authority views, behavior sequences/states, and persisted relational model.
 
-- [ ] **Step 1:** Write root architecture with system context, module boundaries, trust/authority boundaries, data flow, runtime/deployment modes, and active-PR overlay.
-- [ ] **Step 2:** Add Mermaid component, CLI/provider sequence, GET retry/response-handoff state, lifecycle persistence, health/readiness, standalone deployment, CWL embedding authority, and release/evidence diagrams.
-- [ ] **Step 3:** Add Mermaid ERD for protected-main tables only, plus a separately labeled ACTIVE-PR conceptual extension section for tenant/checkpoint/audit features.
-- [ ] **Step 4:** Cross-check every protected-main entity and relation against `schema.sql`.
+- [x] **Step 1:** Write root architecture with system context, module boundaries, trust/authority boundaries, data flow, runtime/deployment modes, and active-PR overlay.
+- [x] **Step 2:** Add Mermaid component, CLI/provider sequence, GET retry/response-handoff state, lifecycle persistence, health/readiness, standalone deployment, CWL embedding authority, and release/evidence diagrams.
+- [x] **Step 3:** Add Mermaid ERD for protected-main tables only, plus a separately labeled ACTIVE-PR conceptual extension section for tenant/checkpoint/audit features.
+- [x] **Step 4:** Cross-check every protected-main entity and relation against `schema.sql`.
 
 ### Task 4: Security, operations, testing, and traceability
 
@@ -77,10 +77,10 @@
 - Consumes: SECURITY policy, CI/test contracts, health behavior, migrations, active PR queue, product/TRD decisions.
 - Produces: threat/control ownership, quality pyramid and acceptance evidence, runbook/recovery/SLO boundaries, and requirement-to-code/test/evidence mapping.
 
-- [ ] **Step 1:** Threat-model credentials, provider input, database tenancy, resource exhaustion, SSRF/destination validation, secret disclosure, replay, stale evidence, supply chain, and writer races.
-- [ ] **Step 2:** Specify deterministic unit/integration/security/concurrency/migration/release tests and exact-head evidence classification.
-- [ ] **Step 3:** Specify startup/readiness, health, backup/recovery assumptions, migration/rollback, incident diagnostics, and release/operator acceptance.
-- [ ] **Step 4:** Build a stable traceability matrix linking requirements/decisions to modules, schema, tests, active PRs, and evidence classes without embedding transient run IDs in timeless contracts.
+- [x] **Step 1:** Threat-model credentials, provider input, database tenancy, resource exhaustion, SSRF/destination validation, secret disclosure, replay, stale evidence, supply chain, and writer races.
+- [x] **Step 2:** Specify deterministic unit/integration/security/concurrency/migration/release tests and exact-head evidence classification.
+- [x] **Step 3:** Specify startup/readiness, health, backup/recovery assumptions, migration/rollback, incident diagnostics, and release/operator acceptance.
+- [x] **Step 4:** Build a stable traceability matrix linking requirements/decisions to modules, schema, tests, active PRs, and evidence classes without embedding transient run IDs in timeless contracts.
 
 ### Task 5: Decision records for maintenance/evidence authority
 
@@ -93,9 +93,9 @@
 - Consumes: repository maintenance policy and current conversation decisions.
 - Produces: durable status-bearing decisions for no-early-stop execution, writer leases, live source/base identity, evidence classes, and independent review separation.
 
-- [ ] **Step 1:** Record the work-conserving no-early-stop decision, branch rotation, mandatory double exit sweep, and rollback/risks.
-- [ ] **Step 2:** Record exact contributor-head/live-base identity, source-publication CAS boundaries, read-only dependencies, writer-conflict behavior, and review/check/evidence separation.
-- [ ] **Step 3:** Add an ADR index that distinguishes repository product ADRs from automation-governance ADRs and prevents undocumented decisions from living only in chat/PR bodies.
+- [x] **Step 1:** Record the work-conserving no-early-stop decision, branch rotation, mandatory double exit sweep, and rollback/risks.
+- [x] **Step 2:** Record exact contributor-head/live-base identity, source-publication CAS boundaries, read-only dependencies, writer-conflict behavior, and review/check/evidence separation.
+- [x] **Step 3:** Add an ADR index that distinguishes repository product ADRs from automation-governance ADRs and prevents undocumented decisions from living only in chat/PR bodies.
 
 ### Task 6: Verify and publish
 
@@ -106,7 +106,7 @@
 - Consumes: all prior task outputs.
 - Produces: one reviewable main-compatible documentation authority PR.
 
-- [ ] **Step 1:** Run/observe the documentation contract after all canonical files exist and verify GREEN.
+- [ ] **Step 1:** Run/observe the documentation contract after all canonical files exist and verify GREEN on the current exact head.
 - [ ] **Step 2:** Recheck protected main, branch head, active PR queue, and every named public table/API to catch drift introduced during the work.
-- [ ] **Step 3:** Create a Draft PR if exact-head checks are still pending; mark Ready only when source-head verification supports it and review can proceed without violating other writer lanes.
+- [x] **Step 3:** Create a Draft PR if exact-head checks are still pending; mark Ready only when source-head verification supports it and review can proceed without violating other writer lanes.
 - [ ] **Step 4:** Treat PR creation/green CI/review wait as intermediate and immediately resume other safe pg-llm-batch work.
