@@ -133,14 +133,15 @@ flowchart LR
     BP[Branch protection] --> GATE
     APP[Qualifying independent formal approval] --> GATE
     GATE -->|all policy gates satisfied on unchanged head| MERGE[Merge execution]
-    MERGE --> POST[Protected-main post-check]
-    QUEUE[Open PR queue] --> POST
-    LIVE[Live graph checks] --> POST
-    POST --> MAIN[Protected main]
+    MERGE --> MAIN[Protected main exact integrated revision]
+    MAIN --> POST[Post-merge operational acceptance]
+    QUEUE[Open PR queue revalidation] --> POST
+    LIVE[Live graph / finding / branch-policy checks] --> POST
+    POST --> ACCEPT[Operational acceptance evidence]
     SYN[Synthetic merge ref/status-only evidence] -. non-authoritative for source identity .-> GATE
 ```
 
-Merge readiness is not protected-main acceptance. After explicit merge execution, the protected-main post-check revalidates the open PR queue, finding resolution, branch protection, and live graph state under `docs/RELEASE_ACCEPTANCE.md` before integrated behavior is treated as operational evidence.
+Merge readiness is not protected-main acceptance. Explicit merge execution first creates the exact integrated protected revision. Capability-specific post-merge operational acceptance then revalidates the applicable queue, findings, branch policy, live graph, runtime/deployment/migration/operator behavior, and other evidence required by `docs/automation/ADR-0005-protected-main-operational-acceptance.md` and `docs/RELEASE_ACCEPTANCE.md`. Only that fresh evidence may close the applicable incident/runtime/release acceptance lane; the merge itself is intermediate.
 
 ## 8. Standalone and CWL composition
 
