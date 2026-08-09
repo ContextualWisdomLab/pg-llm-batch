@@ -13,19 +13,23 @@ explicit or bootstrap_environment_value
 That expression treats an omitted value (`None`) and an explicitly supplied
 empty string as equivalent. For the required DSN, a caller that explicitly
 supplies an empty target can be redirected silently to the environment-selected
-database instead of receiving an input error. For the optional Fernet key, an
-explicit empty value can silently inherit an ambient bootstrap key and therefore
-select a different decryption authority than the caller requested. At an
-operator boundary, fallback must not replace explicit input merely because that
-input is false-valued.
+database instead of receiving an input error. A whitespace-only explicit DSN is
+also unsafe even though it is truthy: passing it through to libpq delegates
+connection-target selection to lower-level defaults instead of preserving a
+reviewable explicit database target. For the optional Fernet key, an explicit
+empty value can silently inherit an ambient bootstrap key and therefore select a
+different decryption authority than the caller requested. At an operator
+boundary, fallback must not replace explicit input merely because that input is
+false-valued, and a required explicit database target must contain non-whitespace
+content.
 
 ## Contract
 
 `resolve_dsn()` distinguishes source absence from source value:
 
-- a non-empty explicit DSN wins over the environment;
-- an explicitly supplied empty string fails closed with `ConfigError` and does
-  not consult `PG_LLM_BATCH_DSN`;
+- a nonblank explicit DSN wins over the environment and is retained byte-for-byte;
+- an explicitly supplied empty or whitespace-only string fails closed with
+  `ConfigError` and does not consult `PG_LLM_BATCH_DSN` or reach libpq;
 - the environment is consulted only when the explicit argument is omitted
   (`None`); and
 - a missing or empty environment DSN still fails with the existing bootstrap
@@ -55,16 +59,17 @@ bootstrap-value paths.
 ## Verification
 
 `tests/test_bootstrap_explicit_dsn_precedence.py` proves the required-DSN
-regression directly: with a valid `PG_LLM_BATCH_DSN` present,
-`resolve_dsn("")` must raise rather than select the environment target.
+regressions directly: with a valid `PG_LLM_BATCH_DSN` present,
+`resolve_dsn("")` and whitespace-only explicit values must raise rather than
+select the environment target or delegate target selection to libpq defaults.
 `tests/test_bootstrap_cli.py` proves the optional-key counterpart: with an
 ambient `PG_LLM_BATCH_SECRET_KEY` present, `resolve_secret_key("")` returns the
 explicit empty string rather than the ambient key.
 
-Existing bootstrap tests continue to prove that non-empty explicit values win,
-omitted arguments use their environment values, an omitted DSN without
-environment configuration fails, and an omitted optional key without environment
-configuration returns `None`.
+Existing bootstrap tests continue to prove that nonblank explicit values win
+without normalization, omitted arguments use their environment values, an
+omitted DSN without environment configuration fails, and an omitted optional
+key without environment configuration returns `None`.
 
 The DSN RED source head `aea84e1d27822826ae22b7d532d87ede0025e5a7`
 reached the intended production boundary in CI run `31305290555`, Python 3.12
@@ -72,25 +77,33 @@ job `93224552797`: the new test failed with `DID NOT RAISE ConfigError` while
 the old truthiness expression silently selected `postgresql://environment`.
 The explicit-key RED source head `683dd533052d8b6f2aef0147ca3260760f11b1f6`
 proved the same truthiness defect for the optional key: an explicit empty string
-returned `environment-key` instead. These are fail-first development evidence,
-not final acceptance evidence.
+returned `environment-key` instead. A later fail-first regression at source head
+`4f427f4577fc5a3c6498d3ace1c78d70f59b8f8e` extended the required-DSN contract
+to whitespace-only explicit values before the production guard recognized
+those inputs. These are fail-first development evidence, not final acceptance
+evidence.
 
 The DSN repair consults the environment only when `explicit is None` and rejects
-an explicitly empty required value before environment lookup. The optional-key
-repair likewise consults the environment only when `explicit is None`, but
-preserves any explicitly supplied string because an empty optional key is a
-valid statement of absence rather than an invalid database target. Final
-acceptance still requires the full repository CI, security, and review evidence
-on the final unchanged source head under the exact-source evidence policy.
+an explicitly empty or whitespace-only required value before environment lookup
+or libpq access. Nonblank explicit DSNs are returned unchanged; the guard does
+not trim, rewrite, or otherwise normalize valid connection strings. The
+optional-key repair likewise consults the environment only when `explicit is
+None`, but preserves any explicitly supplied string because an empty optional
+key is a valid statement of absence rather than an invalid database target.
+Final acceptance still requires the full repository CI, security, and review
+evidence on the final unchanged source head under the exact-source evidence
+policy.
 
 ## Rollback
 
 Rollback is the ordinary Git revert of this bounded bootstrap change. Rolling
-back restores the unsafe ambiguity between omitted and explicitly empty inputs:
-required DSNs can silently retarget a command, and optional Fernet key selection
-can silently inherit an ambient decryption authority. A rollback is appropriate
-only if a documented compatibility contract requires that ambiguity and a safer
-explicit migration is provided.
+back restores the unsafe ambiguity between omitted and explicitly empty inputs
+and permits whitespace-only explicit DSNs to reach lower-level connection
+defaults: required DSNs can silently retarget a command or lose an explicit
+reviewable target, and optional Fernet key selection can silently inherit an
+ambient decryption authority. A rollback is appropriate only if a documented
+compatibility contract requires that ambiguity and a safer explicit migration
+is provided.
 
 ## References
 
