@@ -14,6 +14,7 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _COMPOSE_PATH = _ROOT / "docker-compose.yml"
+_EXPECTED_PUBLISHED_PORTS = {"postgres": 5432, "component": 8080}
 
 
 def _compose_model() -> dict[str, Any]:
@@ -61,9 +62,24 @@ def _assert_only_loopback_port(
 
 
 def _assert_standalone_port_contract(model: dict[str, Any]) -> None:
-    """Require the currently intended database and health publications."""
-    _assert_only_loopback_port(model, "postgres", 5432)
-    _assert_only_loopback_port(model, "component", 8080)
+    """Require exactly the reviewed database and health host publications."""
+    services = model.get("services")
+    assert isinstance(services, dict)
+
+    published_services: set[str] = set()
+    for service_name, service in services.items():
+        assert isinstance(service_name, str)
+        assert isinstance(service, dict)
+        ports = service.get("ports")
+        if ports is None:
+            continue
+        assert isinstance(ports, list)
+        if ports:
+            published_services.add(service_name)
+
+    assert published_services == set(_EXPECTED_PUBLISHED_PORTS)
+    for service_name, port_number in _EXPECTED_PUBLISHED_PORTS.items():
+        _assert_only_loopback_port(model, service_name, port_number)
 
 
 def test_standalone_compose_publishes_database_and_health_only_on_loopback() -> None:
