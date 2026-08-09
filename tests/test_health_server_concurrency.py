@@ -33,3 +33,47 @@ def test_health_server_does_not_serialize_independent_probe_requests(
     health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
 
     assert selections == [True]
+
+
+def test_health_server_bounds_concurrent_probe_threads(monkeypatch: Any) -> None:
+    """A connection flood cannot allocate an unbounded number of probe threads."""
+
+    class _AdmissionHTTPServer:
+        """Drive 33 accepted connections without completing any started request."""
+
+        started: list[object] = []
+        rejected: list[object] = []
+
+        def __init__(
+            self,
+            _address: tuple[str, int],
+            _handler_class: type[Any],
+        ) -> None:
+            """Reset deterministic admission evidence for one server instance."""
+            type(self).started = []
+            type(self).rejected = []
+
+        def serve_forever(self) -> None:
+            """Offer one more connection than the reviewed 32-request ceiling."""
+            for index in range(33):
+                self.process_request(object(), ("127.0.0.1", 10_000 + index))
+
+        def shutdown_request(self, request: object) -> None:
+            """Record a refused connection without allocating another thread."""
+            type(self).rejected.append(request)
+
+    def record_thread_start(
+        server: Any,
+        request: object,
+        _client_address: tuple[str, int],
+    ) -> None:
+        """Record a thread allocation without starting a real test thread."""
+        type(server).started.append(request)
+
+    monkeypatch.setattr("http.server.HTTPServer", _AdmissionHTTPServer)
+    monkeypatch.setattr(ThreadingMixIn, "process_request", record_thread_start)
+
+    health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
+
+    assert len(_AdmissionHTTPServer.started) == 32
+    assert len(_AdmissionHTTPServer.rejected) == 1
