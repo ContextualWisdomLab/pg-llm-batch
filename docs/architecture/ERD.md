@@ -78,8 +78,19 @@ erDiagram
         text endpoint_alias
         text remote_batch_id
         bigint observation_order
+        text input_file_id
+        text batch_endpoint
         text batch_status
+        text output_file_id
+        text error_file_id
+        bigint total_requests
+        bigint completed_requests
+        bigint failed_requests
         jsonb provider_metadata
+        timestamptz first_seen_at
+        timestamptz last_observed_at
+        timestamptz terminal_at
+        timestamptz updated_at
     }
 
     llm_queues ||--o{ llm_batches : contains
@@ -93,7 +104,7 @@ erDiagram
     llm_endpoints ||--o{ llm_endpoint_models : advertises
 ```
 
-All entities above are **IMPLEMENTED-ON-PROTECTED-MAIN** at the documentation baseline. `llm_remote_batch_jobs` uses `(endpoint_alias, remote_batch_id)` as the durable provider-facing identity on protected main. ACTIVE-PR #53 introduces trusted tenant qualification and forced RLS; that tenant boundary is not claimed here as shipped.
+All entities above are **IMPLEMENTED-ON-PROTECTED-MAIN** at the documentation baseline. `llm_remote_batch_jobs` uses composite UNIQUE `(endpoint_alias, remote_batch_id)` as the durable provider-facing identity and idempotency key on protected main; `remote_job_uuid` remains its row primary key. ACTIVE-PR #53 introduces trusted tenant qualification and forced RLS; that tenant boundary is not claimed here as shipped.
 
 ## ACTIVE-PR persistence overlay
 
