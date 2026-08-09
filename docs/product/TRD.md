@@ -47,6 +47,10 @@ The package-owned preparation path shall persist JSONL data in PostgreSQL and re
 
 Checkpoint, checkpoint-audit, snapshot-manifest, and tenant-RLS schema described by open PRs shall remain `ACTIVE-PR` until protected integration. ERD and operator documents must keep those entities separate from protected-main tables.
 
+### TRD-D6 — Data classification and lifecycle authority
+
+The canonical engineering authority for sensitive content, credentials, provider disclosure, telemetry, and operational evidence is `docs/DATA_GOVERNANCE.md`. New persisted fields or emitted logs/metrics/traces shall receive an explicit **data classification** before release. Purpose/business authorization, retention, erasure/export, backup expiry, and data residency remain **host-owned** unless an accepted package ADR and implementation explicitly move that authority. Package-side redaction, bounded telemetry, or tenant RLS must not be treated as substitutes for host authorization.
+
 ## 4. Provider HTTP requirements
 
 ### TRD-H1 — Credential-bearing destination validation
@@ -189,7 +193,7 @@ Version bump, release creation, publication, and provenance acceptance shall use
 
 ## 12. Documentation requirements
 
-The repository shall keep a canonical PRD, TRD, Architecture, UML, ERD, Threat Model, Test Strategy, Operability guide, ADR index, automation-governance ADRs, and Traceability matrix. Each must distinguish `IMPLEMENTED-ON-PROTECTED-MAIN` from `ACTIVE-PR` and must be tested for presence/core authority terms.
+The repository shall keep a canonical PRD, TRD, Architecture, UML, ERD, Threat Model, Data Governance, Test Strategy, Operability guide, ADR index, automation-governance ADRs, and Traceability matrix. Each must distinguish `IMPLEMENTED-ON-PROTECTED-MAIN` from `ACTIVE-PR` and must be tested for presence/core authority terms.
 
 ## 13. Authoritative references
 
