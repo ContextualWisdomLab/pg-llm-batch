@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made malformed boolean configuration values fall back to their declared
+  default instead of treating every non-empty string as true, preventing
+  corrupted false-default flags from being silently enabled.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
