@@ -15,6 +15,8 @@ A database-backed store owns its PostgreSQL connection immediately after `psycop
 
 This constructor cleanup is internal to the store and complements the outer orchestrator and CLI ownership rules. Callers never receive an unusable object, ordinary driver cleanup errors do not replace the primary setup failure, and successful construction retains the existing explicit `close()` contract. The change does not retry setup, hide the original database or encryption error, or convert a failed initialization into a usable fallback store.
 
+`SecretStore` distinguishes intentional no-key local/development operation from an explicit encryption request. When no Fernet key is configured, the existing base64-obfuscated local/dev fallback remains available and is explicitly not encryption. When a **configured Fernet** key is supplied but the optional `cryptography` dependency is unavailable, construction **fails closed** with `ConfigError` instead of silently downgrading the requested encryption to base64 obfuscation. Because this check runs inside the protected constructor setup block, the already acquired PostgreSQL connection is closed before the error propagates. Operators that configure a Fernet key must install the `secrets` extra (or otherwise provide the compatible `cryptography` dependency).
+
 ## Orchestrator runtime contract
 
 The orchestrator uses nested `try/finally` blocks with the following ownership order:
@@ -72,8 +74,9 @@ Deterministic tests prove that:
 9. successful and failed token-count commands close the counter before the configuration store;
 10. async client exit closes HTTP, secret, and configuration resources in reverse construction order;
 11. partial async credential construction closes every successfully constructed owner;
-12. `PostgresConfigStore` closes its acquired connection when constructor setup fails; and
-13. `SecretStore` closes its acquired connection when constructor setup fails.
+12. `PostgresConfigStore` closes its acquired connection when constructor setup fails;
+13. `SecretStore` closes its acquired connection when constructor setup fails; and
+14. a configured Fernet key with unavailable `cryptography` fails closed instead of entering the no-key base64 fallback.
 
 The complete gate must continue to prove Python 3.10, 3.12, and 3.14 behavior; 100% production statement and branch coverage; 100% public docstrings; compilation; Ruff; lock freshness; package construction; Compose validation; container builds; Security Scan; and SAST.
 
@@ -91,9 +94,11 @@ If database sessions remain unexpectedly active after this change, identify whet
 
 Call `TokenCounter.close()`, `PostgresConfigStore.close()`, or `SecretStore.close()` when custom embedding code creates those objects with a longer lifetime. A store constructor that raises does not return an owner to close; its internal failure path must already have released the acquired connection. Do not add a global connection singleton or suppress constructor validation to reduce connection churn. If sustained throughput requires pooling, design it as a separate reviewed ownership contract with bounded capacity, transaction-state reset, health checks, tenant isolation, shutdown behavior, and rollback evidence.
 
+If a configured Fernet key fails because `cryptography` is unavailable, install the package's `secrets` extra or the governed compatible cryptography dependency and retry with the same intended key. Do not remove the key merely to bypass the failure in a production environment; doing so selects the explicitly weaker local/dev base64-obfuscation mode.
+
 ## Rollback
 
-There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned, CLI-owned, and partially initialized store sessions and reacquires the token-counting connection before configuration validation. During an incident, retain the explicit lifecycle and diagnose the failing connection or driver cleanup path rather than removing `try/finally`, constructor cleanup, or relying on garbage collection.
+There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned, CLI-owned, and partially initialized store sessions, reacquires the token-counting connection before configuration validation, and would restore silent encryption downgrade when a configured Fernet key cannot be honored. During an incident, retain the explicit lifecycle and fail-closed encryption boundary and diagnose the failing connection, dependency, or driver cleanup path rather than removing `try/finally`, constructor cleanup, or relying on garbage collection.
 
 ## References
 
