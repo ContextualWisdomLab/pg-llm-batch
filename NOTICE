@@ -8,8 +8,8 @@ Provenance
 The batch core (token counting, batch assembly/orchestration, and the
 OpenAI-compatible Batch API client) was extracted from the internal
 ContextualWisdomLab project "xtrmLLMBatchPython" and relicensed to Apache-2.0.
-ContextualWisdomLab owns the source; the extracted subset depends only on
-permissively-licensed components and is redistributable under Apache-2.0.
+ContextualWisdomLab owns the source. The extracted subset depends on separately
+licensed components listed below; redistribution must satisfy their respective license terms.
 
 Third-party components used at runtime (not vendored here):
   - pg_tiktoken           Apache-2.0
