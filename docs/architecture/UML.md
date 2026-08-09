@@ -30,12 +30,20 @@ sequenceDiagram
     participant T as TokenCounter
     participant P as PostgreSQL
     U->>O: prepare_batches(...)
+    O->>P: read queued requests
     O->>C: load governed configuration
-    O->>T: count request tokens
+    O->>T: count tokens
     T->>P: pg_tiktoken operations
-    O->>P: persist batches, files, requests, JSONL lines
+    O->>O: partition requests into bounded payloads
+    O->>P: persist payload document
+    O->>P: persist batch file
+    O->>P: persist JSONL lines
+    O->>P: assign queued requests
+    O->>P: update batch totals
+    O->>P: commit preparation transaction
     P-->>O: durable identifiers
     O-->>U: prepared batch metadata
+    Note over O,P: Any failure before commit rolls back this preparation transaction.
 ```
 
 ## 3. Provider request, retry, and response handoff
