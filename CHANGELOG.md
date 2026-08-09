@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.
+- Added canonical acquisition licensing/IP diligence for the configured
+  `psycopg-binary` distribution and its bundled client libraries; release
+  acceptance now requires the release SBOM to verify the exact third-party license
+  closure without treating repository metadata as legal clearance.
 - Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff
   patch updates; setup-uv cache pruning is explicit to preserve the previous
   bounded cache-cost policy.
