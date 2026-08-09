@@ -266,4 +266,15 @@ class AuditedPostgresBatchResultCheckpointStore(PostgresBatchResultCheckpointSto
         rows = cursor.fetchall()
         if not isinstance(rows, (tuple, list)):
             raise RuntimeError("checkpoint audit query returned an invalid row collection")
-        return tuple(_audit_event_from_row(row) for row in rows)
+        events = tuple(_audit_event_from_row(row) for row in rows)
+        expected_key = (self.tenant_scope, consumer, alias, remote_batch_id)
+        for event in events:
+            event_key = (
+                event.tenant_scope,
+                event.consumer_name,
+                event.endpoint_alias,
+                event.batch_id,
+            )
+            if event_key != expected_key:
+                raise RuntimeError("checkpoint audit query returned a row outside the requested key")
+        return events
