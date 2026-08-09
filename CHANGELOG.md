@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in bounded checkpoint-audit export pagination through immutable
+  `CheckpointAuditPage`, `list_audit_event_page()`, and
+  `list_audit_event_page_in_transaction()`. Pagination uses a strict positive
+  PostgreSQL `BIGINT` keyset cursor, newest-first `<` continuation, and one-row
+  bounded lookahead rather than `OFFSET`; returned rows are revalidated against
+  the exact trusted tenant/consumer/endpoint/batch key and strict descending
+  identity order. A live PostgreSQL regression proves that a newer committed row
+  between pages cannot drift into the older continuation window. Package-owned
+  calls do not claim one multi-page snapshot; hosts needing that guarantee own a
+  `REPEATABLE READ` or stricter transaction. External immutable/WORM retention,
+  receipts, cryptographic manifests, and reconciliation remain host controls. No
+  migration, version bump, or release is included.
 - Explicit opt-in `init-checkpoint-storage` operator for existing PostgreSQL
   volumes. It bounded-reads, validates, and SHA-256 identifies
   `0007_result_stream_checkpoints` and
