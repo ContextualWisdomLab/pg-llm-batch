@@ -117,8 +117,13 @@ async def test_permanent_tls_failures_are_not_retried(
         ):
             pytest.fail("a TLS failure must not hand off a response")
 
+    expected_error_type = (
+        "ClientConnectorCertificateError"
+        if isinstance(tls_failure, aiohttp.ClientConnectorCertificateError)
+        else "ClientSSLError"
+    )
     assert caught.value.response_data == {
-        "error_type": type(tls_failure).__name__,
+        "error_type": expected_error_type,
         "timeout_seconds": client.request_timeout_seconds,
     }
     assert caught.value.__cause__ is None
@@ -177,14 +182,23 @@ async def test_server_fingerprint_mismatch_is_not_retried(
     assert sleeps == []
 
 
-async def test_dependency_defined_client_error_uses_bounded_error_type() -> None:
-    """Provider-defined class names must not enter exported transport diagnostics."""
+async def test_dependency_defined_client_error_uses_bounded_error_type(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Provider-defined class names must not enter diagnostics or retry logs."""
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    monkeypatch.setattr(client_mod.asyncio, "sleep", record_sleep)
     failure = ProviderNamedClientFailure("gateway.example sensitive-provider-detail")
-    session = _SequenceSession([failure])
+    session = _SequenceSession([failure, failure])
     client = BatchAPIClient(
         "postgresql://example",
         _credentials,
-        max_retry_attempts=1,
+        max_retry_attempts=2,
     )
     client._session = session
 
@@ -203,9 +217,11 @@ async def test_dependency_defined_client_error_uses_bounded_error_type() -> None
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert "ProviderNamedClientFailure" not in str(caught.value.response_data)
+    assert "ProviderNamedClientFailure" not in caplog.text
     assert "gateway.example" not in str(caught.value)
     assert "sensitive-provider-detail" not in str(caught.value)
-    assert session.calls == 1
+    assert session.calls == 2
+    assert len(sleeps) == 1
 
 
 async def test_timeout_remains_retryable_for_idempotent_get(
