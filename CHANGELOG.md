@@ -12,10 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded checkpoint-audit snapshot manifests through immutable
   `CheckpointAuditSnapshotManifest` and
   `build_audit_snapshot_manifest_in_transaction()`. The caller supplies one
-  active read-only PostgreSQL `REPEATABLE READ` or `SERIALIZABLE` transaction;
-  the helper validates that isolation, walks existing bounded keyset pages
-  without materializing the full history, enforces a hard 100,000-event ceiling,
-  and hashes every retained event field in newest-first order with explicit
+  active PostgreSQL transaction that is read-only and uses `REPEATABLE READ` or
+  `SERIALIZABLE`; autocommit or session-level isolation is rejected. The helper
+  validates that isolation, walks existing bounded keyset pages without
+  materializing the full history, enforces a hard 100,000-event ceiling, and
+  hashes every retained event field in newest-first order with explicit
   domain-separated length framing. The schema-v1 manifest records only the
   validated audit-key identity, event count, newest/oldest identities, and
   checksum. A live PostgreSQL regression proves that concurrent inserts after
