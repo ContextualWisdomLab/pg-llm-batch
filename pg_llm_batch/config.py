@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
 from .exceptions import ConfigError
@@ -86,6 +87,12 @@ def _build_default_index(
 DEFAULT_CONFIG_INDEX = _build_default_index(DEFAULT_CONFIG_TREE)
 
 
+def _isolated_default(item: Optional[Dict[str, Any]], fallback: Any) -> Any:
+    """Return an isolated copy of a declared default or caller fallback."""
+    value = item["value"] if item else fallback
+    return deepcopy(value)
+
+
 def _serialize_value(value: Any) -> str:
     """Serialize a config value to text (JSON for dict/list/bool, else ``str``)."""
     if isinstance(value, (dict, list, bool)):
@@ -102,9 +109,9 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
         try:
             decoded = json.loads(raw)
         except json.JSONDecodeError:
-            return item["value"] if item else {}
+            return _isolated_default(item, {})
         if type(decoded) is not target_type:
-            return item["value"] if item else {}
+            return _isolated_default(item, {})
         return decoded
     if target_type is bool:
         lowered = raw.lower()
@@ -112,24 +119,24 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
             return True
         if lowered in {"false", "0", "no", "off"}:
             return False
-        return item["value"] if item else False
+        return _isolated_default(item, False)
     if target_type is int:
         try:
             return int(raw)
         except ValueError:
-            return item["value"] if item else 0
+            return _isolated_default(item, 0)
     if target_type is float:
         try:
             return float(raw)
         except ValueError:
-            return item["value"] if item else 0.0
+            return _isolated_default(item, 0.0)
     return raw
 
 
 def _default_value(category: str, key: str, fallback: Any) -> Any:
-    """Return the built-in default for ``category.key`` or the caller's fallback."""
+    """Return an isolated built-in default or the caller's isolated fallback."""
     item = DEFAULT_CONFIG_INDEX.get(f"{category}.{key}")
-    return item["value"] if item else fallback
+    return _isolated_default(item, fallback)
 
 
 def _split_full_key(full_key: str) -> Tuple[str, str]:
