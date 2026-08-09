@@ -15,6 +15,8 @@ import json
 import logging
 from typing import Any, Dict, List
 
+from .exceptions import ValidationError
+
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
 except ImportError:  # pragma: no cover
@@ -158,8 +160,27 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     return {"ready": ready and required_ready, "components": public_components}
 
 
+def _validate_listener(host: Any, port: Any) -> tuple[str, int]:
+    """Validate one explicit readiness listener before any socket is created."""
+    if not isinstance(host, str) or not host.strip():
+        raise ValidationError(
+            field="host",
+            value=host,
+            reason="must be a non-empty listener hostname or address",
+        )
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65_535:
+        raise ValidationError(
+            field="port",
+            value=port,
+            reason="must be an integer between 1 and 65535",
+        )
+    return host, port
+
+
 def serve_healthz(dsn: str, host: str = "127.0.0.1", port: int = 8080) -> None:
     """Serve a redacted loopback-default ``/healthz`` endpoint (blocking)."""
+    validated_host, validated_port = _validate_listener(host, port)
+
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from socketserver import ThreadingMixIn
     from threading import BoundedSemaphore
@@ -219,6 +240,6 @@ def serve_healthz(dsn: str, host: str = "127.0.0.1", port: int = 8080) -> None:
             """Suppress the default stderr access logging."""
             return
 
-    server = _ThreadingHealthHTTPServer((host, port), _Handler)
-    logger.info("Serving /healthz on %s:%s", host, port)
+    server = _ThreadingHealthHTTPServer((validated_host, validated_port), _Handler)
+    logger.info("Serving /healthz on %s:%s", validated_host, validated_port)
     server.serve_forever()
