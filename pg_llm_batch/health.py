@@ -158,8 +158,8 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     return {"ready": ready and required_ready, "components": public_components}
 
 
-def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
-    """Serve a redacted ``/healthz`` readiness endpoint (blocking)."""
+def serve_healthz(dsn: str, host: str = "127.0.0.1", port: int = 8080) -> None:
+    """Serve a redacted loopback-default ``/healthz`` endpoint (blocking)."""
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from socketserver import ThreadingMixIn
     from threading import BoundedSemaphore
