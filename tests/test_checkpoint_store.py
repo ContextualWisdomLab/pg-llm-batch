@@ -15,7 +15,7 @@ from pg_llm_batch import (
     apply_result_checkpoint_schema,
     validate_checkpoint_consumer_name,
 )
-from pg_llm_batch.exceptions import ValidationError
+from pg_llm_batch.exceptions import ConfigError, ValidationError
 from pg_llm_batch.result_streaming import BatchResultCheckpoint
 
 
@@ -204,6 +204,13 @@ def test_consumer_name_validation_is_strict_and_noncoercive() -> None:
     for value in (None, 1, "", " leading", "bad/name", "a" * 129):
         with pytest.raises(ValidationError):
             validate_checkpoint_consumer_name(value)
+
+
+@pytest.mark.parametrize("postgres_dsn", (None, "", " \t\n"))
+def test_store_requires_an_explicit_nonblank_database_target(postgres_dsn: Any) -> None:
+    """Missing DSNs must not fall through to libpq environment or local defaults."""
+    with pytest.raises(ConfigError, match="Postgres DSN"):
+        PostgresBatchResultCheckpointStore(postgres_dsn)
 
 
 def test_store_validates_tenant_before_database_access() -> None:
