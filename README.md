@@ -14,11 +14,13 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 - **Token counting is authoritative.** Counts come from `pg_tiktoken` in the
   database, so the numbers used to pack a batch are exactly what the DB sees —
   there is no drifting Python-side tokenizer.
-- **Provider credentials stay out of the environment.** Operational
-  configuration and provider credentials live in Postgres KV tables
-  (`com_config`, `com_secrets`). The environment is only a *bootstrap transport*
-  for the DSN and an optional Fernet key. The Fernet key is sensitive bootstrap
-  secret material, not a provider credential, and must be protected accordingly.
+- **By default, provider credentials stay out of the environment in standalone mode.**
+  Operational configuration and provider credentials live in Postgres KV tables
+  (`com_config`, `com_secrets`). In standalone mode, the environment is only a
+  *bootstrap transport* for the DSN and an optional Fernet key. The Fernet key is
+  sensitive bootstrap secret material, not a provider credential, and must be
+  protected accordingly. Embedded hosts may instead supply credentials through
+  the documented `Callable[[str], GatewayCredentials]` integration boundary.
   This replaces the ~75 `os.getenv` reads in the upstream app.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
@@ -73,7 +75,6 @@ curl -fsS localhost:8080/healthz
 export PG_LLM_BATCH_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm
 python -m pg_llm_batch init-db                                   # idempotent
 python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
-python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
 ```
 
 Production gateway destinations must use HTTPS. Plain HTTP is accepted only for
@@ -81,18 +82,52 @@ explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`).
 URLs containing user information, query parameters, fragments, whitespace, or
 invalid ports are rejected before the API key is read from `com_secrets`.
 
-Encrypt secrets at rest by exporting a Fernet key as bootstrap transport:
+For the protected-main-compatible credential path, install the optional Fernet
+dependency and read the provider API key with a no-echo prompt instead of
+placing it in process argv, shell history, or command diagnostics:
+
+```bash
+pip install '.[secrets]'
+python - <<'PY'
+import getpass
+import os
+
+from pg_llm_batch.bootstrap import resolve_secret_key
+from pg_llm_batch.config import SecretStore
+
+store = SecretStore(
+    os.environ["PG_LLM_BATCH_DSN"],
+    fernet_key=resolve_secret_key(),
+)
+try:
+    store.set_secret(
+        "gateway_api_key.default",
+        getpass.getpass("Gateway API key: "),
+    )
+finally:
+    store.close()
+PY
+```
+
+This uses the existing database-backed `SecretStore.set_secret()` API and keeps
+provider credential plaintext out of argv. ACTIVE-PR #85 adds an equivalent
+argv-safe `config set-secret` CLI input path; until that PR is integrated, do
+not treat a plaintext positional CLI secret example as a production procedure.
+Host applications may instead supply their own
+`Callable[[str], GatewayCredentials]` and secret-manager integration.
+
+Encrypt database-backed secrets at rest by exporting a Fernet key as bootstrap
+transport before running the prompt-based procedure above:
 
 ```bash
 export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
-python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
 ```
 
 `PG_LLM_BATCH_SECRET_KEY` is sensitive bootstrap secret material. Keep it out of
 shell history, logs, source control, images, and other ambient diagnostics; use a
 secret-injection mechanism appropriate to the deployment. Provider API
 credentials remain in `com_secrets` rather than environment variables by
-default.
+default in standalone mode.
 
 ### 3. Count, submit, wait, retrieve
 
@@ -231,8 +266,12 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
-Canonical product and acquisition-readiness authority is indexed here so buyers,
-contributors, and operators do not need chat history or PR-body archaeology:
+Canonical product and acquisition-readiness documentation is indexed here so
+buyers, contributors, and operators do not need chat history or PR-body
+archaeology. The newly introduced canonical graph is **ACTIVE-PR #93** until it
+reaches protected `main`; ACTIVE-PR or PARTIAL material is not shipped behavior.
+Use [Documentation fitness and maturity](docs/DOCUMENTATION_FITNESS.md) as the
+status authority for each documentation family and capability.
 
 - [Architecture](ARCHITECTURE.md), [PRD](docs/product/PRD.md), [TRD](docs/product/TRD.md), and [public API/compatibility contract](docs/product/API_CONTRACT.md)
 - [UML behavior views](docs/architecture/UML.md) and [ERD/data model](docs/architecture/ERD.md)
