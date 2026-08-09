@@ -58,6 +58,17 @@ def test_authoritative_documents_define_durable_checkpoint_contract() -> None:
             assert phrase in content, f"{path} is missing {phrase!r}"
 
 
+def test_checkpoint_database_target_contract_is_authoritative() -> None:
+    """Operator docs must prohibit ambient libpq target selection."""
+    doctoring = _text("docs/doctoring/durable-result-checkpoint-store.md")
+    changelog = _text("CHANGELOG.md")
+
+    assert "explicit nonblank Postgres DSN" in doctoring
+    assert "libpq environment" in doctoring
+    assert "before any connection attempt" in doctoring
+    assert "checkpoint database targets" in changelog.lower()
+
+
 def test_doctoring_records_primary_sources_in_apa_7_style() -> None:
     """The assurance record cites current primary sources with stable details."""
     doctoring = _text("docs/doctoring/durable-result-checkpoint-store.md")
