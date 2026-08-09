@@ -16,12 +16,15 @@ supplies an empty target can be redirected silently to the environment-selected
 database instead of receiving an input error. A whitespace-only explicit DSN is
 also unsafe even though it is truthy: passing it through to libpq delegates
 connection-target selection to lower-level defaults instead of preserving a
-reviewable explicit database target. For the optional Fernet key, an explicit
+reviewable explicit database target. The same target ambiguity exists for a
+**whitespace-only environment DSN** when the explicit argument is omitted: a
+truthiness-only environment check accepts that value and can delegate effective
+database selection to libpq defaults. For the optional Fernet key, an explicit
 empty value can silently inherit an ambient bootstrap key and therefore select a
 different decryption authority than the caller requested. At an operator
 boundary, fallback must not replace explicit input merely because that input is
-false-valued, and a required explicit database target must contain non-whitespace
-content.
+false-valued, and every selected required database target must contain
+non-whitespace content.
 
 ## Contract
 
@@ -31,9 +34,10 @@ content.
 - an explicitly supplied empty or whitespace-only string fails closed with
   `ConfigError` and does not consult `PG_LLM_BATCH_DSN` or reach libpq;
 - the environment is consulted only when the explicit argument is omitted
-  (`None`); and
-- a missing or empty environment DSN still fails with the existing bootstrap
-  configuration error.
+  (`None`);
+- a missing, empty, or whitespace-only environment DSN fails closed before
+  libpq target selection; and
+- valid nonblank environment DSNs are also retained byte-for-byte.
 
 `resolve_secret_key()` applies the same source-precedence rule while retaining
 its optional-value semantics:
@@ -62,14 +66,18 @@ bootstrap-value paths.
 regressions directly: with a valid `PG_LLM_BATCH_DSN` present,
 `resolve_dsn("")` and whitespace-only explicit values must raise rather than
 select the environment target or delegate target selection to libpq defaults.
+The same suite parameterizes whitespace-only ambient values and proves an
+omitted explicit argument cannot pass a whitespace-only environment DSN to
+libpq. Its documentation regression requires this **whitespace-only environment
+DSN** boundary to remain visible in both doctoring and CHANGELOG.
 `tests/test_bootstrap_cli.py` proves the optional-key counterpart: with an
 ambient `PG_LLM_BATCH_SECRET_KEY` present, `resolve_secret_key("")` returns the
 explicit empty string rather than the ambient key.
 
 Existing bootstrap tests continue to prove that nonblank explicit values win
-without normalization, omitted arguments use their environment values, an
-omitted DSN without environment configuration fails, and an omitted optional
-key without environment configuration returns `None`.
+without normalization, omitted arguments use their valid environment values,
+an omitted DSN without usable environment configuration fails, and an omitted
+optional key without environment configuration returns `None`.
 
 The DSN RED source head `aea84e1d27822826ae22b7d532d87ede0025e5a7`
 reached the intended production boundary in CI run `31305290555`, Python 3.12
@@ -80,12 +88,15 @@ proved the same truthiness defect for the optional key: an explicit empty string
 returned `environment-key` instead. A later fail-first regression at source head
 `4f427f4577fc5a3c6498d3ace1c78d70f59b8f8e` extended the required-DSN contract
 to whitespace-only explicit values before the production guard recognized
-those inputs. These are fail-first development evidence, not final acceptance
+those inputs. Source head `434583021c04e11739c9a8649c6f5bcccfafde7a`
+then exposed the remaining ambient variant: whitespace-only
+`PG_LLM_BATCH_DSN` values were still accepted when the explicit argument was
+omitted. These are fail-first development evidence, not final acceptance
 evidence.
 
 The DSN repair consults the environment only when `explicit is None` and rejects
-an explicitly empty or whitespace-only required value before environment lookup
-or libpq access. Nonblank explicit DSNs are returned unchanged; the guard does
+empty or whitespace-only required values from either source before libpq access.
+Nonblank explicit and environment DSNs are returned unchanged; the guard does
 not trim, rewrite, or otherwise normalize valid connection strings. The
 optional-key repair likewise consults the environment only when `explicit is
 None`, but preserves any explicitly supplied string because an empty optional
@@ -97,11 +108,11 @@ policy.
 ## Rollback
 
 Rollback is the ordinary Git revert of this bounded bootstrap change. Rolling
-back restores the unsafe ambiguity between omitted and explicitly empty inputs
-and permits whitespace-only explicit DSNs to reach lower-level connection
-defaults: required DSNs can silently retarget a command or lose an explicit
-reviewable target, and optional Fernet key selection can silently inherit an
-ambient decryption authority. A rollback is appropriate only if a documented
+back restores ambiguity between omitted and explicitly empty inputs and permits
+whitespace-only explicit or environment DSNs to reach lower-level connection
+defaults: required DSNs can silently retarget a command or lose a reviewable
+target, and optional Fernet key selection can silently inherit an ambient
+decryption authority. A rollback is appropriate only if a documented
 compatibility contract requires that ambiguity and a safer explicit migration
 is provided.
 
