@@ -54,7 +54,7 @@ def check_health(dsn: str) -> Dict[str, Any]:
                     components.append(
                         {
                             "component": component,
-                            "is_ready": bool(is_ready),
+                            "is_ready": is_ready if type(is_ready) is bool else False,
                             "detail": detail,
                         }
                     )
