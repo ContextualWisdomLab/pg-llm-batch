@@ -85,7 +85,11 @@ class CheckpointAuditEvent:
             record_count=self.record_count,
             prefix_sha256=self.prefix_sha256,
         )
-        if not isinstance(self.recorded_at, datetime) or self.recorded_at.tzinfo is None:
+        if (
+            not isinstance(self.recorded_at, datetime)
+            or self.recorded_at.tzinfo is None
+            or self.recorded_at.utcoffset() is None
+        ):
             raise ValueError("recorded_at must be a timezone-aware datetime")
 
 
