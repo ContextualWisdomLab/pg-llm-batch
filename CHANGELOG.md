@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded checkpoint-audit snapshot manifests through immutable
+  `CheckpointAuditSnapshotManifest` and
+  `build_audit_snapshot_manifest_in_transaction()`. The caller supplies one
+  active read-only PostgreSQL `REPEATABLE READ` or `SERIALIZABLE` transaction;
+  the helper validates that isolation, walks existing bounded keyset pages
+  without materializing the full history, enforces a hard 100,000-event ceiling,
+  and hashes every retained event field in newest-first order with explicit
+  domain-separated length framing. The schema-v1 manifest records only the
+  validated audit-key identity, event count, newest/oldest identities, and
+  checksum. A live PostgreSQL regression proves that concurrent inserts after
+  transaction start are excluded. SHA-256 is change-identification evidence
+  only, not a MAC, signature, attestation, or external immutable/WORM retention
+  mechanism. No migration, version bump, or release is included.
 - Opt-in bounded checkpoint-audit export pagination through immutable
   `CheckpointAuditPage`, `list_audit_event_page()`, and
   `list_audit_event_page_in_transaction()`. Pagination uses a strict positive
@@ -19,8 +32,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   between pages cannot drift into the older continuation window. Package-owned
   calls do not claim one multi-page snapshot; hosts needing that guarantee own a
   `REPEATABLE READ` or stricter transaction. External immutable/WORM retention,
-  receipts, cryptographic manifests, and reconciliation remain host controls. No
-  migration, version bump, or release is included.
+  receipts, signed or authenticated manifests, and reconciliation remain host
+  controls. No migration, version bump, or release is included.
 - Explicit opt-in `init-checkpoint-storage` operator for existing PostgreSQL
   volumes. It bounded-reads, validates, and SHA-256 identifies
   `0007_result_stream_checkpoints` and
