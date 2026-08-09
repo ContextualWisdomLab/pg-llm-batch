@@ -35,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made malformed boolean configuration values fall back to their declared
   default instead of treating every non-empty string as true, preventing
   corrupted false-default flags from being silently enabled.
+- Canonicalized configuration writes before PostgreSQL persistence and cache
+  updates so typed CLI text, malformed known values, and untyped extension text
+  have the same immediate and post-reload representation.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
