@@ -29,6 +29,10 @@ REQUIRED_COMPONENTS = {"database", "pg_tiktoken", "com_config"}
 # acquisition. This is transaction-local and does not alter server defaults.
 HEALTH_STATEMENT_TIMEOUT_MILLISECONDS = 4_000
 
+# The standalone listener intentionally uses one thread per admitted request,
+# so cap admission before allocating another thread or database connection.
+HEALTH_MAX_CONCURRENT_REQUESTS = 32
+
 
 def check_health(dsn: str) -> Dict[str, Any]:
     """Return a detailed local readiness report for operators and the CLI."""
@@ -154,11 +158,32 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
     """Serve a redacted ``/healthz`` readiness endpoint (blocking)."""
     from http.server import BaseHTTPRequestHandler, HTTPServer
     from socketserver import ThreadingMixIn
+    from threading import BoundedSemaphore
 
     class _ThreadingHealthHTTPServer(ThreadingMixIn, HTTPServer):
-        """Handle independent readiness probes on separate daemon threads."""
+        """Handle a bounded number of independent daemon probe threads."""
 
         daemon_threads = True
+        _request_slots = BoundedSemaphore(HEALTH_MAX_CONCURRENT_REQUESTS)
+
+        def process_request(self, request: Any, client_address: Any) -> None:
+            """Admit a request only when one bounded worker slot is available."""
+            if not self._request_slots.acquire(blocking=False):
+                logger.warning("Rejecting readiness connection: concurrency limit reached")
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, client_address)
+            except BaseException:
+                self._request_slots.release()
+                raise
+
+        def process_request_thread(self, request: Any, client_address: Any) -> None:
+            """Release one admission slot after the request thread terminates."""
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                self._request_slots.release()
 
     class _Handler(BaseHTTPRequestHandler):
         """HTTP request handler that answers ``/healthz`` with redacted readiness."""
