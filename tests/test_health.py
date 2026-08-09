@@ -197,6 +197,36 @@ def test_public_health_report_removes_diagnostic_details():
     assert "provider-controlled-extra-field" not in json.dumps(public_report)
 
 
+def test_public_health_report_filters_unrecognized_component_names():
+    """Public readiness exposes only the fixed required-component allow-list."""
+    report = {
+        "ready": True,
+        "components": [
+            {"component": "database", "is_ready": True},
+            {"component": "pg_tiktoken", "is_ready": True},
+            {"component": "com_config", "is_ready": True},
+            {
+                "component": "internal_cluster_primary_host",
+                "is_ready": False,
+                "detail": "db-07.internal.example",
+            },
+        ],
+    }
+
+    public_report = health.public_health_report(report)
+
+    assert public_report == {
+        "ready": True,
+        "components": [
+            {"component": "database", "is_ready": True},
+            {"component": "pg_tiktoken", "is_ready": True},
+            {"component": "com_config", "is_ready": True},
+        ],
+    }
+    assert "internal_cluster_primary_host" not in json.dumps(public_report)
+    assert "db-07.internal.example" not in json.dumps(public_report)
+
+
 def test_public_health_report_fails_closed_on_malformed_readiness_shapes():
     """Malformed readiness shapes return one empty not-ready public projection."""
     malformed_reports = [
