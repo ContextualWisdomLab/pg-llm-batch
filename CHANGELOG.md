@@ -34,8 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Released orchestrator-owned and CLI-owned configuration, secret, and
   token-counting PostgreSQL connections deterministically after successful,
-  failed, and partially constructed operations, and validated token
-  configuration before acquiring the cached `pg_tiktoken` session.
+  failed, and partially constructed operations; each partially initialized
+  store constructor now closes an acquired connection when setup fails; and
+  token configuration is validated before acquiring the cached `pg_tiktoken`
+  session.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
