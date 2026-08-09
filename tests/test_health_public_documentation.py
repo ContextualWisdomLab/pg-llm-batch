@@ -106,6 +106,24 @@ def test_public_healthz_omits_runtime_fingerprint_authoritatively():
     assert "python version" in changelog.lower()
 
 
+def test_healthz_listener_network_exposure_is_explicit_authoritatively():
+    """Docs must preserve loopback CLI safety and explicit container exposure."""
+    doctoring = _normalized(DOCTORING)
+    adr = _normalized(ADR)
+    changelog = _normalized(CHANGELOG)
+    agents = _normalized(AGENTS)
+
+    for document in (doctoring, adr, agents):
+        assert "127.0.0.1" in document
+        assert "0.0.0.0" in document
+        assert "explicit" in document.lower()
+        assert "container" in document.lower()
+
+    assert "loopback" in changelog.lower()
+    assert "explicit" in changelog.lower()
+    assert "container" in changelog.lower()
+
+
 def test_contributor_contract_preserves_healthz_redaction_boundary():
     """Contributor guidance must prevent local diagnostics from becoming public."""
     agents = _normalized(AGENTS)
