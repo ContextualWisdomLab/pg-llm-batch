@@ -72,9 +72,9 @@ flowchart LR
 
 1. A host/operator identifies an existing batch by UUID or supported lookup key.
 2. `PostgresBatchOrchestrator` reads queued, unassigned `llm_requests` for that batch.
-3. `TokenCounter` consults configuration/model-tokenizer mapping and `pg_tiktoken`.
-4. `BatchAccumulator` enforces batch token/byte/record limits.
-5. The orchestrator persists file metadata, JSONB payloads, and JSONL line relations in PostgreSQL inside the reviewed preparation transaction boundary.
+3. `TokenCounter` consults configuration/model-tokenizer mapping and `pg_tiktoken`; `BatchAccumulator` counts and partitions the in-memory request rows under token/byte/record limits before preparation persistence begins.
+4. Under one advisory-locked PostgreSQL preparation transaction, `_persist_payloads()` first persists each payload document in `llm_batch_file_payloads`, then its `llm_batch_files` row, then JSONL line rows and queued-request assignments, and finally batch totals before commit.
+5. Any exception before commit rolls back that preparation transaction rather than leaving a partially committed file/request/line assignment from that invocation.
 6. A virtual `memory://<file_id>` path refers back to PostgreSQL; package-owned payload files are not written to disk.
 
 ### 2.2 Provider path
@@ -173,11 +173,11 @@ flowchart LR
     Stream[Incremental result streaming #58]
     Checkpoint[Prefix checkpoints #59]
     DurableCP[Durable checkpoint store #60]
-    CPTelemetry[Checkpoint telemetry #78]
-    Audit[Acceptance audit #79]
-    Migrations[Atomic checkpoint migrations #80]
-    Pages[Stable audit pages #83]
-    Manifest[Audit snapshot manifests #84]
+    CPTelemetry[Checkpoint telemetry #92]
+    Audit[Acceptance audit #94]
+    Migrations[Atomic checkpoint migrations #95]
+    Pages[Stable audit pages #96]
+    Manifest[Audit snapshot manifests #97]
     ExactCI[Exact source-head CI #88]
     Release[Reproducible release evidence #57]
     Ops[Health / CLI / config / connection / compose hardening #70 #85 #86 #87 #89 #91]
@@ -195,6 +195,8 @@ flowchart LR
     ExactCI --> Release
     Protected --> Ops
 ```
+
+The current checkpoint replacement owners are #92 → #94 → #95 → #96 → #97. Their closed predecessors #78, #79, #80, #83, and #84 are **SUPERSEDED** and are deliberately excluded from the ACTIVE-PR overlay; old evidence does not transfer to the replacements.
 
 The overlay is dependency-aware, not a claim that every PR must merge in the diagram's visual order; the live PR stack/base relations remain authoritative.
 
