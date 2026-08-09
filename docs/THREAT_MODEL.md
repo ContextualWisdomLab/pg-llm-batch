@@ -25,7 +25,7 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 
 | Threat | Boundary | Current control / target | Maturity |
 | --- | --- | --- | --- |
-| Credential disclosure through argv/logs | Caller/CLI | Database-backed secrets; ACTIVE-PR #85 moves secret input off process argv and redacts rejected legacy argument values | PARTIAL / ACTIVE-PR |
+| Credential disclosure through argv/logs or echoed prompt fallback | Caller/CLI | Database-backed secrets; the documented protected-main-compatible manual prompt promotes `getpass.GetPassWarning` to a hard failure, so when terminal echo control is unavailable it fails closed before accepting provider credential input; ACTIVE-PR #85 moves the equivalent CLI secret input off process argv and redacts rejected legacy argument values | IMPLEMENTED-ON-PROTECTED-MAIN manual path / ACTIVE-PR CLI |
 | Bootstrap Fernet key disclosure through ambient process state | Host/bootstrap | `PG_LLM_BATCH_SECRET_KEY` is optional sensitive bootstrap secret material, distinct from database-backed provider credentials; deployment secret injection, scope, rotation, and environment exposure remain host responsibilities | IMPLEMENTED-ON-PROTECTED-MAIN boundary |
 | Ambient environment silently overrides explicit authority | Bootstrap/config | Current explicit configuration interfaces; ACTIVE-PR #89 distinguishes omitted from explicitly blank values | ACTIVE-PR hardening |
 | SSRF or unsafe provider destination | HTTP | URL normalization, HTTPS except explicit loopback, bounded resource identifiers, no query/fragment/userinfo in governed base URL | IMPLEMENTED-ON-PROTECTED-MAIN |
@@ -49,6 +49,7 @@ The package may handle prompts, responses, provider metadata, and operational id
 ## Fail-closed rules
 
 - malformed identifiers, unsafe destinations, impossible bounds, unsupported migration state, stale checkpoint evidence, or authorization ambiguity fail closed;
+- a secret-entry path that cannot guarantee hidden terminal input must fail before accepting the provider credential rather than falling back to visible input;
 - a missing/queued/cancelled/stale required check is not success;
 - a status/comment/model message is not an independent formal approval;
 - a synthetic merge ref is not interchangeable with the exact contributor head;
