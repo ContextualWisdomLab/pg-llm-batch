@@ -613,13 +613,13 @@ class BatchAPIClient:
             data=data,
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await self._read_json_object(response, "Files API upload")
             if response.status != 200:
                 raise GatewayError(
                     f"Files API upload failed: {response.status}",
                     status_code=response.status,
-                    response_data=result,
+                    response_data={"error_type": "ProviderHTTPError"},
                 )
+            result = await self._read_json_object(response, "Files API upload")
             logger.info("Uploaded JSONL file: %s", result.get("id"))
             return result
 
@@ -648,13 +648,13 @@ class BatchAPIClient:
             json=payload,
             headers=self._headers(creds.api_key, json_body=True),
         ) as response:
-            result = await self._read_json_object(response, "Batch creation")
             if response.status not in (200, 201, 202):
                 raise GatewayError(
                     f"Batch creation failed: {response.status}",
                     status_code=response.status,
-                    response_data=result,
+                    response_data={"error_type": "ProviderHTTPError"},
                 )
+            result = await self._read_json_object(response, "Batch creation")
             logger.info("Created batch job: %s", result.get("id"))
             return result
 
@@ -670,13 +670,13 @@ class BatchAPIClient:
             operation="Batch status",
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await self._read_json_object(response, "Batch status")
             if response.status != 200:
                 raise GatewayError(
                     f"Batch status failed: {response.status}",
                     status_code=response.status,
-                    response_data=result,
+                    response_data={"error_type": "ProviderHTTPError"},
                 )
+            result = await self._read_json_object(response, "Batch status")
             counts = result.get("request_counts") or {}
             total = counts.get("total", 0)
             done = counts.get("completed", 0) + counts.get("failed", 0)
@@ -779,17 +779,17 @@ class BatchAPIClient:
             operation=operation,
             headers=self._headers(creds.api_key),
         ) as response:
+            if response.status != 200:
+                raise GatewayError(
+                    f"{operation} failed: {response.status}",
+                    status_code=response.status,
+                    response_data={"error_type": "ProviderHTTPError"},
+                )
             content = await self._read_bounded_utf8(
                 response,
                 operation,
                 max_bytes=self.max_download_bytes,
             )
-            if response.status != 200:
-                raise GatewayError(
-                    f"{operation} failed: {response.status}",
-                    status_code=response.status,
-                    response_data={"body": content},
-                )
         return self._parse_jsonl_content(
             content,
             batch_id=batch_id,
@@ -859,15 +859,13 @@ class BatchAPIClient:
             operation="Batch cancellation",
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await self._read_json_object(response, "Batch cancellation")
             if response.status not in (200, 202):
-                error = result.get("error")
-                reason = (
-                    error.get("message", "Unknown error")
-                    if isinstance(error, dict)
-                    else "Unknown error"
-                )
-                return {"success": False, "reason": reason}
+                return {
+                    "success": False,
+                    "reason": "Batch cancellation rejected by provider",
+                    "status_code": response.status,
+                }
+            result = await self._read_json_object(response, "Batch cancellation")
             return {
                 "success": True,
                 "batch_id": validated_batch_id,
