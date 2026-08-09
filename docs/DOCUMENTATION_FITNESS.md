@@ -81,6 +81,7 @@ Current material implementation/documentation owners include:
 - #94 — current linearized append-only checkpoint acceptance audit replacement on #92.
 - #95 — current linearized atomic checkpoint migration operator replacement on #94.
 - #96 — current linearized bounded checkpoint-audit pagination replacement on #95.
+- #97 — current linearized bounded checkpoint-audit snapshot-manifest replacement on #96.
 - #69 — hourly maintenance credential/writer-boundary hardening.
 - #70 — readiness redaction, concurrency, timeout, and listener hardening.
 - #71 — HTTP 425 and permanent TLS/fingerprint retry-classification hardening.
@@ -100,7 +101,7 @@ Issue #90 is a **PLANNED** buyer-visible CLI cancellation slice whose implementa
 - #79 is SUPERSEDED by #94.
 - #80 is SUPERSEDED by #95.
 - #83 is SUPERSEDED by #96.
-- #84 is still a stale descendant of closed #83 and therefore is not a valid canonical next stack boundary. Its unique snapshot-manifest delta must be replayed or otherwise safely replaced on the exact current #96 head before #84 can be closed as SUPERSEDED. Historical checks/reviews from #84 do not transfer.
+- #84 is SUPERSEDED by #97 and is closed unmerged. Historical checks/reviews from #84 do not transfer to #97.
 
 The queue must be revalidated before any release or acquisition statement. Closed, merged, superseded, or replaced PRs move to their corresponding maturity state; this document must not preserve stale ACTIVE-PR claims indefinitely.
 
