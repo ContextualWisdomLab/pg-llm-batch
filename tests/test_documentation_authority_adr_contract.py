@@ -15,6 +15,9 @@ def test_canonical_documentation_authority_is_a_durable_indexed_adr() -> None:
     index = (ROOT / "docs/adr/README.md").read_text(encoding="utf-8")
     assert ADR_PATH in index
 
+    traceability = (ROOT / "docs/TRACEABILITY.md").read_text(encoding="utf-8")
+    assert ADR_PATH in traceability
+
     adr = adr_path.read_text(encoding="utf-8").lower()
     for phrase in (
         "status: active-pr",
