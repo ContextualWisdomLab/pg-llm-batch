@@ -27,6 +27,7 @@ import asyncio
 import getpass
 import json
 import sys
+import warnings
 from typing import List, Optional
 
 from . import db
@@ -65,14 +66,23 @@ def _validate_secret_input(value: str) -> str:
 def _read_secret_input() -> str:
     """Read one bounded secret from a no-echo TTY prompt or standard input.
 
-    Interactive terminals use :func:`getpass.getpass`, so typed credentials are
-    not echoed. Non-interactive callers may pipe exactly one logical line on
-    standard input; one trailing LF or CRLF line ending is removed. Secret
-    plaintext is never accepted through process arguments.
+    Interactive terminals use :func:`getpass.getpass` and fail closed if the
+    runtime cannot disable terminal echo. Non-interactive callers may pipe
+    exactly one logical line on standard input; one trailing LF or CRLF line
+    ending is removed. Secret plaintext is never accepted through process
+    arguments.
     """
     is_tty = getattr(sys.stdin, "isatty", None)
     if callable(is_tty) and is_tty():
-        return _validate_secret_input(getpass.getpass("Secret value: "))
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", getpass.GetPassWarning)
+                secret_value = getpass.getpass("Secret value: ")
+        except getpass.GetPassWarning:
+            raise ConfigError(
+                "Echo-free interactive secret input is unavailable"
+            ) from None
+        return _validate_secret_input(secret_value)
 
     raw = sys.stdin.read(MAX_SECRET_INPUT_CHARACTERS + 3)
     if raw.endswith("\r\n"):
