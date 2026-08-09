@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   store constructor now closes an acquired connection when setup fails; and
   token configuration is validated before acquiring the cached `pg_tiktoken`
   session.
+- A configured Fernet encryption key now fails closed when the optional
+  `cryptography` dependency is unavailable instead of silently downgrading the
+  explicit encryption request to base64 obfuscation; the intentional no-key
+  local/dev fallback remains unchanged.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
