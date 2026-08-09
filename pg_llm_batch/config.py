@@ -290,9 +290,8 @@ class SecretStore:
             if fernet_key and Fernet is not None:
                 self._fernet = Fernet(fernet_key.encode("utf-8"))
             elif fernet_key and Fernet is None:
-                logger.warning(
-                    "Fernet key supplied but 'cryptography' is not installed; "
-                    "storing secrets base64-obfuscated instead."
+                raise ConfigError(
+                    "cryptography is required when a Fernet key is configured"
                 )
             self._ensure_table()
         except BaseException:
