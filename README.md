@@ -83,38 +83,45 @@ URLs containing user information, query parameters, fragments, whitespace, or
 invalid ports are rejected before the API key is read from `com_secrets`.
 
 For the protected-main-compatible credential path, install the optional Fernet
-dependency and read the provider API key with a no-echo prompt instead of
-placing it in process argv, shell history, or command diagnostics:
+dependency and use a terminal prompt that fails closed if Python cannot disable
+echo. Do not place the provider key in process argv, shell history, or command
+diagnostics:
 
 ```bash
 pip install '.[secrets]'
 python - <<'PY'
 import getpass
 import os
+import warnings
 
 from pg_llm_batch.bootstrap import resolve_secret_key
 from pg_llm_batch.config import SecretStore
+
+warnings.simplefilter("error", getpass.GetPassWarning)
 
 store = SecretStore(
     os.environ["PG_LLM_BATCH_DSN"],
     fernet_key=resolve_secret_key(),
 )
 try:
-    store.set_secret(
-        "gateway_api_key.default",
-        getpass.getpass("Gateway API key: "),
-    )
+    try:
+        api_key = getpass.getpass("Gateway API key: ")
+    except getpass.GetPassWarning as exc:
+        raise SystemExit("Cannot disable terminal echo; refusing secret input") from exc
+    store.set_secret("gateway_api_key.default", api_key)
 finally:
     store.close()
 PY
 ```
 
 This uses the existing database-backed `SecretStore.set_secret()` API and keeps
-provider credential plaintext out of argv. ACTIVE-PR #85 adds an equivalent
-argv-safe `config set-secret` CLI input path; until that PR is integrated, do
-not treat a plaintext positional CLI secret example as a production procedure.
-Host applications may instead supply their own
-`Callable[[str], GatewayCredentials]` and secret-manager integration.
+provider credential plaintext out of argv. The warning-to-error policy prevents
+`getpass` from falling back to visibly echoed input when terminal echo control is
+unavailable. ACTIVE-PR #85 adds an equivalent argv-safe `config set-secret` CLI
+input path; until that PR is integrated, do not treat a plaintext positional CLI
+secret example as a production procedure. Non-interactive host applications
+should use their own secret-manager integration and the documented
+`Callable[[str], GatewayCredentials]` boundary instead of weakening this prompt.
 
 Encrypt database-backed secrets at rest by exporting a Fernet key as bootstrap
 transport before running the prompt-based procedure above:
