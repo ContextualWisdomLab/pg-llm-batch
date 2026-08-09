@@ -20,6 +20,9 @@ def test_bootstrap_secret_claims_distinguish_provider_credentials_from_key_mater
     assert "fernet key is sensitive bootstrap secret material" in readme
     assert "config set-secret gateway_api_key.default sk-your-key" not in readme
     assert "getpass.getpass" in readme
+    assert "getpass.getpasswarning" in readme
+    assert 'warnings.simplefilter("error", getpass.getpasswarning)' in readme
+    assert "cannot disable terminal echo; refusing secret input" in readme
     assert "secretstore" in readme
     assert "set_secret" in readme
     assert "pip install '.[secrets]'" in readme
