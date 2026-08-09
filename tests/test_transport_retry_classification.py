@@ -268,3 +268,14 @@ def test_authoritative_docs_define_tls_fail_closed_retry_boundary() -> None:
         normalized = " ".join(Path(path).read_text(encoding="utf-8").split())
         for required_phrase in required_phrases:
             assert required_phrase in normalized, path
+
+
+def test_authoritative_docs_define_bounded_transport_error_vocabulary() -> None:
+    """Operator contracts must exclude dependency-defined class names from evidence."""
+    required_phrase = "Dependency-defined transport exception class names never enter"
+    for path in (
+        "CHANGELOG.md",
+        "docs/doctoring/http-425-too-early-retries.md",
+    ):
+        normalized = " ".join(Path(path).read_text(encoding="utf-8").split())
+        assert required_phrase in normalized, path
