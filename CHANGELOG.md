@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Enforced declared collection types for JSON-backed configuration so a valid
   array cannot satisfy a mapping setting and a valid object cannot satisfy a
   sequence setting; wrong-shaped values fall back to canonical defaults.
+- Isolated mutable configuration defaults before returning them to callers, so
+  mapping, sequence, and nested caller mutation cannot alter the process-wide
+  registry value observed by later fallbacks, cache misses, or canonical writes.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
