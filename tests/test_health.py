@@ -119,6 +119,26 @@ def test_health_requires_every_required_component(monkeypatch):
     assert health.check_health("postgresql://example")["ready"] is False
 
 
+def test_health_rejects_duplicate_required_component_rows(monkeypatch):
+    """Duplicate required rows cannot make the local readiness command succeed."""
+    rows = [
+        ("database", True, "connected"),
+        ("database", True, "duplicate observation"),
+        ("pg_tiktoken", True, "installed"),
+        ("com_config", True, "ready"),
+    ]
+    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
+
+    report = health.check_health("postgresql://example")
+
+    assert report["ready"] is False
+    assert [
+        item["detail"]
+        for item in report["components"]
+        if item["component"] == "database"
+    ] == ["connected", "duplicate observation"]
+
+
 def test_health_query_uses_transaction_local_statement_timeout(monkeypatch):
     """A stalled PostgreSQL health function cannot block readiness indefinitely."""
     rows = [
