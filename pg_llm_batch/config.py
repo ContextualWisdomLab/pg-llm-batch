@@ -218,9 +218,10 @@ class PostgresConfigStore:
         return _default_value(category, key, default)
 
     def set(self, category: str, key: str, value: Any) -> None:
-        """Persist and cache a typed configuration value."""
+        """Normalize, persist, and cache one canonical configuration value."""
         full_key = f"{category}.{key}"
-        serialized = _serialize_value(value)
+        normalized = _deserialize_value(full_key, _serialize_value(value))
+        serialized = _serialize_value(normalized)
         item = DEFAULT_CONFIG_INDEX.get(full_key)
         description = item["description"] if item else full_key
         with self._conn.cursor() as cur:
@@ -236,7 +237,7 @@ class PostgresConfigStore:
                 """,
                 (full_key, serialized, description),
             )
-        self.cache.setdefault(category, {})[key] = value
+        self.cache.setdefault(category, {})[key] = normalized
 
     def show_config(self) -> Iterable[Tuple[str, str, Any]]:
         """Yield all configuration entries in stable key order."""
