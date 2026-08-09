@@ -33,8 +33,6 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
-# Default configuration tree. Mirrors the upstream batch tunables so behaviour
-# is preserved after extraction. Secrets are NOT stored here.
 DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
     "batch_size": {
         "min": 100,
@@ -43,7 +41,7 @@ DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
         "description": "Batch request size limit",
     },
     "token_limits": {
-        "per_batch": 5_000_000_000,  # 5B tokens
+        "per_batch": 5_000_000_000,
         "per_request": 128_000,
         "buffer_percentage": 5,
         "description": "Token count limits",
@@ -137,6 +135,15 @@ def _split_full_key(full_key: str) -> Tuple[str, str]:
     return "global", full_key
 
 
+def _validated_postgres_dsn(value: Any) -> str:
+    """Require an explicit nonblank database target without rewriting it."""
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(
+            "A Postgres DSN must be provided explicitly (no os.getenv for config)"
+        )
+    return value
+
+
 class PostgresConfigStore:
     """PostgreSQL-backed KV configuration store (``com_config`` table)."""
 
@@ -146,11 +153,7 @@ class PostgresConfigStore:
         """Connect, initialize the cache, and release partial setup on failure."""
         if psycopg is None:
             raise ConfigError("psycopg is required for PostgresConfigStore")
-        if not dsn:
-            raise ConfigError(
-                "A Postgres DSN must be provided explicitly (no os.getenv for config)"
-            )
-        self.dsn = dsn
+        self.dsn = _validated_postgres_dsn(dsn)
         self._conn = psycopg.connect(self.dsn)
         try:
             self._conn.autocommit = True
@@ -165,7 +168,7 @@ class PostgresConfigStore:
     def _ensure_table(self) -> None:
         """Create the ``com_config`` table if it does not already exist."""
         with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_config") is interpolated; every value is bound via %s placeholders.
+            cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
                     config_key TEXT PRIMARY KEY,
@@ -177,10 +180,10 @@ class PostgresConfigStore:
             )
 
     def _ensure_defaults(self) -> None:
-        """Insert any missing default config rows without overwriting existing ones."""
+        """Insert missing default config rows without overwriting existing ones."""
         with self._conn.cursor() as cur:
             for item in DEFAULT_CONFIG_INDEX.values():
-                cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
+                cur.execute(
                     f"""
                     INSERT INTO {self.TABLE_NAME}
                         (config_key, config_value, config_description)
@@ -198,7 +201,7 @@ class PostgresConfigStore:
         """Reload the in-memory cache from every row in the config table."""
         self.cache.clear()
         with self._conn.cursor() as cur:
-            cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; no user input reaches the query.
+            cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")
             for config_key, config_value in cur.fetchall():
                 category, key = _split_full_key(config_key)
                 value = _deserialize_value(config_key, config_value)
@@ -210,7 +213,7 @@ class PostgresConfigStore:
             return self.cache[category][key]
         full_key = f"{category}.{key}"
         with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; the lookup value is bound via a %s placeholder.
+            cur.execute(
                 f"SELECT config_value FROM {self.TABLE_NAME} WHERE config_key = %s",
                 (full_key,),
             )
@@ -228,7 +231,7 @@ class PostgresConfigStore:
         item = DEFAULT_CONFIG_INDEX.get(full_key)
         description = item["description"] if item else full_key
         with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
+            cur.execute(
                 f"""
                 INSERT INTO {self.TABLE_NAME}
                     (config_key, config_value, config_description)
@@ -266,12 +269,7 @@ class PostgresConfigStore:
 
 
 class SecretStore:
-    """PostgreSQL-backed secret store (``com_secrets`` table).
-
-    Values are Fernet-encrypted at rest when a key is supplied (mirrors the
-    naruon Fernet-DB pattern). Without a key, values are base64-obfuscated and
-    a warning is logged — acceptable only for local/dev containers.
-    """
+    """PostgreSQL-backed secret store (``com_secrets`` table)."""
 
     TABLE_NAME = "com_secrets"
 
@@ -279,16 +277,14 @@ class SecretStore:
         """Connect, configure encryption, and release partial setup on failure."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
-        if not dsn:
-            raise ConfigError("A Postgres DSN must be provided explicitly")
-        self.dsn = dsn
+        self.dsn = _validated_postgres_dsn(dsn)
         self._conn = psycopg.connect(self.dsn)
         try:
             self._conn.autocommit = True
             self._fernet = None
             if fernet_key and Fernet is not None:
                 self._fernet = Fernet(fernet_key.encode("utf-8"))
-            elif fernet_key and Fernet is None:  # pragma: no cover
+            elif fernet_key and Fernet is None:
                 logger.warning(
                     "Fernet key supplied but 'cryptography' is not installed; "
                     "storing secrets base64-obfuscated instead."
@@ -301,7 +297,7 @@ class SecretStore:
     def _ensure_table(self) -> None:
         """Create the ``com_secrets`` table if it does not already exist."""
         with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_secrets") is interpolated; every value is bound via %s placeholders.
+            cur.execute(
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
                     secret_key TEXT PRIMARY KEY,
@@ -313,17 +309,17 @@ class SecretStore:
             )
 
     def _encode(self, raw: str) -> Tuple[str, bool]:
-        """Encode a secret for storage, returning the text and whether it is encrypted."""
+        """Encode a secret for storage and return whether it is encrypted."""
         if self._fernet is not None:
             return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
-        logger.warning(  # nosemgrep -- python-logger-credential-disclosure FP: the message text contains the word "secret", but the only logged argument is the literal mask "***"; no secret value is ever logged.
+        logger.warning(
             "No Fernet key configured; secret '%s' stored base64-obfuscated only.",
             "***",
         )
         return base64.b64encode(raw.encode("utf-8")).decode("utf-8"), False
 
     def _decode(self, stored: str, is_encrypted: bool) -> str:
-        """Decrypt or de-obfuscate a stored secret back to its plaintext value."""
+        """Decrypt or de-obfuscate a stored secret."""
         if is_encrypted:
             if self._fernet is None:
                 raise ConfigError(
@@ -336,7 +332,7 @@ class SecretStore:
         """Encrypt or obfuscate and persist a secret value."""
         encoded, is_encrypted = self._encode(value)
         with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
+            cur.execute(
                 f"""
                 INSERT INTO {self.TABLE_NAME} (secret_key, secret_value, is_encrypted)
                 VALUES (%s, %s, %s)
@@ -383,5 +379,5 @@ class SecretStore:
 
 
 def get_config_store(dsn: str) -> PostgresConfigStore:
-    """Construct a config store. DSN must be passed explicitly (no getenv)."""
+    """Construct a config store from an explicit DSN."""
     return PostgresConfigStore(dsn)
