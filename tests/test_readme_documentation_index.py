@@ -7,6 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 CANONICAL_LINK_TARGETS = (
     "ARCHITECTURE.md",
+    "SECURITY.md",
     "docs/product/PRD.md",
     "docs/product/TRD.md",
     "docs/product/API_CONTRACT.md",
