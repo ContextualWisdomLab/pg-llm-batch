@@ -355,7 +355,7 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        """Yield a response, retrying bounded GET failures except permanent TLS errors."""
+        """Yield a response, retrying bounded GET acquisition failures only."""
         session = self._get_session()
         normalized_method = method.lower()
         request = getattr(session, normalized_method)
@@ -365,6 +365,7 @@ class BatchAPIClient:
             delay: Optional[float] = None
             retry_reason = ""
             terminal_error_type: Optional[str] = None
+            response_handed_off = False
             try:
                 async with request(
                     url,
@@ -379,15 +380,19 @@ class BatchAPIClient:
                     ):
                         delay = self._retry_delay_for_response(response, attempt)
                         if delay is None:
+                            response_handed_off = True
                             yield response
                             return
                         retry_reason = f"HTTP {response.status}"
                     else:
+                        response_handed_off = True
                         yield response
                         return
             except GatewayError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                if response_handed_off:
+                    raise
                 if (
                     not retry_safe
                     or attempt >= self.max_retry_attempts
