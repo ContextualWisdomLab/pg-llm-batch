@@ -28,3 +28,5 @@ def test_bootstrap_secret_claims_distinguish_provider_credentials_from_key_mater
     assert "pip install '.[secrets]'" in readme
     assert "bootstrap fernet key" in threat_model
     assert "distinct from database-backed provider credentials" in threat_model
+    assert "terminal echo control is unavailable" in threat_model
+    assert "fails closed before accepting provider credential input" in threat_model
