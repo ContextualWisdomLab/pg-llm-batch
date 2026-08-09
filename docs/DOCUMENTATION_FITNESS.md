@@ -43,6 +43,7 @@ Document fitness is different from capability maturity. Use exactly these maturi
 | ERD / logical data model | MISSING | PRESENT-CURRENT | Added from `pg_llm_batch/schema.sql`; active checkpoint/audit entities are separately labeled ACTIVE-PR. |
 | Vulnerability reporting | PRESENT-CURRENT | PRESENT-CURRENT | `SECURITY.md` remains authoritative for disclosure process. |
 | Threat model | MISSING | PRESENT-CURRENT | Added as `docs/THREAT_MODEL.md`; separates package and host responsibilities. |
+| Data governance / privacy | PARTIAL | PRESENT-CURRENT | Protected main contains privacy-sensitive persistence and bounded telemetry/diagnostic rules but no canonical package-vs-host governance authority. `docs/DATA_GOVERNANCE.md` now classifies content/credentials/metadata, preserves purpose-bound utility instead of blanket masking, labels #53 tenant isolation ACTIVE-PR, and makes retention/erasure/backup/residency host-owned unless a future accepted contract changes that boundary. |
 | Test strategy | PARTIAL | PRESENT-CURRENT | Existing CI/pyproject encoded gates but no explanatory canonical strategy. |
 | Operability / recovery | PARTIAL | PRESENT-CURRENT | README and doctoring covered fragments; a canonical runbook is added. |
 | Release / rollback / provenance acceptance | PARTIAL | PRESENT-CURRENT | Added as `docs/RELEASE_ACCEPTANCE.md`; it keeps descriptor-pinned reproducibility itself ACTIVE-PR (#57) while defining exact integrated-head, migration, rollback, SBOM/provenance, operational and post-publication gates. |
@@ -93,7 +94,7 @@ Current material implementation/documentation owners include:
 - #88 — exact source-head CI evidence.
 - #89 — explicit bootstrap-source precedence and blank-DSN rejection.
 - #91 — loopback-only standalone Compose port publishing.
-- #93 — this canonical documentation authority, licensing/IP diligence authority, and foundational protected-main ADR record set.
+- #93 — this canonical documentation authority, data-governance/privacy authority, licensing/IP diligence authority, and foundational protected-main ADR record set.
 
 Issue #90 is a **PLANNED** buyer-visible CLI cancellation slice whose implementation must wait until overlapping CLI/resource-lifecycle changes are protected or superseded.
 
@@ -109,7 +110,7 @@ The queue must be revalidated before any release or acquisition statement. Close
 
 ## Sufficiency judgement
 
-The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, foundational product decisions, threat model, testing, operability, release/rollback/provenance acceptance, licensing/IP/third-party diligence, traceability, and the maintenance/evidence-governance decisions. The foundational ADR set makes the already-shipped PostgreSQL/disk-free, provider HTTP/replay, standalone/embedding-host, and lifecycle-observation choices reviewable as decisions rather than only as architecture prose. ADR-0004 additionally makes semantic review versus infrastructure/policy evidence separation explicit, so infrastructure-only review failures remain fail-closed merge blockers without being misrepresented as source-code findings. The licensing/IP authority makes Apache-2.0 metadata, project provenance, NOTICE, dependency/SBOM verification, and repository-vs-external legal evidence boundaries explicit. This is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented, that every third-party obligation has been independently cleared for a future release/transaction, or that the product is release-ready.
+The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, foundational product decisions, threat model, data governance/privacy, testing, operability, release/rollback/provenance acceptance, licensing/IP/third-party diligence, traceability, and the maintenance/evidence-governance decisions. The data-governance authority makes sensitive content/credential/metadata classification, package-vs-host responsibility, provider disclosure, telemetry/logging limits, and retention/erasure/backup/residency ownership explicit without inventing a legal-compliance claim or destructive blanket masking. The foundational ADR set makes the already-shipped PostgreSQL/disk-free, provider HTTP/replay, standalone/embedding-host, and lifecycle-observation choices reviewable as decisions rather than only as architecture prose. ADR-0004 additionally makes semantic review versus infrastructure/policy evidence separation explicit, so infrastructure-only review failures remain fail-closed merge blockers without being misrepresented as source-code findings. The licensing/IP authority makes Apache-2.0 metadata, project provenance, NOTICE, dependency/SBOM verification, and repository-vs-external legal evidence boundaries explicit. This is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented, that every third-party obligation has been independently cleared for a future release/transaction, or that the product is release-ready.
 
 Two repository-guidance surfaces remain intentionally PARTIAL: `AGENTS.md` and `CLAUDE.md`. Multiple active implementation branches currently modify those shared files, so this docs-only branch does not create a competing canonical rewrite. They must be reconciled after the moving implementation stack stabilizes or merges. The fitness matrix keeps that incompleteness visible instead of hiding it.
 
@@ -121,14 +122,15 @@ Two repository-guidance surfaces remain intentionally PARTIAL: `AGENTS.md` and `
 4. **Checks, reviews, and runtime behavior are separate evidence classes.** A green status is not an independent approval, a review is not a test run, and a synthetic merge commit is not automatically source-head evidence.
 5. **Architecture is timeless; evidence is dated.** Stable contracts belong in PRD/TRD/Architecture/ADR. Run IDs and transient SHAs belong in PR bodies or evidence notes unless a historical incident requires them.
 6. **Do not invent entities.** ERD/data-model documentation may include conceptual ACTIVE-PR entities only when the implementing PR actually contains them, and must label them separately from protected-main persistence.
-7. **Documentation is a release gate, not a release bypass.** A complete graph does not waive CI, security, provenance, licensing, operational, or independent-review requirements.
+7. **Documentation is a release gate, not a release bypass.** A complete graph does not waive CI, security, provenance, licensing, operational, data-governance, or independent-review requirements.
 8. **Volatile queue facts are bounded.** PR numbers in this file are a dated navigation snapshot; architectural meaning lives in capability names and ADR/TRD contracts, not in mutable PR identifiers.
 9. **Semantic review and infrastructure/policy blockers remain distinct.** When required semantic evidence is unavailable, the semantic result abstains or is unavailable; the non-source blocker may still fail merge readiness but does not create a synthetic source finding.
 10. **Licensing scanners do not create legal authority.** Package metadata, NOTICE, SBOMs, and automated license classification are evidence inputs; unknown ownership/license obligations remain unresolved until verified rather than being inferred as approved.
+11. **Privacy controls do not create host authorization.** Package-side redaction, bounded telemetry, or future tenant RLS cannot substitute for host-selected purpose, identity, authorization, retention, erasure, backup, or residency policy.
 
 ## Fitness maintenance loop
 
-For every material runtime, schema, security, deployment, workflow, public-API, dependency/license, or release-contract change:
+For every material runtime, schema, security, deployment, workflow, public-API, dependency/license, data-governance, or release-contract change:
 
 1. refetch protected main and the exact active PR head/base;
 2. identify which canonical document family owns the changed contract;
