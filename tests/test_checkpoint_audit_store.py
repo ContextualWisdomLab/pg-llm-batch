@@ -301,6 +301,34 @@ def test_list_in_transaction_is_tenant_qualified_bounded_and_newest_first(
     assert params == ("tenant-a", "worker-a", "default", "batch-1", 7)
 
 
+def test_list_rejects_rows_outside_the_requested_compound_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Database or adapter corruption must not expose evidence for another key."""
+    monkeypatch.setattr(checkpoint_audit, "_set_transaction_tenant_scope", lambda *_: None)
+    store = AuditedPostgresBatchResultCheckpointStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+    )
+
+    for index, wrong_value in (
+        (1, "tenant-b"),
+        (2, "worker-b"),
+        (3, "secondary"),
+        (4, "batch-2"),
+    ):
+        row = list(audit_row())
+        row[index] = wrong_value
+        cursor = FakeCursor(rows=(tuple(row),))
+        with pytest.raises(RuntimeError, match="outside the requested key"):
+            store.list_audit_events_in_transaction(
+                cursor,
+                "worker-a",
+                "batch-1",
+                "default",
+            )
+
+
 def test_owned_list_uses_connection_without_committing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
