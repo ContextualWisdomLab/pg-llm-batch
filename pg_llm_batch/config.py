@@ -94,6 +94,13 @@ def _isolated_default(item: Optional[Dict[str, Any]], fallback: Any) -> Any:
     return deepcopy(item["value"])
 
 
+def _isolated_cached_value(value: Any) -> Any:
+    """Copy mutable cache-owned configuration before returning it to a caller."""
+    if type(value) in (dict, list):
+        return deepcopy(value)
+    return value
+
+
 def _serialize_value(value: Any) -> str:
     """Serialize a config value to text (JSON for dict/list/bool, else ``str``)."""
     if isinstance(value, (dict, list, bool)):
@@ -212,9 +219,9 @@ class PostgresConfigStore:
                 self.cache.setdefault(category, {})[key] = value
 
     def get(self, category: str, key: str, default: Any = None) -> Any:
-        """Return a typed configuration value, falling back to its default."""
+        """Return a typed value without exposing mutable cache-owned state."""
         if category in self.cache and key in self.cache[category]:
-            return self.cache[category][key]
+            return _isolated_cached_value(self.cache[category][key])
         full_key = f"{category}.{key}"
         with self._conn.cursor() as cur:
             cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; the lookup value is bound via a %s placeholder.
@@ -225,7 +232,7 @@ class PostgresConfigStore:
         if row:
             value = _deserialize_value(full_key, row[0])
             self.cache.setdefault(category, {})[key] = value
-            return value
+            return _isolated_cached_value(value)
         return _default_value(category, key, default)
 
     def set(self, category: str, key: str, value: Any) -> None:
