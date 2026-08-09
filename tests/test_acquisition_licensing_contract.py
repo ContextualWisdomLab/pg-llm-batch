@@ -75,3 +75,11 @@ def test_release_acceptance_fails_closed_on_unverified_licensing_evidence() -> N
     assert "licensing/ip" in release
     assert "dependency license" in release
     assert "unverified ownership" in release
+
+
+def test_changelog_records_acquisition_licensing_contract_change() -> None:
+    """The Unreleased record must disclose the new dependency-license diligence boundary."""
+    changelog = _read("CHANGELOG.md")
+    assert "psycopg-binary" in changelog
+    assert "release SBOM" in changelog
+    assert "third-party license" in changelog
