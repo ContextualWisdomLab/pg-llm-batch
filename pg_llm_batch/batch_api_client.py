@@ -92,6 +92,19 @@ def _normalize_retry_delay(field: str, value: Any) -> float:
     return float(value)
 
 
+def _bounded_transport_error_type(error: BaseException) -> str:
+    """Return one finite transport category without dependency-defined class names."""
+    if isinstance(error, aiohttp.ServerFingerprintMismatch):
+        return "ServerFingerprintMismatch"
+    if isinstance(error, aiohttp.ClientConnectorCertificateError):
+        return "ClientConnectorCertificateError"
+    if isinstance(error, aiohttp.ClientSSLError):
+        return "ClientSSLError"
+    if isinstance(error, asyncio.TimeoutError):
+        return "TimeoutError"
+    return "ClientError"
+
+
 @dataclass
 class GatewayCredentials:
     """Resolved endpoint credentials for a single batch backend."""
@@ -393,6 +406,7 @@ class BatchAPIClient:
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 if response_handed_off:
                     raise
+                bounded_error_type = _bounded_transport_error_type(exc)
                 if (
                     not retry_safe
                     or attempt >= self.max_retry_attempts
@@ -401,10 +415,10 @@ class BatchAPIClient:
                         (aiohttp.ClientSSLError, aiohttp.ServerFingerprintMismatch),
                     )
                 ):
-                    terminal_error_type = type(exc).__name__
+                    terminal_error_type = bounded_error_type
                 else:
                     delay = self._fallback_retry_delay(attempt)
-                    retry_reason = type(exc).__name__
+                    retry_reason = bounded_error_type
 
             if terminal_error_type is not None:
                 raise GatewayError(
