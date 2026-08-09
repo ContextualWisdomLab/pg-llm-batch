@@ -242,7 +242,7 @@ def test_batch_preparation_docs_follow_production_persistence_order() -> None:
     assert sequence_match is not None, "missing batch preparation sequence diagram"
     _assert_text_order(operability.lower(), expected)
     _assert_text_order(sequence_match.group("body").lower(), expected)
-    assert "rollback" in operability.lower()
+    assert "rolls back the transaction" in operability.lower()
 
 
 def test_uml_tracks_checkpoint_replacements_and_merge_revalidation() -> None:
@@ -321,7 +321,8 @@ def test_api_contract_separates_current_surface_from_active_targets() -> None:
     active_cli = _section(
         contract, "### ACTIVE-PR CLI overlays", "## 5. Provider HTTP contract"
     )
-    assert "ACTIVE-PR" not in protected_python
+    assert "remain target interfaces" in protected_python
+    assert "until their implementing branch reaches protected main" in protected_python
     assert "Issue #90" in active_cli
     assert "PLANNED" in active_cli
     assert "cancel" in active_cli
