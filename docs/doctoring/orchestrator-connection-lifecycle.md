@@ -9,6 +9,12 @@
 
 `PostgresConfigStore` owns the connection used to read or update `com_config`. `SecretStore` owns the connection used for `com_secrets`. `TokenCounter` may cache a separate PostgreSQL connection for `pg_tiktoken` counting. These sessions are owned by the active operation, not by the caller. Each operation therefore provides **deterministic cleanup** on every exit path instead of relying on interpreter garbage collection or eventual object destruction.
 
+## Store-constructor runtime contract
+
+A database-backed store owns its PostgreSQL connection immediately after `psycopg.connect()` returns. `PostgresConfigStore` and `SecretStore` therefore protect every subsequent constructor step, including autocommit configuration, encryption setup, table creation, default insertion, and cache loading. If any setup failure occurs, the partially initialized store closes the connection it already acquired before re-raising the original failure.
+
+This constructor cleanup is internal to the store and complements the outer orchestrator and CLI ownership rules. Callers never receive an unusable object, ordinary driver cleanup errors do not replace the primary setup failure, and successful construction retains the existing explicit `close()` contract. The change does not retry setup, hide the original database or encryption error, or convert a failed initialization into a usable fallback store.
+
 ## Orchestrator runtime contract
 
 The orchestrator uses nested `try/finally` blocks with the following ownership order:
@@ -49,7 +55,7 @@ The change introduces no connection pool, schema migration, table change, creden
 
 Psycopg documents a `Connection` as a database session and states that code using an un-entered connection is responsible for calling `commit()`, `rollback()`, and `close()` where needed. It also documents context-manager use as the normal mechanism for closing resources at block exit. The package follows the same explicit-lifecycle principle for its cached token-counting connection, database-backed configuration store, and secret store.
 
-Python documents `finally` as the cleanup clause that executes when control leaves the protected block, including when the block returns or raises. Nested `try/finally` therefore makes the ownership order reviewable and deterministic across successful preparation, command completion, assembly failure, remote-operation failure, and partial collaborator construction.
+Python documents `finally` as the cleanup clause that executes when control leaves the protected block, including when the block returns or raises. Nested `try/finally` therefore makes the ownership order reviewable and deterministic across successful preparation, command completion, assembly failure, remote-operation failure, partial collaborator construction, and store-constructor setup failure.
 
 ## Verification
 
@@ -64,8 +70,10 @@ Deterministic tests prove that:
 7. existing runtime-limit test doubles implement and verify the same cleanup contract;
 8. one-shot config and secret commands close their owned stores;
 9. successful and failed token-count commands close the counter before the configuration store;
-10. async client exit closes HTTP, secret, and configuration resources in reverse construction order; and
-11. partial async credential construction closes every successfully constructed owner.
+10. async client exit closes HTTP, secret, and configuration resources in reverse construction order;
+11. partial async credential construction closes every successfully constructed owner;
+12. `PostgresConfigStore` closes its acquired connection when constructor setup fails; and
+13. `SecretStore` closes its acquired connection when constructor setup fails.
 
 The complete gate must continue to prove Python 3.10, 3.12, and 3.14 behavior; 100% production statement and branch coverage; 100% public docstrings; compilation; Ruff; lock freshness; package construction; Compose validation; container builds; Security Scan; and SAST.
 
@@ -81,11 +89,11 @@ If database sessions remain unexpectedly active after this change, identify whet
 - a currently running CLI remote operation; or
 - embedding code outside the bounded orchestrator and CLI operations that independently owns a `TokenCounter` or store.
 
-Call `TokenCounter.close()`, `PostgresConfigStore.close()`, or `SecretStore.close()` when custom embedding code creates those objects with a longer lifetime. Do not add a global connection singleton or suppress constructor validation to reduce connection churn. If sustained throughput requires pooling, design it as a separate reviewed ownership contract with bounded capacity, transaction-state reset, health checks, tenant isolation, shutdown behavior, and rollback evidence.
+Call `TokenCounter.close()`, `PostgresConfigStore.close()`, or `SecretStore.close()` when custom embedding code creates those objects with a longer lifetime. A store constructor that raises does not return an owner to close; its internal failure path must already have released the acquired connection. Do not add a global connection singleton or suppress constructor validation to reduce connection churn. If sustained throughput requires pooling, design it as a separate reviewed ownership contract with bounded capacity, transaction-state reset, health checks, tenant isolation, shutdown behavior, and rollback evidence.
 
 ## Rollback
 
-There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned and CLI-owned sessions and reacquires the token-counting connection before configuration validation. During an incident, retain the explicit lifecycle and diagnose the failing connection or driver cleanup path rather than removing `try/finally` or relying on garbage collection.
+There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned, CLI-owned, and partially initialized store sessions and reacquires the token-counting connection before configuration validation. During an incident, retain the explicit lifecycle and diagnose the failing connection or driver cleanup path rather than removing `try/finally`, constructor cleanup, or relying on garbage collection.
 
 ## References
 
