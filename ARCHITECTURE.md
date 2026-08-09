@@ -216,6 +216,51 @@ descriptive snake_case, RLS is enabled and forced, and the rollback refuses to
 drop a non-empty table. The stored digest remains prefix evidence only; durable
 storage does not add provider authentication or full-stream immutability.
 
+## Checkpoint accepted-save audit boundary
+
+`AuditedPostgresBatchResultCheckpointStore` is an opt-in subclass of the durable
+store for deployments that require retained application audit evidence rather
+than only mutable checkpoint state or best-effort telemetry. Every successful
+save call appends one fixed `checkpoint_save_accepted` row in the same PostgreSQL
+transaction as the checkpoint operation. Exact idempotent repeats therefore
+produce additional accepted-call events; rejected validation or compare-and-swap
+operations produce no success event.
+
+The event retains trusted tenant and consumer identity, endpoint and remote batch
+key, the complete validated checkpoint coordinates and prefix digest, a
+database-generated event identity, and a database timestamp. `recorded_at` uses
+PostgreSQL `clock_timestamp()` at row insertion because `NOW()` and
+`CURRENT_TIMESTAMP` are transaction-start values and can materially predate an
+accepted save in a long caller-owned transaction. Reapplying migration 0008
+idempotently resets the default for future rows without rewriting retained audit
+evidence. The database wall clock remains inside the operational trust boundary
+and is not a cryptographic time attestation. The event excludes provider
+payloads, prompts, model output, credentials, DSNs, transport headers, exception
+messages, and arbitrary free-form log text. Public reads are tenant-qualified by
+the exact checkpoint key, newest-first, and bounded to a strict maximum of 1,000
+rows per call.
+
+`llm_result_checkpoint_audit_events` uses forced row-level security under the
+same trusted transaction-local tenant setting as checkpoint persistence. A row
+trigger rejects ordinary UPDATE and DELETE, while a statement trigger rejects
+TRUNCATE because PostgreSQL exposes TRUNCATE triggers only at statement level.
+The rollback transaction temporarily relaxes FORCE RLS only so an owner-level
+emptiness check can observe every tenant, and refuses destructive rollback while
+any audit row remains.
+
+These are append-only controls for ordinary reviewed application roles, not
+cryptographic non-repudiation or administrator-proof tamper evidence. PostgreSQL
+owners, superusers, `BYPASSRLS` roles, disabled triggers, and physical storage
+administrators remain outside the assurance boundary. Stronger deployments must
+replicate or export events to separately governed immutable storage or use a
+cryptographically protected evidence design.
+
+The package and Docker audit migrations are byte-identical. Fresh bundled
+PostgreSQL data directories install audit schema after durable checkpoint schema;
+existing volumes require explicit reviewed migration because Docker entrypoint
+initialization is not an upgrade mechanism. Audit retention, export, legal hold,
+and disposal remain host/operator policy.
+
 ## Checkpoint OpenTelemetry observability boundary
 
 `OpenTelemetryCheckpointStore` is an opt-in wrapper around a durable checkpoint
@@ -279,7 +324,10 @@ advance it after a failed or partially committed consumer transaction. Hosts
 must also avoid treating successful prefix reproduction as evidence that an
 unseen suffix is complete or immutable. Hosts using the package-owned store may
 place local PostgreSQL effects and `save_in_transaction()` on the same caller
-cursor; cross-system effects remain host-owned recovery boundaries.
+cursor; cross-system effects remain host-owned recovery boundaries. Hosts that
+choose the audited store gain transaction-coupled accepted-save evidence but
+still own identity authorization, retention, export, and stronger tamper-proof
+controls where required.
 
 ## Verification boundary
 
@@ -314,7 +362,13 @@ cover strict consumer identity, caller-owned transaction behavior, idempotent
 repeat, exact compare-and-swap, stale and regressive writers, equal and unequal
 first-writer races, disappearing conflict rows, forced-RLS migration text,
 fail-closed rollback, documentation, and live PostgreSQL persistence. Checkpoint
-telemetry tests additionally prove exact delegation, fixed low-cardinality signal
+audit tests additionally cover accepted-save transaction coupling, caller-owned
+insert-time wall-clock semantics, rejected-save no-success evidence, strict event
+revalidation, tenant-qualified bounded reads, package/container migration
+identity and idempotent timestamp-default repair, forced RLS, UPDATE/DELETE and
+TRUNCATE rejection, fresh-image installation order, fail-closed non-empty
+rollback, and explicit administrator-tamper exclusions. Checkpoint telemetry
+tests additionally prove exact delegation, fixed low-cardinality signal
 attributes, storage-agnostic operation spans, seconds-based nonnegative duration,
 confidential failure classification, explicit Error status without descriptions,
 Unset success status, disabled exception recording, and preservation of
