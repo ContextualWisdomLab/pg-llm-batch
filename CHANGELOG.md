@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Provider HTTP error responses no longer export provider-controlled JSON,
+  free-text bodies, debug fields, or cancellation messages through package
+  diagnostics. Files upload, batch creation/status, and file download expose
+  only the status plus fixed `ProviderHTTPError`; cancellation rejection exposes
+  only the status plus the fixed package reason.
 - Dependency-defined transport exception class names never enter exported
   diagnostics or retry warning logs; acquisition failures use the closed
   `ServerFingerprintMismatch`, `ClientConnectorCertificateError`,
