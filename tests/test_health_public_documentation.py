@@ -42,6 +42,20 @@ def test_public_healthz_security_boundary_is_authoritative():
     assert "diagnostic" in changelog.lower()
 
 
+def test_public_healthz_component_names_use_fixed_allow_list():
+    """Docs must forbid arbitrary local component names at the HTTP boundary."""
+    doctoring = _normalized(DOCTORING)
+    adr = _normalized(ADR)
+    changelog = _normalized(CHANGELOG)
+    agents = _normalized(AGENTS)
+
+    required_phrase = "fixed required-component allow-list"
+    for document in (doctoring, adr, agents):
+        assert required_phrase in document
+
+    assert "unrecognized component names" in changelog.lower()
+
+
 def test_health_query_timeout_boundary_is_authoritative():
     """Docs must preserve the bounded PostgreSQL statement-timeout contract."""
     doctoring = _normalized(DOCTORING)
