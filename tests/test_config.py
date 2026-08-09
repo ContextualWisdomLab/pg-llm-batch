@@ -58,6 +58,19 @@ def test_secret_store_fails_closed_when_configured_fernet_is_unavailable(
         SecretStore("postgresql://x", fernet_key="configured-but-unavailable")
 
 
+def test_secret_store_rejects_malformed_base64_storage(fake_pg):
+    """Corrupted local/dev obfuscation must not be silently normalized."""
+    fake_pg.store.secrets["corrupted"] = ("c2stc2VjcmV0$", False)
+    store = SecretStore("postgresql://x")
+
+    with pytest.raises(ConfigError, match="stored secret encoding is invalid") as exc_info:
+        store.get_secret("corrupted")
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert "c2stc2VjcmV0" not in str(exc_info.value)
+
+
 def test_secret_store_fernet_encrypts_at_rest(fake_pg):
     from cryptography.fernet import Fernet
 
