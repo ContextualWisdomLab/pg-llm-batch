@@ -12,6 +12,8 @@ Before this decision, `serve_healthz()` serialized the complete local report. A 
 
 Kubernetes readiness probes require a success or failure result; they do not require database exception strings, internal hostnames, extension versions, arbitrary local component names, or other diagnostic detail. HTTP caching is also undesirable for readiness responses because a stored response can outlive the state it represents.
 
+The HTTP server implementation itself can disclose runtime detail independently of the JSON body. Python's `BaseHTTPRequestHandler` normally emits a `Server header` identifying the stdlib server together with the running `Python version`. A public readiness endpoint does not need that implementation fingerprint.
+
 The readiness query also needs a database-side execution bound. A PostgreSQL connection can be established successfully while `pg_llm_batch_health_check()` stalls on database work. A connection timeout alone does not bound an already-started SQL statement.
 
 ## Decision
@@ -28,6 +30,8 @@ The **public /healthz** response is a separate projection. It exposes only:
 - `component and is_ready` for identities in the **fixed required-component allow-list**.
 
 Every other top-level or component field is dropped before JSON serialization, and validly shaped but unrecognized component names are omitted from the public representation. In particular, database exception text, SQL health-function `detail`, arbitrary local component identities, debug fields, credentials, provider-controlled extras, and future unreviewed diagnostic fields cannot cross the public readiness projection merely because they were added to the local report.
+
+The HTTP response metadata follows the same minimum-disclosure rule. The handler overrides the inherited `BaseHTTPRequestHandler` response path so no default `Server header` containing the stdlib identity or `Python version` is emitted. It retains the status line, `Date`, and the explicitly reviewed readiness headers. This is fingerprint reduction, not authentication or a claim that the implementation is unidentifiable through every other channel.
 
 Public readiness validation is **non-coercive**. Any **malformed readiness** shape—including a non-boolean top-level `ready`, a non-list `components`, a non-object component record, a non-string component name, or a non-boolean `is_ready`—fails closed to the fixed `{"ready": false, "components": []}` projection and **HTTP 503**. String, numeric, container, or object truthiness is never accepted as readiness evidence. Validly shaped unrecognized names are ignored rather than promoted to public probe output; they neither satisfy nor invalidate the fixed required-component set.
 
@@ -48,6 +52,7 @@ The transaction-local timeout likewise requires no schema or server-configuratio
 ### Positive
 
 - Database exception strings, arbitrary local component identities, and internal diagnostic detail no longer cross the public HTTP readiness boundary.
+- The default stdlib/Python `Server header` is not emitted, reducing passive runtime fingerprint disclosure.
 - Readiness clients retain the fixed required-component state without receiving troubleshooting content.
 - Malformed readiness values cannot become false-ready HTTP evidence through truth coercion.
 - New local diagnostic component names do not silently widen the public interface.
@@ -59,23 +64,23 @@ The transaction-local timeout likewise requires no schema or server-configuratio
 
 - Remote probe consumers can no longer inspect detailed failure text or optional/unrecognized local component names directly from `/healthz`.
 - Operators must use trusted local tooling or logs for detailed diagnosis.
-- A network-visible health endpoint still reveals that the service exists and whether the fixed required components are ready; deployments requiring a narrower exposure boundary must enforce that outside this package.
+- A network-visible health endpoint still reveals that the service exists and whether the fixed required components are ready; suppressing one `Server header` does not make the implementation anonymous or replace network access control.
 - Unexpected local health-report schema drift is intentionally reported as not ready rather than partially projected, while validly shaped unknown component identities are kept local.
 - The 4,000-millisecond statement limit can classify unusually slow health-function execution as not ready even when it would eventually complete; that is intentional fail-closed readiness behavior, not a query-performance retry mechanism.
 
 ## Verification
 
-Deterministic tests prove that secret-like text, internal hostnames, provider-controlled extra keys, database details, unknown top-level fields, and unrecognized component names are absent from the public projection. Separate HTTP tests prove the same redaction is applied by `/healthz`, status semantics are preserved, and `Cache-Control: no-store` is emitted. Existing tests continue to prove that detailed local diagnostics remain available.
+Deterministic tests prove that secret-like text, internal hostnames, provider-controlled extra keys, database details, unknown top-level fields, and unrecognized component names are absent from the public projection. Separate HTTP tests prove the same redaction is applied by `/healthz`, status semantics are preserved, `Cache-Control: no-store` is emitted, and inherited `BaseHTTPRequestHandler` behavior cannot reintroduce a stdlib/Python `Server header`. Existing tests continue to prove that detailed local diagnostics remain available.
 
 A malformed-readiness matrix proves that coercive top-level state, non-list component containers, non-object records, non-string component names, and non-boolean component readiness all produce the same empty not-ready public projection. A dedicated HTTP regression proves that this sanitized projection—not raw local-report truthiness—controls the 200/503 status decision. A separate allow-list regression proves that a valid but unrecognized local component identity is not serialized and cannot alter required-component readiness.
 
-A focused reliability regression records SQL calls and requires the parameterized, transaction-local `statement_timeout` assignment to occur before the health function. Documentation contracts preserve the exact 4,000-millisecond boundary, the PostgreSQL 18 basis, the fixed required-component allow-list, and the explicit statement that this is not an end-to-end deadline.
+A focused reliability regression records SQL calls and requires the parameterized, transaction-local `statement_timeout` assignment to occur before the health function. Documentation contracts preserve the exact 4,000-millisecond boundary, the PostgreSQL 18 basis, the fixed required-component allow-list, the explicit `Server header`/`Python version` fingerprint boundary, and the explicit statement that the SQL timeout is not an end-to-end deadline.
 
 The production suite must retain 100% statement and branch coverage and 100% public docstrings. Synthetic-merge-only CI is not final exact-head merge evidence; the branch must later obtain required exact-source-head evidence under the repository's protected merge policy.
 
 ## Rollback
 
-There is no persistent state or migration to reverse. A code rollback restores the former detailed HTTP payload immediately, so rollback is mechanically simple but reintroduces the confidentiality risk. Reverting the non-coercive projection would also reopen the false-ready boundary for malformed state. Reverting the component-name filter would allow future local component identities to cross the HTTP boundary without deliberate review. Removing the transaction-local statement bound would restore the unbounded connected-query behavior. During an incident, prefer retaining redaction, the fixed required-component allow-list, strict projection validation, and the bounded SQL path while using local operator diagnostics rather than restoring public diagnostic detail or weakening the execution ceiling.
+There is no persistent state or migration to reverse. A code rollback restores the former detailed HTTP payload immediately, so rollback is mechanically simple but reintroduces the confidentiality risk. Reverting the non-coercive projection would also reopen the false-ready boundary for malformed state. Reverting the component-name filter would allow future local component identities to cross the HTTP boundary without deliberate review. Restoring the default `BaseHTTPRequestHandler.send_response()` behavior would reintroduce the stdlib/Python `Server header` and expose the runtime `Python version`. Removing the transaction-local statement bound would restore the unbounded connected-query behavior. During an incident, prefer retaining redaction, the fixed required-component allow-list, strict projection validation, runtime-fingerprint suppression, and the bounded SQL path while using local operator diagnostics rather than restoring public diagnostic detail or weakening the execution ceiling.
 
 ## References
 
