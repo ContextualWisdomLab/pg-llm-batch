@@ -20,6 +20,9 @@ The value is acquired separately:
 
 - when standard input is an interactive terminal, `getpass.getpass()` requests
   one value without echoing typed characters;
+- if Python reports `GetPassWarning` because terminal echo cannot be disabled,
+  the warning is promoted to a failure before `getpass` can fall back to visibly
+  reading the secret; the command does not trade confidentiality for availability;
 - when standard input is non-interactive, exactly one bounded logical line is
   read from standard input so an existing secret-management process can pipe a
   value without placing it in the `pg_llm_batch` process argument vector;
@@ -37,10 +40,10 @@ storage or bootstrap-key contract.
 
 `tests/test_cli_secret_input_security.py` proves that plaintext is rejected from
 process arguments, TTY input uses the no-echo primitive rather than an ordinary
-stdin read, piped input is bounded and single-line, common terminal line endings
-are normalized, and unsafe shapes fail closed. `tests/test_bootstrap_cli.py`
-keeps the existing CLI routing test while providing its fixture value through
-stdin.
+stdin read, `GetPassWarning` aborts before an echoed fallback can read plaintext,
+piped input is bounded and single-line, common terminal line endings are
+normalized, and unsafe shapes fail closed. `tests/test_bootstrap_cli.py` keeps
+the existing CLI routing test while providing its fixture value through stdin.
 
 The development sequence is intentionally test-first. PR CI run `31298176124`
 was triggered from RED source head `e8b256992b34a8651ab5a2f0cef350d5fbde4b75`
@@ -51,6 +54,19 @@ still accepted a positional secret and required it when stdin-only invocation
 was attempted. This is valid fail-first development evidence for the behavior,
 but it is not exact-source-head acceptance evidence. No predecessor or
 synthetic-merge-only result is counted as post-fix acceptance.
+
+The echo-fallback regression was added separately at source head
+`e88fe90246b5a97159af55ace5bbb62cb3525843`. CI run `31300391772` reached the
+intended production boundary and failed because the implementation allowed a
+`GetPassWarning` fallback. The implementation at
+`44ffbe5298022652c497b3e1f0d28790839135e1` promoted that warning to a
+fail-closed `ConfigError`; after correcting a case-sensitive diagnostic matcher
+in the regression itself, source head `7be44e829a53946e382e5319f48a477fca15d193`
+passed the Python 3.10, 3.12, and 3.14 unit-test jobs and the production
+coverage/docstring/lint/package gate in CI run `31300511133`. These PR-triggered
+runs remain development evidence under the current synthetic-merge checkout
+workflow; final acceptance still requires the repository's exact-source-head
+gate after that workflow hardening reaches protected main.
 
 ## References
 
