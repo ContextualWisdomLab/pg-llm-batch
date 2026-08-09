@@ -43,3 +43,21 @@ def test_protected_main_operational_acceptance_is_a_durable_indexed_decision() -
         "read-only dependency",
     ):
         assert phrase in adr, phrase
+
+
+def test_merge_authority_diagram_runs_operational_acceptance_after_integration() -> None:
+    """The UML must not depict post-merge acceptance before protected integration."""
+    uml = (ROOT / "docs/architecture/UML.md").read_text(encoding="utf-8")
+    section = uml.split("## 7. Evidence and merge authority", maxsplit=1)[1].split(
+        "## 8. Standalone and CWL composition", maxsplit=1
+    )[0]
+
+    merge_to_main = "MERGE --> MAIN[Protected main exact integrated revision]"
+    main_to_acceptance = "MAIN --> POST[Post-merge operational acceptance]"
+    acceptance_to_closure = "POST --> ACCEPT[Operational acceptance evidence]"
+
+    assert merge_to_main in section
+    assert main_to_acceptance in section
+    assert acceptance_to_closure in section
+    assert section.index(merge_to_main) < section.index(main_to_acceptance)
+    assert section.index(main_to_acceptance) < section.index(acceptance_to_closure)
