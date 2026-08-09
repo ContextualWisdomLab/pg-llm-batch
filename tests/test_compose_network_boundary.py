@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from typing import Any
 
+import pytest
+
 
 _ROOT = Path(__file__).resolve().parents[1]
 _COMPOSE_PATH = _ROOT / "docker-compose.yml"
@@ -58,9 +60,53 @@ def _assert_only_loopback_port(
     assert published.get("protocol", "tcp") == "tcp"
 
 
-def test_standalone_compose_publishes_database_and_health_only_on_loopback() -> None:
-    """Canonical Compose ports must expose only the two intended loopback sockets."""
-    model = _compose_model()
-
+def _assert_standalone_port_contract(model: dict[str, Any]) -> None:
+    """Require the currently intended database and health publications."""
     _assert_only_loopback_port(model, "postgres", 5432)
     _assert_only_loopback_port(model, "component", 8080)
+
+
+def test_standalone_compose_publishes_database_and_health_only_on_loopback() -> None:
+    """Canonical Compose ports must expose only the two intended loopback sockets."""
+    _assert_standalone_port_contract(_compose_model())
+
+
+def test_standalone_port_contract_rejects_an_unexpected_published_service() -> None:
+    """Adding another host-published service must fail the standalone boundary."""
+    model: dict[str, Any] = {
+        "services": {
+            "postgres": {
+                "ports": [
+                    {
+                        "host_ip": "127.0.0.1",
+                        "published": "5432",
+                        "target": 5432,
+                        "protocol": "tcp",
+                    }
+                ]
+            },
+            "component": {
+                "ports": [
+                    {
+                        "host_ip": "127.0.0.1",
+                        "published": "8080",
+                        "target": 8080,
+                        "protocol": "tcp",
+                    }
+                ]
+            },
+            "rogue": {
+                "ports": [
+                    {
+                        "host_ip": "0.0.0.0",
+                        "published": "9090",
+                        "target": 9090,
+                        "protocol": "tcp",
+                    }
+                ]
+            },
+        }
+    }
+
+    with pytest.raises(AssertionError):
+        _assert_standalone_port_contract(model)
