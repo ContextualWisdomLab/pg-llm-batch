@@ -116,7 +116,7 @@ def test_interactive_secret_refuses_getpass_echo_fallback(
 
     monkeypatch.setattr(cli.getpass, "getpass", insecure_getpass)
 
-    with pytest.raises(ConfigError, match="echo"):
+    with pytest.raises(ConfigError, match="Echo-free"):
         cli._read_secret_input()
     assert fallback_reads == []
 
