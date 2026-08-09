@@ -8,6 +8,7 @@ import io
 import pytest
 
 from pg_llm_batch import cli
+from pg_llm_batch.exceptions import ConfigError
 
 
 def test_set_secret_parser_rejects_plaintext_value_in_process_argv() -> None:
@@ -65,3 +66,68 @@ def test_set_secret_reads_noninteractive_value_from_standard_input(
     assert "Secret stored." in output.out
     assert "piped-secret" not in output.out
     assert "piped-secret" not in output.err
+
+
+class _InteractiveInput(io.StringIO):
+    """TTY-like input that fails if production tries to read an echoed secret."""
+
+    def isatty(self) -> bool:
+        """Report an interactive controlling terminal."""
+        return True
+
+    def read(self, *args, **kwargs):
+        """Reject ordinary stdin reads for interactive secret entry."""
+        raise AssertionError("interactive secrets must use getpass")
+
+
+def test_interactive_secret_uses_no_echo_getpass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Interactive entry must use the terminal no-echo password primitive."""
+    monkeypatch.setattr(cli.sys, "stdin", _InteractiveInput())
+    prompts: list[str] = []
+    monkeypatch.setattr(
+        cli.getpass,
+        "getpass",
+        lambda prompt: prompts.append(prompt) or "interactive-secret",
+    )
+
+    assert cli._read_secret_input() == "interactive-secret"
+    assert prompts == ["Secret value: "]
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("plain-secret", "plain-secret"),
+        ("newline-secret\n", "newline-secret"),
+        ("windows-secret\r\n", "windows-secret"),
+    ],
+)
+def test_noninteractive_secret_accepts_one_bounded_logical_line(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+    expected: str,
+) -> None:
+    """Piped input accepts one line and removes only its terminal line ending."""
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(raw))
+    assert cli._read_secret_input() == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "",
+        "first\nsecond",
+        "first\rsecond",
+        "x" * 65_537,
+    ],
+)
+def test_noninteractive_secret_fails_closed_on_unsafe_shape(
+    monkeypatch: pytest.MonkeyPatch,
+    raw: str,
+) -> None:
+    """Empty, multiline, or oversized secrets are rejected without storage."""
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(raw))
+    with pytest.raises(ConfigError):
+        cli._read_secret_input()
