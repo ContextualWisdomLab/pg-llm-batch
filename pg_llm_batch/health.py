@@ -157,6 +157,12 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
     class _Handler(BaseHTTPRequestHandler):
         """HTTP request handler that answers ``/healthz`` with redacted readiness."""
 
+        def send_response(self, code: int, message: str | None = None) -> None:
+            """Send status metadata without exposing the stdlib/Python fingerprint."""
+            self.log_request(code)
+            self.send_response_only(code, message)
+            self.send_header("Date", self.date_time_string())
+
         def do_GET(self) -> None:  # noqa: N802 (stdlib naming)
             """Return redacted readiness for ``/healthz``, or 404 elsewhere."""
             if self.path.rstrip("/") != "/healthz":
