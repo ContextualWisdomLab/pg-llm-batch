@@ -61,4 +61,5 @@ def test_mutable_default_isolation_contract_is_authoritative() -> None:
     assert "isolated copy" in doctoring.lower()
     assert "process-wide default" in doctoring.lower()
     assert "caller mutation" in doctoring.lower()
+    assert "unknown caller fallback identity" in doctoring.lower()
     assert "mutable configuration defaults" in changelog.lower()
