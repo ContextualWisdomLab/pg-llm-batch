@@ -38,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Made public `/healthz` readiness validation non-coercive: malformed readiness
   shapes and non-boolean state fail closed to HTTP 503 instead of allowing truth
   coercion to create false-ready evidence.
+- Made local readiness fail closed when `pg_llm_batch_health_check()` returns
+  duplicate rows for a required component, while preserving those detailed rows
+  for trusted operator diagnosis instead of allowing duplicate true rows to
+  produce a successful CLI health result.
 - Bounded the PostgreSQL readiness function with a parameterized transaction-local
   statement timeout so a connected but stalled health query cannot wait without
   a database-side execution limit.
