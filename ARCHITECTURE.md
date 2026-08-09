@@ -196,7 +196,7 @@ flowchart LR
     Protected --> Ops
 ```
 
-The current checkpoint replacement owners are #92 → #94 → #95 → #96 → #97. Their closed predecessors #78, #79, #80, #83, and #84 are **SUPERSEDED** and are deliberately excluded from the ACTIVE-PR overlay; old evidence does not transfer to the replacements.
+The checkpoint nodes above are the current active implementation chain. Superseded predecessor lineages are indexed in `docs/adr/README.md` and are deliberately excluded from this ACTIVE-PR overlay; their old evidence does not transfer to replacements.
 
 The overlay is dependency-aware, not a claim that every PR must merge in the diagram's visual order; the live PR stack/base relations remain authoritative.
 
