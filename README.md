@@ -19,6 +19,9 @@ core and relicensed under Apache-2.0. See [`NOTICE`](NOTICE) for provenance.
   bootstrap transport.
 - **Durable provider reconciliation.** Opt-in lifecycle clients persist ordered
   remote state across restarts and worker failover.
+- **Atomic checkpoint upgrades.** Existing PostgreSQL volumes can install the
+  durable checkpoint and accepted-save audit schemas with one explicit,
+  serialized, all-or-nothing operator command.
 - **Standalone or tenant-scoped operation.** Existing single-tenant consumers
   retain a compatible facade, while shared-table MSA deployments can use a
   trusted tenant-qualified identity and forced PostgreSQL row-level security.
@@ -64,6 +67,12 @@ Optional durable projection:
 
     TenantDurableBatchAPIClient
         └─ (tenant_scope, endpoint_alias, remote_batch_id)
+
+Optional checkpoint schema operator:
+    init-checkpoint-storage
+        ├─ 0007_result_stream_checkpoints
+        ├─ 0008_result_checkpoint_audit_events
+        └─ pg_advisory_xact_lock → one transaction → one commit
 ```
 
 | Capability | Module |
@@ -74,6 +83,8 @@ Optional durable projection:
 | Incremental bounded result and error records | `pg_llm_batch/result_streaming.py` |
 | Durable standalone and tenant lifecycle clients | `pg_llm_batch/durable_client.py` |
 | Tenant-qualified lifecycle persistence and reads | `pg_llm_batch/db.py` |
+| Durable checkpoint persistence and audit | `pg_llm_batch/checkpoint_store.py`, `pg_llm_batch/checkpoint_audit.py` |
+| Atomic checkpoint schema planning and application | `pg_llm_batch/checkpoint_migrations.py` |
 | Opt-in OpenTelemetry operations | `pg_llm_batch/observability.py` |
 | KV configuration and encrypted secrets | `pg_llm_batch/config.py` |
 | Canonical PostgreSQL DDL | `pg_llm_batch/schema.sql` |
@@ -106,6 +117,23 @@ python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
 python -m pg_llm_batch config set-secret \
   gateway_api_key.default sk-your-key
 ```
+
+`init-db` applies only the backward-compatible core batch schema. To upgrade an
+existing PostgreSQL volume for durable result checkpoints and accepted-save audit
+evidence, run the explicit opt-in command:
+
+```bash
+python -m pg_llm_batch init-checkpoint-storage
+```
+
+The command bounded-reads and SHA-256 identifies
+`0007_result_stream_checkpoints` and
+`0008_result_checkpoint_audit_events` before database access, obtains one
+transaction-level `pg_advisory_xact_lock`, applies both in one transaction, and
+issues one commit. A failure in the second migration rolls back the first. The
+success JSON contains migration identifiers, byte counts, and SHA-256 only;
+SHA-256 is change-identification evidence and not a signature or attestation.
+See the [checkpoint storage migration operator guide](docs/checkpoint-storage-migrations.md).
 
 Production gateway destinations require HTTPS. Plain HTTP is accepted only for
 explicit loopback development endpoints. URLs containing user information,
@@ -381,10 +409,18 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 Protected CI verifies Python 3.10, 3.12, and 3.14; compilation; Ruff; 100%
 production statement and branch coverage; 100% production docstrings; lockfile
 freshness; source and wheel packaging; Compose validation; component and
-PostgreSQL container builds; SAST; and security scanning.
+PostgreSQL container builds; live checkpoint migration rollback and advisory
+serialization; SAST; and security scanning.
 
 ## Documentation
 
+- [`docs/checkpoint-storage-migrations.md`](docs/checkpoint-storage-migrations.md)
+  — atomic existing-volume checkpoint/audit upgrade, rollback, evidence, and
+  concurrency contract.
+- [`docs/adr/0010-atomic-checkpoint-schema-operator.md`](docs/adr/0010-atomic-checkpoint-schema-operator.md)
+  — decision record for ordered transaction-level advisory locking.
+- [`docs/doctoring/checkpoint-migration-operator.md`](docs/doctoring/checkpoint-migration-operator.md)
+  — standards mapping, exact verification boundary, and APA 7 references.
 - [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) — standalone
   and tenant lifecycle operations, RLS trust boundary, migration, rollback, and
   recovery.

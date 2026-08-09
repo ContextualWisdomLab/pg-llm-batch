@@ -237,3 +237,36 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   deterministic transaction, event-time, tenant, validation, bounded-read,
   migration, rollback, immutability-trigger, compatibility, and documentation
   tests.
+
+## Checkpoint migration operator contract
+
+- Keep the **Checkpoint migration operator** opt-in through
+  `init-checkpoint-storage`; `init-db` must remain the backward-compatible core
+  schema command.
+- Load, bounded-read, strict UTF-8 decode, and SHA-256 identify both
+  `0007_result_stream_checkpoints` and
+  `0008_result_checkpoint_audit_events` before database access. Each file is
+  limited to 1 MiB plus one detection byte and the SQL body remains private.
+- Obtain the fixed two-key transaction-level advisory lock with
+  `pg_advisory_xact_lock`, then execute migration 0007 before migration 0008 in
+  one PostgreSQL transaction and issue one commit only after both succeed.
+- A second-migration failure must roll back the first migration from the same
+  invocation and release the transaction-level advisory lock automatically.
+- Emit only immutable migration identifiers, bounded byte counts, SHA-256, and
+  schema version after commit. SHA-256 is change-identification evidence and
+  **not a signature**, provenance statement, remote attestation, or release
+  authority.
+- Preserve the independent `apply_result_checkpoint_schema()` and
+  `apply_result_checkpoint_audit_schema()` helpers for hosts that intentionally
+  own separate transactions. Do not add a migration ledger, downgrade, or
+  destructive retained-evidence rollback to this bounded operator.
+- Keep standalone operation and modular MSA use independent of `naruon` and
+  `contextual-orchestrator`. Advisory locking coordinates cooperating package
+  operators; it is not authorization and does not constrain an administrator or
+  unrelated SQL client.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  deterministic input-bound, order, transaction, rollback, live PostgreSQL,
+  concurrency, compatibility, CLI, documentation, and body-free evidence tests.
+- Update README, architecture, ADR, operator documentation, doctoring, and
+  CHANGELOG whenever migration ordering, locking, evidence, failure, or
+  compatibility semantics change.
