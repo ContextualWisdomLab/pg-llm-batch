@@ -1,16 +1,27 @@
 # SPDX-License-Identifier: Apache-2.0
 """Documentation contracts for owned PostgreSQL connection lifecycles."""
 
+import ast
 from pathlib import Path
 
 
 DOCTORING = Path("docs/doctoring/orchestrator-connection-lifecycle.md")
 CHANGELOG = Path("CHANGELOG.md")
+CONFIG_SOURCE = Path("pg_llm_batch/config.py")
 
 
 def _normalized(path: Path) -> str:
     """Return Markdown with layout-only whitespace collapsed."""
     return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def _class_docstring(path: Path, class_name: str) -> str:
+    """Return one class docstring from source without importing dependencies."""
+    module = ast.parse(path.read_text(encoding="utf-8"))
+    for node in module.body:
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return " ".join((ast.get_docstring(node) or "").split())
+    raise AssertionError(f"missing class {class_name}")
 
 
 def test_owned_connection_lifecycle_contract_is_authoritative() -> None:
@@ -45,3 +56,12 @@ def test_partial_store_construction_cleanup_is_authoritative() -> None:
     assert "SecretStore" in doctoring
     assert "setup failure" in doctoring.lower()
     assert "store constructor" in changelog.lower()
+
+
+def test_secret_store_docstring_preserves_fallback_confidentiality_boundary() -> None:
+    """Public docs must not hide that no-key storage is obfuscation, not encryption."""
+    docstring = _class_docstring(CONFIG_SOURCE, "SecretStore").lower()
+
+    assert "fernet-encrypted at rest" in docstring
+    assert "base64-obfuscated" in docstring
+    assert "local/dev" in docstring
