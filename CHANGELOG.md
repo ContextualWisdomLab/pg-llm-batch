@@ -81,6 +81,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `psycopg-binary` distribution and its bundled client libraries; release
   acceptance now requires the release SBOM to verify the exact third-party license
   closure without treating repository metadata as legal clearance.
+- Added protected-main operational-acceptance governance: source merge is an
+  intermediate state for runtime-sensitive changes, and incident/release closure
+  requires fresh capability-specific post-merge evidence from the integrated
+  protected revision while read-only dependency failures remain separate blockers.
 - Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff
   patch updates; setup-uv cache pruning is explicit to preserve the previous
   bounded cache-cost policy.
