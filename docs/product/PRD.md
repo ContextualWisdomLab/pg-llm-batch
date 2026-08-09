@@ -61,6 +61,10 @@ The package must not claim distributed exactly-once delivery, provider authentic
 
 Commercial acceptance depends on exact tests, security gates, durable schema/API contracts, and independent review—not PR prose or an older green commit.
 
+### PRD-P6 — Purpose-bound data governance
+
+Prompts, provider results, credentials, lifecycle metadata, and telemetry shall follow the canonical engineering boundary in `docs/DATA_GOVERNANCE.md`. The product shall preserve purpose-bound prompt/result utility where the workflow requires it rather than treating blanket masking as authorization. Business purpose, subject/workload authorization, retention, erasure/export, backup, and residency remain **host-owned** unless a future accepted package contract explicitly moves part of that authority into pg-llm-batch.
+
 ## 5. Protected-main product requirements
 
 The following requirements describe the as-built protected-main baseline used for this edition.
@@ -182,7 +186,7 @@ A commercially defensible integrated release requires all of the following on th
 4. security/SAST/dependency/supply-chain/provenance gates required by live policy pass;
 5. migrations and rollback/recovery contracts are deterministic and tested where applicable;
 6. health, startup, provider, and operator workflows have bounded failure behavior;
-7. canonical PRD/TRD/Architecture/UML/ERD/Threat Model/Test Strategy/Operability/Traceability remain code-current;
+7. canonical PRD/TRD/Architecture/UML/ERD/Threat Model/Data Governance/Test Strategy/Operability/Traceability remain code-current;
 8. zero valid unresolved review/security findings remain;
 9. a qualifying independent non-author formal approval exists when policy requires it; and
 10. release/publication occurs only after protected integration and release acceptance, never from a predecessor or synthetic-only evidence state.
