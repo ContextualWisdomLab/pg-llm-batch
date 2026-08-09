@@ -12,8 +12,10 @@ from pg_llm_batch import cli
 from pg_llm_batch.exceptions import ConfigError
 
 
-def test_set_secret_parser_rejects_plaintext_value_in_process_argv() -> None:
-    """Secret plaintext must never be accepted as a command-line argument."""
+def test_set_secret_parser_rejects_plaintext_value_in_process_argv(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Rejected argv secrets must not be reflected through parser diagnostics."""
     parser = cli.build_parser()
 
     with pytest.raises(SystemExit) as exc_info:
@@ -29,6 +31,9 @@ def test_set_secret_parser_rejects_plaintext_value_in_process_argv() -> None:
         )
 
     assert exc_info.value.code == 2
+    output = capsys.readouterr()
+    assert "visible-secret" not in output.out
+    assert "visible-secret" not in output.err
 
 
 def test_set_secret_reads_noninteractive_value_from_standard_input(
