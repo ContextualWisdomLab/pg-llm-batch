@@ -20,11 +20,11 @@ This matrix makes product and governance claims auditable without relying on cha
 | Incremental bounded result records | ACTIVE-PR #58 | PR #58 streaming client surfaces | branch CI/release acceptance | TRD, UML |
 | Prefix-bound resumable checkpoints | ACTIVE-PR #59 | PR #59 checkpoint contracts | checkpoint integrity/resume tests | TRD, UML |
 | Durable checkpoint CAS storage | ACTIVE-PR #60 | `llm_result_stream_checkpoints` migration in PR #60 | live PostgreSQL/RLS/CAS/rollback tests | ERD overlay, THREAT_MODEL |
-| Checkpoint observability replacement | ACTIVE-PR #92 | PR #92 checkpoint telemetry | fresh replacement exact-head evidence required | UML, TEST_STRATEGY |
-| Append-only checkpoint audit replacement | ACTIVE-PR #94 | `llm_result_checkpoint_audit_events` migration and audit module | fresh replacement CI/live PostgreSQL evidence required | ERD overlay, THREAT_MODEL |
-| Atomic checkpoint migration operator replacement | ACTIVE-PR #95 | migration operator, CLI/API, CI and live PostgreSQL contracts on #95 | fresh exact-head/exact-base rollback/concurrency evidence required | ADR index, OPERABILITY |
-| Bounded stable checkpoint-audit pagination replacement | ACTIVE-PR #96 | pagination/cursor/public API composition on #96 | fresh exact-head/live PostgreSQL pagination evidence required | ADR index, UML/ERD overlay |
-| Snapshot-manifest assurance | PARTIAL | stale PR #84 contains unique implementation on closed #83 ancestry; a live successor branch is being rebuilt from #96 | historical evidence does not transfer; current successor exact ancestry and fresh gates are required | ADR index; checkpoint-audit doctoring |
+| Checkpoint observability replacement | ACTIVE-PR #92 | PR #92 checkpoint telemetry | exact-head CI and Release Acceptance succeeded on the current staged replacement; final protected-main gates remain required | UML, TEST_STRATEGY |
+| Append-only checkpoint audit replacement | ACTIVE-PR #94 | `llm_result_checkpoint_audit_events` migration and audit module | exact-head CI and Release Acceptance succeeded on the current staged replacement; final protected-main/live PostgreSQL gates remain required | ERD overlay, THREAT_MODEL |
+| Atomic checkpoint migration operator replacement | ACTIVE-PR #95 | migration operator, CLI/API, CI and live PostgreSQL contracts on #95 | exact-head CI and Release Acceptance succeeded on the current staged replacement; final protected-main rollback/concurrency gates remain required | ADR index, OPERABILITY |
+| Bounded stable checkpoint-audit pagination replacement | ACTIVE-PR #96 | pagination/cursor/public API composition on #96 | exact-head CI and Release Acceptance succeeded on the current staged replacement; final protected-main/live PostgreSQL gates remain required | ADR index, UML/ERD overlay |
+| Snapshot-manifest assurance replacement | ACTIVE-PR #97 | snapshot-manifest implementation composed on exact #96 pagination predecessor | fresh #97 exact-head CI is required; Release Acceptance succeeded on the current replacement; #84 evidence does not transfer | ADR index; checkpoint-audit doctoring |
 | Exact source-head CI evidence | ACTIVE-PR #88 | `.github/workflows/ci.yml` on #88 | exact contributor head checkout/verification tests | ADR-0002, TEST_STRATEGY |
 | Canonical product documentation authority | ACTIVE-PR #93 | this documentation graph | `tests/test_documentation_fitness_contract.py` + normal CI | DOCUMENTATION_FITNESS |
 | Operator CLI batch cancellation | PLANNED | issue #90; existing `BatchAPIClient.cancel_batch()` primitive | implementation blocked until overlapping CLI/resource ownership work settles | PRD/TRD/API contract follow-up |
@@ -63,9 +63,9 @@ The checkpoint chain is currently linearized through replacements rather than de
 - #79 -> #94;
 - #80 -> #95;
 - #83 -> #96;
-- #84 remains the stale snapshot-manifest implementation; a live successor branch currently descends directly from the exact #96 head and must complete its full unique delta before #84 can be closed as SUPERSEDED.
+- #84 -> #97.
 
-No check, review, approval, or historical base evidence transfers across a replacement. The successor must prove exact ancestry, preserved unique behavior, and fresh exact-head/exact-base evidence.
+#84 is closed unmerged as SUPERSEDED by #97. No check, review, approval, or historical base evidence transfers across any replacement. Each successor must prove exact ancestry, preserved unique behavior, and fresh exact-head/exact-base evidence.
 
 ## Security, operability, and release traceability
 
