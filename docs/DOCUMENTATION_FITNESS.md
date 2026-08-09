@@ -37,6 +37,7 @@ Document fitness is different from capability maturity. Use exactly these maturi
 | README / quick start | PRESENT-CURRENT | PRESENT-CURRENT | Strong runtime overview, but not a substitute for PRD/TRD/architecture. |
 | Product PRD | MISSING | PRESENT-CURRENT | Added as `docs/product/PRD.md`; file maturity is ACTIVE-PR until merge. |
 | Technical requirements | MISSING | PRESENT-CURRENT | Added as `docs/product/TRD.md`. |
+| Public API / CLI / schema / version contract | PARTIAL | PRESENT-CURRENT | Added as `docs/product/API_CONTRACT.md`; explicitly separates protected-main exports/commands/schema from ACTIVE-PR overlays and defines Semantic Versioning/deprecation rules. |
 | Root architecture | MISSING | PRESENT-CURRENT | Added as `ARCHITECTURE.md`; distinguishes protected-main as-built from active-PR overlay. |
 | UML behavior/deployment views | MISSING | PRESENT-CURRENT | Added as code-renderable Mermaid in `docs/architecture/UML.md`. |
 | ERD / logical data model | MISSING | PRESENT-CURRENT | Added from `pg_llm_batch/schema.sql`; active checkpoint/audit entities are separately labeled ACTIVE-PR. |
@@ -44,14 +45,13 @@ Document fitness is different from capability maturity. Use exactly these maturi
 | Threat model | MISSING | PRESENT-CURRENT | Added as `docs/THREAT_MODEL.md`; separates package and host responsibilities. |
 | Test strategy | PARTIAL | PRESENT-CURRENT | Existing CI/pyproject encoded gates but no explanatory canonical strategy. |
 | Operability / recovery | PARTIAL | PRESENT-CURRENT | README and doctoring covered fragments; a canonical runbook is added. |
+| Release / rollback / provenance acceptance | PARTIAL | PRESENT-CURRENT | Added as `docs/RELEASE_ACCEPTANCE.md`; it keeps descriptor-pinned reproducibility itself ACTIVE-PR (#57) while defining exact integrated-head, migration, rollback, SBOM/provenance, operational and post-publication gates. |
 | Traceability | MISSING | PRESENT-CURRENT | Added requirement/decision -> source/schema/test/evidence mapping. |
 | Product ADR index | MISSING | PRESENT-CURRENT | Added as `docs/adr/README.md`; active-PR ADRs remain explicitly unshipped. |
 | Maintenance-governance ADRs | MISSING | PRESENT-CURRENT | Work conservation, evidence identity, and writer lease were previously chat/prompt-only. |
 | Feature doctoring | PARTIAL | PRESENT-CURRENT | Keep feature-specific doctoring; index it through traceability rather than duplicating it. |
 | AGENTS guidance | PARTIAL | PARTIAL | Protected main records only a narrow code-owner hold. Consolidate after overlapping active feature branches land rather than creating a conflict-heavy competing copy here. |
 | CLAUDE guidance | MISSING | PARTIAL | Several active product branches carry guidance. Canonical reconciliation is deferred until their source contracts integrate; this does not replace the product documentation graph. |
-| API / schema / version contract | PARTIAL | PARTIAL | Public exports, CLI behavior, schema, and package metadata are specified across PRD/TRD/Architecture/ERD. A dedicated versioned API/schema contract remains a follow-up fitness improvement rather than an undocumented assumption. |
-| Release / rollback / provenance | PARTIAL | PARTIAL | Protected main builds packages; descriptor-pinned reproducible release evidence remains ACTIVE-PR (#57). Operability/Test Strategy document current rollback and acceptance boundaries without claiming publication readiness. |
 
 ## Product-capability maturity snapshot
 
@@ -106,12 +106,9 @@ The queue must be revalidated before any release or acquisition statement. Close
 
 ## Sufficiency judgement
 
-The documentation graph in this PR is now **structurally sufficient for product intent, technical requirements, architecture, core data model, threat model, testing, operability, traceability, and the two maintenance/evidence-governance decisions**. It is not yet the final acquisition package because two families remain intentionally PARTIAL:
+The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, threat model, testing, operability, release/rollback/provenance acceptance, traceability, and the maintenance/evidence-governance decisions. That is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented or that the product is release-ready.
 
-1. a dedicated versioned public API/schema compatibility contract; and
-2. a dedicated release/rollback/provenance contract once the active reproducibility implementation is integrated.
-
-Those gaps are explicit rather than hidden, so they can drive bounded follow-up work without overclaiming current protected-main behavior. AGENTS/CLAUDE consolidation is also intentionally deferred until overlapping implementation branches stop moving.
+Two repository-guidance surfaces remain intentionally PARTIAL: `AGENTS.md` and `CLAUDE.md`. Multiple active implementation branches currently modify those shared files, so this docs-only branch does not create a competing canonical rewrite. They must be reconciled after the moving implementation stack stabilizes or merges. The fitness matrix keeps that incompleteness visible instead of hiding it.
 
 ## Authority rules
 
