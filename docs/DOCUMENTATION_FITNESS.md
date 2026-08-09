@@ -4,9 +4,9 @@
 
 This document answers a simple acquisition-readiness question: **can a buyer, maintainer, security reviewer, or embedding team reconstruct pg-llm-batch from GitHub without reading old chat transcripts or reverse-engineering a chain of pull-request bodies?**
 
-At the protected-main baseline used to open this documentation slice (`bf2cc2e140dc3ff4a56c3203f80f41bb9fed5d10`), the answer was **no**. `README.md` described the product and current runtime path, `SECURITY.md` defined vulnerability-reporting policy, and feature-specific doctoring existed, but the repository did not have a canonical PRD, TRD, root architecture, UML, ERD, threat model, test strategy, operability contract, traceability matrix, ADR index, or durable repository record for the maintenance/evidence-authority decisions.
+At the protected-main baseline used to open this documentation slice (`bf2cc2e140dc3ff4a56c3203f80f41bb9fed5d10`), the answer was **no**. `README.md` described the product and current runtime path, and `SECURITY.md` defined vulnerability-reporting policy, but the repository did not have a canonical PRD, TRD, root architecture, UML, ERD, threat model, test strategy, operability contract, traceability matrix, ADR index, or durable repository record for maintenance/evidence-authority decisions.
 
-This branch closes that documentation-structure gap. Until this PR reaches protected `main`, every file introduced here is itself **ACTIVE-PR** documentation rather than protected-main authority.
+This branch establishes that canonical graph. Until this PR reaches protected `main`, every document introduced here is itself **ACTIVE-PR** documentation rather than protected-main authority.
 
 ## Closed documentation-fitness vocabulary
 
@@ -48,13 +48,14 @@ Document fitness is different from capability maturity. Use exactly these maturi
 | Product ADR index | MISSING | PRESENT-CURRENT | Added as `docs/adr/README.md`; active-PR ADRs remain explicitly unshipped. |
 | Maintenance-governance ADRs | MISSING | PRESENT-CURRENT | Work conservation, evidence identity, and writer lease were previously chat/prompt-only. |
 | Feature doctoring | PARTIAL | PRESENT-CURRENT | Keep feature-specific doctoring; index it through traceability rather than duplicating it. |
-| AGENTS guidance | PARTIAL | PARTIAL | Protected main currently records the code-owner hold only. Active branches carry broader contracts; do not fabricate a merged state here. |
-| CLAUDE guidance | MISSING | MISSING | Several active product branches add/update this file. Consolidate after those contracts integrate instead of creating a conflicting competing copy in this docs-only slice. |
-| Release reproducibility/provenance | PARTIAL | PARTIAL | Protected main builds packages; descriptor-pinned reproducible release evidence is ACTIVE-PR (#57). |
+| AGENTS guidance | PARTIAL | PARTIAL | Protected main records only a narrow code-owner hold. Consolidate after overlapping active feature branches land rather than creating a conflict-heavy competing copy here. |
+| CLAUDE guidance | MISSING | PARTIAL | Several active product branches carry guidance. Canonical reconciliation is deferred until their source contracts integrate; this does not replace the product documentation graph. |
+| API / schema / version contract | PARTIAL | PARTIAL | Public exports, CLI behavior, schema, and package metadata are specified across PRD/TRD/Architecture/ERD. A dedicated versioned API/schema contract remains a follow-up fitness improvement rather than an undocumented assumption. |
+| Release / rollback / provenance | PARTIAL | PARTIAL | Protected main builds packages; descriptor-pinned reproducible release evidence remains ACTIVE-PR (#57). Operability/Test Strategy document current rollback and acceptance boundaries without claiming publication readiness. |
 
 ## Product-capability maturity snapshot
 
-This is a **classification aid**, not a release checklist and not a substitute for live PR state.
+This is a **dated classification aid for the current documentation branch**, not a release checklist and not a substitute for refetching live PR state before a merge/release decision.
 
 ### IMPLEMENTED-ON-PROTECTED-MAIN
 
@@ -69,7 +70,7 @@ This is a **classification aid**, not a release checklist and not a substitute f
 
 ### ACTIVE-PR
 
-The open PR queue contains the following material target capabilities at the latest reconciliation. A PR number is an index, not a claim that the PR is mergeable or accepted now.
+Current material implementation/documentation owners include:
 
 - #53 — tenant-isolated durable lifecycle state and PostgreSQL RLS boundary.
 - #57 — descriptor-pinned reproducible release evidence.
@@ -78,6 +79,8 @@ The open PR queue contains the following material target capabilities at the lat
 - #60 — durable PostgreSQL checkpoint persistence.
 - #92 — current linearized checkpoint OpenTelemetry observability replacement on #60.
 - #94 — current linearized append-only checkpoint acceptance audit replacement on #92.
+- #95 — current linearized atomic checkpoint migration operator replacement on #94.
+- #96 — current linearized bounded checkpoint-audit pagination replacement on #95.
 - #69 — hourly maintenance credential/writer-boundary hardening.
 - #70 — readiness redaction, concurrency, timeout, and listener hardening.
 - #71 — HTTP 425 and permanent TLS/fingerprint retry-classification hardening.
@@ -89,14 +92,26 @@ The open PR queue contains the following material target capabilities at the lat
 - #91 — loopback-only standalone Compose port publishing.
 - #93 — this canonical documentation authority.
 
-### SUPERSEDED or stale-stack work that still needs convergence
+Issue #90 is a **PLANNED** buyer-visible CLI cancellation slice whose implementation must wait until overlapping CLI/resource-lifecycle changes are protected or superseded.
 
-- #78 was superseded by current replacement #92 after #60 advanced.
-- #79 was closed unmerged as SUPERSEDED by current replacement #94 after replacement preservation was verified.
-- #80 remains open on the old #79 branch and therefore cannot remain the canonical next stack boundary; its unique atomic checkpoint migration-operator delta must be replayed or otherwise safely replaced on #94 before downstream work proceeds.
-- #83 and #84 remain open descendants of stale #80 and likewise require successor reconciliation after the #80 replacement. Their prior staged checks are historical evidence only and do not transfer to a successor chain.
+### SUPERSEDED / stale-stack work
+
+- #78 is SUPERSEDED by #92.
+- #79 is SUPERSEDED by #94.
+- #80 is SUPERSEDED by #95.
+- #83 is SUPERSEDED by #96.
+- #84 is still a stale descendant of closed #83 and therefore is not a valid canonical next stack boundary. Its unique snapshot-manifest delta must be replayed or otherwise safely replaced on the exact current #96 head before #84 can be closed as SUPERSEDED. Historical checks/reviews from #84 do not transfer.
 
 The queue must be revalidated before any release or acquisition statement. Closed, merged, superseded, or replaced PRs move to their corresponding maturity state; this document must not preserve stale ACTIVE-PR claims indefinitely.
+
+## Sufficiency judgement
+
+The documentation graph in this PR is now **structurally sufficient for product intent, technical requirements, architecture, core data model, threat model, testing, operability, traceability, and the two maintenance/evidence-governance decisions**. It is not yet the final acquisition package because two families remain intentionally PARTIAL:
+
+1. a dedicated versioned public API/schema compatibility contract; and
+2. a dedicated release/rollback/provenance contract once the active reproducibility implementation is integrated.
+
+Those gaps are explicit rather than hidden, so they can drive bounded follow-up work without overclaiming current protected-main behavior. AGENTS/CLAUDE consolidation is also intentionally deferred until overlapping implementation branches stop moving.
 
 ## Authority rules
 
@@ -107,6 +122,7 @@ The queue must be revalidated before any release or acquisition statement. Close
 5. **Architecture is timeless; evidence is dated.** Stable contracts belong in PRD/TRD/Architecture/ADR. Run IDs and transient SHAs belong in PR bodies or evidence notes unless a historical incident requires them.
 6. **Do not invent entities.** ERD/data-model documentation may include conceptual ACTIVE-PR entities only when the implementing PR actually contains them, and must label them separately from protected-main persistence.
 7. **Documentation is a release gate, not a release bypass.** A complete graph does not waive CI, security, provenance, operational, or independent-review requirements.
+8. **Volatile queue facts are bounded.** PR numbers in this file are a dated navigation snapshot; architectural meaning lives in capability names and ADR/TRD contracts, not in mutable PR identifiers.
 
 ## Fitness maintenance loop
 
