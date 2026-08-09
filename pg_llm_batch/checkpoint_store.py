@@ -17,7 +17,7 @@ from .db import (
     validate_remote_resource_id,
     validate_tenant_scope,
 )
-from .exceptions import PgLlmBatchError, ValidationError
+from .exceptions import ConfigError, PgLlmBatchError, ValidationError
 from .result_streaming import BatchResultCheckpoint
 
 MIGRATION_PATH = (
@@ -72,6 +72,15 @@ def validate_checkpoint_consumer_name(value: Any) -> str:
                 "character and containing only letters, digits, dot, underscore, "
                 "colon, or hyphen"
             ),
+        )
+    return value
+
+
+def _validated_postgres_dsn(value: Any) -> str:
+    """Require an explicit nonblank database target without normalizing it."""
+    if not isinstance(value, str) or not value.strip():
+        raise ConfigError(
+            "A Postgres DSN must be provided explicitly for checkpoint persistence"
         )
     return value
 
@@ -164,10 +173,11 @@ def apply_result_checkpoint_schema(
     migration_path: Optional[str] = None,
 ) -> None:
     """Apply the idempotent durable result-checkpoint migration."""
+    dsn = _validated_postgres_dsn(postgres_dsn)
     _require_psycopg()
     path = Path(migration_path) if migration_path else MIGRATION_PATH
     sql = path.read_text(encoding="utf-8")
-    with psycopg.connect(postgres_dsn) as conn:
+    with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
         conn.commit()
@@ -182,8 +192,8 @@ class PostgresBatchResultCheckpointStore:
         *,
         tenant_scope: str = DEFAULT_TENANT_SCOPE,
     ) -> None:
-        """Bind one database and trusted local tenant scope to the store."""
-        self.postgres_dsn = postgres_dsn
+        """Bind one explicit database and trusted local tenant scope to the store."""
+        self.postgres_dsn = _validated_postgres_dsn(postgres_dsn)
         try:
             self.tenant_scope = validate_tenant_scope(tenant_scope)
         except ValidationError as exc:
