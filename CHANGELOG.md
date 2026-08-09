@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Dependency-defined transport exception class names never enter exported
+  diagnostics or retry warning logs; acquisition failures use the closed
+  `ServerFingerprintMismatch`, `ClientConnectorCertificateError`,
+  `ClientSSLError`, `TimeoutError`, or `ClientError` vocabulary.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
