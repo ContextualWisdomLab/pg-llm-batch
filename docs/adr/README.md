@@ -10,6 +10,7 @@ This index is the canonical entry point for durable pg-llm-batch architecture/go
 | --- | --- | --- |
 | [`docs/automation/ADR-0001-work-conserving-maintenance.md`](../automation/ADR-0001-work-conserving-maintenance.md) | Autonomous maintenance is work-conserving; one successful action or local wait is not invocation completion | ACTIVE-PR (#93) |
 | [`docs/automation/ADR-0002-evidence-identity-and-writer-lease.md`](../automation/ADR-0002-evidence-identity-and-writer-lease.md) | Separate source/base/check/review authorities and enforce branch-local writer leases | ACTIVE-PR (#93) |
+| [`docs/automation/ADR-0003-canonical-documentation-authority.md`](../automation/ADR-0003-canonical-documentation-authority.md) | Keep one source-bound documentation graph with explicit fitness/maturity and machine-checkable drift controls | ACTIVE-PR (#93) |
 
 ## Feature decisions carried by active implementation PRs
 
