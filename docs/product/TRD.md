@@ -153,7 +153,7 @@ Durable lifecycle errors shall retain enough bounded phase/operation/order/valid
 
 ### TRD-REL4 — Audit target
 
-`ACTIVE-PR` #79/#83/#84 defines append-only acceptance evidence, stable pagination, and snapshot manifests. Audit evidence does not make a PostgreSQL owner/superuser cryptographically unable to modify data; that residual boundary must remain explicit.
+`ACTIVE-PR` #94/#96/#97 defines the current linearized append-only acceptance evidence, stable pagination, and snapshot-manifest chain. #79/#83/#84 are superseded implementation lines and their checks/reviews do not transfer. Audit evidence does not make a PostgreSQL owner/superuser cryptographically unable to modify data; that residual boundary must remain explicit.
 
 ## 10. CI, evidence, and review requirements
 
