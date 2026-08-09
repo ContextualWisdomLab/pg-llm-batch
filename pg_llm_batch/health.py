@@ -99,7 +99,8 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     database-provided ``detail`` field. Probe clients only need the overall
     readiness decision and each component's boolean state. This projection
     therefore accepts only exact boolean readiness fields and string component
-    names, copies those fixed fields, and fails closed on malformed shapes.
+    names, copies those fixed fields, and fails closed on malformed shapes or
+    contradictory required-component evidence.
     """
     ready = report.get("ready")
     components = report.get("components")
@@ -107,6 +108,7 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
         return _not_ready_public_health_report()
 
     public_components: List[Dict[str, Any]] = []
+    required_states: Dict[str, bool] = {}
     for component in components:
         if type(component) is not dict:
             return _not_ready_public_health_report()
@@ -116,11 +118,19 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
             return _not_ready_public_health_report()
         if type(is_ready) is not bool:
             return _not_ready_public_health_report()
+        if component_name in REQUIRED_COMPONENTS:
+            if component_name in required_states:
+                return _not_ready_public_health_report()
+            required_states[component_name] = is_ready
         public_components.append(
             {"component": component_name, "is_ready": is_ready}
         )
 
-    return {"ready": ready, "components": public_components}
+    required_ready = (
+        set(required_states) == REQUIRED_COMPONENTS
+        and all(required_states.values())
+    )
+    return {"ready": ready and required_ready, "components": public_components}
 
 
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
