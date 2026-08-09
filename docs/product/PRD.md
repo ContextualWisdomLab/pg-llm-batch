@@ -79,9 +79,9 @@ Prepared JSONL payloads shall be persisted/reconstructable through PostgreSQL st
 
 ### PRD-R3 — OpenAI-compatible provider workflow
 
-The package shall support upload, batch creation, status polling, bounded waiting, cancellation, and result retrieval through the Files/Batches API shape used by OpenAI-compatible endpoints.
+The package API shall support upload, batch creation, status polling, bounded waiting, cancellation, and result retrieval through the Files/Batches API shape used by OpenAI-compatible endpoints. The protected-main CLI exposes `submit`, `poll`, `wait`, and `retrieve`; an operator-facing `cancel` command is PLANNED in Issue #90 and is not shipped on this baseline.
 
-**Protected-main evidence:** `BatchAPIClient` and CLI commands.
+**Protected-main evidence:** `BatchAPIClient` for provider operations and the parser surface in `pg_llm_batch/cli.py` for current operator commands.
 
 ### PRD-R4 — Credential-source separation
 
@@ -109,7 +109,7 @@ Hosts that already operate OpenTelemetry shall be able to opt into bounded opera
 
 ### PRD-R10 — Standalone operator surface
 
-The package shall provide a CLI, Docker images/Compose example, schema initialization, configuration/secret commands, provider operation commands, and readiness interfaces sufficient for a standalone deployment.
+The package shall provide a CLI, Docker images/Compose example, schema initialization, configuration/secret commands, provider operation commands, and readiness interfaces sufficient for a standalone deployment. The command-level compatibility surface is enumerated in `docs/product/API_CONTRACT.md`; planned commands are not implied by this general requirement.
 
 ### PRD-R11 — Hard quality thresholds
 
@@ -117,7 +117,7 @@ Owned production code shall maintain 100% statement and branch coverage and 100%
 
 ## 6. Active product targets
 
-These are **ACTIVE-PR**, not shipped requirements. They are listed because they materially define the accepted product direction and must be visible to diligence readers.
+These are **ACTIVE-PR** or explicitly **PLANNED**, not shipped requirements. They are listed because they materially define the accepted product direction and must be visible to diligence readers.
 
 ### PRD-T1 — Tenant-isolated lifecycle state (#53)
 
@@ -158,6 +158,10 @@ Remove plaintext secret values from argv, canonicalize typed configuration owner
 ### PRD-T10 — Exact source evidence and maintenance governance (#88, #69, #93)
 
 Bind CI evidence to the exact source head, harden scheduled maintenance authority, and make the product/technical/documentation/evidence graph reconstructable from the repository itself.
+
+### PRD-T11 — Operator cancellation CLI (Issue #90) — PLANNED
+
+Expose the existing validated provider cancellation primitive through a first-class `cancel --endpoint <alias> --batch-id <id>` operator command without adding automatic retry to the side-effecting cancellation request. This slice remains PLANNED while overlapping CLI secret-input/resource-ownership work in #85 and #87 is active and requires final exact-source acceptance after #88; it must not be represented as a protected-main CLI capability before those dependencies are resolved and the implementation is integrated.
 
 ## 7. Non-goals and explicit exclusions
 
