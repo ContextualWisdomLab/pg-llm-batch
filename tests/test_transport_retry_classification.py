@@ -200,9 +200,10 @@ async def test_timeout_remains_retryable_for_idempotent_get(
 
 
 def test_authoritative_docs_define_tls_fail_closed_retry_boundary() -> None:
-    """Public and operator contracts must state that permanent TLS failures do not retry."""
-    required_phrase = (
-        "TLS handshake and certificate failures are never retried automatically"
+    """Public and operator contracts must document every permanent TLS failure class."""
+    required_phrases = (
+        "TLS handshake and certificate failures are never retried automatically",
+        "Certificate fingerprint mismatches are never retried automatically",
     )
     authoritative_paths = (
         "README.md",
@@ -214,4 +215,5 @@ def test_authoritative_docs_define_tls_fail_closed_retry_boundary() -> None:
 
     for path in authoritative_paths:
         normalized = " ".join(Path(path).read_text(encoding="utf-8").split())
-        assert required_phrase in normalized, path
+        for required_phrase in required_phrases:
+            assert required_phrase in normalized, path
