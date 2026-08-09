@@ -5,6 +5,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 ADR_PATH = "docs/automation/ADR-0003-canonical-documentation-authority.md"
+ADR_INDEX_TARGET = "../automation/ADR-0003-canonical-documentation-authority.md"
 
 
 def test_canonical_documentation_authority_is_a_durable_indexed_adr() -> None:
@@ -13,7 +14,7 @@ def test_canonical_documentation_authority_is_a_durable_indexed_adr() -> None:
     assert adr_path.is_file(), f"missing canonical documentation authority ADR: {ADR_PATH}"
 
     index = (ROOT / "docs/adr/README.md").read_text(encoding="utf-8")
-    assert ADR_PATH in index
+    assert f"]({ADR_INDEX_TARGET})" in index
 
     traceability = (ROOT / "docs/TRACEABILITY.md").read_text(encoding="utf-8")
     assert ADR_PATH in traceability
