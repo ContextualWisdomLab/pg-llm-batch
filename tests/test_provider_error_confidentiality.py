@@ -105,6 +105,22 @@ async def test_batch_status_http_error_does_not_export_provider_payload() -> Non
     assert SENSITIVE_PROVIDER_TEXT not in str(exc_info.value.details)
 
 
+async def test_file_upload_http_error_does_not_export_provider_payload() -> None:
+    """Upload failures expose fixed diagnostics rather than provider JSON."""
+    client = _client(_json_response(status=400))
+
+    async def _payload(_file_id: str) -> bytes:
+        return b"{}\n"
+
+    client._load_payload_bytes = _payload
+
+    with pytest.raises(GatewayError, match="Files API upload failed: 400") as exc_info:
+        await client.upload_jsonl("memory://file-1", "default")
+
+    assert exc_info.value.response_data == BOUNDED_HTTP_ERROR
+    assert SENSITIVE_PROVIDER_TEXT not in str(exc_info.value.details)
+
+
 async def test_batch_creation_http_error_does_not_export_provider_payload() -> None:
     """Create failures expose fixed diagnostics rather than provider JSON."""
     client = _client(_json_response(status=400))
