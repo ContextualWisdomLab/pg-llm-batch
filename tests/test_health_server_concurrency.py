@@ -76,6 +76,55 @@ def test_health_server_bounds_concurrent_probe_threads(monkeypatch: Any) -> None
     assert len(rejected) == 1
 
 
+def test_health_server_saturation_does_not_amplify_logs(monkeypatch: Any) -> None:
+    """Refused probe connections must not create attacker-controlled log volume."""
+    started: list[object] = []
+    rejected: list[object] = []
+    warnings: list[tuple[object, ...]] = []
+
+    class _SaturatedHTTPServer:
+        """Hold one worker slot while offering one excess connection."""
+
+        def __init__(
+            self,
+            _address: tuple[str, int],
+            _handler_class: type[Any],
+        ) -> None:
+            """Create the deterministic server double without opening a socket."""
+
+        def serve_forever(self) -> None:
+            """Offer two requests to a one-slot server without completing the first."""
+            for index in range(2):
+                self.process_request(object(), ("127.0.0.1", 10_500 + index))
+
+        def shutdown_request(self, request: object) -> None:
+            """Record the expected excess-connection refusal."""
+            rejected.append(request)
+
+    def record_thread_start(
+        _server: Any,
+        request: object,
+        _client_address: tuple[str, int],
+    ) -> None:
+        """Hold the admitted slot without allocating a real thread."""
+        started.append(request)
+
+    def record_warning(*args: object, **_kwargs: object) -> None:
+        """Capture any per-refusal warning emitted by the listener."""
+        warnings.append(args)
+
+    monkeypatch.setattr(health, "HEALTH_MAX_CONCURRENT_REQUESTS", 1)
+    monkeypatch.setattr("http.server.HTTPServer", _SaturatedHTTPServer)
+    monkeypatch.setattr(ThreadingMixIn, "process_request", record_thread_start)
+    monkeypatch.setattr(health.logger, "warning", record_warning)
+
+    health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
+
+    assert len(started) == 1
+    assert len(rejected) == 1
+    assert warnings == []
+
+
 def test_health_server_releases_admission_slot_when_thread_start_fails(
     monkeypatch: Any,
 ) -> None:
