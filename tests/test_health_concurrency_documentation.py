@@ -55,3 +55,18 @@ def test_bounded_health_probe_admission_contract_is_authoritative() -> None:
     assert "release every admission slot" in agents
     assert "bounded concurrent readiness probes" in changelog.lower()
     assert "32" in changelog
+
+
+def test_health_probe_partial_request_timeout_contract_is_authoritative() -> None:
+    """Docs must keep slow clients from occupying finite admission slots forever."""
+    adr = _normalized(ADR)
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    for document in (adr, doctoring):
+        assert "5-second request-read timeout" in document
+        assert "partial request" in document.lower()
+        assert "finite admission slot" in document.lower()
+        assert "http.server is not recommended for production" in document.lower()
+
+    assert "5-second request-read timeout" in changelog.lower()
