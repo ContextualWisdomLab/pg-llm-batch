@@ -28,6 +28,17 @@ def test_explicit_empty_dsn_never_falls_back_to_environment(monkeypatch) -> None
         bootstrap.resolve_dsn("")
 
 
+@pytest.mark.parametrize("explicit", [" ", "\t", "\n", " \t \n "])
+def test_explicit_whitespace_only_dsn_never_reaches_libpq_defaults(
+    monkeypatch, explicit: str
+) -> None:
+    """Whitespace-only explicit DSNs must not delegate target selection to libpq defaults."""
+    monkeypatch.setenv(bootstrap.DSN_ENV_VAR, "postgresql://environment")
+
+    with pytest.raises(ConfigError, match="explicit Postgres DSN"):
+        bootstrap.resolve_dsn(explicit)
+
+
 def test_optional_secret_key_precedence_is_authoritative() -> None:
     """Docs must preserve explicit-empty secret-key precedence over ambient state."""
     doctoring = _normalized(DOCTORING)
