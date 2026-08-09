@@ -23,11 +23,11 @@ The following decisions are indexed by capability rather than promoted to protec
 - repository-local maintenance credential/writer boundary — #69;
 - health/readiness disclosure and resource bounds — #70;
 - bounded retry/TLS/response-handoff classification — #71;
-- checkpoint OpenTelemetry observability — current replacement #92;
-- append-only checkpoint acceptance audit — current replacement #94;
-- atomic checkpoint migration operator — current replacement #95;
-- bounded checkpoint-audit pagination — current replacement #96;
-- snapshot-manifest assurance — stale #84 implementation must be replaced on #96 before #84 is superseded;
+- checkpoint OpenTelemetry observability — current replacement #92; SUPERSEDED #78;
+- append-only checkpoint acceptance audit — current replacement #94; SUPERSEDED #79;
+- atomic checkpoint migration operator — current replacement #95; SUPERSEDED #80;
+- bounded checkpoint-audit pagination — current replacement #96; SUPERSEDED #83;
+- snapshot-manifest assurance — current replacement #97 on #96; SUPERSEDED #84 is closed unmerged and its checks/reviews do not transfer;
 - secret input outside process argv — #85;
 - typed config/cached mutable-state authority — #86;
 - PostgreSQL connection ownership and cleanup — #87;
