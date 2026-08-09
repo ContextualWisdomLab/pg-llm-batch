@@ -69,18 +69,15 @@ This is a **classification aid**, not a release checklist and not a substitute f
 
 ### ACTIVE-PR
 
-The open PR queue contains the following material target capabilities at the time this document was authored. Their PR number is an index, not a claim that the PR is mergeable or accepted now.
+The open PR queue contains the following material target capabilities at the latest reconciliation. A PR number is an index, not a claim that the PR is mergeable or accepted now.
 
 - #53 — tenant-isolated durable lifecycle state and PostgreSQL RLS boundary.
 - #57 — descriptor-pinned reproducible release evidence.
 - #58 — bounded incremental result-record streaming.
 - #59 — resumable stream checkpoints.
 - #60 — durable PostgreSQL checkpoint persistence.
-- #78 — checkpoint OpenTelemetry observability.
-- #79 — append-only checkpoint acceptance audit trail.
-- #80 — atomic checkpoint migration operator.
-- #83 — bounded stable audit export pages.
-- #84 — checkpoint-audit snapshot manifests.
+- #92 — current linearized checkpoint OpenTelemetry observability replacement on #60.
+- #94 — current linearized append-only checkpoint acceptance audit replacement on #92.
 - #69 — hourly maintenance credential/writer-boundary hardening.
 - #70 — readiness redaction, concurrency, timeout, and listener hardening.
 - #71 — HTTP 425 and permanent TLS/fingerprint retry-classification hardening.
@@ -92,7 +89,14 @@ The open PR queue contains the following material target capabilities at the tim
 - #91 — loopback-only standalone Compose port publishing.
 - #93 — this canonical documentation authority.
 
-The list must be revalidated before any release or acquisition statement. Closed, merged, superseded, or replaced PRs move to their corresponding maturity state; the documentation must not preserve stale ACTIVE-PR claims indefinitely.
+### SUPERSEDED or stale-stack work that still needs convergence
+
+- #78 was superseded by current replacement #92 after #60 advanced.
+- #79 was closed unmerged as SUPERSEDED by current replacement #94 after replacement preservation was verified.
+- #80 remains open on the old #79 branch and therefore cannot remain the canonical next stack boundary; its unique atomic checkpoint migration-operator delta must be replayed or otherwise safely replaced on #94 before downstream work proceeds.
+- #83 and #84 remain open descendants of stale #80 and likewise require successor reconciliation after the #80 replacement. Their prior staged checks are historical evidence only and do not transfer to a successor chain.
+
+The queue must be revalidated before any release or acquisition statement. Closed, merged, superseded, or replaced PRs move to their corresponding maturity state; this document must not preserve stale ACTIVE-PR claims indefinitely.
 
 ## Authority rules
 
@@ -112,7 +116,7 @@ For every material runtime, schema, security, deployment, workflow, public-API, 
 2. identify which canonical document family owns the changed contract;
 3. update the smallest authoritative document and its traceability entry;
 4. run the documentation fitness contract plus normal repository gates;
-5. classify anything intentionally deferred as ACTIVE-PR, PLANNED, or OUT-OF-SCOPE rather than leaving ambiguous prose; and
+5. classify anything intentionally deferred as ACTIVE-PR, PLANNED, SUPERSEDED, or OUT-OF-SCOPE rather than leaving ambiguous prose; and
 6. after the documentation mutation, return to executable product/merge/operational work instead of treating documentation as run completion.
 
 ## References
