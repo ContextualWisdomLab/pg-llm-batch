@@ -169,7 +169,6 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
         def process_request(self, request: Any, client_address: Any) -> None:
             """Admit a request only when one bounded worker slot is available."""
             if not self._request_slots.acquire(blocking=False):
-                logger.warning("Rejecting readiness connection: concurrency limit reached")
                 self.shutdown_request(request)
                 return
             try:
