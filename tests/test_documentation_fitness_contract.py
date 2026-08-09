@@ -12,6 +12,8 @@ REQUIRED_DOCUMENTATION = (
     "docs/DOCUMENTATION_FITNESS.md",
     "docs/product/PRD.md",
     "docs/product/TRD.md",
+    "docs/product/API_CONTRACT.md",
+    "docs/RELEASE_ACCEPTANCE.md",
     "docs/architecture/UML.md",
     "docs/architecture/ERD.md",
     "docs/THREAT_MODEL.md",
@@ -97,6 +99,39 @@ def test_traceability_binds_requirements_to_live_repository_surfaces() -> None:
     assert "exact contributor head" in traceability.lower()
     assert "live base" in traceability.lower()
     assert "independent" in traceability.lower()
+
+
+def test_api_contract_separates_current_surface_from_active_targets() -> None:
+    """Public compatibility promises must not silently promote open-PR APIs to shipped."""
+    contract = _read("docs/product/API_CONTRACT.md")
+    for phrase in (
+        "IMPLEMENTED-ON-PROTECTED-MAIN",
+        "ACTIVE-PR",
+        "BatchAPIClient",
+        "DurableBatchAPIClient",
+        "semantic versioning",
+        "deprecation",
+        "schema",
+        "CLI",
+    ):
+        assert phrase.lower() in contract.lower()
+
+
+def test_release_acceptance_requires_exact_integrated_evidence() -> None:
+    """Release documentation must bind publication to integrated evidence and rollback."""
+    release = _read("docs/RELEASE_ACCEPTANCE.md")
+    for phrase in (
+        "exact integrated protected head",
+        "independent",
+        "100%",
+        "SBOM",
+        "provenance",
+        "rollback",
+        "migration",
+        "operational acceptance",
+        "CHANGELOG",
+    ):
+        assert phrase.lower() in release.lower()
 
 
 def test_automation_adrs_capture_work_conservation_and_writer_lease() -> None:
