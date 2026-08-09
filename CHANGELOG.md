@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Required explicit nonblank checkpoint database targets for store construction
+  and schema application, rejecting absent, empty, or whitespace-only DSNs
+  before any Psycopg/libpq connection attempt instead of permitting ambient
+  environment, service-file, or local-default target selection.
 - Installed the durable checkpoint migration in the fresh bundled PostgreSQL image
   as `/docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql`, after the cron
   initialization script, so new container deployments cannot silently omit the
