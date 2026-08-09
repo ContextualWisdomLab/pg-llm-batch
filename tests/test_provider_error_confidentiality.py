@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -191,3 +192,17 @@ async def test_invalid_control_utf8_does_not_retain_provider_bytes_exception() -
     assert exc_info.value.__cause__ is None
     assert exc_info.value.__context__ is None
     assert SENSITIVE_PROVIDER_TEXT not in str(exc_info.value.details)
+
+
+def test_provider_confidentiality_doctoring_covers_malformed_success_payload_links() -> None:
+    """Authoritative docs must cover exception-link retention on malformed success bodies."""
+    doctoring = " ".join(
+        Path("docs/doctoring/http-425-too-early-retries.md")
+        .read_text(encoding="utf-8")
+        .split()
+    )
+    changelog = " ".join(Path("CHANGELOG.md").read_text(encoding="utf-8").split())
+
+    assert "malformed successful provider responses" in doctoring
+    assert "exception cause or context" in doctoring
+    assert "malformed provider response exception links" in changelog
