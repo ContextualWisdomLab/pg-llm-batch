@@ -273,7 +273,9 @@ class SecretStore:
 
     Values are Fernet-encrypted at rest when a key is supplied. Without a key,
     values are base64-obfuscated and a warning is logged; that fallback is
-    acceptable only for local/dev containers and is not encryption.
+    acceptable only for local/dev containers and is not encryption. When a
+    Fernet key is configured, missing ``cryptography`` support fails closed
+    instead of silently downgrading that explicit encryption request.
     """
 
     TABLE_NAME = "com_secrets"
