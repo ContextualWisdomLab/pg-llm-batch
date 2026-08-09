@@ -391,7 +391,10 @@ class BatchAPIClient:
                 if (
                     not retry_safe
                     or attempt >= self.max_retry_attempts
-                    or isinstance(exc, aiohttp.ClientSSLError)
+                    or isinstance(
+                        exc,
+                        (aiohttp.ClientSSLError, aiohttp.ServerFingerprintMismatch),
+                    )
                 ):
                     terminal_error_type = type(exc).__name__
                 else:
