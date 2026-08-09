@@ -49,5 +49,12 @@ def resolve_dsn(explicit: Optional[str] = None) -> str:
 
 
 def resolve_secret_key(explicit: Optional[str] = None) -> Optional[str]:
-    """Resolve the optional Fernet key used to decrypt secrets at rest."""
-    return explicit or os.environ.get(SECRET_KEY_ENV_VAR)
+    """Resolve the optional Fernet key while preserving explicit absence.
+
+    The environment is consulted only when the caller omits the argument.
+    Supplying an empty string explicitly disables the ambient bootstrap key
+    rather than silently selecting a different decryption authority.
+    """
+    if explicit is not None:
+        return explicit
+    return os.environ.get(SECRET_KEY_ENV_VAR)
