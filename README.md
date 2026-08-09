@@ -17,11 +17,11 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 - **By default, provider credentials stay out of the environment in standalone mode.**
   Operational configuration and provider credentials live in Postgres KV tables
   (`com_config`, `com_secrets`). In standalone mode, the environment is only a
-  *bootstrap transport* for the DSN and an optional Fernet key. The Fernet key is
-  sensitive bootstrap secret material, not a provider credential, and must be
-  protected accordingly. Embedded hosts may instead supply credentials through
-  the documented `Callable[[str], GatewayCredentials]` integration boundary.
-  This replaces the ~75 `os.getenv` reads in the upstream app.
+  *bootstrap transport* for the DSN and an optional Fernet key. The Fernet key is sensitive bootstrap secret material,
+  not a provider credential, and must be protected accordingly. Embedded hosts
+  may instead supply credentials through the documented
+  `Callable[[str], GatewayCredentials]` integration boundary. This replaces the
+  ~75 `os.getenv` reads in the upstream app.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 
