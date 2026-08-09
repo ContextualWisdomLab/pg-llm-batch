@@ -6,7 +6,7 @@
 
 ## Purpose
 
-This document makes the repository's licensing, provenance, ownership, and third-party notice evidence discoverable for release and acquisition due diligence. It records what the repository itself can prove and the checks that must be repeated before a release or transaction. It does **not replace legal review**, title verification, contributor/assignment review, or a transaction-specific freedom-to-operate analysis.
+This document makes the repository's licensing, provenance, ownership, and third-party notice evidence discoverable for release and acquisition due diligence. It records what the repository itself can prove and the checks that must be repeated before a release or transaction. It does not replace legal review, title verification, contributor/assignment review, or a transaction-specific freedom-to-operate analysis.
 
 ## Outbound license authority
 
