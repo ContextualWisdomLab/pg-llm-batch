@@ -191,6 +191,15 @@ def test_public_health_report_fails_closed_on_malformed_readiness_shapes():
             "ready": False,
             "components": [{"component": "database", "is_ready": "false"}],
         },
+        {
+            "ready": True,
+            "components": [
+                {"component": "database", "is_ready": True},
+                {"component": "database", "is_ready": True},
+                {"component": "pg_tiktoken", "is_ready": True},
+                {"component": "com_config", "is_ready": True},
+            ],
+        },
     ]
 
     for report in malformed_reports:
