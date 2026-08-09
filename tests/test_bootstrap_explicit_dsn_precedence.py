@@ -50,6 +50,15 @@ def test_environment_whitespace_only_dsn_never_reaches_libpq_defaults(
         bootstrap.resolve_dsn()
 
 
+def test_environment_whitespace_dsn_boundary_is_authoritative() -> None:
+    """Docs must state that whitespace-only ambient DSNs are rejected too."""
+    doctoring = _normalized(DOCTORING).lower()
+    changelog = _normalized(CHANGELOG).lower()
+
+    assert "whitespace-only environment dsn" in doctoring
+    assert "whitespace-only environment dsn" in changelog
+
+
 def test_optional_secret_key_precedence_is_authoritative() -> None:
     """Docs must preserve explicit-empty secret-key precedence over ambient state."""
     doctoring = _normalized(DOCTORING)
