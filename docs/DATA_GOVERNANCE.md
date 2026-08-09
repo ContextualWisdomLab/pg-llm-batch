@@ -45,9 +45,9 @@ Even after integration, `tenant_scope` is a host-selected authorization input, n
 
 Submitting a batch intentionally discloses request content and required metadata to the configured OpenAI-compatible provider endpoint. The host is responsible for selecting an authorized provider/region/account and determining whether that disclosure is permitted for the intended purpose.
 
-The package is responsible for its narrower transport boundary: validate configured destinations and resource identifiers, use reviewed TLS rules, keep side-effecting POST operations single-attempt unless a separately reviewed idempotency design changes that contract, bound provider responses, and avoid reflecting raw provider response bodies into exported errors or logs.
+The package is responsible for its narrower transport boundary: validate configured destinations and resource identifiers, use reviewed TLS rules, keep side-effecting POST operations single-attempt unless a separately reviewed idempotency design changes that contract, and bound provider responses. **Provider-error confidentiality is not yet protected-main behavior at this documentation baseline.** ACTIVE-PR #71 changes Files upload, batch creation/status, output/error file download, and cancellation rejection so provider-controlled HTTP error JSON, free-text bodies, debug fields, and messages are not copied into package diagnostics/results; those changes remain ACTIVE-PR until integrated and revalidated on protected main.
 
-Provider responses are untrusted input. Successful TLS plus a valid provider response does not convert provider content into authorization instructions or a new package policy authority.
+The target package contract is to avoid reflecting raw provider response bodies into exported errors or logs. Until ACTIVE-PR #71 is protected, acquisition/release evidence must not describe that target as shipped solely because this documentation branch states it. Provider responses remain untrusted input, and successful TLS plus a valid provider response does not convert provider content into authorization instructions or a new package policy authority.
 
 ## 7. Credentials and secret authority
 
@@ -59,7 +59,7 @@ Provider credential values are secret data. The package must never log them, ret
 
 The protected-main opt-in OpenTelemetry path is package-owned only for bounded operation signals. Telemetry must not contain prompts, provider response bodies, credentials, DSNs, endpoint aliases, provider URLs, resource identifiers, or arbitrary provider/database messages. Prefer finite operation/outcome vocabularies and low-cardinality attributes.
 
-Health/readiness and ordinary operator diagnostics follow the same principle: expose enough bounded information to operate the component, but never log or return raw provider response content, prompt text, secret values, or unreviewed database exception detail.
+Health/readiness and ordinary operator diagnostics follow the same principle: expose enough bounded information to operate the component, but never log or return raw prompt text or secret values. The stronger provider HTTP error redaction described in section 6 is **ACTIVE-PR #71**, not protected-main evidence at this baseline; exact release acceptance must verify its integrated behavior before claiming provider-error confidentiality as shipped.
 
 ## 9. Logging and evidence
 
@@ -97,7 +97,7 @@ If a credential or sensitive content is exposed through logs/artifacts, treat it
 For an exact release candidate, data governance is acceptable only when:
 
 1. this document matches the protected schema/runtime and all ACTIVE-PR overlays remain correctly labeled;
-2. package telemetry/log/error/health contracts do not expose secret or raw sensitive content beyond reviewed boundaries;
+2. package telemetry/log/error/health contracts do not expose secret or raw sensitive content beyond reviewed boundaries, including fresh protected-main proof of provider-error confidentiality if ACTIVE-PR #71 or a successor is part of the release candidate;
 3. provider destination/resource validation and response bounds pass their security tests;
 4. deployment documentation states host ownership of authorization, purpose, retention, erasure, backup, and residency;
 5. migrations/rollback do not silently destroy retained content/evidence; and
@@ -109,6 +109,7 @@ This is an engineering control contract, not a claim of legal compliance, certif
 
 - Protected persistence: `pg_llm_batch/schema.sql`.
 - Provider transport and response bounds: `pg_llm_batch/batch_api_client.py` and security/HTTP tests.
+- Provider-error confidentiality target and current implementation owner: ACTIVE-PR #71 plus `docs/doctoring/http-425-too-early-retries.md`; it becomes protected-main evidence only after integration and fresh validation.
 - Credential storage/provider seam: configuration/secret-store modules and `docs/product/API_CONTRACT.md`.
 - Telemetry privacy boundary: `pg_llm_batch/observability.py` and `docs/doctoring/opentelemetry-operations.md`.
 - Threats and trust boundaries: `docs/THREAT_MODEL.md`.
