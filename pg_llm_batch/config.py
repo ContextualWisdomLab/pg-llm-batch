@@ -332,7 +332,16 @@ class SecretStore:
                     "Secret is encrypted but no Fernet key is configured to decrypt it"
                 )
             return self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
-        return base64.b64decode(stored.encode("utf-8")).decode("utf-8")
+        decoded: Optional[str]
+        try:
+            decoded = base64.b64decode(
+                stored.encode("utf-8"), validate=True
+            ).decode("utf-8")
+        except ValueError:
+            decoded = None
+        if decoded is None:
+            raise ConfigError("stored secret encoding is invalid")
+        return decoded
 
     def set_secret(self, key: str, value: str) -> None:
         """Encrypt or obfuscate and persist a secret value."""
