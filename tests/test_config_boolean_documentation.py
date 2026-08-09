@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Documentation contracts for malformed boolean configuration fallback."""
+"""Documentation contracts for stable typed configuration behavior."""
 
 from pathlib import Path
 
@@ -26,3 +26,15 @@ def test_boolean_fallback_contract_is_authoritative() -> None:
     assert "Python Software Foundation. (2026)." in doctoring
     assert "Truth value testing" in doctoring
     assert "malformed boolean configuration" in changelog.lower()
+
+
+def test_configuration_write_normalization_is_authoritative() -> None:
+    """Docs must preserve canonical read-after-write and reload behavior."""
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    assert "read-after-write" in doctoring.lower()
+    assert "cache reload" in doctoring.lower()
+    assert "canonical" in doctoring.lower()
+    assert "untyped" in doctoring.lower()
+    assert "configuration writes" in changelog.lower()
