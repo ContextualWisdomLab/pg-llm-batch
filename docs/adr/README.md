@@ -2,7 +2,18 @@
 
 ## Authority and status
 
-This index is the canonical entry point for durable pg-llm-batch architecture/governance decisions. A file present on an open PR is **ACTIVE-PR** and does not become protected-main authority until merged. Feature-specific ADRs carried by other active PRs retain their own status and must not be presented as shipped behavior here.
+This index is the canonical entry point for durable pg-llm-batch architecture/governance decisions. A file present only on an open PR is **ACTIVE-PR documentation** and does not become protected-main documentation authority until merged. A decision recorded by that file may nevertheless describe behavior already **IMPLEMENTED-ON-PROTECTED-MAIN**; document-integration maturity and implementation maturity are separate. Feature-specific ADRs carried by other active PRs retain their own status and must not be presented as shipped behavior here.
+
+## Foundational protected-main product decisions
+
+The following records capture architectural choices already implemented on protected main. The decisions are `IMPLEMENTED-ON-PROTECTED-MAIN`; these newly written records themselves remain ACTIVE-PR #93 until this documentation branch integrates.
+
+| ADR | Decision | Implementation maturity |
+| --- | --- | --- |
+| [`foundation-postgresql-authority.md`](foundation-postgresql-authority.md) | PostgreSQL is the package-owned durable authority for current configuration, batch/request/payload state, endpoint mapping, and lifecycle projection; batch payload reconstruction remains disk-free | IMPLEMENTED-ON-PROTECTED-MAIN |
+| [`foundation-provider-http-boundary.md`](foundation-provider-http-boundary.md) | Provider HTTP is external/untrusted; validate destinations/identifiers, bound responses/time, and keep side-effecting POST operations single-attempt unless a reviewed idempotency contract changes that rule | IMPLEMENTED-ON-PROTECTED-MAIN |
+| [`foundation-standalone-composition.md`](foundation-standalone-composition.md) | Preserve both standalone operation and embedding-host composition without mandatory sibling-service or hidden cross-service database coupling | IMPLEMENTED-ON-PROTECTED-MAIN |
+| [`foundation-lifecycle-observation.md`](foundation-lifecycle-observation.md) | Reserve database-owned observation order before durable lifecycle provider I/O and surface provider-success/persistence-failure as reconciliation evidence | IMPLEMENTED-ON-PROTECTED-MAIN |
 
 ## Canonical governance ADRs
 
