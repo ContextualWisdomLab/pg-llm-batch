@@ -141,7 +141,7 @@ flowchart LR
     SYN[Synthetic merge ref/status-only evidence] -. non-authoritative for source identity .-> GATE
 ```
 
-Merge readiness is not protected-main acceptance. Explicit merge execution first creates the exact integrated protected revision. Capability-specific post-merge operational acceptance then revalidates the applicable queue, findings, branch policy, live graph, runtime/deployment/migration/operator behavior, and other evidence required by `docs/automation/ADR-0005-protected-main-operational-acceptance.md` and `docs/RELEASE_ACCEPTANCE.md`. Only that fresh evidence may close the applicable incident/runtime/release acceptance lane; the merge itself is intermediate.
+Merge readiness is not protected-main acceptance. Explicit merge execution first creates the exact integrated protected revision. This protected-main post-check is the capability-specific post-merge operational acceptance: it revalidates the applicable queue, findings, branch policy, live graph, runtime/deployment/migration/operator behavior, and other evidence required by `docs/automation/ADR-0005-protected-main-operational-acceptance.md` and `docs/RELEASE_ACCEPTANCE.md`. Only that fresh evidence may close the applicable incident/runtime/release acceptance lane; the merge itself is intermediate.
 
 ## 8. Standalone and CWL composition
 
