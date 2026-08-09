@@ -15,6 +15,14 @@ SQL, or an incorrectly authorized tenant-to-scope mapping.
 
 ## Control rationale
 
+### Database target authority
+
+Every package-owned durable-checkpoint surface requires an **explicit nonblank Postgres DSN**. `PostgresBatchResultCheckpointStore` validates its target during construction, and `apply_result_checkpoint_schema()` applies the same validation before reading migration input or asking Psycopg to connect. `None`, an empty string, and whitespace-only text fail with a bounded `ConfigError` **before any connection attempt**.
+
+This prevents Psycopg/libpq from selecting a database through a **libpq environment** variable, service file, or local default when the application did not supply a reviewed target. Validation uses trimming only to recognize all-whitespace input; a valid nonblank DSN is returned byte-for-byte so this package does not rewrite libpq conninfo syntax. The fixed error message never reflects the rejected value, credentials, host, database name, or process environment.
+
+Caller-owned transaction methods do not reconnect and therefore use the database authority already established by the caller's cursor. The explicit-DSN requirement applies to package-owned store construction, package-owned `load()`/`save()` connections, and migration application; it does not claim to authorize a cursor supplied by embedding code.
+
 ### Concurrent writer control
 
 PostgreSQL 18 documents that row-level `FOR UPDATE` locks block competing writers
@@ -60,6 +68,7 @@ before schema rollback.
 
 | Threat or failure | Deterministic control | Residual boundary |
 |---|---|---|
+| Missing package-owned database target | Reject absent, empty, or whitespace-only DSN before Psycopg/libpq | Caller-owned cursors remain the embedding host's authority boundary |
 | Stale writer overwrites newer acknowledgement | `FOR UPDATE` plus exact `expected_previous` comparison | Administrative direct writes remain outside package guarantees |
 | Two writers create the first checkpoint | Compound unique key, `ON CONFLICT`, locked reconciliation | Database outage still aborts the operation |
 | Duplicate retry of the same acknowledgement | Exact checkpoint equality is idempotent | Duplicate external side effects require host idempotency |
@@ -72,11 +81,14 @@ before schema rollback.
 
 ## Verification evidence
 
-Deterministic unit tests cover strict consumer and tenant validation, compound-key
-SQL parameters, malformed rows, package-owned and caller-owned transaction paths,
-idempotent repeats, stale and forked writers, logical and physical regressions,
-identical and conflicting initial races, disappearing conflict rows, schema
-installation, and 100% production statement and branch coverage.
+Deterministic unit tests cover strict database-target, consumer, and tenant
+validation, compound-key SQL parameters, malformed rows, package-owned and
+caller-owned transaction paths, idempotent repeats, stale and forked writers,
+logical and physical regressions, identical and conflicting initial races,
+disappearing conflict rows, schema installation, and 100% production statement
+and branch coverage. Database-target tests prove both the store and migration
+entrypoint reject `None`, empty, and whitespace-only values without invoking the
+database driver.
 
 Static migration tests require byte-identical package and container SQL, forced
 RLS, tenant policy text, bounded digest and position constraints, descriptive
@@ -95,6 +107,20 @@ the durable checkpoint schema.
 Final merge evidence must be regenerated on the integrated exact head and base.
 A successful stacked-branch run is development evidence only and cannot authorize
 release, provenance, or reuse of an older artifact.
+
+## Operational recovery and rollback
+
+A database-target validation failure is corrected by supplying the intended
+nonblank DSN through the caller's reviewed configuration or explicit API/CLI
+argument. Do not make the checkpoint component depend on ambient libpq target
+selection to recover availability. If a valid explicit DSN later fails to
+connect, preserve the original driver failure for operator diagnosis; this
+boundary validates authority presence, not network reachability or credentials.
+
+There is no data migration for the target-validation change. Reverting it would
+restore implicit libpq target selection for missing package-owned DSNs and can
+redirect checkpoint evidence or schema application to an unintended database.
+Retain the validation and correct the caller configuration instead.
 
 ## APA 7th references
 
