@@ -1,20 +1,23 @@
-# Bootstrap DSN precedence
+# Bootstrap source precedence
 
 ## Problem
 
-`PG_LLM_BATCH_DSN` is a bootstrap transport used only when a caller does not
-supply an explicit PostgreSQL target. The previous implementation selected the
-DSN with Python boolean truthiness:
+`PG_LLM_BATCH_DSN` and `PG_LLM_BATCH_SECRET_KEY` are bootstrap transports used
+only when a caller does not supply the corresponding explicit value. The
+previous implementation selected both values with Python boolean truthiness:
 
 ```text
-explicit or PG_LLM_BATCH_DSN
+explicit or bootstrap_environment_value
 ```
 
 That expression treats an omitted value (`None`) and an explicitly supplied
-empty string as equivalent. When the environment contains a valid DSN, a caller
-that explicitly supplies an empty DSN can therefore be redirected silently to
-the environment-selected database instead of receiving an input error. At an
-operator boundary, fallback must not replace an explicit but invalid target.
+empty string as equivalent. For the required DSN, a caller that explicitly
+supplies an empty target can be redirected silently to the environment-selected
+database instead of receiving an input error. For the optional Fernet key, an
+explicit empty value can silently inherit an ambient bootstrap key and therefore
+select a different decryption authority than the caller requested. At an
+operator boundary, fallback must not replace explicit input merely because that
+input is false-valued.
 
 ## Contract
 
@@ -24,42 +27,70 @@ operator boundary, fallback must not replace an explicit but invalid target.
 - an explicitly supplied empty string fails closed with `ConfigError` and does
   not consult `PG_LLM_BATCH_DSN`;
 - the environment is consulted only when the explicit argument is omitted
-  (`None`);
+  (`None`); and
 - a missing or empty environment DSN still fails with the existing bootstrap
-  configuration error; and
-- optional Fernet bootstrap-key resolution is unchanged by this slice.
+  configuration error.
+
+`resolve_secret_key()` applies the same source-precedence rule while retaining
+its optional-value semantics:
+
+- a non-empty explicit key wins over the environment;
+- an **explicit empty Fernet** bootstrap key is preserved as the empty string
+  and never replaced by an **ambient bootstrap key**;
+- `PG_LLM_BATCH_SECRET_KEY` is consulted only when the explicit argument is
+  omitted (`None`); and
+- when neither source provides a key, the result remains `None`.
+
+An explicit empty key does not make encrypted records decryptable. It expresses
+that this invocation has no Fernet key and prevents an ambient process value
+from silently changing the selected decryption authority. `SecretStore` retains
+its existing behavior for missing or empty keys, and an encrypted record still
+fails closed when no usable key is configured.
 
 The distinction matches Python's command-line model: an optional argument may be
-absent and receive a default, while a supplied argument is an explicit input.
-`os.environ` remains the process-environment mapping used only by the omitted
-DSN path.
+absent and receive a default, while a supplied argument is explicit input.
+`os.environ` remains the process-environment mapping used only by omitted
+bootstrap-value paths.
 
 ## Verification
 
-`tests/test_bootstrap_explicit_dsn_precedence.py` proves the regression directly:
-with a valid `PG_LLM_BATCH_DSN` present, `resolve_dsn("")` must raise rather than
-select the environment target. Existing bootstrap tests continue to prove that a
-non-empty explicit DSN wins, an omitted argument uses the environment, and an
-omitted argument without environment configuration fails.
+`tests/test_bootstrap_explicit_dsn_precedence.py` proves the required-DSN
+regression directly: with a valid `PG_LLM_BATCH_DSN` present,
+`resolve_dsn("")` must raise rather than select the environment target.
+`tests/test_bootstrap_cli.py` proves the optional-key counterpart: with an
+ambient `PG_LLM_BATCH_SECRET_KEY` present, `resolve_secret_key("")` returns the
+explicit empty string rather than the ambient key.
 
-RED source head `aea84e1d27822826ae22b7d532d87ede0025e5a7` reached the intended production
-boundary in CI run `31305290555`, Python 3.12 job `93224552797`: the new test
-failed with `DID NOT RAISE ConfigError` while the old truthiness expression
-silently selected `postgresql://environment`. This is fail-first development
-evidence; it is not final acceptance evidence.
+Existing bootstrap tests continue to prove that non-empty explicit values win,
+omitted arguments use their environment values, an omitted DSN without
+environment configuration fails, and an omitted optional key without environment
+configuration returns `None`.
 
-The repair at source head `a0aa1ec7281aeb12ecbb732139742bd12d004286`
-consults the environment only when `explicit is None` and rejects an explicitly
-empty value before environment lookup. Final acceptance still requires the full
-repository CI/security/review evidence on the final unchanged source head under
-the repository's exact-source evidence policy.
+The DSN RED source head `aea84e1d27822826ae22b7d532d87ede0025e5a7`
+reached the intended production boundary in CI run `31305290555`, Python 3.12
+job `93224552797`: the new test failed with `DID NOT RAISE ConfigError` while
+the old truthiness expression silently selected `postgresql://environment`.
+The explicit-key RED source head `683dd533052d8b6f2aef0147ca3260760f11b1f6`
+proved the same truthiness defect for the optional key: an explicit empty string
+returned `environment-key` instead. These are fail-first development evidence,
+not final acceptance evidence.
+
+The DSN repair consults the environment only when `explicit is None` and rejects
+an explicitly empty required value before environment lookup. The optional-key
+repair likewise consults the environment only when `explicit is None`, but
+preserves any explicitly supplied string because an empty optional key is a
+valid statement of absence rather than an invalid database target. Final
+acceptance still requires the full repository CI, security, and review evidence
+on the final unchanged source head under the exact-source evidence policy.
 
 ## Rollback
 
 Rollback is the ordinary Git revert of this bounded bootstrap change. Rolling
-back restores the unsafe ambiguity between omitted and explicitly empty DSN
-inputs, so rollback is appropriate only if a documented compatibility contract
-requires that ambiguity and a safer explicit migration is provided.
+back restores the unsafe ambiguity between omitted and explicitly empty inputs:
+required DSNs can silently retarget a command, and optional Fernet key selection
+can silently inherit an ambient decryption authority. A rollback is appropriate
+only if a documented compatibility contract requires that ambiguity and a safer
+explicit migration is provided.
 
 ## References
 
