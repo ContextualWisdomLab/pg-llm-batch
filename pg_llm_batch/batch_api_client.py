@@ -452,14 +452,17 @@ class BatchAPIClient:
             operation,
             max_bytes=self.max_control_response_bytes,
         )
+        decode_error_type: Optional[str] = None
         try:
             result = json.loads(content)
         except (json.JSONDecodeError, RecursionError) as exc:
+            decode_error_type = type(exc).__name__
+        if decode_error_type is not None:
             raise GatewayError(
                 f"{operation} returned invalid JSON",
                 status_code=getattr(response, "status", None),
-                response_data={"error_type": type(exc).__name__},
-            ) from exc
+                response_data={"error_type": decode_error_type},
+            )
         if not isinstance(result, dict):
             raise GatewayError(
                 f"{operation} returned a non-object JSON response",
@@ -544,17 +547,23 @@ class BatchAPIClient:
                 payload.extend(chunk.tobytes())
             else:
                 payload.extend(chunk)
+        decode_error_type: Optional[str] = None
+        decode_error_offset: Optional[int] = None
         try:
-            return payload.decode("utf-8")
+            decoded = payload.decode("utf-8")
         except UnicodeDecodeError as exc:
+            decode_error_type = type(exc).__name__
+            decode_error_offset = exc.start
+        if decode_error_type is not None:
             raise GatewayError(
                 f"{operation} returned invalid UTF-8",
                 status_code=getattr(response, "status", None),
                 response_data={
-                    "error_type": type(exc).__name__,
-                    "byte_offset": exc.start,
+                    "error_type": decode_error_type,
+                    "byte_offset": decode_error_offset,
                 },
-            ) from exc
+            )
+        return decoded
 
     def _headers(self, api_key: str, *, json_body: bool = False) -> Dict[str, str]:
         """Build request headers with bearer auth, optionally declaring a JSON body."""
