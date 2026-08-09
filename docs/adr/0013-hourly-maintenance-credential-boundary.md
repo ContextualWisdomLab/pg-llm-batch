@@ -36,8 +36,8 @@ A later feasibility review exposed another operational gap. Removing repository
 write permission also removed `id-token: write`, so the central scheduler could
 not request the OIDC assertion needed for its preferred short-lived GitHub App
 credential. GitHub documents `id-token: write` as permission to request an OIDC
-token; it does not itself grant repository mutation authority. The called
-workflow still performs the token exchange and all mutation authorization checks.
+token; it does not grant repository write access. The called workflow still
+performs the token exchange and all mutation authorization checks.
 
 Exact-source CI source-head binding is intentionally **out of scope** for this
 ADR and pull request. That independent repository-governance repair is isolated
