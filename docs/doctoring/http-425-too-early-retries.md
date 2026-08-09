@@ -32,7 +32,9 @@ Failing closed on `ClientSSLError` and `ServerFingerprintMismatch` is a transpor
 
 Dependency-defined transport exception class names never enter exported diagnostics or retry warning logs. The closed vocabulary is `ServerFingerprintMismatch`, `ClientConnectorCertificateError`, `ClientSSLError`, `TimeoutError`, and `ClientError`. Specific reviewed TLS categories remain distinguishable; every other `aiohttp.ClientError`, including a caller- or dependency-defined subclass, is collapsed to `ClientError`. This prevents dynamic class names from becoming a confidentiality leak or high-cardinality log/evidence field while preserving the original exception only inside the active acquisition boundary.
 
-The response-status retry decision uses only the HTTP status and bounded `Retry-After` guidance. Provider response bodies do not decide whether a request is replayed. Existing credential, HTTPS, no-redirect, response-size, body-confidentiality, and post-response-handoff no-replay controls remain unchanged.
+Provider-controlled HTTP error bodies are also excluded from exported package diagnostics. Files upload, batch creation, batch status, and output/error file download return only the HTTP status plus the fixed `ProviderHTTPError` category when the provider responds with a non-success status. Batch-cancellation rejection returns the status plus the fixed reason `Batch cancellation rejected by provider`. These paths decide on status before parsing or decoding the provider body, so provider error JSON, free-text bodies, email addresses, credential-like strings, debug fields, and provider-specific error types cannot be copied into `GatewayError.response_data`, cancellation results, exception details, or package logs by those error paths. Successful responses retain the existing bounded UTF-8 and JSON parsing contracts.
+
+The response-status retry decision uses only the HTTP status and bounded `Retry-After` guidance. Provider response bodies do not decide whether a request is replayed. Existing credential, HTTPS, no-redirect, response-size, and post-response-handoff no-replay controls remain unchanged.
 
 ## Operational behavior
 
@@ -42,11 +44,13 @@ A TLS handshake, certificate-verification, or certificate fingerprint mismatch p
 
 Retry warnings identify only an HTTP status or one closed transport category. They never include exception messages, URLs, hostnames, fingerprints, arbitrary subclass names, or provider-controlled class naming. A 500 response is exposed immediately. Operators should not compensate by increasing the global retry set without evidence that a specific provider contract makes that replay safe and useful.
 
+For a non-success provider response, operators receive the status code and the fixed package category/reason rather than the provider's body. Correlate deeper provider-side diagnostics using provider-owned request identifiers or provider observability available through an authorized administrative channel; do not reintroduce raw provider error bodies into generic application exceptions merely for convenience.
+
 ## Recovery and rollback
 
 No persistent state, schema, migration, background job, credential, or trust-store change is involved. Operational recovery for TLS failures is to correct the endpoint certificate, trust chain, hostname, configured fingerprint, proxy/service-mesh TLS policy, or other deployment cause and then issue a new caller-controlled request. The client does not retry around the failure automatically.
 
-Rollback consists of removing 425 from the closed retry set and reverting the associated retry-classification tests and documentation. In-flight requests are not migrated or reconstructed. Reintroducing automatic TLS retries or dependency-defined class names in diagnostics is not a routine rollback step; either change requires a separately reviewed security contract.
+Rollback consists of removing 425 from the closed retry set and reverting the associated retry-classification tests and documentation. In-flight requests are not migrated or reconstructed. Reintroducing automatic TLS retries, dependency-defined class names in diagnostics, or raw provider error content in package-level diagnostics is not a routine rollback step; any of those changes requires a separately reviewed security contract.
 
 ## Verification
 
@@ -59,7 +63,9 @@ Permanent regression coverage requires that:
 - certificate fingerprint mismatch performs exactly one GET and zero retry sleeps while exporting no peer hostname or fingerprint bytes;
 - request-acquisition timeouts retain one bounded retry under the configured attempt policy;
 - a dependency-defined `aiohttp.ClientError` subclass is retried under the existing bounded policy but exports and logs only `ClientError`, with no subclass name or message;
-- public, contributor, changelog, ADR, and doctoring text all state the same fail-closed TLS boundary; and
+- Files upload, batch creation, batch status, and file-download HTTP errors expose only `ProviderHTTPError` plus status and never provider-controlled error bodies;
+- cancellation rejection exposes only the fixed package reason plus status and never the provider message;
+- public, contributor, changelog, ADR, and doctoring text all state the same fail-closed TLS and provider-error confidentiality boundaries; and
 - the existing project gates continue to prove 100% production statement and branch coverage plus 100% public docstrings.
 
 ## References
