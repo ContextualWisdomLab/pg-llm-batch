@@ -25,13 +25,17 @@ The following decisions are indexed by capability rather than promoted to protec
 - bounded retry/TLS/response-handoff classification — #71;
 - checkpoint OpenTelemetry observability — current replacement #92;
 - append-only checkpoint acceptance audit — current replacement #94;
-- atomic checkpoint migration operator — successor to #80 required after #94;
+- atomic checkpoint migration operator — current replacement #95;
+- bounded checkpoint-audit pagination — current replacement #96;
+- snapshot-manifest assurance — stale #84 implementation must be replaced on #96 before #84 is superseded;
 - secret input outside process argv — #85;
 - typed config/cached mutable-state authority — #86;
 - PostgreSQL connection ownership and cleanup — #87;
 - exact source-head CI evidence — #88;
 - explicit bootstrap-source precedence — #89;
 - loopback-only standalone Compose publication — #91.
+
+Issue #90 is a planned operator-facing cancellation slice, not an accepted/shipped ADR. It is intentionally deferred while overlapping CLI/resource-ownership PRs remain active.
 
 ## ADR content contract
 
