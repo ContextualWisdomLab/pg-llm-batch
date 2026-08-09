@@ -48,3 +48,11 @@ def test_licensing_authority_does_not_overclaim_third_party_clearance() -> None:
     text = _read("docs/LICENSING_AND_IP.md").lower()
     assert "does not replace legal review" in text
     assert "verify" in text and "dependency" in text
+
+
+def test_notice_does_not_call_lgpl_dependencies_permissive() -> None:
+    """NOTICE must not contradict its own LGPL dependency declaration."""
+    notice = _read("NOTICE")
+    assert "LGPL" in notice
+    assert "depends only on\npermissively-licensed components" not in notice
+    assert "respective license terms" in notice
