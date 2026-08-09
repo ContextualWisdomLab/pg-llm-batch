@@ -48,6 +48,19 @@ def test_secret_store_base64_without_key(fake_pg, caplog):
     assert store.get_secret("gateway_api_key.default") == "sk-secret-123"
 
 
+def test_secret_store_warns_and_falls_back_when_fernet_is_unavailable(
+    fake_pg, monkeypatch, caplog
+):
+    """A supplied key without cryptography must take the documented fallback path."""
+    monkeypatch.setattr(cfg_mod, "Fernet", None)
+
+    store = SecretStore("postgresql://x", fernet_key="configured-but-unavailable")
+
+    assert store._fernet is None
+    assert "cryptography" in caplog.text
+    assert "base64-obfuscated" in caplog.text
+
+
 def test_secret_store_fernet_encrypts_at_rest(fake_pg):
     from cryptography.fernet import Fernet
 
