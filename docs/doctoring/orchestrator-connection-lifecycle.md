@@ -1,15 +1,15 @@
-# Orchestrator-owned PostgreSQL connection lifecycle
+# Operation-owned PostgreSQL connection lifecycle
 
 ## Purpose
 
-`PostgresBatchOrchestrator.prepare_batches()` creates two collaborators for one preparation attempt:
+`pg-llm-batch` creates database-backed collaborators in two bounded operation surfaces:
 
-- `PostgresConfigStore`, which owns the connection used to read `com_config`; and
-- `TokenCounter`, which may cache a separate PostgreSQL connection for `pg_tiktoken` counting.
+- `PostgresBatchOrchestrator.prepare_batches()` creates a `PostgresConfigStore` and a `TokenCounter` for one preparation attempt; and
+- one-shot CLI commands create configuration, secret, token-counting, and credential-provider collaborators for one command invocation.
 
-Those sessions are owned by the preparation call, not by the caller. The call therefore provides **deterministic cleanup** on every exit path instead of relying on interpreter garbage collection or eventual object destruction.
+`PostgresConfigStore` owns the connection used to read or update `com_config`. `SecretStore` owns the connection used for `com_secrets`. `TokenCounter` may cache a separate PostgreSQL connection for `pg_tiktoken` counting. These sessions are owned by the active operation, not by the caller. Each operation therefore provides **deterministic cleanup** on every exit path instead of relying on interpreter garbage collection or eventual object destruction.
 
-## Runtime contract
+## Orchestrator runtime contract
 
 The orchestrator uses nested `try/finally` blocks with the following ownership order:
 
@@ -26,17 +26,30 @@ The orchestrator uses nested `try/finally` blocks with the following ownership o
 
 The constructor completes **configuration validation before** it attempts `pg_tiktoken` extension setup or cached connection acquisition. Invalid `buffer_percentage` input therefore fails at the declared validation boundary without opening a token-counting database session.
 
+## CLI runtime contract
+
+Every one-shot command closes the database-backed resources it creates:
+
+- `config set` and `config get` close their `PostgresConfigStore` after success or failure;
+- `config set-secret` closes its `SecretStore` after success or failure;
+- `count-tokens` closes `TokenCounter` before closing the configuration store, including when token counting raises; and
+- submit, poll, wait, and retrieve use an async context manager that closes the HTTP client first, then `SecretStore`, then `PostgresConfigStore`.
+
+The async client context uses nested `try/finally` ownership. If secret-store construction fails, the completed configuration store is still closed. If provider or HTTP-client construction fails, both completed database stores are closed. If the remote operation or HTTP-client shutdown raises, the database-store cleanup still runs in reverse construction order.
+
+The CLI keeps the existing command output, exit-code, credential lookup, and endpoint behavior. Cleanup is not exposed as a new user-facing command or protocol.
+
 ## Transaction and compatibility boundary
 
-This change does not alter the existing short-lived query and persistence transaction contexts. Psycopg connection context managers continue to own their commit, rollback, and close behavior. The new lifecycle rule applies only to the longer-lived collaborators that were constructed outside those contexts and previously had no deterministic release path.
+This change does not alter the existing short-lived query and persistence transaction contexts. Psycopg connection context managers continue to own their commit, rollback, and close behavior. The explicit lifecycle rule applies to collaborators constructed outside those contexts that previously had no deterministic release path.
 
-The change introduces no connection pool, schema migration, table change, credential, provider request, token-counting algorithm, payload format, public API, or cross-service dependency. `pg-llm-batch` remains independently deployable and embeddable.
+The change introduces no connection pool, schema migration, table change, credential format, provider request, token-counting algorithm, payload format, public API, or cross-service dependency. `pg-llm-batch` remains independently deployable and embeddable.
 
 ## Operational rationale
 
-Psycopg documents a `Connection` as a database session and states that code using an un-entered connection is responsible for calling `commit()`, `rollback()`, and `close()` where needed. It also documents context-manager use as the normal mechanism for closing resources at block exit. The package follows the same explicit-lifecycle principle for its cached token-counting connection and its database-backed configuration store.
+Psycopg documents a `Connection` as a database session and states that code using an un-entered connection is responsible for calling `commit()`, `rollback()`, and `close()` where needed. It also documents context-manager use as the normal mechanism for closing resources at block exit. The package follows the same explicit-lifecycle principle for its cached token-counting connection, database-backed configuration store, and secret store.
 
-Python documents `finally` as the cleanup clause that executes when control leaves the protected block, including when the block returns or raises. Nested `try/finally` therefore makes the ownership order reviewable and deterministic across successful preparation, assembly failure, persistence failure, and partial collaborator construction.
+Python documents `finally` as the cleanup clause that executes when control leaves the protected block, including when the block returns or raises. Nested `try/finally` therefore makes the ownership order reviewable and deterministic across successful preparation, command completion, assembly failure, remote-operation failure, and partial collaborator construction.
 
 ## Verification
 
@@ -47,8 +60,12 @@ Deterministic tests prove that:
 3. configuration-store cleanup still occurs when `TokenCounter` construction fails;
 4. `TokenCounter.close()` releases the cached connection once and is safe to call again;
 5. a driver close failure still clears the cached connection reference;
-6. invalid configuration is rejected before `pg_tiktoken` connection acquisition; and
-7. existing runtime-limit test doubles implement and verify the same cleanup contract.
+6. invalid configuration is rejected before `pg_tiktoken` connection acquisition;
+7. existing runtime-limit test doubles implement and verify the same cleanup contract;
+8. one-shot config and secret commands close their owned stores;
+9. successful and failed token-count commands close the counter before the configuration store;
+10. async client exit closes HTTP, secret, and configuration resources in reverse construction order; and
+11. partial async credential construction closes every successfully constructed owner.
 
 The complete gate must continue to prove Python 3.10, 3.12, and 3.14 behavior; 100% production statement and branch coverage; 100% public docstrings; compilation; Ruff; lock freshness; package construction; Compose validation; container builds; Security Scan; and SAST.
 
@@ -57,16 +74,18 @@ The complete gate must continue to prove Python 3.10, 3.12, and 3.14 behavior; 1
 If database sessions remain unexpectedly active after this change, identify whether they belong to:
 
 - the configuration store;
+- the secret store;
 - the token-counting cache;
 - an active short-lived query context;
-- an active persistence transaction; or
-- code outside `prepare_batches()` that independently owns a `TokenCounter`.
+- an active persistence transaction;
+- a currently running CLI remote operation; or
+- embedding code outside the bounded orchestrator and CLI operations that independently owns a `TokenCounter` or store.
 
-Call `TokenCounter.close()` when custom embedding code creates a counter with a lifetime longer than one operation. Do not add a global connection singleton or suppress constructor validation to reduce connection churn. If sustained throughput requires pooling, design it as a separate reviewed ownership contract with bounded capacity, transaction-state reset, health checks, tenant isolation, shutdown behavior, and rollback evidence.
+Call `TokenCounter.close()`, `PostgresConfigStore.close()`, or `SecretStore.close()` when custom embedding code creates those objects with a longer lifetime. Do not add a global connection singleton or suppress constructor validation to reduce connection churn. If sustained throughput requires pooling, design it as a separate reviewed ownership contract with bounded capacity, transaction-state reset, health checks, tenant isolation, shutdown behavior, and rollback evidence.
 
 ## Rollback
 
-There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of the two orchestrator-owned sessions and reacquires the token-counting connection before configuration validation. During an incident, retain the explicit lifecycle and diagnose the failing connection or driver cleanup path rather than removing `try/finally` or relying on garbage collection.
+There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned and CLI-owned sessions and reacquires the token-counting connection before configuration validation. During an incident, retain the explicit lifecycle and diagnose the failing connection or driver cleanup path rather than removing `try/finally` or relying on garbage collection.
 
 ## References
 
