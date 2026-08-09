@@ -45,7 +45,7 @@ Do not silently fall back to another database, provider, credential source, or t
 
 ### Batch preparation
 
-Persist requests → count tokens → partition into bounded batch files → persist JSONL lines/payloads → reconstruct provider payloads from PostgreSQL. Operators should monitor failure counts, queue/batch state and database resource pressure; payloads are application data and should not be copied wholesale into logs.
+Read queued requests → count tokens → partition requests into bounded payloads → persist payload document → persist batch file → persist JSONL lines → assign queued requests → update batch totals → commit the preparation transaction. Token counting and partitioning occur before `_persist_payloads()` opens its persistence transaction. Inside that transaction, payload documents precede batch-file rows, JSONL rows precede request assignment, and batch totals are updated last. Any failure before commit rolls back the transaction, so those writes from the failed preparation invocation do not become durable partial state. Existing previously committed preparation state remains independently durable and is re-read under the idempotency rules. Operators should monitor failure counts, queue/batch state and database resource pressure; payloads are application data and should not be copied wholesale into logs.
 
 ### Remote batch lifecycle
 
@@ -87,7 +87,7 @@ Every package-owned schema change requires:
 - refusal to destroy non-empty durable evidence unless an explicit reviewed destructive procedure exists;
 - post-migration schema/behavior verification.
 
-ACTIVE-PR #80 adds an atomic checkpoint migration operator; it is not current protected-main operator behavior.
+ACTIVE-PR #95 is the current linearized atomic checkpoint migration operator replacement; #80 is SUPERSEDED and is not current protected-main operator behavior.
 
 ## Incident evidence
 
