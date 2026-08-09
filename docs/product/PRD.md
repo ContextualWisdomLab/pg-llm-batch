@@ -135,13 +135,13 @@ Provide bounded record iteration so large provider result/error files need not b
 
 Create immutable prefix checkpoints and package-owned durable PostgreSQL checkpoint persistence with explicit compare-and-swap and transaction boundaries; do not claim full-stream attestation or distributed exactly-once delivery.
 
-### PRD-T5 — Checkpoint observability and auditability (#78, #79, #83, #84)
+### PRD-T5 — Checkpoint observability and auditability (#92, #94, #96, #97)
 
-Add optional checkpoint telemetry, append-only acceptance evidence, bounded stable export, and deterministic snapshot manifests while preserving tenant and evidence boundaries.
+Add optional checkpoint telemetry, append-only acceptance evidence, bounded stable export, and deterministic snapshot manifests while preserving tenant and evidence boundaries. These PRs are the current linearized replacements; #78, #79, #83, and #84 are superseded implementation lines and their evidence does not transfer.
 
-### PRD-T6 — Atomic migration operation (#80)
+### PRD-T6 — Atomic migration operation (#95)
 
-Make related checkpoint/audit migrations an all-or-nothing operator action with bounded source and rollback/concurrency verification.
+Make related checkpoint/audit migrations an all-or-nothing operator action with bounded source and rollback/concurrency verification. #95 is the current replacement; #80 is superseded.
 
 ### PRD-T7 — Health/deployment hardening (#70, #91)
 
