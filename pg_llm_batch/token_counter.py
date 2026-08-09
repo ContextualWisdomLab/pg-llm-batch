@@ -69,8 +69,6 @@ class TokenCounter:
         self.config = config
         self._pg_conn: Optional["psycopg.Connection"] = None
         self._pg_available: bool = False
-        if psycopg is not None:
-            self._pg_available = self._ensure_pg_tiktoken()
         self._encoder_cache: Dict[str, _EncoderInfo] = {}
 
         resolved_buffer = buffer_percentage
@@ -105,6 +103,9 @@ class TokenCounter:
         self.azure_max_files_per_job = self._resolve_config_value(
             "azure_limits", "max_files_per_job", self.DEFAULT_AZURE_MAX_FILES
         )
+
+        if psycopg is not None:
+            self._pg_available = self._ensure_pg_tiktoken()
 
     # ------------------------------------------------------------------
     # Tokenizer resolution
@@ -240,6 +241,17 @@ class TokenCounter:
             batches.append(current)
         return batches
 
+    def close(self) -> None:
+        """Close and clear the cached PostgreSQL token-counting connection."""
+        conn = self._pg_conn
+        self._pg_conn = None
+        if conn is None:
+            return
+        try:
+            conn.close()
+        except Exception:
+            pass
+
     # ------------------------------------------------------------------
     # Config helpers
     # ------------------------------------------------------------------
@@ -267,12 +279,7 @@ class TokenCounter:
             conn.commit()
             return True
         except Exception:
-            if self._pg_conn is not None:
-                try:
-                    self._pg_conn.close()
-                except Exception:
-                    pass
-            self._pg_conn = None
+            self.close()
             return False
 
     def _get_pg_conn(self) -> "psycopg.Connection":
