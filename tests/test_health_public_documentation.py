@@ -91,6 +91,21 @@ def test_malformed_public_readiness_fails_closed_authoritatively():
     assert "truth coercion" in changelog.lower()
 
 
+def test_public_healthz_omits_runtime_fingerprint_authoritatively():
+    """Public-probe docs must forbid stdlib/Python version disclosure."""
+    doctoring = _normalized(DOCTORING)
+    adr = _normalized(ADR)
+    changelog = _normalized(CHANGELOG)
+
+    for document in (doctoring, adr):
+        assert "Server header" in document
+        assert "Python version" in document
+        assert "BaseHTTPRequestHandler" in document
+
+    assert "server header" in changelog.lower()
+    assert "python version" in changelog.lower()
+
+
 def test_contributor_contract_preserves_healthz_redaction_boundary():
     """Contributor guidance must prevent local diagnostics from becoming public."""
     agents = _normalized(AGENTS)
