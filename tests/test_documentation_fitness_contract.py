@@ -234,9 +234,40 @@ def test_batch_preparation_docs_follow_production_persistence_order() -> None:
         "update batch totals",
         "commit",
     )
+    sequence_match = re.search(
+        r"```mermaid\s*\nsequenceDiagram(?P<body>.*?)```",
+        uml,
+        flags=re.DOTALL,
+    )
+    assert sequence_match is not None, "missing batch preparation sequence diagram"
     _assert_text_order(operability.lower(), expected)
-    _assert_text_order(uml.lower(), expected)
+    _assert_text_order(sequence_match.group("body").lower(), expected)
     assert "rollback" in operability.lower()
+
+
+def test_uml_tracks_checkpoint_replacements_and_merge_revalidation() -> None:
+    """UML must show the full live checkpoint chain and explicit merge/post-check authority."""
+    uml = _read("docs/architecture/UML.md")
+    checkpoint = _section(
+        uml,
+        "## 5. Result streaming and checkpoint overlay",
+        "## 6. Health/readiness deployment sequence",
+    )
+    merge = _section(uml, "## 7. Evidence and merge authority", "## 8. Standalone and CWL composition")
+
+    for current in ("#92", "#94", "#95", "#96", "#97"):
+        assert current in checkpoint, current
+    assert "SUPERSEDED" in checkpoint
+    for phrase in (
+        "merge execution",
+        "open pr queue",
+        "finding resolution",
+        "branch protection",
+        "live graph",
+        "protected-main post-check",
+    ):
+        assert phrase in merge.lower(), phrase
+    assert "synthetic merge ref/status-only evidence" in merge.lower()
 
 
 def test_traceability_binds_requirements_to_live_repository_surfaces() -> None:
