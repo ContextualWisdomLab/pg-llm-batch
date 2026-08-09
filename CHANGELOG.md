@@ -32,6 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Rejected an explicitly empty bootstrap Postgres DSN instead of silently
+  falling back to `PG_LLM_BATCH_DSN`; environment fallback now applies only
+  when the explicit database target is omitted.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
