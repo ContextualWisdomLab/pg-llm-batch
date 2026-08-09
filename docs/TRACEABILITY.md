@@ -26,7 +26,7 @@ This matrix makes product and governance claims auditable without relying on cha
 | Bounded stable checkpoint-audit pagination replacement | ACTIVE-PR #96 | pagination/cursor/public API composition on #96 | exact-head CI and Release Acceptance succeeded on the current staged replacement; final protected-main/live PostgreSQL gates remain required | ADR index, UML/ERD overlay |
 | Snapshot-manifest assurance replacement | ACTIVE-PR #97 | snapshot-manifest implementation composed on exact #96 pagination predecessor | fresh #97 exact-head CI is required; Release Acceptance succeeded on the current replacement; #84 evidence does not transfer | ADR index; checkpoint-audit doctoring |
 | Exact source-head CI evidence | ACTIVE-PR #88 | `.github/workflows/ci.yml` on #88 | exact contributor head checkout/verification tests | ADR-0002, TEST_STRATEGY |
-| Canonical product documentation authority | ACTIVE-PR #93 | this documentation graph | `tests/test_documentation_fitness_contract.py` + normal CI | DOCUMENTATION_FITNESS |
+| Canonical product documentation authority | ACTIVE-PR #93 | this documentation graph | `tests/test_documentation_fitness_contract.py` + normal CI | `docs/automation/ADR-0003-canonical-documentation-authority.md`, DOCUMENTATION_FITNESS |
 | Operator CLI batch cancellation | PLANNED | issue #90; existing `BatchAPIClient.cancel_batch()` primitive | implementation blocked until overlapping CLI/resource ownership work settles | PRD/TRD/API contract follow-up |
 
 ## Evidence-identity traceability
@@ -52,6 +52,7 @@ A green check cannot replace independent approval, and an infrastructure failure
 | Exact source vs live-base evidence separation | ADR-0002 + ACTIVE-PR #88 | current source head and independently resolved live base must be separately recorded |
 | Central `.github` ownership of reusable review/bootstrap defects | ADR-0002 + repository automation contract | pg-llm-batch treats leased central fixes read-only and does not weaken leaf product code |
 | Prompt/documentation updates are intermediate | ADR-0001 | control-plane change must hand back to executable repository work when safe |
+| Canonical documentation authority and maturity discipline | `docs/automation/ADR-0003-canonical-documentation-authority.md` | protected-main and ACTIVE-PR truth remain separate; machine-checkable fitness catches drift |
 | Public compatibility/versioning authority | `docs/product/API_CONTRACT.md` | shipped, ACTIVE-PR, deprecated, and breaking behavior must be explicit and testable |
 | Release/publish authority | `docs/RELEASE_ACCEPTANCE.md` | exact integrated protected head + independent applicable gates + post-publication verification |
 
@@ -65,7 +66,7 @@ The checkpoint chain is currently linearized through replacements rather than de
 - #83 -> #96;
 - #84 -> #97.
 
-#84 is closed unmerged as SUPERSEDED by #97. No check, review, approval, or historical base evidence transfers across any replacement. Each successor must prove exact ancestry, preserved unique behavior, and fresh exact-head/exact-base evidence.
+#84 is closed unmerged as SUPERSEDED by `#97`. No check, review, approval, or historical base evidence transfers across any replacement. Each successor must prove exact ancestry, preserved unique behavior, and fresh exact-head/exact-base evidence.
 
 ## Security, operability, and release traceability
 
