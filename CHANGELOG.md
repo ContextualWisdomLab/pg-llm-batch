@@ -82,10 +82,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required to exchange a short-lived OpenCode GitHub App token. The generated
   GitHub token retains no repository write authority, unrelated secrets are not
   inherited, and the independent merge plane remains unchanged.
-- Bound every repository CI checkout to the exact pull-request source head and
-  verify `git rev-parse HEAD` before tests, coverage, packaging, or container
-  gates, so GitHub-generated synthetic merge refs cannot satisfy exact-head
-  acceptance evidence.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.
