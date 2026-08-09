@@ -6,18 +6,20 @@
 ## Goal
 
 Migrate the `pg-llm-batch` hourly review-repair caller to the hardened central
-scheduler contract while preserving the independent merge plane, binding CI
-evidence to the exact pull-request source head, ensuring a later hourly trigger
-cannot cancel an active RCA or bounded repair, and retaining a realistic
-short-lived mutation-credential path without granting repository writes to the
-workflow-generated token.
+scheduler contract while preserving the independent merge plane, ensuring a
+later hourly trigger cannot cancel an active RCA or bounded repair, and
+retaining a realistic short-lived mutation-credential path without granting
+repository writes to the workflow-generated token.
+
+Exact-source repository CI governance is intentionally separated into PR #88.
+This scheduler branch must not duplicate or weaken that independent slice.
 
 ## Dependency
 
-The implementation is stacked logically on `ContextualWisdomLab/.github#782`.
-The exact current green prerequisite head is used only for Draft verification.
-Final promotion requires the protected merge SHA from central `main` and fresh
-exact-head gates.
+The scheduler implementation is stacked logically on
+`ContextualWisdomLab/.github#782`. The exact current candidate head is used only
+for Draft verification. Final promotion requires the protected merge SHA from
+central `main` and fresh current-head gates.
 
 This replacement branch starts from protected `pg-llm-batch` main
 `bf2cc2e140dc3ff4a56c3203f80f41bb9fed5d10`, which already contains the bounded
@@ -40,7 +42,7 @@ regressions and are not reused as success evidence.
 ## Task 2: Implement the bounded caller migration
 
 - [x] Pin `pr-review-fix-scheduler.yml` and the compatibility `canonical_ref`
-      input to the exact current `.github#782` green head
+      input to the exact current `.github#782` candidate head
       `17bd5e4a98a718012dcb82d5028aa697a4ca8077` for Draft verification.
 - [x] Treat predecessor central pin
       `afd33b5d09f331f2b73913c1d4b312be9296a449` only as historical development
@@ -60,55 +62,46 @@ regressions and are not reused as success evidence.
 - [x] Keep the merge scheduler pin, permissions, inputs, and secret inheritance
       unchanged.
 - [x] When the prerequisite advanced from earlier reviewed heads, update the
-      exact-pin test before implementation and regenerate exact-head evidence.
-      RED heads `62fb2f2d9251586f37b30f6e24cfa18c11ddf458`,
-      `07bb189b3f554195eba48bcc0124aca50a6f5faf`, and
-      `76c9e86cbcd6ba5885bf28a3a96037b0a56d27d5` each captured a deterministic
-      predecessor-pin mismatch before the workflow moved.
-- [x] Treat the cancelled predecessor run `31234208124` only as superseded
-      diagnostic history; it is not passing or executed RED evidence.
+      exact-pin test before implementation and regenerate current-head evidence.
+- [x] Treat cancelled predecessor runs only as superseded diagnostic history;
+      they are never passing or executed RED evidence.
 
-## Task 3: Bind CI to the exact source head
+## Task 3: Keep exact-source CI isolated in PR #88
 
-- [x] Add a RED contract requiring every repository CI checkout to use
-      `${{ github.event.pull_request.head.sha || github.sha }}` and immediately
-      verify `git rev-parse HEAD`.
-- [x] Record RED CI `31186479041`, which proved the predecessor workflow executed
-      GitHub's synthetic pull-request merge ref instead of the exact source head.
-- [x] Make the test topology-independent by counting checkout sites dynamically,
-      so any future CI job without the same identity proof fails closed.
-- [x] Update all CI checkout sites to use the exact source-head expression with
-      `persist-credentials: false` and a post-checkout equality assertion.
-- [x] Rebase the bounded slice onto current protected main rather than copying
-      stale-base test failures forward.
+- [x] Identify exact-source CI source-head binding as an independent repository
+      governance contract rather than a scheduler-credential requirement.
+- [x] Restore `.github/workflows/ci.yml` on this branch to the protected-main
+      baseline so #69 does not duplicate #88.
+- [x] Remove the duplicated exact-source workflow contract from
+      `tests/test_workflow_contracts.py` while retaining scheduler-pin coverage.
+- [x] Remove the duplicated exact-source claim from this branch's CHANGELOG and
+      ADR scope.
+- [x] Keep PR #88 responsible for its own source-head CI tests, review evidence,
+      integration, and rollback lifecycle.
+
+Historical exact-source RED/GREEN evidence produced before the split remains
+provenance only; it is not a current #69 acceptance claim.
 
 ## Task 4: Preserve RCA and scope writer-lease recovery
 
 - [x] Add a failing contract requiring queued single-flight maintenance instead
       of cancellation of the active run.
 - [x] Record exact-head RED CI `31257187170` on
-      `6ef1dd64f2f088f83b9bd975870e4c17c5ecc07d`: one intended scheduler
-      assertion failed on Python 3.10/3.12/3.14 and coverage because the product
-      workflow still used `cancel-in-progress: true`.
+      `6ef1dd64f2f088f83b9bd975870e4c17c5ecc07d`: the intended scheduler
+      assertion failed because the product workflow still used
+      `cancel-in-progress: true`.
 - [x] Change the product concurrency group to `cancel-in-progress: false` plus
       `queue: max`, retaining one running maintenance workflow while allowing
-      later hourly triggers to wait rather than discard active work. The central
-      reusable queue scan is a separate short read-only component and may cancel
-      only a superseded scan; separately dispatched per-PR writers remain
-      non-cancelling.
+      later hourly triggers to wait rather than discard active work.
 - [x] Record implementation GREEN CI `31257294919`, Security Scan
       `31257294934`, and SAST Semgrep `31257294909` on exact head
       `d689750fa4df3fb17b1d82f590da4a52e2754218`.
 - [x] Add a documentation contract requiring root-cause analysis, candidate
       remedies, feasibility evaluation, execution, and branch-scoped lease
       recovery.
-- [x] Record exact-head documentation RED CI `31257371090` on
-      `90748552a9a389daac3b4198cd165a69fbfad790`: the intended single contract
-      failed because ADR 0013 did not yet define that recovery behavior.
 - [x] Define actual lease conflict as movement of the same `pg-llm-batch` target
       branch, PR, or blob, while treating read-only dependency movement as scoped
-      evidence invalidation and reconciliation rather than a repository-wide
-      stop.
+      evidence invalidation rather than a repository-wide stop.
 - [x] Record ADR-contract GREEN CI `31257451896`, Security Scan
       `31257451894`, and SAST Semgrep `31257451900` on exact head
       `07b6535b0f965b2be8ef4343332ad873df935387`.
@@ -119,7 +112,7 @@ regressions and are not reused as success evidence.
       exchanges a GitHub OIDC assertion for a short-lived OpenCode GitHub App
       token, with the two explicit secrets as fallbacks.
 - [x] Add a RED caller contract requiring exactly `contents: read` and
-      `id-token: write`, while still rejecting every repository write permission,
+      `id-token: write`, while rejecting repository write permission,
       `secrets: inherit`, `COPILOT_GITHUB_TOKEN`, and caller-side model secrets.
 - [x] Record exact-head RED CI `31258604528` on
       `63c0def47f48167cb82b89c3e4c0f300b2319f23`: the intended permission
@@ -129,11 +122,7 @@ regressions and are not reused as success evidence.
 - [x] Replace a newline-sensitive test assertion with an exact structural set
       comparison at `0fcf4419c75747712bb7fd0d1c1f16ea8e046d63`; CI
       `31258740858`, Security Scan `31258740833`, and SAST Semgrep
-      `31258740855` then succeeded on that exact source head.
-- [x] Add a RED documentation contract at
-      `94b4ee3c553879485dadd20518f6d0d34f3f350b`; CI `31258829737` failed the
-      intended missing OIDC feasibility statement and is retained only as RED
-      evidence.
+      `31258740855` then succeeded.
 - [x] Document that `id-token: write` authorizes OIDC token issuance rather than
       repository mutation, that the app token is short-lived, and that repair
       fails closed only when both OIDC exchange and explicit fallbacks are
@@ -152,12 +141,13 @@ regressions and are not reused as success evidence.
 - [x] Document the RCA → remedy → feasibility → execution sequence and the
       distinction between same-target writer conflicts and read-only dependency
       drift.
-- [x] Record the scheduler, exact-source CI, queued recovery, and OIDC changes
-      under `CHANGELOG.md` Unreleased.
+- [x] Record scheduler, queued recovery, and OIDC changes under
+      `CHANGELOG.md` Unreleased without claiming ownership of PR #88.
 
 ## Task 7: Verify and promote
 
-- [ ] Run focused workflow-contract tests on the exact final source head.
+- [ ] Run focused scheduler workflow-contract tests on the exact final source
+      head.
 - [ ] Run the complete non-integration suite on the exact final source head.
 - [ ] Require Ruff and 100% production statement/branch coverage on the exact
       final source head.
@@ -166,10 +156,11 @@ regressions and are not reused as success evidence.
       container builds on the exact final source head.
 - [ ] Require current-head security, SAST, dependency, SBOM, and review gates.
 - [ ] After central #782 merges, replace the temporary SHA with its protected
-      merge SHA and rerun every gate.
+      merge SHA and rerun every affected gate.
 - [ ] Merge only with zero unresolved valid findings and a qualifying independent
       non-author approval.
 
-Synthetic merge runs and predecessor-branch results remain useful diagnostic or
-RED evidence only. Final acceptance is tied exclusively to the exact current
-source head on the exact protected base.
+Synthetic merge runs, rate-limited review attempts, and predecessor-branch
+results remain diagnostic or development evidence only. Final acceptance is tied
+to the exact current source head on the exact protected base and does not borrow
+PR #88 evidence.
