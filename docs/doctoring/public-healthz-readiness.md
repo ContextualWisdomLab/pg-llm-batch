@@ -4,7 +4,7 @@
 
 `pg-llm-batch` deliberately separates **local operator diagnostics** from the network-facing **public /healthz** representation. This note is the authoritative operator contract for that boundary.
 
-The package's `check_health()` function remains suitable for trusted local diagnosis. It can report database connection failures and PostgreSQL health-function **diagnostic detail** so an operator can understand why the service is not ready. The CLI may continue to print that detailed local report.
+The package's `check_health()` function remains suitable for trusted local diagnosis. It can report database connection failures and PostgreSQL health-function **diagnostic detail** so an operator can understand why the service is not ready. The CLI may continue to print that detailed local report. Detailed local output is not permissive readiness evidence: each required component must be observed exactly once. Missing or duplicate required-component rows make the local report not ready while preserving the returned diagnostic rows for troubleshooting.
 
 The HTTP endpoint is different. Probe clients need readiness state, not troubleshooting content. `/healthz` therefore projects each local component to only `component and is_ready`, plus the top-level `ready` boolean. Unknown top-level values, database exception strings, extension versions, internal hostnames, credentials, debug keys, SQL health-function `detail`, and future diagnostic fields are discarded before JSON serialization.
 
@@ -12,7 +12,7 @@ The HTTP endpoint is different. Probe clients need readiness state, not troubles
 
 MITRE **CWE-209** identifies externally visible error detail as an information-disclosure weakness because messages can reveal environmental or sensitive data. The fixed allow-list projection follows the same defensive principle: public output is constructed from the fields the probe contract needs rather than trying to enumerate every field that might become sensitive later.
 
-Public readiness validation is **non-coercive**. Any **malformed readiness** shape—including a non-boolean top-level `ready`, a non-list component collection, a non-object component record, a non-string component name, or a non-boolean `is_ready`—is replaced by the fixed empty not-ready projection and returned as **HTTP 503**. The endpoint never interprets string, numeric, container, or object truthiness as readiness evidence. This prevents malformed local state or future schema drift from becoming false-ready public evidence.
+Public readiness validation is **non-coercive**. Any **malformed readiness** shape—including a non-boolean top-level `ready`, a non-list component collection, a non-object component record, a non-string component name, or a non-boolean `is_ready`—is replaced by the fixed empty not-ready projection and returned as **HTTP 503**. Duplicate observations for any required component are also ambiguous readiness evidence and fail closed. The endpoint never interprets string, numeric, container, or object truthiness as readiness evidence. This prevents malformed local state, duplicate required rows, or future schema drift from becoming false-ready public evidence.
 
 This change is **not authentication**. It neither hides the existence of the endpoint nor authorizes callers. An operator who needs to prevent untrusted network access must still use deployment controls such as private networking, ingress rules, service-mesh policy, firewall policy, or an authenticated gateway where appropriate. The package's responsibility is narrower: if a caller can reach readiness, the response does not unnecessarily disclose local diagnostic detail.
 
@@ -34,7 +34,7 @@ Every `/healthz` response also carries `Cache-Control: no-store`. Under **RFC 91
 
 ## Standalone and embedded operation
 
-The change does not alter PostgreSQL schema, migrations, provider requests, credentials, batch state, or MSA integration. Docker and Compose may continue to use `/healthz`. Embedded hosts can call `check_health()` for a trusted local operator surface, while external readiness consumers receive the redacted projection.
+The change does not alter PostgreSQL schema, migrations, provider requests, credentials, batch state, or MSA integration. Docker and Compose may continue to use `/healthz`. Embedded hosts can call `check_health()` for a trusted local operator surface, while external readiness consumers receive the redacted projection. The local CLI keeps diagnostic detail but returns not-ready when required-component identity is missing or duplicated, so detailed troubleshooting cannot override ambiguous required readiness evidence.
 
 There is no new dependency on `contextual-orchestrator`, `naruon`, or another CWL service. The same package works independently and as an imported MSA component. The timeout is established per health transaction, so standalone and embedded callers do not need a PostgreSQL configuration migration.
 
@@ -42,10 +42,10 @@ There is no new dependency on `contextual-orchestrator`, `naruon`, or another CW
 
 Deterministic tests exercise both sides of the boundary:
 
-1. local `check_health()` continues to include useful failure reasons;
+1. local `check_health()` continues to include useful failure reasons and fails closed when a required component is duplicated;
 2. the public projection copies only `ready`, `component and is_ready`;
 3. secret-like text, internal hostnames, debug values, and unknown keys never appear in the serialized response;
-4. malformed readiness shapes and non-boolean state fail closed to an empty not-ready projection;
+4. malformed readiness shapes, duplicate required-component observations, and non-boolean state fail closed to an empty not-ready projection;
 5. the HTTP handler applies the validated projection rather than raw local-report truthiness when selecting HTTP 200 or HTTP 503;
 6. status-code and 404 behavior remain compatible;
 7. `Cache-Control: no-store` is present; and
@@ -55,11 +55,11 @@ The normal quality gate must continue to prove 100% production statement and bra
 
 ## Operator recovery
 
-If `/healthz` reports `503`, use trusted **local operator diagnostics** such as `python -m pg_llm_batch health`, database administration tooling, and protected logs. If local diagnostics indicate malformed readiness data, treat that as a contract or integration defect rather than coercing the value into a boolean. If local diagnostics indicate a statement-timeout cancellation, investigate the health function's locks, database load, extension availability, and query execution rather than increasing or removing the timeout as a first response. Do not add detailed exception text back to the public endpoint as an incident shortcut.
+If `/healthz` reports `503`, use trusted **local operator diagnostics** such as `python -m pg_llm_batch health`, database administration tooling, and protected logs. If local diagnostics show duplicate required-component rows, investigate the `pg_llm_batch_health_check()` contract or deployment schema rather than accepting either duplicate as authoritative. If local diagnostics indicate malformed readiness data, treat that as a contract or integration defect rather than coercing the value into a boolean. If local diagnostics indicate a statement-timeout cancellation, investigate the health function's locks, database load, extension availability, and query execution rather than increasing or removing the timeout as a first response. Do not add detailed exception text back to the public endpoint as an incident shortcut.
 
 ## Rollback
 
-No persistent data changes, database migrations, or external protocol state are introduced, so code **rollback** is mechanically straightforward. Reverting this change restores the former HTTP payload and therefore reintroduces the information-disclosure surface. Reverting strict readiness validation would also reintroduce truth-coercion false-ready risk. Removing the transaction-local statement limit separately would restore an unbounded connected-query path. If operational diagnosis is the reason for considering rollback, retain redaction, the non-coercive public projection, and the bounded SQL contract and use the local diagnostic path instead.
+No persistent data changes, database migrations, or external protocol state are introduced, so code **rollback** is mechanically straightforward. Reverting this change restores the former HTTP payload and therefore reintroduces the information-disclosure surface. Reverting strict readiness validation would also reintroduce truth-coercion and duplicate-row false-ready risk. Removing the transaction-local statement limit separately would restore an unbounded connected-query path. If operational diagnosis is the reason for considering rollback, retain redaction, the non-coercive public projection, duplicate-row rejection, and the bounded SQL contract and use the local diagnostic path instead.
 
 ## References
 
