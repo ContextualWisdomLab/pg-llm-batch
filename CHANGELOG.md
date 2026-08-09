@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made direct `serve-healthz` CLI invocation bind to loopback `127.0.0.1` by
+  default, while the bundled container explicitly opts into `0.0.0.0` so broad
+  listener exposure is a reviewable deployment decision rather than an implicit
+  CLI default.
 - Redacted public `/healthz` readiness output to omit database exceptions and
   other local diagnostic detail while preserving detailed operator diagnostics,
   fixed required-component readiness state, HTTP status semantics, and
