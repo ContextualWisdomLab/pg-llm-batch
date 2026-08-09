@@ -34,3 +34,11 @@ def test_review_evidence_separation_is_a_durable_indexed_adr() -> None:
         "rollback and supersession",
     ):
         assert phrase in adr, phrase
+
+
+def test_documentation_fitness_tracks_review_evidence_separation() -> None:
+    """The fitness matrix must include the newly durable review-evidence decision."""
+    fitness = (ROOT / "docs/DOCUMENTATION_FITNESS.md").read_text(encoding="utf-8").lower()
+    assert "semantic review" in fitness
+    assert "infrastructure/policy" in fitness
+    assert "adr-0004-review-evidence-separation.md" in fitness
