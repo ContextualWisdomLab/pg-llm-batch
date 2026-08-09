@@ -8,8 +8,10 @@ from typing import Any
 
 import pytest
 
+from pg_llm_batch import config as config_module
 from pg_llm_batch import orchestrator as orchestrator_module
 from pg_llm_batch import token_counter as token_counter_module
+from pg_llm_batch.config import PostgresConfigStore, SecretStore
 from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.orchestrator import PostgresBatchOrchestrator
 from pg_llm_batch.token_counter import TokenCounter
@@ -46,6 +48,19 @@ class _QueryConnection:
     def cursor(self) -> _QueryCursor:
         """Return a new query cursor."""
         return _QueryCursor()
+
+
+class _InitializationConnection:
+    """Expose whether a partially initialized store releases its connection."""
+
+    def __init__(self) -> None:
+        """Start open with autocommit disabled like a new psycopg connection."""
+        self.autocommit = False
+        self.closed = False
+
+    def close(self) -> None:
+        """Record deterministic release after constructor failure."""
+        self.closed = True
 
 
 class _OwnedConfig:
@@ -150,6 +165,50 @@ def test_prepare_batches_closes_config_when_counter_construction_fails(
 
     assert _OwnedConfig.instances[0].closed is True
     assert _OwnedCounter.instances == []
+
+
+def test_config_store_constructor_closes_connection_after_setup_failure(
+    monkeypatch: Any,
+) -> None:
+    """A failed config-store setup must release the connection it already acquired."""
+    connection = _InitializationConnection()
+    monkeypatch.setattr(
+        config_module,
+        "psycopg",
+        SimpleNamespace(connect=lambda _dsn: connection),
+    )
+
+    def fail_table_setup(_store: PostgresConfigStore) -> None:
+        raise RuntimeError("config setup failed")
+
+    monkeypatch.setattr(PostgresConfigStore, "_ensure_table", fail_table_setup)
+
+    with pytest.raises(RuntimeError, match="config setup failed"):
+        PostgresConfigStore("postgresql://example")
+
+    assert connection.closed is True
+
+
+def test_secret_store_constructor_closes_connection_after_setup_failure(
+    monkeypatch: Any,
+) -> None:
+    """A failed secret-store setup must release the connection it already acquired."""
+    connection = _InitializationConnection()
+    monkeypatch.setattr(
+        config_module,
+        "psycopg",
+        SimpleNamespace(connect=lambda _dsn: connection),
+    )
+
+    def fail_table_setup(_store: SecretStore) -> None:
+        raise RuntimeError("secret setup failed")
+
+    monkeypatch.setattr(SecretStore, "_ensure_table", fail_table_setup)
+
+    with pytest.raises(RuntimeError, match="secret setup failed"):
+        SecretStore("postgresql://example")
+
+    assert connection.closed is True
 
 
 def test_token_counter_close_releases_cached_connection() -> None:
