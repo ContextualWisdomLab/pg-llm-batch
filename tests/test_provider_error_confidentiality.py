@@ -162,3 +162,32 @@ async def test_cancellation_rejection_does_not_return_provider_message() -> None
         "status_code": 400,
     }
     assert SENSITIVE_PROVIDER_TEXT not in str(result)
+
+
+async def test_invalid_control_json_does_not_retain_provider_payload_exception() -> None:
+    """Malformed provider JSON must not survive through exception links."""
+    payload = (
+        b'{"message":"customer-email@example.test secret-provider-diagnostic",'
+        b'"broken":]}'
+    )
+    client = _client(_Response(status=200, payload=payload))
+
+    with pytest.raises(GatewayError, match="Batch status returned invalid JSON") as exc_info:
+        await client.get_batch_status("batch-1", "default")
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert SENSITIVE_PROVIDER_TEXT not in str(exc_info.value.details)
+
+
+async def test_invalid_control_utf8_does_not_retain_provider_bytes_exception() -> None:
+    """Malformed provider UTF-8 must not survive through exception links."""
+    payload = SENSITIVE_PROVIDER_TEXT.encode("utf-8") + b"\xff"
+    client = _client(_Response(status=200, payload=payload))
+
+    with pytest.raises(GatewayError, match="Batch status returned invalid UTF-8") as exc_info:
+        await client.get_batch_status("batch-1", "default")
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert SENSITIVE_PROVIDER_TEXT not in str(exc_info.value.details)
