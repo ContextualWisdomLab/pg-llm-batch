@@ -6,7 +6,7 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 
 ## Assets
 
-- provider API credentials and encrypted secret values;
+- provider API credentials, encrypted secret values, and bootstrap Fernet key secret material;
 - PostgreSQL configuration, request, batch, lifecycle, payload, and result metadata;
 - prompt/request content stored for batch construction;
 - remote provider identifiers and lifecycle evidence;
@@ -26,6 +26,7 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 | Threat | Boundary | Current control / target | Maturity |
 | --- | --- | --- | --- |
 | Credential disclosure through argv/logs | Caller/CLI | Database-backed secrets; ACTIVE-PR #85 moves secret input off process argv and redacts rejected legacy argument values | PARTIAL / ACTIVE-PR |
+| Bootstrap Fernet key disclosure through ambient process state | Host/bootstrap | `PG_LLM_BATCH_SECRET_KEY` is optional sensitive bootstrap secret material, distinct from database-backed provider credentials; deployment secret injection, scope, rotation, and environment exposure remain host responsibilities | IMPLEMENTED-ON-PROTECTED-MAIN boundary |
 | Ambient environment silently overrides explicit authority | Bootstrap/config | Current explicit configuration interfaces; ACTIVE-PR #89 distinguishes omitted from explicitly blank values | ACTIVE-PR hardening |
 | SSRF or unsafe provider destination | HTTP | URL normalization, HTTPS except explicit loopback, bounded resource identifiers, no query/fragment/userinfo in governed base URL | IMPLEMENTED-ON-PROTECTED-MAIN |
 | Unbounded provider response memory/CPU | HTTP | bounded control responses and provider-file downloads; ACTIVE-PR #58 adds incremental result records | IMPLEMENTED-ON-PROTECTED-MAIN + ACTIVE-PR |
