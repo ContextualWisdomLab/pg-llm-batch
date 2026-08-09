@@ -52,3 +52,19 @@ def test_data_governance_separates_package_and_host_authority() -> None:
 
     assert "must not log" in lower or "never log" in lower
     assert "raw provider response" in lower or "provider response bodies" in lower
+
+
+def test_product_requirements_bind_data_governance_authority() -> None:
+    """Product and technical requirements must point to the governance owner."""
+    prd = _read("docs/product/PRD.md").lower()
+    trd = _read("docs/product/TRD.md").lower()
+
+    assert DATA_GOVERNANCE.lower() in prd
+    assert "purpose-bound" in prd
+    assert "retention" in prd
+    assert "host-owned" in prd
+
+    assert DATA_GOVERNANCE.lower() in trd
+    assert "data classification" in trd
+    assert "retention" in trd
+    assert "host-owned" in trd
