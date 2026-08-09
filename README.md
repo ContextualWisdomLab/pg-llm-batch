@@ -14,10 +14,12 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 - **Token counting is authoritative.** Counts come from `pg_tiktoken` in the
   database, so the numbers used to pack a batch are exactly what the DB sees —
   there is no drifting Python-side tokenizer.
-- **No secrets in the environment.** All configuration and credentials live in
-  Postgres KV tables (`com_config`, `com_secrets`). The environment is only a
-  *bootstrap transport* for the DSN and an optional Fernet key. This replaces
-  the ~75 `os.getenv` reads in the upstream app.
+- **Provider credentials stay out of the environment.** Operational
+  configuration and provider credentials live in Postgres KV tables
+  (`com_config`, `com_secrets`). The environment is only a *bootstrap transport*
+  for the DSN and an optional Fernet key. The Fernet key is sensitive bootstrap
+  secret material, not a provider credential, and must be protected accordingly.
+  This replaces the ~75 `os.getenv` reads in the upstream app.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 
@@ -65,7 +67,7 @@ docker compose up -d --build
 curl -fsS localhost:8080/healthz
 ```
 
-### 2. Point it at your gateway (config + secret in the DB, not env)
+### 2. Point it at your gateway (provider config + credential in the DB)
 
 ```bash
 export PG_LLM_BATCH_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm
@@ -85,6 +87,12 @@ Encrypt secrets at rest by exporting a Fernet key as bootstrap transport:
 export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
 python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
 ```
+
+`PG_LLM_BATCH_SECRET_KEY` is sensitive bootstrap secret material. Keep it out of
+shell history, logs, source control, images, and other ambient diagnostics; use a
+secret-injection mechanism appropriate to the deployment. Provider API
+credentials remain in `com_secrets` rather than environment variables by
+default.
 
 ### 3. Count, submit, wait, retrieve
 
