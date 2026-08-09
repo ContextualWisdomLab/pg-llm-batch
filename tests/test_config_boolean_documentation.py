@@ -51,3 +51,14 @@ def test_declared_collection_shape_contract_is_authoritative() -> None:
     assert "sequence" in doctoring.lower()
     assert "container shape" in doctoring.lower()
     assert "declared collection" in changelog.lower()
+
+
+def test_mutable_default_isolation_contract_is_authoritative() -> None:
+    """Docs must prevent callers from mutating process-wide collection defaults."""
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    assert "isolated copy" in doctoring.lower()
+    assert "process-wide default" in doctoring.lower()
+    assert "caller mutation" in doctoring.lower()
+    assert "mutable configuration defaults" in changelog.lower()
