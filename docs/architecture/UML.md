@@ -95,8 +95,15 @@ flowchart TD
     R -. ACTIVE-PR #58 .-> S[Incremental BatchResultRecord stream]
     S -. ACTIVE-PR #59 .-> C[Prefix-bound BatchResultCheckpoint]
     C -. ACTIVE-PR #60 .-> CP[(llm_result_stream_checkpoints)]
-    CP -. ACTIVE-PR #92/#94 successors .-> OBS[Telemetry + append-only audit evidence]
+    CP -. ACTIVE-PR #92 .-> OBS[Checkpoint telemetry]
+    OBS -. ACTIVE-PR #94 .-> AUD[Append-only checkpoint audit evidence]
+    AUD -. ACTIVE-PR #95 .-> MIG[Atomic checkpoint migration operator]
+    MIG -. ACTIVE-PR #96 .-> PAGE[Bounded stable audit pages]
+    PAGE -. ACTIVE-PR #97 DRAFT .-> MAN[Snapshot-manifest assurance]
+    OLD[#78 / #79 / #80 / #83 / #84\nSUPERSEDED] -. no evidence transfer .-> OBS
 ```
+
+The live replacement order is #92 -> #94 -> #95 -> #96 -> #97. The former #78/#79/#80/#83/#84 chain is **SUPERSEDED**; its checks, reviews, approvals, and base evidence do not transfer to replacement heads. #97 is the current Draft snapshot-manifest successor.
 
 ## 6. Health/readiness deployment sequence
 
@@ -122,10 +129,18 @@ flowchart LR
     CI --> GATE[Merge readiness]
     COMP --> GATE
     REV --> GATE
+    FIND[Finding resolution] --> GATE
+    BP[Branch protection] --> GATE
     APP[Qualifying independent formal approval] --> GATE
-    GATE -->|all policy gates satisfied on unchanged head| MAIN[Protected main]
+    GATE -->|all policy gates satisfied on unchanged head| MERGE[Merge execution]
+    MERGE --> POST[Protected-main post-check]
+    QUEUE[Open PR queue] --> POST
+    LIVE[Live graph checks] --> POST
+    POST --> MAIN[Protected main]
     SYN[Synthetic merge ref/status-only evidence] -. non-authoritative for source identity .-> GATE
 ```
+
+Merge readiness is not protected-main acceptance. After explicit merge execution, the protected-main post-check revalidates the open PR queue, finding resolution, branch protection, and live graph state under `docs/RELEASE_ACCEPTANCE.md` before integrated behavior is treated as operational evidence.
 
 ## 8. Standalone and CWL composition
 
