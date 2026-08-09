@@ -7,9 +7,10 @@
 ## Context
 
 `pg-llm-batch` already runs an hourly pull-request maintenance workflow. Its
-review-repair job pins an older central scheduler revision, grants write
-permissions to the workflow-generated GitHub token, and forwards all repository
-secrets through `secrets: inherit`.
+review-repair job pins a central scheduler revision, and the prior caller exposed
+a broader trust surface than necessary by granting repository write permission
+to the workflow-generated token and forwarding repository secrets with
+`secrets: inherit`.
 
 The central scheduler hardening in `ContextualWisdomLab/.github#782` separates
 model authentication from GitHub mutation authority, binds privileged source to
@@ -20,34 +21,28 @@ GitHub OIDC, with the established explicitly mapped `PR_REVIEW_MERGE_TOKEN` or
 continues to use `NVIDIA_NIM_API_KEY` inside the separately reviewed worker and
 never uses `COPILOT_GITHUB_TOKEN`.
 
-The merge scheduler is a distinct review and merge plane. This change must not
+The merge scheduler is a distinct review and merge plane. This decision must not
 alter its credential chain, permissions, or merge policy while repairing the
 review-fix caller.
 
-Required pull-request CI also needs source identity to be explicit. GitHub can
-create a synthetic pull-request merge ref, but this repository's merge policy
-requires evidence tied to the exact pull-request source head. Each CI checkout
-therefore binds `${{ github.event.pull_request.head.sha || github.sha }}` and
-immediately verifies `git rev-parse HEAD`; synthetic-merge-only execution cannot
-satisfy the exact-head gate.
-
 The previous maintenance concurrency policy used `cancel-in-progress: true`.
-That policy is suitable for obsolete build evidence, but not for a bounded
-maintenance run that may spend substantial time diagnosing a failure, waiting
-for an external reviewer, or applying one serialized repair. A later hourly
-trigger could cancel the active diagnosis and repeatedly restart from the same
-symptom. Broad writer-lease interpretation compounded that problem by treating
-a moving read-only dependency as though another actor had written the current
+That policy can discard a bounded maintenance run while it is diagnosing a
+failure, waiting for a reviewer, or applying one serialized repair. Broad
+writer-lease interpretation compounded that problem by treating a moving
+read-only dependency as though another actor had written the current
 `pg-llm-batch` target.
 
-A later feasibility review exposed another operational gap. The product caller
-removed repository write permission correctly, but it also omitted
-`id-token: write`. The central scheduler's short-lived GitHub App token exchange
-therefore could not run, leaving the hourly repair dependent on long-lived
-repository secrets even though the reviewed central design supplied a safer
-OIDC path. GitHub documents `id-token: write` as permission to request an OIDC
-token; it does not grant repository write access. The called workflow still
-performs the token exchange and all mutation authorization checks.
+A later feasibility review exposed another operational gap. Removing repository
+write permission also removed `id-token: write`, so the central scheduler could
+not request the OIDC assertion needed for its preferred short-lived GitHub App
+credential. GitHub documents `id-token: write` as permission to request an OIDC
+token; it does not itself grant repository mutation authority. The called
+workflow still performs the token exchange and all mutation authorization checks.
+
+Exact-source CI source-head binding is intentionally **out of scope** for this
+ADR and pull request. That independent repository-governance repair is isolated
+in pg-llm-batch PR #88. This branch must not duplicate, replace, or weaken #88's
+workflow and contract changes merely to advance scheduler hardening.
 
 ## Decision
 
@@ -74,61 +69,54 @@ plane fails closed only when neither an explicit secret nor the OIDC exchange
 yields mutation authority. It never falls back to `github.token` for repository
 mutation.
 
-Every repository CI job that checks out source will also pin the exact
-pull-request head expression, disable persisted checkout credentials, and verify
-the resulting Git commit before any test, coverage, package, or container gate.
-The test contract counts checkout sites dynamically so adding a future CI job
-without the same source-identity proof fails closed.
+The feature PR remains Draft until the central scheduler prerequisite is
+protected on `.github/main`. Before promotion, its temporary prerequisite SHA
+must be replaced by the resulting protected merge SHA and all affected current
+head gates must be regenerated. PR #88 follows its own independent integration
+and evidence lifecycle.
 
-The feature PR remains Draft and must not merge until the central prerequisite
-is protected on `main`. Before promotion, its temporary prerequisite SHA must be
-replaced by the resulting protected merge SHA and every exact-head check must be
-rerun.
-
-## Failure-recovery and writer-lease decision
+## Failure recovery and writer lease
 
 The maintenance decision sequence is **root-cause analysis → candidate remedy →
 feasibility check → execution**. A blocker report is not terminal while a safe,
 bounded remedy remains available.
 
-Root-cause analysis must identify the exact failed surface, exact current head,
+Root-cause analysis identifies the exact failed surface, exact current head,
 exact current base-branch tip, relevant review or workflow evidence, and whether
 the failure is deterministic, transient, infrastructure-only, dependency-bound,
-or caused by stale evidence. Candidate remedies are then ranked by minimum
-scope, preservation of tests and protections, and ability to create fresh
-exact-head evidence.
+or caused by stale evidence. Candidate remedies are ranked by minimum scope,
+preservation of tests and protections, and ability to create fresh current-head
+evidence.
 
 Before mutation, the scheduler evaluates **permissions, branch protection,
 exact-head checks, dependency integration, blast radius, and rollback**. A
 remedy is feasible only when it can be executed with existing authorized
 credentials, within the current repository lease, without bypassing a required
-gate, and with a bounded validation and rollback path. If the preferred remedy
-is infeasible, the scheduler evaluates the next safe candidate instead of
-stopping at the diagnosis.
+gate, and with bounded validation and rollback. If the preferred remedy is
+infeasible, the scheduler evaluates the next safe candidate instead of stopping
+at the diagnosis.
 
 A repository writer-lease conflict exists only when another actor changes the
-same `pg-llm-batch` target branch, pull request, or target blob between the
-required pre-write reads, or when another live write-capable path targets that
-same branch. In that case the scheduler refuses the stale write, reconciles
-read-only, and defers that target for the current run.
+same `pg-llm-batch` target branch, pull request, or target blob between required
+pre-write reads, or when another live write-capable path targets that same
+branch. The scheduler then refuses the stale write, reconciles read-only, and
+defers only that target for the current run.
 
 By contrast, **read-only dependency movement** invalidates only assumptions and
-evidence tied to that dependency. It requires a refetch, compatibility review,
-and possibly a refreshed immutable pin, but it **does not create a
-repository-wide writer-lease conflict**. The scheduler must continue unrelated
-safe work, and it may continue a dependency-independent bounded slice. A slice
-that truly requires the moving dependency waits until a reviewed stable identity
-is available; unrelated branches are not frozen merely because the dependency
-has advanced.
+evidence tied to that dependency. It requires a refetch and compatibility
+review, but it **does not create a repository-wide writer-lease conflict**. The
+scheduler must continue unrelated safe work. A slice that truly depends on the
+moving prerequisite waits for a reviewed stable identity; unrelated branches do
+not freeze merely because the dependency advanced.
 
 Queued, pending, cancelled, absent, skipped-required, neutral-required,
 stale-head, stale-base, predecessor-head, and synthetic-merge-only evidence
-remain non-passing. The recovery policy changes what productive action follows a
+remain non-passing. Recovery policy changes what productive action follows a
 blocker; it does not weaken the merge gate.
 
 ## Feasibility boundary
 
-The updated caller is realistic only under all of these conditions:
+The updated caller is realistic only when:
 
 - the referenced central workflow commit remains immutable and reviewed;
 - GitHub OIDC is available to the called workflow and the OpenCode exchange
@@ -138,14 +126,14 @@ The updated caller is realistic only under all of these conditions:
 - the target PR remains open, same-repository, and unchanged at the expected
   head/base immediately before mutation;
 - the central worker preserves its path allowlist, exact-head refusal, hook
-  suppression, and explicit push destination checks; and
+  suppression, and explicit push-destination checks; and
 - final merge still waits for independent approval, branch protection, and all
-  exact-head required checks.
+  required current-head checks.
 
 An OIDC outage, exchange-service outage, missing app installation, or missing
 fallback secret is an operational failure, not permission to weaken the gate.
-The scheduler records the failed boundary, continues read-only analysis or an
-independent safe slice, and retries on a later hourly run.
+The scheduler records that boundary, continues read-only analysis or an
+independent safe slice, and retries on a later run.
 
 ## Consequences
 
@@ -159,12 +147,12 @@ independent safe slice, and retries on a later hourly run.
 - Standalone and MSA deployments share the same central scheduler contract.
 - The model credential remains isolated inside the OpenCode worker.
 - The existing reviewer and merge credential systems are not rewritten.
-- Required CI evidence is attributable to the exact source head rather than a
-  GitHub-generated merge ref.
 - Long-running RCA and bounded repair are not discarded by the next hourly
   trigger.
 - Dependency drift causes scoped reconciliation rather than repository-wide
   maintenance livelock.
+- Exact-source CI governance remains independently reviewable in PR #88 instead
+  of being serialized behind the scheduler dependency.
 
 ### Trade-offs
 
@@ -173,11 +161,9 @@ independent safe slice, and retries on a later hourly run.
   inherited wholesale.
 - The caller depends on the central prerequisite merging before it can be
   promoted.
-- Every source-head change invalidates prior CI evidence and requires a fresh
-  exact-head run.
-- Queuing preserves work but can accumulate delayed runs; the repair and review
-  dispatch limits therefore remain bounded, and every run must re-fetch live
-  state before acting.
+- Every source-head change invalidates prior current-head evidence.
+- Queuing preserves work but can accumulate delayed runs; repair and review
+  dispatch limits therefore remain bounded, and each run refetches live state.
 
 ## Verification
 
@@ -185,9 +171,8 @@ Permanent tests require the exact central scheduler SHA, explicit secret
 mapping, the exact caller permission set `{contents: read, id-token: write}`,
 absence of generated-token repository write authority and secret inheritance,
 byte-stable merge-plane policy, queued single-flight concurrency, and the scoped
-RCA and writer-lease contract. They also require every `actions/checkout` in
-repository CI to bind the exact source-head expression and to be followed by an
-explicit `git rev-parse HEAD` equality check. The complete repository CI,
+RCA and writer-lease contract. They also ensure this scheduler slice does not
+own the exact-source CI contract isolated in PR #88. Complete repository CI,
 security, coverage, packaging, and independent-review gates remain mandatory on
 the final protected-main base.
 
@@ -212,10 +197,6 @@ GitHub. (n.d.). *Workflow syntax for GitHub Actions: Concurrency*. GitHub Docs.
 Retrieved August 8, 2026, from
 https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#concurrency
 
-GitHub. (n.d.). *Troubleshooting workflows: Scheduled workflows running at
-unexpected times*. GitHub Docs. Retrieved August 8, 2026, from
-https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#scheduled-workflows-running-at-unexpected-times
-
-GitHub. (n.d.). *Events that trigger workflows: pull_request*. GitHub Docs.
+GitHub. (n.d.). *Troubleshooting workflows: Scheduled workflows running at unexpected times*. GitHub Docs.
 Retrieved August 8, 2026, from
-https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request
+https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#scheduled-workflows-running-at-unexpected-times
