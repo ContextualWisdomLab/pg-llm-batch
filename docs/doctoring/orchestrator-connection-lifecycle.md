@@ -15,7 +15,9 @@ A database-backed store owns its PostgreSQL connection immediately after `psycop
 
 This constructor cleanup is internal to the store and complements the outer orchestrator and CLI ownership rules. Callers never receive an unusable object, ordinary driver cleanup errors do not replace the primary setup failure, and successful construction retains the existing explicit `close()` contract. The change does not retry setup, hide the original database or encryption error, or convert a failed initialization into a usable fallback store.
 
-`SecretStore` distinguishes intentional no-key local/development operation from an explicit encryption request. When no Fernet key is configured, the existing base64-obfuscated local/dev fallback remains available and is explicitly not encryption. When a **configured Fernet** key is supplied but the optional `cryptography` dependency is unavailable, construction **fails closed** with `ConfigError` instead of silently downgrading the requested encryption to base64 obfuscation. Because this check runs inside the protected constructor setup block, the already acquired PostgreSQL connection is closed before the error propagates. Operators that configure a Fernet key must install the `secrets` extra (or otherwise provide the compatible `cryptography` dependency).
+`SecretStore` distinguishes intentional no-key local/development operation from an explicit encryption request. When no Fernet key is configured, the existing base64-obfuscated local/dev fallback remains available and is explicitly not encryption. When a **configured Fernet** key is supplied but the optional `cryptography` dependency is unavailable, construction **must fail closed** with `ConfigError` instead of silently downgrading the requested encryption to base64 obfuscation. Because this check runs inside the protected constructor setup block, the already acquired PostgreSQL connection is closed before the error propagates. Operators that configure a Fernet key must install the `secrets` extra (or otherwise provide the compatible `cryptography` dependency).
+
+The no-key read path is also strict. Python's `base64.b64decode(..., validate=True)` rejects non-alphabet input instead of discarding it before the padding check. `SecretStore` uses that strict boundary and requires the decoded bytes to be valid UTF-8. Malformed stored base64 or invalid decoded text must **fail closed** as the bounded `ConfigError` message `stored secret encoding is invalid`; stored secret material and the decoder exception are not attached as exported cause or context.
 
 ## Orchestrator runtime contract
 
@@ -59,6 +61,8 @@ Psycopg documents a `Connection` as a database session and states that code usin
 
 Python documents `finally` as the cleanup clause that executes when control leaves the protected block, including when the block returns or raises. Nested `try/finally` therefore makes the ownership order reviewable and deterministic across successful preparation, command completion, assembly failure, remote-operation failure, partial collaborator construction, and store-constructor setup failure.
 
+Python's Base64 library documents that `b64decode(..., validate=False)` discards non-alphabet characters before padding validation, while `validate=True` raises `binascii.Error` for them. The stored-secret boundary uses strict validation because accepting and normalizing corrupted persistence would make database corruption indistinguishable from a valid credential.
+
 ## Verification
 
 Deterministic tests prove that:
@@ -75,8 +79,9 @@ Deterministic tests prove that:
 10. async client exit closes HTTP, secret, and configuration resources in reverse construction order;
 11. partial async credential construction closes every successfully constructed owner;
 12. `PostgresConfigStore` closes its acquired connection when constructor setup fails;
-13. `SecretStore` closes its acquired connection when constructor setup fails; and
-14. a configured Fernet key with unavailable `cryptography` fails closed instead of entering the no-key base64 fallback.
+13. `SecretStore` closes its acquired connection when constructor setup fails;
+14. a configured Fernet key with unavailable `cryptography` must fail closed instead of entering the no-key base64 fallback; and
+15. malformed no-key base64 persistence must fail closed with bounded diagnostics and no stored material in exception cause or context.
 
 The complete gate must continue to prove Python 3.10, 3.12, and 3.14 behavior; 100% production statement and branch coverage; 100% public docstrings; compilation; Ruff; lock freshness; package construction; Compose validation; container builds; Security Scan; and SAST.
 
@@ -96,12 +101,16 @@ Call `TokenCounter.close()`, `PostgresConfigStore.close()`, or `SecretStore.clos
 
 If a configured Fernet key fails because `cryptography` is unavailable, install the package's `secrets` extra or the governed compatible cryptography dependency and retry with the same intended key. Do not remove the key merely to bypass the failure in a production environment; doing so selects the explicitly weaker local/dev base64-obfuscation mode.
 
+If a stored local/dev obfuscated value fails strict Base64 or UTF-8 validation, treat the row as corrupted evidence. Do not trim, discard, or normalize bytes to make the credential usable. Restore the value from a trusted source through the normal `SecretStore` write path, or rotate the affected credential, then retry.
+
 ## Rollback
 
-There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned, CLI-owned, and partially initialized store sessions, reacquires the token-counting connection before configuration validation, and would restore silent encryption downgrade when a configured Fernet key cannot be honored. During an incident, retain the explicit lifecycle and fail-closed encryption boundary and diagnose the failing connection, dependency, or driver cleanup path rather than removing `try/finally`, constructor cleanup, or relying on garbage collection.
+There is no persistent data or migration to reverse. Code **rollback** is mechanically straightforward, but it restores nondeterministic release of orchestrator-owned, CLI-owned, and partially initialized store sessions, reacquires the token-counting connection before configuration validation, would restore silent encryption downgrade when a configured Fernet key cannot be honored, and would again permit non-alphabet Base64 characters to be discarded during local/dev credential reads. During an incident, retain the explicit lifecycle and fail-closed encryption/decoding boundaries and diagnose the failing connection, dependency, persistence, or driver cleanup path rather than removing `try/finally`, constructor cleanup, strict Base64 validation, or relying on garbage collection.
 
 ## References
 
 Psycopg Team. (2026). *Basic module usage*. Psycopg 3 documentation. https://www.psycopg.org/psycopg3/docs/basic/usage.html
+
+Python Software Foundation. (2026). *Base16, Base32, Base64, Base85 data encodings*. Python 3.14.6 documentation. https://docs.python.org/3.14/library/base64.html
 
 Python Software Foundation. (2026). *Compound statements*. Python 3.14.6 documentation. https://docs.python.org/3/reference/compound_stmts.html
