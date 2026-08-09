@@ -24,12 +24,12 @@ SECRET_KEY_ENV_VAR = "PG_LLM_BATCH_SECRET_KEY"
 
 
 def resolve_dsn(explicit: Optional[str] = None) -> str:
-    """Resolve the Postgres DSN without overriding explicit operator intent.
+    """Resolve a nonblank Postgres DSN without overriding explicit operator intent.
 
     A supplied explicit argument (for example ``--dsn``) always owns the
-    database-target decision. An explicitly empty or whitespace-only value is
-    invalid and fails closed; the environment fallback is consulted only when
-    the argument is omitted entirely.
+    database-target decision. Empty or whitespace-only explicit and environment
+    values fail closed; the environment fallback is consulted only when the
+    explicit argument is omitted entirely. Valid DSNs are returned unchanged.
     """
     if explicit is not None:
         if explicit.strip() == "":
@@ -40,9 +40,9 @@ def resolve_dsn(explicit: Optional[str] = None) -> str:
         return explicit
 
     dsn = os.environ.get(DSN_ENV_VAR)
-    if not dsn:
+    if dsn is None or dsn.strip() == "":
         raise ConfigError(
-            f"No Postgres DSN available. Pass --dsn or set {DSN_ENV_VAR} "
+            f"No nonblank Postgres DSN available. Pass --dsn or set {DSN_ENV_VAR} "
             "(bootstrap transport only)."
         )
     return dsn
