@@ -107,7 +107,7 @@ def test_public_healthz_omits_runtime_fingerprint_authoritatively():
 
 
 def test_healthz_listener_network_exposure_is_explicit_authoritatively():
-    """Docs must preserve loopback CLI safety and explicit container exposure."""
+    """Docs must cover secure library/CLI defaults and explicit container exposure."""
     doctoring = _normalized(DOCTORING)
     adr = _normalized(ADR)
     changelog = _normalized(CHANGELOG)
@@ -118,10 +118,14 @@ def test_healthz_listener_network_exposure_is_explicit_authoritatively():
         assert "0.0.0.0" in document
         assert "explicit" in document.lower()
         assert "container" in document.lower()
+        assert "serve_healthz(dsn)" in document
+        assert "library" in document.lower()
 
     assert "loopback" in changelog.lower()
     assert "explicit" in changelog.lower()
     assert "container" in changelog.lower()
+    assert "serve_healthz(dsn)" in changelog
+    assert "library" in changelog.lower()
 
 
 def test_contributor_contract_preserves_healthz_redaction_boundary():
