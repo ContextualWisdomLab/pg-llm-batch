@@ -4,6 +4,7 @@
 from pathlib import Path
 
 
+AGENTS = Path("AGENTS.md")
 ADR = Path("docs/adr/0014-public-healthz-readiness.md")
 DOCTORING = Path("docs/doctoring/public-healthz-readiness.md")
 CHANGELOG = Path("CHANGELOG.md")
@@ -32,6 +33,7 @@ def test_concurrent_health_probe_contract_is_authoritative() -> None:
 
 def test_bounded_health_probe_admission_contract_is_authoritative() -> None:
     """Docs must define the resource ceiling and every worker-slot release path."""
+    agents = _normalized(AGENTS)
     adr = _normalized(ADR)
     doctoring = _normalized(DOCTORING)
     changelog = _normalized(CHANGELOG)
@@ -47,5 +49,9 @@ def test_bounded_health_probe_admission_contract_is_authoritative() -> None:
         for phrase in required:
             assert phrase in document
 
+    assert "32 admitted readiness requests" in agents
+    assert "excess connections" in agents
+    assert "before worker or database work" in agents
+    assert "release every admission slot" in agents
     assert "bounded concurrent readiness probes" in changelog.lower()
     assert "32" in changelog
