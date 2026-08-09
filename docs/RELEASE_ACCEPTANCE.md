@@ -101,7 +101,7 @@ A COMMENTED review, commit status, bot text, reaction, dismissed review, author 
 
 ## 9. Operational acceptance
 
-After source integration and before publication, changed operator/runtime surfaces must be exercised from protected main where practical. Depending on the release, operational acceptance includes:
+After source integration, **post-merge operational acceptance** must exercise changed operator/runtime surfaces from protected main where practical. This gate follows `docs/automation/ADR-0005-protected-main-operational-acceptance.md`: source merge is intermediate, and fresh protected-main evidence remains distinct from pull-request checks and reviews. Depending on the release, operational acceptance includes:
 
 - schema initialization or supported upgrade path;
 - component startup and readiness;
@@ -114,7 +114,7 @@ After source integration and before publication, changed operator/runtime surfac
 - verification that package-owned diagnostics remain within the current data-governance classification; and
 - explicit degraded/failure behavior.
 
-Operational acceptance records the exact source/artifact and environment assumptions used. A green source PR alone is not runtime closure.
+Operational acceptance records the exact source/artifact and environment assumptions used. A green source PR alone is not runtime closure. If the integrated behavior fails, use the applicable rollback or forward-repair path below and reacquire fresh evidence on the resulting protected state.
 
 ## 10. CHANGELOG and version decision
 
