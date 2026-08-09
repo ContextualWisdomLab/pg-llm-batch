@@ -269,8 +269,47 @@
   snapshot-stable export must begin a caller-owned `REPEATABLE READ` or stricter
   transaction before the first query and reuse the in-transaction method.
 - Keep destination credentials, immutable/WORM storage, retention, legal hold,
-  export receipts, cryptographic manifests, and reconciliation outside package
-  write authority.
+  export receipts, signed or authenticated manifests, and reconciliation outside
+  package write authority.
 - Maintain 100% production statement, branch, and public-docstring coverage with
   strict cursor, immutable-page, lookahead, keyset SQL, trusted-key, ordering,
   malformed-driver, no-commit, and live concurrent-insert pagination tests.
+
+## Checkpoint audit snapshot manifest invariants
+
+- Keep `CheckpointAuditSnapshotManifest` and
+  `build_audit_snapshot_manifest_in_transaction()` opt-in and preserve the
+  existing one-page and keyset-pagination APIs.
+- Require one active PostgreSQL transaction owned by the caller before any
+  manifest page is read, then require a **read-only** `REPEATABLE READ` or
+  `SERIALIZABLE` transaction. Session-level isolation defaults do not satisfy
+  this boundary: reject autocommit even when it advertises `REPEATABLE READ`,
+  reject `READ COMMITTED`, malformed isolation or read-only evidence, unknown
+  modes, and read-write transactions before page traversal. This prevents a
+  manifest from identifying the caller's own uncommitted accepted-save rows
+  that could disappear on rollback. Never alter caller-owned transaction state,
+  isolation, or read-only mode.
+- Validate `page_size` as a strict integer from 1 through 1,000 and `max_events`
+  as a strict integer from 1 through 100,000. Keep only one bounded page plus
+  fixed digest state in package-owned memory and fail closed rather than silently
+  truncating when a continuation remains beyond `max_events`.
+- Treat manifest schema version 1 as a compatibility contract. Bind the domain,
+  exact trusted tenant/consumer/endpoint/batch key, every retained audit-event
+  field in strict newest-first order, UTC microsecond `recorded_at`, event count,
+  and newest/oldest identities with explicit length framing. Page boundaries must
+  not affect digest identity. Incompatible framing requires a new schema version.
+- Revalidate manifest count, event-identity range, and lowercase 64-hex digest.
+  Empty manifests have no event IDs, one-event manifests have one equal identity,
+  and multi-event manifests require a strictly descending identity range.
+- Describe SHA-256 only as deterministic content identity and change detection.
+  It is not a MAC, signature, credential, trusted timestamp, delivery receipt,
+  provenance statement, or non-repudiation mechanism.
+- Keep external immutable/WORM retention, destination credentials, legal hold,
+  delivery receipts, signing/authentication, key management, and reconciliation
+  under host/operator authority.
+- Preserve standalone and modular MSA operation without a new migration, provider
+  credential, LLM key, network exporter, or background scheduler.
+- Maintain 100% production statement, branch, and public-docstring coverage with
+  strict manifest validation, isolation, active-transaction, autocommit,
+  read-only, rollback-risk, overflow, digest-sensitivity, page-partition,
+  public-export, fixed-vector, and live concurrent-insert tests.
