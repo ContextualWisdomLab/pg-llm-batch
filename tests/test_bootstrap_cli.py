@@ -29,6 +29,13 @@ def test_bootstrap_precedence_and_missing_values(monkeypatch):
     assert bootstrap.resolve_secret_key() is None
 
 
+def test_explicit_empty_secret_key_never_falls_back_to_environment(monkeypatch):
+    """An explicit empty optional key must override an ambient bootstrap key."""
+    monkeypatch.setenv(bootstrap.SECRET_KEY_ENV_VAR, "environment-key")
+
+    assert bootstrap.resolve_secret_key("") == ""
+
+
 def test_main_maps_domain_error_to_stderr(monkeypatch, capsys):
     """Domain errors retain their reason and stable exit code."""
     monkeypatch.setattr(
