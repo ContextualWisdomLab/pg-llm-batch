@@ -229,7 +229,7 @@ def test_batch_preparation_docs_follow_production_persistence_order() -> None:
         "partition",
         "persist payload document",
         "persist batch file",
-        "persist JSONL lines",
+        "persist jsonl lines",
         "assign queued requests",
         "update batch totals",
         "commit",
