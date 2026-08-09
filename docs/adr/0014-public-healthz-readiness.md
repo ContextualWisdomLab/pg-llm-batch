@@ -8,9 +8,9 @@
 
 The package has two different readiness consumers. The local CLI and operator tooling need **local operator diagnostics** from `check_health()`, including database or extension `detail` values that help explain why a deployment is not ready. The network-facing **public /healthz** endpoint only needs enough information for an orchestrator or load balancer to decide whether the service is ready.
 
-Before this decision, `serve_healthz()` serialized the complete local report. A connection exception or PostgreSQL health-function message could therefore cross the HTTP boundary. That creates an unnecessary information-disclosure surface consistent with **CWE-209**, even when the HTTP status itself is correct.
+Before this decision, `serve_healthz()` serialized the complete local report. A connection exception or PostgreSQL health-function message could therefore cross the HTTP boundary. That creates an unnecessary information-disclosure surface consistent with **CWE-209**, even when the HTTP status itself is correct. Arbitrary local component identifiers can also disclose topology or implementation detail even when their per-component diagnostic fields are stripped.
 
-Kubernetes readiness probes require a success or failure result; they do not require database exception strings, internal hostnames, extension versions, or other diagnostic detail. HTTP caching is also undesirable for readiness responses because a stored response can outlive the state it represents.
+Kubernetes readiness probes require a success or failure result; they do not require database exception strings, internal hostnames, extension versions, arbitrary local component names, or other diagnostic detail. HTTP caching is also undesirable for readiness responses because a stored response can outlive the state it represents.
 
 The readiness query also needs a database-side execution bound. A PostgreSQL connection can be established successfully while `pg_llm_batch_health_check()` stalls on database work. A connection timeout alone does not bound an already-started SQL statement.
 
@@ -25,11 +25,11 @@ This database-side limit is **not an end-to-end deadline** for the HTTP request.
 The **public /healthz** response is a separate projection. It exposes only:
 
 - the top-level boolean `ready`; and
-- for each observed component, `component and is_ready`.
+- `component and is_ready` for identities in the **fixed required-component allow-list**.
 
-Every other top-level or component field is dropped before JSON serialization. In particular, database exception text, SQL health-function `detail`, debug fields, credentials, provider-controlled extras, and future unreviewed diagnostic fields cannot cross the public readiness projection merely because they were added to the local report.
+Every other top-level or component field is dropped before JSON serialization, and validly shaped but unrecognized component names are omitted from the public representation. In particular, database exception text, SQL health-function `detail`, arbitrary local component identities, debug fields, credentials, provider-controlled extras, and future unreviewed diagnostic fields cannot cross the public readiness projection merely because they were added to the local report.
 
-Public readiness validation is **non-coercive**. Any **malformed readiness** shape—including a non-boolean top-level `ready`, a non-list `components`, a non-object component record, a non-string component name, or a non-boolean `is_ready`—fails closed to the fixed `{"ready": false, "components": []}` projection and **HTTP 503**. String, numeric, container, or object truthiness is never accepted as readiness evidence.
+Public readiness validation is **non-coercive**. Any **malformed readiness** shape—including a non-boolean top-level `ready`, a non-list `components`, a non-object component record, a non-string component name, or a non-boolean `is_ready`—fails closed to the fixed `{"ready": false, "components": []}` projection and **HTTP 503**. String, numeric, container, or object truthiness is never accepted as readiness evidence. Validly shaped unrecognized names are ignored rather than promoted to public probe output; they neither satisfy nor invalidate the fixed required-component set.
 
 The response keeps the existing `200` when ready and `503` when not ready behavior. Other paths remain `404`. The endpoint adds `Cache-Control: no-store`, consistent with **RFC 9111**, so caches are instructed not to store readiness representations.
 
@@ -39,7 +39,7 @@ This boundary is **not authentication** and does not make an intentionally publi
 
 Standalone operation is unchanged: Docker and Compose can continue probing `/healthz`, while `python -m pg_llm_batch health` retains detailed local diagnostics. Embedding applications can keep calling `check_health()` when their trusted operator surface needs detail. No database schema, migration, provider API, model credential, or cross-service dependency changes.
 
-The public projection copies a fixed allow-list instead of deleting known sensitive keys. This is fail-closed for future diagnostic fields: new local fields remain private unless the public contract is deliberately reviewed and changed. Malformed or unexpectedly typed readiness fields also remain fail-closed rather than being converted through Python truth coercion.
+The public projection copies a **fixed required-component allow-list** instead of deleting known sensitive keys or relaying arbitrary local component names. This is fail-closed for future diagnostic fields and identities: new local fields and component names remain private unless the public contract is deliberately reviewed and changed. Malformed or unexpectedly typed readiness fields also remain fail-closed rather than being converted through Python truth coercion.
 
 The transaction-local timeout likewise requires no schema or server-configuration migration. It is scoped to the current health transaction and rolls back automatically with that transaction.
 
@@ -47,34 +47,35 @@ The transaction-local timeout likewise requires no schema or server-configuratio
 
 ### Positive
 
-- Database exception strings and internal diagnostic detail no longer cross the public HTTP readiness boundary.
-- Readiness clients retain useful component state without receiving troubleshooting content.
+- Database exception strings, arbitrary local component identities, and internal diagnostic detail no longer cross the public HTTP readiness boundary.
+- Readiness clients retain the fixed required-component state without receiving troubleshooting content.
 - Malformed readiness values cannot become false-ready HTTP evidence through truth coercion.
+- New local diagnostic component names do not silently widen the public interface.
 - `Cache-Control: no-store` reduces the chance that stale readiness JSON is stored or reused by an HTTP cache.
 - Local troubleshooting remains useful because the CLI path is not redacted.
 - A connected but stalled PostgreSQL health statement receives a deterministic database-side execution ceiling instead of relying only on an outer probe timeout.
 
 ### Trade-offs
 
-- Remote probe consumers can no longer inspect detailed failure text directly from `/healthz`.
+- Remote probe consumers can no longer inspect detailed failure text or optional/unrecognized local component names directly from `/healthz`.
 - Operators must use trusted local tooling or logs for detailed diagnosis.
-- A network-visible health endpoint still reveals that the service exists and whether named components are ready; deployments requiring a narrower exposure boundary must enforce that outside this package.
-- Unexpected local health-report schema drift is intentionally reported as not ready rather than partially projected.
+- A network-visible health endpoint still reveals that the service exists and whether the fixed required components are ready; deployments requiring a narrower exposure boundary must enforce that outside this package.
+- Unexpected local health-report schema drift is intentionally reported as not ready rather than partially projected, while validly shaped unknown component identities are kept local.
 - The 4,000-millisecond statement limit can classify unusually slow health-function execution as not ready even when it would eventually complete; that is intentional fail-closed readiness behavior, not a query-performance retry mechanism.
 
 ## Verification
 
-Deterministic tests prove that secret-like text, internal hostnames, provider-controlled extra keys, database details, and unknown top-level fields are absent from the public projection. Separate HTTP tests prove the same redaction is applied by `/healthz`, status semantics are preserved, and `Cache-Control: no-store` is emitted. Existing tests continue to prove that detailed local diagnostics remain available.
+Deterministic tests prove that secret-like text, internal hostnames, provider-controlled extra keys, database details, unknown top-level fields, and unrecognized component names are absent from the public projection. Separate HTTP tests prove the same redaction is applied by `/healthz`, status semantics are preserved, and `Cache-Control: no-store` is emitted. Existing tests continue to prove that detailed local diagnostics remain available.
 
-A malformed-readiness matrix proves that coercive top-level state, non-list component containers, non-object records, non-string component names, and non-boolean component readiness all produce the same empty not-ready public projection. A dedicated HTTP regression proves that this sanitized projection—not raw local-report truthiness—controls the 200/503 status decision.
+A malformed-readiness matrix proves that coercive top-level state, non-list component containers, non-object records, non-string component names, and non-boolean component readiness all produce the same empty not-ready public projection. A dedicated HTTP regression proves that this sanitized projection—not raw local-report truthiness—controls the 200/503 status decision. A separate allow-list regression proves that a valid but unrecognized local component identity is not serialized and cannot alter required-component readiness.
 
-A focused reliability regression records SQL calls and requires the parameterized, transaction-local `statement_timeout` assignment to occur before the health function. Documentation contracts preserve the exact 4,000-millisecond boundary, the PostgreSQL 18 basis, and the explicit statement that this is not an end-to-end deadline.
+A focused reliability regression records SQL calls and requires the parameterized, transaction-local `statement_timeout` assignment to occur before the health function. Documentation contracts preserve the exact 4,000-millisecond boundary, the PostgreSQL 18 basis, the fixed required-component allow-list, and the explicit statement that this is not an end-to-end deadline.
 
 The production suite must retain 100% statement and branch coverage and 100% public docstrings. Synthetic-merge-only CI is not final exact-head merge evidence; the branch must later obtain required exact-source-head evidence under the repository's protected merge policy.
 
 ## Rollback
 
-There is no persistent state or migration to reverse. A code rollback restores the former detailed HTTP payload immediately, so rollback is mechanically simple but reintroduces the confidentiality risk. Reverting the non-coercive projection would also reopen the false-ready boundary for malformed state. Removing the transaction-local statement bound would restore the unbounded connected-query behavior. During an incident, prefer retaining redaction, strict projection validation, and the bounded SQL path while using local operator diagnostics rather than restoring public diagnostic detail or weakening the execution ceiling.
+There is no persistent state or migration to reverse. A code rollback restores the former detailed HTTP payload immediately, so rollback is mechanically simple but reintroduces the confidentiality risk. Reverting the non-coercive projection would also reopen the false-ready boundary for malformed state. Reverting the component-name filter would allow future local component identities to cross the HTTP boundary without deliberate review. Removing the transaction-local statement bound would restore the unbounded connected-query behavior. During an incident, prefer retaining redaction, the fixed required-component allow-list, strict projection validation, and the bounded SQL path while using local operator diagnostics rather than restoring public diagnostic detail or weakening the execution ceiling.
 
 ## References
 
