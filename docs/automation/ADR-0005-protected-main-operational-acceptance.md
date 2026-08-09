@@ -1,6 +1,6 @@
 # ADR-0005: Protected-main operational acceptance
 
-- **Status:** ACTIVE-PR
+- Status: ACTIVE-PR
 - **Scope:** post-merge operational, incident-closure, and release-readiness evidence
 
 ## Context
