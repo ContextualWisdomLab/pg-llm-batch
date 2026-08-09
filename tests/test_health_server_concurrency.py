@@ -224,3 +224,29 @@ def test_health_server_releases_admission_slot_after_request_completion(
 
     assert len(handled) == 2
     assert rejected == []
+
+
+def test_health_handler_bounds_partial_request_read_time(monkeypatch: Any) -> None:
+    """Each admitted socket must have a finite read timeout against slow clients."""
+    handler_classes: list[type[Any]] = []
+
+    class _CapturingHTTPServer:
+        """Capture the request handler contract without opening a real socket."""
+
+        def __init__(
+            self,
+            _address: tuple[str, int],
+            handler_class: type[Any],
+        ) -> None:
+            """Retain the generated handler class for timeout inspection."""
+            handler_classes.append(handler_class)
+
+        def serve_forever(self) -> None:
+            """Return immediately instead of entering a real server loop."""
+
+    monkeypatch.setattr("http.server.HTTPServer", _CapturingHTTPServer)
+
+    health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
+
+    assert len(handler_classes) == 1
+    assert handler_classes[0].timeout == health.HEALTH_REQUEST_TIMEOUT_SECONDS
