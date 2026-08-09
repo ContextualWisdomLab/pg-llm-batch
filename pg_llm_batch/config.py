@@ -88,9 +88,10 @@ DEFAULT_CONFIG_INDEX = _build_default_index(DEFAULT_CONFIG_TREE)
 
 
 def _isolated_default(item: Optional[Dict[str, Any]], fallback: Any) -> Any:
-    """Return an isolated copy of a declared default or caller fallback."""
-    value = item["value"] if item else fallback
-    return deepcopy(value)
+    """Copy a declared default while preserving caller-owned fallback identity."""
+    if item is None:
+        return fallback
+    return deepcopy(item["value"])
 
 
 def _serialize_value(value: Any) -> str:
@@ -134,7 +135,7 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
 
 
 def _default_value(category: str, key: str, fallback: Any) -> Any:
-    """Return an isolated built-in default or the caller's isolated fallback."""
+    """Return an isolated built-in default or caller-owned fallback unchanged."""
     item = DEFAULT_CONFIG_INDEX.get(f"{category}.{key}")
     return _isolated_default(item, fallback)
 
