@@ -88,6 +88,23 @@ def test_secret_store_fernet_encrypts_at_rest(fake_pg):
     assert store.get_secret("gateway_api_key.default") == "sk-abc"
 
 
+def test_encrypted_secret_wrong_key_fails_with_bounded_config_error(fake_pg):
+    """Wrong-key persistence must not expose ciphertext through exception links."""
+    from cryptography.fernet import Fernet
+
+    writer = SecretStore("postgresql://x", fernet_key=Fernet.generate_key().decode())
+    writer.set_secret("gateway_api_key.default", "sensitive-provider-secret")
+    ciphertext = fake_pg.store.secrets["gateway_api_key.default"][0]
+    reader = SecretStore("postgresql://x", fernet_key=Fernet.generate_key().decode())
+
+    with pytest.raises(ConfigError, match="stored encrypted secret is invalid") as exc_info:
+        reader.get_secret("gateway_api_key.default")
+
+    assert exc_info.value.__cause__ is None
+    assert exc_info.value.__context__ is None
+    assert ciphertext not in str(exc_info.value)
+
+
 def test_require_secret_raises_when_missing(fake_pg):
     store = SecretStore("postgresql://x")
     with pytest.raises(ConfigError):
