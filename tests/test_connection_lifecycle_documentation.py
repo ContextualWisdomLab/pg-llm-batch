@@ -32,3 +32,16 @@ def test_owned_connection_lifecycle_contract_is_authoritative() -> None:
     assert "Compound statements" in doctoring
     assert "orchestrator-owned" in changelog.lower()
     assert "connection" in changelog.lower()
+
+
+def test_partial_store_construction_cleanup_is_authoritative() -> None:
+    """Docs must preserve cleanup after a store acquires but cannot initialize."""
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    assert "partially initialized" in doctoring.lower()
+    assert "constructor" in doctoring.lower()
+    assert "PostgresConfigStore" in doctoring
+    assert "SecretStore" in doctoring
+    assert "setup failure" in doctoring.lower()
+    assert "store constructor" in changelog.lower()
