@@ -94,11 +94,7 @@ def check_health(dsn: str) -> Dict[str, Any]:
             ", ".join(sorted(duplicate_required)),
         )
 
-    ready = (
-        not missing
-        and not duplicate_required
-        and all(required_states.values())
-    )
+    ready = not missing and not duplicate_required and all(required_states.values())
     return {"ready": ready, "components": components}
 
 
@@ -139,20 +135,17 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
         if component_name in required_states:
             return _not_ready_public_health_report()
         required_states[component_name] = is_ready
-        public_components.append(
-            {"component": component_name, "is_ready": is_ready}
-        )
+        public_components.append({"component": component_name, "is_ready": is_ready})
 
-    required_ready = (
-        set(required_states) == REQUIRED_COMPONENTS
-        and all(required_states.values())
+    required_ready = set(required_states) == REQUIRED_COMPONENTS and all(
+        required_states.values()
     )
     return {"ready": ready and required_ready, "components": public_components}
 
 
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
     """Serve a redacted ``/healthz`` readiness endpoint (blocking)."""
-    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
         """HTTP request handler that answers ``/healthz`` with redacted readiness."""
@@ -183,6 +176,6 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
             """Suppress the default stderr access logging."""
             return
 
-    server = HTTPServer((host, port), _Handler)
+    server = ThreadingHTTPServer((host, port), _Handler)
     logger.info("Serving /healthz on %s:%s", host, port)
     server.serve_forever()
