@@ -112,10 +112,11 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
 
     Local callers can keep using :func:`check_health` when they need the
     database-provided ``detail`` field. Probe clients only need the overall
-    readiness decision and each component's boolean state. This projection
-    therefore accepts only exact boolean readiness fields and string component
-    names, copies those fixed fields, and fails closed on malformed shapes or
-    contradictory required-component evidence.
+    readiness decision and the fixed required components' boolean states. This
+    projection therefore accepts only exact boolean readiness fields and string
+    component names, exposes only names in :data:`REQUIRED_COMPONENTS`, and
+    fails closed on malformed shapes or contradictory required-component
+    evidence.
     """
     ready = report.get("ready")
     components = report.get("components")
@@ -133,10 +134,11 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
             return _not_ready_public_health_report()
         if type(is_ready) is not bool:
             return _not_ready_public_health_report()
-        if component_name in REQUIRED_COMPONENTS:
-            if component_name in required_states:
-                return _not_ready_public_health_report()
-            required_states[component_name] = is_ready
+        if component_name not in REQUIRED_COMPONENTS:
+            continue
+        if component_name in required_states:
+            return _not_ready_public_health_report()
+        required_states[component_name] = is_ready
         public_components.append(
             {"component": component_name, "is_ready": is_ready}
         )
