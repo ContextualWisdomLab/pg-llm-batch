@@ -30,3 +30,5 @@ def test_bootstrap_secret_claims_distinguish_provider_credentials_from_key_mater
     assert "distinct from database-backed provider credentials" in threat_model
     assert "terminal echo control is unavailable" in threat_model
     assert "fails closed before accepting provider credential input" in threat_model
+    assert "active-pr #93 guidance" in threat_model
+    assert "implemented-on-protected-main primitives" in threat_model
