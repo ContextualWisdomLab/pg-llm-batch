@@ -14,7 +14,9 @@ services:
       POSTGRES_PASSWORD: pgllm
       POSTGRES_DB: pgllm
     ports:
-      - "5432:5432"
+      # Standalone host access is local-only by default. Remote deployments must
+      # opt into an explicit ingress/network policy instead of inheriting 0.0.0.0.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       # Readiness = DB up AND pg_tiktoken present (mirrors /healthz gate).
       test:
@@ -43,7 +45,9 @@ services:
       PG_LLM_BATCH_DSN: "postgresql://pgllm:pgllm@postgres:5432/pgllm"
       PG_LLM_BATCH_HEALTH_PORT: "8080"
     ports:
-      - "8080:8080"
+      # The bundled standalone profile is deliberately host-local. Operators
+      # expose production health/API surfaces only through reviewed ingress.
+      - "127.0.0.1:8080:8080"
 
 volumes:
   pgdata:
