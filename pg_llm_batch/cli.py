@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import getpass
 import json
+import re
 import sys
 import warnings
 from typing import List, Optional
@@ -39,6 +40,19 @@ from .health import check_health, serve_healthz
 from .token_counter import TokenCounter
 
 MAX_SECRET_INPUT_CHARACTERS = 65_536
+
+
+class _RedactingArgumentParser(argparse.ArgumentParser):
+    """Argument parser that does not reflect arbitrary rejected argv values."""
+
+    def error(self, message: str) -> None:
+        """Exit with a parser error after redacting unrecognized argv values."""
+        redacted_message = re.sub(
+            r"(?s)^unrecognized arguments:.*$",
+            "unrecognized arguments: <redacted>",
+            message,
+        )
+        super().error(redacted_message)
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
@@ -94,7 +108,7 @@ def _read_secret_input() -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser and all supported subcommands."""
-    parser = argparse.ArgumentParser(
+    parser = _RedactingArgumentParser(
         prog="pg_llm_batch",
         description="Standalone Postgres LLM batch engine",
     )
