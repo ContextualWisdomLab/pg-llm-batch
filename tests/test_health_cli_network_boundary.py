@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from pg_llm_batch import cli
@@ -36,7 +37,15 @@ def test_serve_healthz_cli_allows_explicit_container_binding() -> None:
 
 
 def test_component_image_explicitly_requests_container_wide_binding() -> None:
-    """The bundled container must opt in to all-interface binding explicitly."""
-    dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
+    """The executable container command must opt in to all-interface binding."""
+    lines = (_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
+    cmd_lines = [line.strip() for line in lines if line.lstrip().startswith("CMD ")]
 
-    assert "serve-healthz --host 0.0.0.0 --port ${PG_LLM_BATCH_HEALTH_PORT}" in dockerfile
+    assert len(cmd_lines) == 1
+    command = json.loads(cmd_lines[0].removeprefix("CMD "))
+    assert command == [
+        "sh",
+        "-c",
+        "python -m pg_llm_batch serve-healthz --host 0.0.0.0 "
+        "--port ${PG_LLM_BATCH_HEALTH_PORT}",
+    ]
