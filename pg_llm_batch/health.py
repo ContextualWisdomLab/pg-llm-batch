@@ -29,6 +29,10 @@ REQUIRED_COMPONENTS = {"database", "pg_tiktoken", "com_config"}
 # acquisition. This is transaction-local and does not alter server defaults.
 HEALTH_STATEMENT_TIMEOUT_MILLISECONDS = 4_000
 
+# Bound request-line/header reads after admission so a slow or partial client
+# cannot occupy one of the finite health worker slots indefinitely.
+HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
+
 # The standalone listener intentionally uses one thread per admitted request,
 # so cap admission before allocating another thread or database connection.
 HEALTH_MAX_CONCURRENT_REQUESTS = 32
@@ -186,6 +190,8 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
 
     class _Handler(BaseHTTPRequestHandler):
         """HTTP request handler that answers ``/healthz`` with redacted readiness."""
+
+        timeout = HEALTH_REQUEST_TIMEOUT_SECONDS
 
         def send_response(self, code: int, message: str | None = None) -> None:
             """Send status metadata without exposing the stdlib/Python fingerprint."""
