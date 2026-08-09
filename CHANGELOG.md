@@ -33,8 +33,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Removed plaintext secret values from `config set-secret` process arguments;
-  interactive entry now uses a no-echo prompt and automation can supply one
-  bounded logical line over standard input with fail-closed shape validation.
+  interactive entry now uses a no-echo prompt and fails closed if terminal echo
+  suppression is unavailable, while automation can supply one bounded logical
+  line over standard input with fail-closed shape validation.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
