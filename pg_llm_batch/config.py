@@ -100,9 +100,12 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
 
     if target_type in (dict, list):
         try:
-            return json.loads(raw)
+            decoded = json.loads(raw)
         except json.JSONDecodeError:
             return item["value"] if item else {}
+        if type(decoded) is not target_type:
+            return item["value"] if item else {}
+        return decoded
     if target_type is bool:
         lowered = raw.lower()
         if lowered in {"true", "1", "yes", "on"}:
