@@ -6,7 +6,7 @@ Subcommands:
     init-db        apply the batch schema (idempotent)
     config set     set a KV config value
     config get     read a KV config value
-    config set-secret   store a secret (Fernet-encrypted when a key is present)
+    config set-secret   store a secret from no-echo TTY input or stdin
     count-tokens   count tokens for text via pg_tiktoken
     submit         upload a prepared batch payload and create a batch job
     poll           poll a batch job's status once
@@ -16,13 +16,15 @@ Subcommands:
     serve-healthz  serve GET /healthz
 
 The DSN is resolved from --dsn or the PG_LLM_BATCH_DSN bootstrap env var only.
-All other config/secrets come from the database KV stores.
+All other config/secrets come from the database KV stores. Secret plaintext is
+never accepted as a command-line argument.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import getpass
 import json
 import sys
 from typing import List, Optional
@@ -31,9 +33,11 @@ from . import db
 from .batch_api_client import BatchAPIClient, config_credentials_provider
 from .bootstrap import resolve_dsn, resolve_secret_key
 from .config import PostgresConfigStore, SecretStore
-from .exceptions import PgLlmBatchError
+from .exceptions import ConfigError, PgLlmBatchError
 from .health import check_health, serve_healthz
 from .token_counter import TokenCounter
+
+MAX_SECRET_INPUT_CHARACTERS = 65_536
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
@@ -43,6 +47,39 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Postgres DSN (else PG_LLM_BATCH_DSN bootstrap env var)",
     )
+
+
+def _validate_secret_input(value: str) -> str:
+    """Require one non-empty bounded line of secret input without echoing it."""
+    if not value:
+        raise ConfigError("Secret value must not be empty")
+    if len(value) > MAX_SECRET_INPUT_CHARACTERS:
+        raise ConfigError(
+            f"Secret value must not exceed {MAX_SECRET_INPUT_CHARACTERS} characters"
+        )
+    if "\n" in value or "\r" in value:
+        raise ConfigError("Secret value must be a single line")
+    return value
+
+
+def _read_secret_input() -> str:
+    """Read one bounded secret from a no-echo TTY prompt or standard input.
+
+    Interactive terminals use :func:`getpass.getpass`, so typed credentials are
+    not echoed. Non-interactive callers may pipe exactly one logical line on
+    standard input; one trailing LF or CRLF line ending is removed. Secret
+    plaintext is never accepted through process arguments.
+    """
+    is_tty = getattr(sys.stdin, "isatty", None)
+    if callable(is_tty) and is_tty():
+        return _validate_secret_input(getpass.getpass("Secret value: "))
+
+    raw = sys.stdin.read(MAX_SECRET_INPUT_CHARACTERS + 3)
+    if raw.endswith("\r\n"):
+        raw = raw[:-2]
+    elif raw.endswith("\n"):
+        raw = raw[:-1]
+    return _validate_secret_input(raw)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,10 +104,12 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p_get)
     p_get.add_argument("category")
     p_get.add_argument("key")
-    p_secret = cfg_sub.add_parser("set-secret", help="Store a secret")
+    p_secret = cfg_sub.add_parser(
+        "set-secret",
+        help="Store a secret from a no-echo prompt or standard input",
+    )
     _add_common(p_secret)
     p_secret.add_argument("secret_key")
-    p_secret.add_argument("secret_value")
 
     p_count = sub.add_parser("count-tokens", help="Count tokens for text")
     _add_common(p_count)
@@ -149,8 +188,9 @@ def _dispatch(argv: Optional[List[str]]) -> int:
             print(store.get(args.category, args.key))
             return 0
         if args.config_command == "set-secret":  # pragma: no branch - exhaustive parser
+            secret_value = _read_secret_input()
             secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
-            secrets.set_secret(args.secret_key, args.secret_value)
+            secrets.set_secret(args.secret_key, secret_value)
             print("Secret stored.")
             return 0
 
