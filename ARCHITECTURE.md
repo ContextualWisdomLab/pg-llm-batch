@@ -426,3 +426,33 @@ concurrent lock waiting, body-free JSON, unchanged `init-db`, and 100% productio
 statement, branch, and public-docstring coverage. Final merge evidence must be
 regenerated against the integrated base; successful stacked-base runs are not
 reusable release evidence.
+
+## Bounded checkpoint-audit export boundary
+
+`CheckpointAuditPage`, `list_audit_event_page()`, and
+`list_audit_event_page_in_transaction()` add an opt-in bounded traversal layer
+without changing the existing one-page audit read or database schema. Pagination
+uses `checkpoint_audit_event_id` as a strict positive signed PostgreSQL `BIGINT`
+keyset cursor, never `OFFSET`.
+
+Each query requests at most the validated public limit plus one lookahead row and
+exposes at most 1,000 events. Continuations use
+`checkpoint_audit_event_id < before_audit_event_id` in newest-first order. Every
+row is revalidated through `CheckpointAuditEvent`, compared with the exact trusted
+tenant/consumer/endpoint/batch key, and required to remain strictly descending.
+Malformed collections, impossible driver overruns, cross-key rows, duplicate or
+ascending identities, and cursor-domain violations fail closed before exposure.
+
+Keyset traversal prevents later higher-identity inserts from shifting an older
+continuation window, but package-owned calls do not provide one multi-page
+historic snapshot. A host that requires snapshot-stable export must begin a
+caller-owned PostgreSQL `REPEATABLE READ` or stricter transaction before the first
+query and repeatedly call the in-transaction method on that same transaction.
+
+Audit identities are navigation keys, not cryptographic chronology or completeness
+proof. Sequence gaps and allocation/commit reordering are valid. External
+immutable/WORM retention, delivery receipts, cryptographic manifests,
+reconciliation, legal hold, and disposal remain host/operator responsibilities.
+The primitive stays independently deployable and can be embedded into CWL MSA
+workflows without requiring `contextual-orchestrator`, `naruon`, or a network
+export service.
