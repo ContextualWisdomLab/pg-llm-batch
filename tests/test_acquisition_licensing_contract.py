@@ -56,3 +56,13 @@ def test_notice_does_not_call_lgpl_dependencies_permissive() -> None:
     assert "LGPL" in notice
     assert "depends only on\npermissively-licensed components" not in notice
     assert "respective license terms" in notice
+
+
+def test_notice_accounts_for_configured_psycopg_binary_distribution() -> None:
+    """The notice must expose the binary extra and its release-specific bundled libraries."""
+    pyproject = _read("pyproject.toml")
+    notice = _read("NOTICE")
+    assert '"psycopg[binary]>=' in pyproject
+    assert "psycopg-binary" in notice
+    assert "bundled client libraries" in notice
+    assert "release SBOM" in notice
