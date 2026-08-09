@@ -141,6 +141,7 @@ def test_prepare_batches_rejects_unknown_lookup_key(monkeypatch, fake_pg):
 
 def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     rows = [("r1", "system", "prompt", "gpt-4o")]
+    closed = []
 
     class Cursor:
         def __enter__(self):
@@ -167,14 +168,22 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
         def cursor(self):
             return Cursor()
 
+    class Config:
+        def close(self):
+            closed.append("config")
+
     class Counter:
         def __init__(self, dsn, config):
-            assert (dsn, config) == ("postgresql://x", "config")
+            assert dsn == "postgresql://x"
+            assert isinstance(config, Config)
             self.effective_limit = 100
+
+        def close(self):
+            closed.append("counter")
 
     orch = PostgresBatchOrchestrator("postgresql://x")
     monkeypatch.setattr(fake_pg, "connect", lambda _dsn: Connection())
-    monkeypatch.setattr(orch_mod, "PostgresConfigStore", lambda _dsn: "config")
+    monkeypatch.setattr(orch_mod, "PostgresConfigStore", lambda _dsn: Config())
     monkeypatch.setattr(orch_mod, "TokenCounter", Counter)
     monkeypatch.setattr(orch, "_resolve_batch_uuid", lambda _key: "resolved")
     monkeypatch.setattr(
@@ -198,6 +207,7 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     assert result["ready"] == [BatchPayload("resolved", 1, 50)]
     result = orch.prepare_batches(batch_uuid="source-key")
     assert result["ready"] == [BatchPayload("resolved", 0, 100)]
+    assert closed == ["counter", "config", "counter", "config"]
 
 
 def test_assemble_payloads_handles_empty_model_switch_and_null_user(fake_pg, monkeypatch):
