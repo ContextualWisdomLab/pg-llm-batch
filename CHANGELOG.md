@@ -36,7 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other local diagnostic detail while preserving detailed operator diagnostics,
   fixed required-component readiness state, HTTP status semantics, and
   `Cache-Control: no-store`; unrecognized component names now remain on trusted
-  local surfaces instead of silently widening the public probe schema.
+  local surfaces instead of silently widening the public probe schema. The HTTP
+  handler also omits the default `Server header` so the stdlib identity and
+  `Python version` are not disclosed by response metadata.
 - Made public `/healthz` readiness validation non-coercive: malformed readiness
   shapes and non-boolean state fail closed to HTTP 503 instead of allowing truth
   coercion to create false-ready evidence.
