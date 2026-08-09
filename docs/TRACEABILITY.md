@@ -15,6 +15,8 @@ Evidence listed for an ACTIVE-PR belongs only to that implementation PR's exact 
 | OpenAI-compatible bounded Files/Batches client | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/batch_api_client.py` | HTTP control/download/retry/security tests | TRD, THREAT_MODEL, API_CONTRACT |
 | Durable remote lifecycle observations | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/durable_client.py`, `llm_remote_batch_jobs` in `pg_llm_batch/schema.sql` | lifecycle/concurrency/schema tests | ARCHITECTURE, ERD, OPERABILITY, API_CONTRACT |
 | Readiness contract | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/health.py`, `pg_llm_batch/schema.sql` | health tests + `.github/workflows/ci.yml` | OPERABILITY, UML, API_CONTRACT |
+| Apache-2.0 outbound license and repository provenance artifacts | IMPLEMENTED-ON-PROTECTED-MAIN | `pyproject.toml`, `LICENSE`, `NOTICE` | package metadata/license-file checks at release; repository statements do not replace external title/legal evidence | `docs/LICENSING_AND_IP.md`, RELEASE_ACCEPTANCE |
+| Licensing/IP/third-party acquisition-diligence authority | ACTIVE-PR #93 | protected-main license/provenance artifacts mirrored into a canonical diligence boundary | `tests/test_acquisition_licensing_contract.py` + exact release dependency/SBOM/license verification; unknown obligations fail closed | `docs/LICENSING_AND_IP.md`, DOCUMENTATION_FITNESS |
 | Public Python/CLI/schema compatibility authority | ACTIVE-PR #93 | protected-main `pg_llm_batch/__init__.py`, `pg_llm_batch/cli.py`, `pg_llm_batch/schema.sql` mirrored into canonical compatibility policy | documentation fitness contract + live source reconciliation; current #93 gates remain head-specific | `docs/product/API_CONTRACT.md` |
 | Release/rollback/provenance acceptance authority | ACTIVE-PR #93 | package/workflow/migration/runtime evidence classes | documentation fitness contract + exact integrated-head release gates; documentation-branch checks do not substitute for release acceptance | `docs/RELEASE_ACCEPTANCE.md` |
 | Tenant-qualified lifecycle + forced RLS | ACTIVE-PR #53 | PR #53 lifecycle/schema changes | branch CI/security/live PostgreSQL evidence belongs only to #53's unchanged head/base; final exact-head review and protected-main gates required | THREAT_MODEL, ERD overlay |
@@ -65,6 +67,7 @@ A green check cannot replace independent approval, and an infrastructure failure
 | Prompt/documentation updates are intermediate | ADR-0001 | control-plane change must hand back to executable repository work when safe |
 | Canonical documentation authority and maturity discipline | `docs/automation/ADR-0003-canonical-documentation-authority.md` | protected-main and ACTIVE-PR truth remain separate; machine-checkable fitness catches drift |
 | Public compatibility/versioning authority | `docs/product/API_CONTRACT.md` | shipped, ACTIVE-PR, deprecated, and breaking behavior must be explicit and testable |
+| Licensing/IP acquisition authority | `docs/LICENSING_AND_IP.md` | exact package metadata + LICENSE/NOTICE consistency + dependency/SBOM/upstream-license verification; unresolved ownership/license evidence fails closed and repository declarations do not replace legal review |
 | Release/publish authority | `docs/RELEASE_ACCEPTANCE.md` | exact integrated protected head + independent applicable gates + post-publication verification |
 
 ## Stack-replacement traceability
@@ -87,7 +90,8 @@ The checkpoint chain is currently linearized through replacements rather than de
 - Disclosure policy: `SECURITY.md` -> vulnerability-reporting process; threat-model controls do not replace disclosure policy.
 - Exact-source workflow governance: `.github/workflows/ci.yml` -> workflow contract tests -> ACTIVE-PR #88 + ADR-0002.
 - Public compatibility: `pg_llm_batch/__init__.py` + `pg_llm_batch/cli.py` + schema -> `docs/product/API_CONTRACT.md`.
-- Release decision: CI/security/package/migration/runtime/review/artifact evidence -> `docs/RELEASE_ACCEPTANCE.md`.
+- Licensing/IP diligence: `pyproject.toml` + `LICENSE` + `NOTICE` + exact dependency/SBOM evidence -> `docs/LICENSING_AND_IP.md`.
+- Release decision: CI/security/package/migration/runtime/review/artifact/licensing evidence -> `docs/RELEASE_ACCEPTANCE.md`.
 
 ## Documentation maintenance
 
