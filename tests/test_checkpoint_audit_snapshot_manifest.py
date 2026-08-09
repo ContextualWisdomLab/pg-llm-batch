@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
 
 import pytest
@@ -17,6 +17,22 @@ from pg_llm_batch.checkpoint_audit import (
     validate_checkpoint_audit_snapshot_max_events,
 )
 from pg_llm_batch.exceptions import ValidationError
+
+
+class _UnresolvedTimezone(tzinfo):
+    """Carry a tzinfo object that deliberately provides no UTC offset."""
+
+    def utcoffset(self, _value: datetime | None) -> timedelta | None:
+        """Return no offset so Python still treats the datetime as naive."""
+        return None
+
+    def dst(self, _value: datetime | None) -> timedelta | None:
+        """Return no daylight-saving offset for the unresolved timezone."""
+        return None
+
+    def tzname(self, _value: datetime | None) -> str:
+        """Return a stable display name without implying an actual offset."""
+        return "unresolved"
 
 
 def _event(event_id: int, *, digest_seed: int | None = None) -> CheckpointAuditEvent:
@@ -142,6 +158,29 @@ def test_snapshot_manifest_is_immutable_and_revalidates_public_fields() -> None:
     for override in invalid:
         with pytest.raises(ValueError):
             CheckpointAuditSnapshotManifest(**(baseline | override))
+
+
+def test_audit_event_rejects_tzinfo_without_a_utc_offset() -> None:
+    """A tzinfo object alone must not satisfy deterministic timestamp evidence."""
+    unresolved = datetime(2026, 8, 9, 10, 30, tzinfo=_UnresolvedTimezone())
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        CheckpointAuditEvent(
+            audit_event_id=1,
+            tenant_scope="tenant-a",
+            consumer_name="worker-a",
+            endpoint_alias="default",
+            batch_id="batch-1",
+            action="checkpoint_save_accepted",
+            schema_version=1,
+            file_kind="result",
+            file_id="file-1",
+            file_line_number=1,
+            batch_line_count=1,
+            record_count=1,
+            prefix_sha256="a" * 64,
+            recorded_at=unresolved,
+        )
 
 
 def test_snapshot_manifest_requires_repeatable_read_or_serializable(
