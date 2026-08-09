@@ -29,7 +29,8 @@ The value is acquired separately:
 - one terminal LF or CRLF is removed from non-interactive input;
 - empty, multiline, carriage-return-containing, and values longer than 65,536
   characters fail closed before `SecretStore` is constructed or written; and
-- errors, success output, logs, and tests never include the supplied plaintext.
+- errors, success output, captured test output, and test/runtime logs never
+  include a supplied runtime secret value.
 
 The non-interactive path intentionally does not define or require a particular
 external secret manager. Deployment owners may connect their existing
