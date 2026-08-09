@@ -49,6 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bounded the PostgreSQL readiness function with a parameterized transaction-local
   statement timeout so a connected but stalled health query cannot wait without
   a database-side execution limit.
+- Served concurrent readiness probes on independent daemon request threads so
+  one delayed database check cannot serialize other probes; redaction, status,
+  cache, and database timeout contracts remain unchanged.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
