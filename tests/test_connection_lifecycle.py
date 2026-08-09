@@ -133,6 +133,25 @@ def test_prepare_batches_closes_owned_connections_after_failure(
     assert _OwnedConfig.instances[0].closed is True
 
 
+def test_prepare_batches_closes_config_when_counter_construction_fails(
+    monkeypatch: Any,
+) -> None:
+    """Config ownership must be released even when token setup cannot finish."""
+    orchestrator = _prepare_owned_orchestrator(monkeypatch)
+
+    def fail_counter(_dsn: str, *, config: _OwnedConfig) -> _OwnedCounter:
+        assert config is _OwnedConfig.instances[0]
+        raise RuntimeError("counter construction failed")
+
+    monkeypatch.setattr(orchestrator_module, "TokenCounter", fail_counter)
+
+    with pytest.raises(RuntimeError, match="counter construction failed"):
+        orchestrator.prepare_batches(batch_uuid="source-key")
+
+    assert _OwnedConfig.instances[0].closed is True
+    assert _OwnedCounter.instances == []
+
+
 def test_token_counter_close_releases_cached_connection() -> None:
     """Closing a counter must release and clear its cached PostgreSQL connection."""
     closed: list[str] = []
