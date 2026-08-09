@@ -223,6 +223,17 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
+Canonical product and acquisition-readiness authority is indexed here so buyers,
+contributors, and operators do not need chat history or PR-body archaeology:
+
+- [Architecture](ARCHITECTURE.md), [PRD](docs/product/PRD.md), [TRD](docs/product/TRD.md), and [public API/compatibility contract](docs/product/API_CONTRACT.md)
+- [UML behavior views](docs/architecture/UML.md) and [ERD/data model](docs/architecture/ERD.md)
+- [Threat model](docs/THREAT_MODEL.md), [test strategy](docs/TEST_STRATEGY.md), and [operability/recovery](docs/OPERABILITY.md)
+- [Release acceptance](docs/RELEASE_ACCEPTANCE.md), [traceability](docs/TRACEABILITY.md), and [ADR index](docs/adr/README.md)
+- [Documentation fitness and maturity matrix](docs/DOCUMENTATION_FITNESS.md)
+
+Additional method and research documentation:
+
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
