@@ -47,8 +47,8 @@ Document fitness is different from capability maturity. Use exactly these maturi
 | Operability / recovery | PARTIAL | PRESENT-CURRENT | README and doctoring covered fragments; a canonical runbook is added. |
 | Release / rollback / provenance acceptance | PARTIAL | PRESENT-CURRENT | Added as `docs/RELEASE_ACCEPTANCE.md`; it keeps descriptor-pinned reproducibility itself ACTIVE-PR (#57) while defining exact integrated-head, migration, rollback, SBOM/provenance, operational and post-publication gates. |
 | Traceability | MISSING | PRESENT-CURRENT | Added requirement/decision -> source/schema/test/evidence mapping. |
-| Product ADR index | MISSING | PRESENT-CURRENT | Added as `docs/adr/README.md`; active-PR ADRs remain explicitly unshipped. |
-| Maintenance-governance ADRs | MISSING | PRESENT-CURRENT | Work conservation, evidence identity, and writer lease were previously chat/prompt-only. |
+| Product ADR index and foundational decisions | MISSING | PRESENT-CURRENT | `docs/adr/README.md` now indexes detailed protected-main foundation records for PostgreSQL/disk-free authority, provider HTTP/replay boundaries, standalone/host composition, and durable lifecycle observation; the new records themselves remain ACTIVE-PR documentation until #93 integrates. |
+| Maintenance-governance ADRs | MISSING | PRESENT-CURRENT | Work conservation, evidence identity, writer lease, and canonical-documentation authority were previously chat/prompt-only. |
 | Feature doctoring | PARTIAL | PRESENT-CURRENT | Keep feature-specific doctoring; index it through traceability rather than duplicating it. |
 | AGENTS guidance | PARTIAL | PARTIAL | Protected main records only a narrow code-owner hold. Consolidate after overlapping active feature branches land rather than creating a conflict-heavy competing copy here. |
 | CLAUDE guidance | MISSING | PARTIAL | Several active product branches carry guidance. Canonical reconciliation is deferred until their source contracts integrate; this does not replace the product documentation graph. |
@@ -91,7 +91,7 @@ Current material implementation/documentation owners include:
 - #88 — exact source-head CI evidence.
 - #89 — explicit bootstrap-source precedence and blank-DSN rejection.
 - #91 — loopback-only standalone Compose port publishing.
-- #93 — this canonical documentation authority.
+- #93 — this canonical documentation authority and foundational protected-main ADR record set.
 
 Issue #90 is a **PLANNED** buyer-visible CLI cancellation slice whose implementation must wait until overlapping CLI/resource-lifecycle changes are protected or superseded.
 
@@ -107,7 +107,7 @@ The queue must be revalidated before any release or acquisition statement. Close
 
 ## Sufficiency judgement
 
-The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, threat model, testing, operability, release/rollback/provenance acceptance, traceability, and the maintenance/evidence-governance decisions. That is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented or that the product is release-ready.
+The canonical documentation graph in this PR is now **structurally sufficient** for product intent, technical requirements, public API/CLI/schema compatibility, architecture, core data model, foundational product decisions, threat model, testing, operability, release/rollback/provenance acceptance, traceability, and the maintenance/evidence-governance decisions. The foundational ADR set makes the already-shipped PostgreSQL/disk-free, provider HTTP/replay, standalone/embedding-host, and lifecycle-observation choices reviewable as decisions rather than only as architecture prose. This is a documentation sufficiency statement, not a claim that all ACTIVE-PR capabilities are implemented or that the product is release-ready.
 
 Two repository-guidance surfaces remain intentionally PARTIAL: `AGENTS.md` and `CLAUDE.md`. Multiple active implementation branches currently modify those shared files, so this docs-only branch does not create a competing canonical rewrite. They must be reconciled after the moving implementation stack stabilizes or merges. The fitness matrix keeps that incompleteness visible instead of hiding it.
 
