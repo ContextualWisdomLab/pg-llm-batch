@@ -1,0 +1,200 @@
+# pg-llm-batch Product Requirements Document
+
+- **Document status:** Proposed canonical authority on PR #93
+- **Product:** `pg-llm-batch`
+- **Current release on protected-main baseline:** `0.1.0`
+- **Protected-main reference used for this edition:** `bf2cc2e140dc3ff4a56c3203f80f41bb9fed5d10`
+- **Maturity discipline:** protected-main behavior is `IMPLEMENTED-ON-PROTECTED-MAIN`; open-PR behavior is `ACTIVE-PR` and is never represented as shipped.
+
+## 1. Product mission
+
+`pg-llm-batch` is a PostgreSQL-centered LLM batch engine that can run as a standalone component or be embedded in another service. Its job is to turn database-backed LLM requests into bounded JSONL batch payloads, submit them to an OpenAI-compatible Files/Batches API, observe remote lifecycle state, and retrieve results without forcing every embedding product to reimplement token accounting, batch construction, provider transport hardening, persistence, and operational controls.
+
+The product optimizes for **deterministic correctness, bounded resources, restart/reconciliation evidence, composability, and defensible operational/security boundaries** rather than maximum request throughput at any cost.
+
+## 2. Primary users and buyers
+
+### 2.1 Application integrator
+
+Needs a Python package that can be embedded into an existing service while preserving host ownership of authentication, tenancy, OpenTelemetry SDK/exporters, deployment topology, and higher-level business transactions.
+
+### 2.2 Platform / AI operator
+
+Needs a standalone PostgreSQL-backed batch component with CLI, Docker deployment, health checks, database configuration/secrets, provider lifecycle state, and bounded failure behavior.
+
+### 2.3 SRE / security / compliance reviewer
+
+Needs explicit trust boundaries, bounded network and memory behavior, auditable durable state, predictable recovery/rollback, least-privilege integration seams, and evidence that CI/review/release claims correspond to the exact source under review.
+
+### 2.4 Acquisition / technical diligence reviewer
+
+Needs the repository to explain what is shipped, what is still an active PR, why key architecture decisions were made, how data moves and persists, how release evidence is produced, and which risks remain host-owned.
+
+## 3. Jobs to be done
+
+1. **Prepare batches deterministically.** Given queued PostgreSQL requests and provider limits, count tokens through `pg_tiktoken`, construct bounded payloads, and persist enough database state to reconstruct them without temporary files.
+2. **Submit and operate remote batch jobs safely.** Upload payloads, create jobs, poll, wait, cancel, and retrieve through an OpenAI-compatible API with explicit credential and destination validation.
+3. **Bound untrusted provider behavior.** Apply finite time, retry, decoded-byte, identifier, JSON, and URL contracts so provider or intermediary behavior cannot create unbounded application work or ambiguous follow-up requests.
+4. **Preserve restart/reconciliation evidence.** Record remote lifecycle observations durably; evolve toward tenant-isolated checkpoints/audit evidence only through explicit reviewed contracts.
+5. **Operate standalone or embedded.** Keep core batch behavior usable without requiring a global OpenTelemetry SDK, a specific gateway vendor, or a larger ContextualWisdomLab service.
+6. **Support commercial diligence.** Provide testable documentation, migration/recovery boundaries, security controls, release/provenance evidence, and clear separation of shipped versus planned functionality.
+
+## 4. Product principles
+
+### PRD-P1 — PostgreSQL-centered authority
+
+For package-owned batch configuration, queue/batch/request/payload state, endpoint/tokenizer mapping, and durable remote lifecycle state, PostgreSQL is the durable authority on protected main. Provider APIs are external systems whose responses are untrusted inputs that must be validated before they become durable package state.
+
+### PRD-P2 — Standalone plus modular MSA interoperability
+
+The same package must remain usable in a standalone Docker/CLI deployment and inside a larger service. Host applications may inject credential providers and, where supported, observability/persistence seams instead of being forced to adopt a package-owned global runtime.
+
+### PRD-P3 — Bounded-by-default behavior
+
+Network requests, provider-control JSON, provider-file downloads, retries, identifiers, request paths, and batch resource limits must be finite and validated. A provider failure must not silently widen replay, memory, or credential exposure.
+
+### PRD-P4 — Explicit authority and no false guarantees
+
+The package must not claim distributed exactly-once delivery, provider authentication beyond the configured TLS/credential boundary, full-stream immutability from a prefix checkpoint, tenant authorization where the host remains responsible, or certification it has not earned.
+
+### PRD-P5 — Evidence over narrative
+
+Commercial acceptance depends on exact tests, security gates, durable schema/API contracts, and independent review—not PR prose or an older green commit.
+
+## 5. Protected-main product requirements
+
+The following requirements describe the as-built protected-main baseline used for this edition.
+
+### PRD-R1 — Database-authoritative token counting
+
+The engine shall support token counting through PostgreSQL `pg_tiktoken` and use that result when constructing provider batch payloads.
+
+**Protected-main evidence:** `pg_llm_batch/token_counter.py`, `pg_llm_batch/orchestrator.py`, bundled PostgreSQL image.
+
+### PRD-R2 — Disk-free payload assembly
+
+Prepared JSONL payloads shall be persisted/reconstructable through PostgreSQL state rather than requiring package-owned temporary payload files.
+
+**Protected-main evidence:** `llm_batch_file_payloads`, `llm_batch_files`, `llm_jsonl_lines`, `load_virtual_payload()`.
+
+### PRD-R3 — OpenAI-compatible provider workflow
+
+The package shall support upload, batch creation, status polling, bounded waiting, cancellation, and result retrieval through the Files/Batches API shape used by OpenAI-compatible endpoints.
+
+**Protected-main evidence:** `BatchAPIClient` and CLI commands.
+
+### PRD-R4 — Credential-source separation
+
+Provider URLs and API keys shall be resolved through a pluggable credential provider. The built-in path stores configuration and secrets in PostgreSQL; environment variables are bootstrap transport only where explicitly documented.
+
+### PRD-R5 — Safe provider destination and identifier handling
+
+Credential-bearing remote calls shall reject ambiguous or unsafe gateway destinations and unsafe provider resource identifiers before constructing authenticated follow-up requests. Non-loopback production destinations require HTTPS.
+
+### PRD-R6 — Bounded provider responses
+
+Files/Batches control-plane JSON shall be decoded under an independent bounded budget. Provider result/error files shall be streamed under a finite decoded-byte ceiling and strict UTF-8/JSONL handling.
+
+### PRD-R7 — Bounded idempotent retries
+
+Protected main shall automatically retry only the reviewed idempotent GET failure/status classes within finite attempt and delay bounds and shall honor bounded standards-compliant `Retry-After` guidance. Side-effecting POST operations shall remain single-attempt unless a separately reviewed idempotency contract explicitly changes that rule.
+
+### PRD-R8 — Durable remote lifecycle projection
+
+The package shall offer a client that reserves database-owned observation order before provider I/O and persists validated create/poll/accepted-cancel lifecycle observations to `llm_remote_batch_jobs`.
+
+### PRD-R9 — Optional operation observability
+
+Hosts that already operate OpenTelemetry shall be able to opt into bounded operation spans/metrics without the base package configuring a global SDK/exporter. Package-owned telemetry shall use low-cardinality, privacy-bounded attributes.
+
+### PRD-R10 — Standalone operator surface
+
+The package shall provide a CLI, Docker images/Compose example, schema initialization, configuration/secret commands, provider operation commands, and readiness interfaces sufficient for a standalone deployment.
+
+### PRD-R11 — Hard quality thresholds
+
+Owned production code shall maintain 100% statement and branch coverage and 100% public docstrings under repository policy; supported CI Python versions are 3.10, 3.12, and 3.14 on the protected-main baseline.
+
+## 6. Active product targets
+
+These are **ACTIVE-PR**, not shipped requirements. They are listed because they materially define the accepted product direction and must be visible to diligence readers.
+
+### PRD-T1 — Tenant-isolated lifecycle state (#53)
+
+Introduce trusted host-selected tenant scope and fail-closed PostgreSQL row-level isolation for durable lifecycle state while preserving standalone compatibility.
+
+### PRD-T2 — Reproducible release evidence (#57)
+
+Produce read-only, descriptor-pinned, reproducible wheel/sdist evidence before publication authority is considered.
+
+### PRD-T3 — Incremental result streaming (#58)
+
+Provide bounded record iteration so large provider result/error files need not be fully materialized as aggregate lists.
+
+### PRD-T4 — Resumable checkpoints (#59, #60)
+
+Create immutable prefix checkpoints and package-owned durable PostgreSQL checkpoint persistence with explicit compare-and-swap and transaction boundaries; do not claim full-stream attestation or distributed exactly-once delivery.
+
+### PRD-T5 — Checkpoint observability and auditability (#78, #79, #83, #84)
+
+Add optional checkpoint telemetry, append-only acceptance evidence, bounded stable export, and deterministic snapshot manifests while preserving tenant and evidence boundaries.
+
+### PRD-T6 — Atomic migration operation (#80)
+
+Make related checkpoint/audit migrations an all-or-nothing operator action with bounded source and rollback/concurrency verification.
+
+### PRD-T7 — Health/deployment hardening (#70, #91)
+
+Redact public readiness diagnostics, bound health work/concurrency/read duration, default direct CLI listening to loopback, and bind standalone Compose publications to loopback unless a deployment explicitly opts into broader ingress.
+
+### PRD-T8 — Provider retry trust hardening (#71)
+
+Extend the reviewed GET retry set with HTTP 425 while treating TLS/certificate/fingerprint identity failures as permanent single-attempt failures and keeping transport diagnostics in a bounded vocabulary.
+
+### PRD-T9 — Secret/config/bootstrap lifecycle hardening (#85, #86, #87, #89)
+
+Remove plaintext secret values from argv, canonicalize typed configuration ownership, deterministically close package-owned database sessions, and make explicit bootstrap-source precedence fail closed on blank targets.
+
+### PRD-T10 — Exact source evidence and maintenance governance (#88, #69, #93)
+
+Bind CI evidence to the exact source head, harden scheduled maintenance authority, and make the product/technical/documentation/evidence graph reconstructable from the repository itself.
+
+## 7. Non-goals and explicit exclusions
+
+- **OUT-OF-SCOPE:** training or serving language models.
+- **OUT-OF-SCOPE:** replacing a general-purpose job scheduler, workflow engine, or message bus.
+- **OUT-OF-SCOPE:** acting as a universal secret-management system; the built-in secret store is a package integration boundary, and host-managed credential providers remain supported.
+- **OUT-OF-SCOPE:** claiming distributed exactly-once semantics across PostgreSQL and external provider/business systems without a host-owned outbox/idempotency/reconciliation design.
+- **OUT-OF-SCOPE:** inferring tenant identity from provider metadata, endpoint aliases, request bodies, remote IDs, or transport headers.
+- **OUT-OF-SCOPE:** making a documentation/check status equivalent to independent approval or release authorization.
+
+## 8. Commercial acceptance criteria
+
+A commercially defensible integrated release requires all of the following on the exact protected source head:
+
+1. product requirements that are claimed shipped are implemented and traceable to source/schema/tests;
+2. supported Python/version/package/container gates pass under repository policy;
+3. owned production statement/branch and public-docstring thresholds are satisfied;
+4. security/SAST/dependency/supply-chain/provenance gates required by live policy pass;
+5. migrations and rollback/recovery contracts are deterministic and tested where applicable;
+6. health, startup, provider, and operator workflows have bounded failure behavior;
+7. canonical PRD/TRD/Architecture/UML/ERD/Threat Model/Test Strategy/Operability/Traceability remain code-current;
+8. zero valid unresolved review/security findings remain;
+9. a qualifying independent non-author formal approval exists when policy requires it; and
+10. release/publication occurs only after protected integration and release acceptance, never from a predecessor or synthetic-only evidence state.
+
+## 9. Success measures
+
+Success is evaluated primarily through correctness and operations evidence rather than vanity traffic metrics:
+
+- reproducible batch construction for the same database inputs/configuration;
+- no unbounded provider body or retry path owned by the package;
+- restart/reconciliation state sufficient for supported lifecycle workflows;
+- deterministic failure classes and actionable operator diagnostics without exposing sensitive provider payloads;
+- clear shipped-vs-active-vs-out-of-scope documentation;
+- repeatable migration/rollback and release evidence where those capabilities exist; and
+- decreasing diligence dependence on maintainer oral history.
+
+## 10. Product decision ownership
+
+Product behavior is governed by protected source/schema plus accepted ADRs. Active PRs may refine the target but do not supersede protected-main truth until integrated. Scientific or security decisions that cannot be reconciled through tests, standards, or least-privilege design require explicit maintainer resolution rather than silent assumption.
