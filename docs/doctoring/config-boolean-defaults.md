@@ -1,4 +1,4 @@
-# Boolean configuration fallback and canonical writes
+# Typed configuration fallback and canonical writes
 
 ## Purpose
 
@@ -6,12 +6,16 @@ Configuration rows in `com_config` are persisted as text and converted back to t
 
 Any other persisted text is a **malformed boolean**. It must not be interpreted using Python's general truth-value rules because every non-empty string is true. Instead, the loader returns the setting's **declared default**. This is especially important for a **false-default** feature flag: corrupt or manually mistyped text cannot silently enable behavior that operators and code declared disabled by default.
 
+JSON-backed mapping and sequence settings have a second boundary. Syntactically **valid JSON** is not sufficient when its **container shape** contradicts the **declared collection type**. An array cannot satisfy a mapping contract, and an object cannot satisfy a sequence contract merely because both parse successfully. A shape mismatch returns the declared default exactly like malformed JSON.
+
 ## Runtime contract
 
 - Known boolean spellings retain their existing values.
 - A malformed boolean value returns the exact default recorded for that configuration key.
 - A key with boolean type metadata but no declared item fails closed to `False`.
-- Integer, floating-point, mapping, sequence, and untyped custom-value read behavior remains deterministic.
+- A mapping setting accepts only a decoded JSON object; a decoded array, scalar, or null returns the declared mapping default.
+- A sequence setting accepts only a decoded JSON array; a decoded object, scalar, or null returns the declared sequence default.
+- Integer, floating-point, and untyped custom-value read behavior remains deterministic.
 - The fallback does not make malformed external data valid. Operators should correct an affected legacy `com_config` row after diagnosis.
 - No credential, provider response, prompt, tenant identifier, or configuration value is added to public telemetry by this change.
 
@@ -25,7 +29,7 @@ This gives one **read-after-write** result across process boundaries:
 
 - CLI text such as `false` is cached immediately as the boolean `False` and is still `False` after a **cache reload**;
 - numeric CLI text such as `17` is cached as an integer and remains an integer after reload;
-- malformed text for a known typed key is normalized to the declared default and the canonical default text is persisted, rather than retaining corrupt text in the database; and
+- malformed text or wrong-shaped valid JSON for a known typed key is normalized to the declared default and the canonical default text is persisted, rather than retaining corrupt or contradictory data in the database; and
 - an **untyped** custom key has no declared decoder, so its canonical database and cache value is its textual serialized representation. A mapping supplied to an untyped key therefore reads consistently as JSON text both immediately and after restart.
 
 Before this contract, `set()` wrote serialized text to PostgreSQL but cached the raw caller value. A CLI boolean write could therefore be a truthy string in the current process and a boolean after the next cache load. The same write changing meaning after restart was a configuration-consistency defect even when the persisted representation itself was parseable.
@@ -34,9 +38,9 @@ The write path does not add a new schema, type column, or migration. `DEFAULT_CO
 
 ## Operational diagnosis
 
-When a configured boolean appears to have fallen back, inspect the relevant `com_config.config_key` and `config_value` through trusted database administration tooling. Compare the stored text with the accepted vocabulary above. Repair a legacy row with the CLI or a parameterized database update; do not broaden the parser to accept arbitrary prose, whitespace-bearing variants, or Python truthiness.
+When a configured value appears to have fallen back, inspect the relevant `com_config.config_key` and `config_value` through trusted database administration tooling. For booleans, compare the stored text with the accepted vocabulary above. For a mapping or sequence, verify both JSON syntax and the top-level JSON type defined by RFC 8259. Repair a legacy row with the CLI or a parameterized database update; do not broaden the parser to accept arbitrary prose, whitespace-bearing boolean variants, Python truthiness, or the wrong JSON container type.
 
-A fallback to the declared default is safer than raising during process startup because the existing configuration contract already uses declared defaults for malformed integers, floating-point values, mappings, and sequences. It also preserves service availability while preventing malformed text from overriding the reviewed default direction. New writes are canonicalized, so malformed known values are not reintroduced by the supported store API.
+A fallback to the declared default is safer than raising during process startup because the existing configuration contract already uses declared defaults for malformed integers, floating-point values, mappings, and sequences. It also preserves service availability while preventing malformed or contradictory text from overriding the reviewed default direction. New writes are canonicalized, so malformed known values are not reintroduced by the supported store API.
 
 ## Verification
 
@@ -45,17 +49,21 @@ Deterministic tests prove that:
 1. all established true and false spellings remain accepted;
 2. a malformed value for a false-default key remains false;
 3. the existing true-default key falls back to true;
-4. CLI-style boolean and integer strings have the same typed read-after-write and post-reload value;
-5. malformed known writes persist the canonical declared default;
-6. unknown untyped configuration is cached and reloaded as the same textual representation; and
-7. this doctoring and the changelog retain the non-coercive fallback and canonical-write contracts.
+4. valid JSON with the wrong collection shape returns the declared mapping or sequence default;
+5. valid JSON with the correct declared collection type retains its configured value;
+6. CLI-style boolean and integer strings have the same typed read-after-write and post-reload value;
+7. malformed known writes persist the canonical declared default;
+8. unknown untyped configuration is cached and reloaded as the same textual representation; and
+9. this doctoring and the changelog retain the non-coercive fallback, declared collection type, and canonical-write contracts.
 
 The full gate must continue to prove production statement and branch coverage, public docstrings, Python 3.10/3.12/3.14 compatibility, lint, lock freshness, packaging, container builds, SAST, and security checks.
 
 ## Rollback
 
-There is no database migration or persistent format change. Code **rollback** is mechanically simple, but it restores two defects: any non-empty malformed boolean string becomes true during deserialization, and configuration writes can cache a different type or value than the text PostgreSQL will return after reload. If compatibility concerns arise, retain declared-default fallback and canonical write normalization and correct the affected `com_config` data rather than restoring truth coercion or raw caller-object caching.
+There is no database migration or persistent format change. Code **rollback** is mechanically simple, but it restores three defects: any non-empty malformed boolean string becomes true during deserialization, valid JSON with a contradictory container shape can violate a declared mapping or sequence type, and configuration writes can cache a different type or value than the text PostgreSQL will return after reload. If compatibility concerns arise, retain declared-default fallback, exact collection-shape validation, and canonical write normalization and correct the affected `com_config` data rather than restoring truth coercion, shape ambiguity, or raw caller-object caching.
 
-## Reference
+## References
+
+Bray, T. (2017). *The JavaScript Object Notation (JSON) data interchange format* (RFC 8259). Internet Engineering Task Force. https://www.rfc-editor.org/rfc/rfc8259.html
 
 Python Software Foundation. (2026). *Truth value testing*. Python 3.14.6 documentation. https://docs.python.org/3/library/stdtypes.html#truth-value-testing
