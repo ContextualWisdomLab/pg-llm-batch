@@ -5,7 +5,7 @@
 
 ## 1. Release authority
 
-A pg-llm-batch release may be created only from one **exact integrated protected head** after every applicable deterministic, security, compatibility, migration, operational, review, packaging, licensing/IP, SBOM, provenance, and publication gate has been evaluated for that exact revision.
+A pg-llm-batch release may be created only from one **exact integrated protected head** after every applicable deterministic, security, compatibility, migration, operational, review, packaging, licensing/IP, data governance, SBOM, provenance, and publication gate has been evaluated for that exact revision.
 
 A feature PR, stacked branch, synthetic merge commit, predecessor-head check, status-only review, draft release artifact, or locally built package is not release authority.
 
@@ -19,13 +19,14 @@ Release acceptance keeps the following authorities separate:
 - security/SAST/dependency and supply-chain evidence;
 - package/wheel/sdist identity and installability evidence;
 - licensing/IP, ownership/provenance, NOTICE, and dependency license evidence governed by `docs/LICENSING_AND_IP.md`;
+- data-governance/privacy evidence governed by `docs/DATA_GOVERNANCE.md`, including classification of new persisted/emitted fields and explicit package-vs-host authority;
 - migration/rollback/recovery evidence where persistence changed;
 - runtime **operational acceptance** for changed health/deployment/operator paths;
 - formal semantic review and qualifying **independent** non-author approval where required;
 - SBOM and provenance/attestation evidence where the release policy requires them; and
 - final published artifact identity after publication.
 
-One evidence class cannot silently substitute for another. A green scanner or generated SBOM does not prove ownership, title, or satisfaction of a dependency license obligation.
+One evidence class cannot silently substitute for another. A green scanner or generated SBOM does not prove ownership, title, satisfaction of a dependency license obligation, host authorization, or retention/data-residency policy.
 
 ## 3. Quality gate
 
@@ -43,11 +44,13 @@ The exact release candidate must pass the live repository's complete quality con
 
 A coverage percentage does not replace domain-validity tests. A passing unit suite does not replace live PostgreSQL evidence for migration, RLS, transaction, concurrency, or rollback behavior when those contracts changed.
 
-## 4. Security gate
+## 4. Security and data-governance gate
 
 Release acceptance requires zero known valid unresolved security findings within the release scope and successful applicable repository security workflows. Security evidence should include, where configured, SAST, dependency/vulnerability scanning, secret scanning, supply-chain checks, and least-privilege workflow review.
 
-Provider bodies, credentials, DSNs, tenant identities, secret values, and other protected data must remain outside release logs/artifacts except where an explicitly authorized evidence contract requires a bounded representation.
+Provider bodies, credentials, DSNs, tenant identities, secret values, and other protected data must remain outside release logs/artifacts except where an explicitly authorized evidence contract requires a bounded representation. New persisted fields, logs, metrics, traces, health fields, provider disclosures, or export surfaces must be classified in `docs/DATA_GOVERNANCE.md` and must not silently move authorization, purpose, retention, erasure, backup, or residency authority from the embedding host into the package.
+
+The package must preserve useful prompt/result content where the workflow legitimately requires it rather than applying destructive blanket masking as a substitute for authorization. At the same time, package-owned logs/telemetry/health/errors must not expose secret values, prompt bodies, or raw provider response bodies outside a separately reviewed bounded contract.
 
 ## 5. Migration and rollback gate
 
@@ -61,15 +64,17 @@ When a release changes PostgreSQL persistence, the release candidate must prove:
 6. rollback behavior, including fail-closed refusal when rollback would destroy retained evidence; and
 7. operator recovery steps for a failed or interrupted deployment.
 
-A Docker initialization script is not an upgrade mechanism for existing volumes unless a reviewed contract explicitly says otherwise.
+A Docker initialization script is not an upgrade mechanism for existing volumes unless a reviewed contract explicitly says otherwise. A migration that introduces new persisted content or identifiers must update data classification and retention/ownership documentation before release.
 
-## 6. Compatibility and licensing gate
+## 6. Compatibility, governance, and licensing gate
 
-The release candidate must agree with `docs/product/API_CONTRACT.md`, `docs/LICENSING_AND_IP.md`, package metadata, `LICENSE`, `NOTICE`, README, PRD/TRD, architecture, schema/ERD, and CHANGELOG.
+The release candidate must agree with `docs/product/API_CONTRACT.md`, `docs/DATA_GOVERNANCE.md`, `docs/LICENSING_AND_IP.md`, package metadata, `LICENSE`, `NOTICE`, README, PRD/TRD, architecture, schema/ERD, and CHANGELOG.
 
 Breaking Python API, CLI, schema, deployment, or evidence-format changes require the versioning/deprecation treatment documented in the API contract. ACTIVE-PR behavior must not be advertised as shipped.
 
 Licensing/IP acceptance is fail-closed. For the exact candidate, verify package license metadata and included license files, the actual direct/transitive/container dependency closure, the release SBOM, required NOTICE/attribution material, and authoritative upstream dependency license metadata. Repository declarations are evidence inputs, not a substitute for legal/title review. Any unverified ownership chain, unknown dependency license, incompatible obligation, or missing required notice keeps release acceptance unresolved until the responsible reviewer verifies or remediates it.
+
+Data-governance acceptance is likewise evidence-bound. The package documentation may state engineering ownership and non-goals, but it must not claim that host legal basis, data-subject rights, residency, or regulated-use approval is automatically satisfied by package controls.
 
 ## 7. Reproducibility and artifact identity
 
@@ -105,7 +110,8 @@ After source integration and before publication, changed operator/runtime surfac
 - submit/poll/wait/retrieve lifecycle against an approved compatible provider or deterministic contract harness;
 - migration/recovery paths;
 - container/Compose startup and intended network exposure;
-- observability that does not alter application behavior; and
+- observability that does not alter application behavior or disclose protected content;
+- verification that package-owned diagnostics remain within the current data-governance classification; and
 - explicit degraded/failure behavior.
 
 Operational acceptance records the exact source/artifact and environment assumptions used. A green source PR alone is not runtime closure.
@@ -136,9 +142,10 @@ A release rollback is a controlled product operation, not `git reset` plus hope.
 - **Irreversible or data-transforming migration:** prefer a forward corrective migration or restore from verified backup according to the migration ADR/runbook.
 - **Published bad artifact:** stop promotion, mark/yank only when registry policy and consumer safety permit, publish a corrected version rather than rewriting an immutable release, and preserve incident evidence.
 - **Credential/security exposure:** rotate/revoke affected credentials, preserve bounded incident evidence, and do not rely on package rollback alone.
+- **Sensitive-content/log exposure:** stop further distribution where feasible, preserve minimum necessary incident evidence, repair the disclosure boundary, and recognize that package rollback does not erase logs/artifacts already exported by host or CI systems.
 - **Licensing/IP evidence defect:** stop publication/promotion, preserve exact dependency/artifact evidence, correct metadata/NOTICE or dependency selection through a reviewed change, and do not rewrite immutable released artifacts to hide the historical condition.
 
-Rollback must never delete retained checkpoint/audit evidence merely to satisfy an older schema expectation.
+Rollback must never delete retained checkpoint/audit or content records merely to satisfy an older schema expectation. Host retention/legal-hold requirements remain authoritative over destructive cleanup unless an explicitly reviewed package operation is authorized to delete the relevant data.
 
 ## 13. Release rejection conditions
 
@@ -149,6 +156,8 @@ Reject release when any of the following is true:
 - a valid unresolved source/security finding remains;
 - required independent approval is absent;
 - migration/rollback or operational evidence is missing for a changed contract;
+- a new persisted/logged/emitted/provider-disclosed field lacks data classification or silently contradicts `docs/DATA_GOVERNANCE.md`;
+- package-owned logs/telemetry/health/errors expose secrets, prompt bodies, or raw provider response bodies outside a reviewed bounded contract;
 - package, SBOM, provenance, or reproducibility evidence refers to a different source/artifact;
 - licensing/IP evidence contains an unknown or incompatible dependency license, missing required notice, or unverified ownership/title chain;
 - documentation advertises ACTIVE-PR behavior as shipped; or
@@ -163,7 +172,8 @@ After publication, verify the released artifact as a consumer would:
 - compare the published dependency/artifact closure with the accepted SBOM and licensing review evidence;
 - compare expected hashes/provenance;
 - install in a clean supported environment;
-- execute a bounded smoke/health path; and
+- execute a bounded smoke/health path;
+- confirm that logs/telemetry from that path do not violate the accepted data-governance boundary; and
 - record any incident or rollback decision without mutating historical release evidence.
 
 Only then is publication evidence complete.
