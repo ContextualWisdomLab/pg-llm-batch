@@ -184,14 +184,15 @@ Idempotent provider `GET` operations use up to three total attempts by default
 for transient `408`, `425`, `429`, `502`, `503`, and `504` responses and for
 retryable aiohttp transport failures. TLS handshake and certificate failures are
 never retried automatically; they fail after the first attempt because repeating
-a request cannot repair peer identity or TLS policy. A bounded RFC `Retry-After`
-delta or HTTP-date is honored. Delta-seconds accept RFC ASCII digits only.
-Syntactically valid values above the configured maximum are refused; malformed
-values use equal-jitter exponential fallback from 0.5 seconds up to 30 seconds.
-Upload, batch creation, and cancellation `POST` operations are never retried
-automatically. Operators can override `max_retry_attempts`,
-`retry_base_delay_seconds`, and `retry_max_delay_seconds` in the
-`BatchAPIClient` constructor.
+a request cannot repair peer identity or TLS policy. Certificate fingerprint
+mismatches are never retried automatically for the same peer-identity reason.
+A bounded RFC `Retry-After` delta or HTTP-date is honored. Delta-seconds accept
+RFC ASCII digits only. Syntactically valid values above the configured maximum
+are refused; malformed values use equal-jitter exponential fallback from 0.5
+seconds up to 30 seconds. Upload, batch creation, and cancellation `POST`
+operations are never retried automatically. Operators can override
+`max_retry_attempts`, `retry_base_delay_seconds`, and
+`retry_max_delay_seconds` in the `BatchAPIClient` constructor.
 
 Hosts that already operate OpenTelemetry can select the opt-in subclass without
 adding telemetry dependencies to ordinary standalone installations:
