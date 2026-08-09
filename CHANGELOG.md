@@ -38,6 +38,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Canonicalized configuration writes before PostgreSQL persistence and cache
   updates so typed CLI text, malformed known values, and untyped extension text
   have the same immediate and post-reload representation.
+- Enforced declared collection types for JSON-backed configuration so a valid
+  array cannot satisfy a mapping setting and a valid object cannot satisfy a
+  sequence setting; wrong-shaped values fall back to canonical defaults.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
