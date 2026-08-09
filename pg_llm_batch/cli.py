@@ -25,7 +25,8 @@ import argparse
 import asyncio
 import json
 import sys
-from typing import List, Optional
+from contextlib import asynccontextmanager
+from typing import AsyncIterator, List, Optional
 
 from . import db
 from .batch_api_client import BatchAPIClient, config_credentials_provider
@@ -111,12 +112,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _make_client(dsn: str) -> BatchAPIClient:
-    """Assemble a BatchAPIClient wired to the KV config and secret stores."""
+@asynccontextmanager
+async def _make_client(dsn: str) -> AsyncIterator[BatchAPIClient]:
+    """Yield a client and close its database-backed credential stores."""
     config = PostgresConfigStore(dsn)
-    secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
-    provider = config_credentials_provider(config, secrets)
-    return BatchAPIClient(dsn, provider)
+    try:
+        secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
+        try:
+            provider = config_credentials_provider(config, secrets)
+            async with BatchAPIClient(dsn, provider) as client:
+                yield client
+        finally:
+            secrets.close()
+    finally:
+        config.close()
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -141,24 +150,40 @@ def _dispatch(argv: Optional[List[str]]) -> int:
     if args.command == "config":
         if args.config_command == "set":
             store = PostgresConfigStore(dsn)
-            store.set(args.category, args.key, args.value)
-            print(f"Set {args.category}.{args.key}")
-            return 0
+            try:
+                store.set(args.category, args.key, args.value)
+                print(f"Set {args.category}.{args.key}")
+                return 0
+            finally:
+                store.close()
         if args.config_command == "get":
             store = PostgresConfigStore(dsn)
-            print(store.get(args.category, args.key))
-            return 0
+            try:
+                print(store.get(args.category, args.key))
+                return 0
+            finally:
+                store.close()
         if args.config_command == "set-secret":  # pragma: no branch - exhaustive parser
             secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
-            secrets.set_secret(args.secret_key, args.secret_value)
-            print("Secret stored.")
-            return 0
+            try:
+                secrets.set_secret(args.secret_key, args.secret_value)
+                print("Secret stored.")
+                return 0
+            finally:
+                secrets.close()
 
     if args.command == "count-tokens":
-        counter = TokenCounter(dsn, config=PostgresConfigStore(dsn))
-        tokens = counter.count_tokens(args.text, args.model)
-        print(json.dumps({"model": args.model, "tokens": tokens}))
-        return 0
+        config = PostgresConfigStore(dsn)
+        try:
+            counter = TokenCounter(dsn, config=config)
+            try:
+                tokens = counter.count_tokens(args.text, args.model)
+                print(json.dumps({"model": args.model, "tokens": tokens}))
+                return 0
+            finally:
+                counter.close()
+        finally:
+            config.close()
 
     if args.command == "submit":
         return _run_submit(dsn, args)
