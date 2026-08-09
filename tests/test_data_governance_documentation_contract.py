@@ -54,6 +54,18 @@ def test_data_governance_separates_package_and_host_authority() -> None:
     assert "raw provider response" in lower or "provider response bodies" in lower
 
 
+def test_provider_error_confidentiality_remains_active_pr_scoped() -> None:
+    """Canonical docs must not present #71 provider-error redaction as shipped."""
+    governance = _read(DATA_GOVERNANCE)
+    traceability = _read("docs/TRACEABILITY.md")
+    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
+
+    assert "ACTIVE-PR #71" in governance
+    assert "provider-error confidentiality" in governance.lower()
+    assert "provider-error confidentiality" in traceability.lower()
+    assert "provider-error confidentiality" in fitness.lower()
+
+
 def test_product_requirements_bind_data_governance_authority() -> None:
     """Product and technical requirements must point to the governance owner."""
     prd = _read("docs/product/PRD.md").lower()
