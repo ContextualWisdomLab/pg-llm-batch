@@ -24,6 +24,53 @@ def _assert_external_actions_are_pinned(workflow: str) -> None:
         assert re.search(r"@[0-9a-f]{40}(?:\s|$)", target), target
 
 
+def _workflow_job_steps(workflow: str) -> list[list[str]]:
+    """Return raw step blocks for every top-level job in a workflow."""
+    job_steps: list[list[str]] = []
+    current_steps: list[str] | None = None
+    current_step_lines: list[str] | None = None
+    inside_steps = False
+
+    for raw_line in workflow.splitlines():
+        stripped = raw_line.strip()
+        indent = len(raw_line) - len(raw_line.lstrip())
+
+        if indent == 2 and stripped.endswith(":") and not stripped.startswith("-"):
+            inside_steps = False
+            current_steps = None
+            current_step_lines = None
+            continue
+
+        if indent == 4 and stripped == "steps:":
+            current_steps = []
+            job_steps.append(current_steps)
+            current_step_lines = None
+            inside_steps = True
+            continue
+
+        if not inside_steps:
+            continue
+
+        if indent == 6 and stripped.startswith("- "):
+            current_step_lines = [raw_line]
+            assert current_steps is not None
+            current_steps.append("\n".join(current_step_lines))
+            continue
+
+        if stripped and indent <= 4:
+            inside_steps = False
+            current_steps = None
+            current_step_lines = None
+            continue
+
+        if current_step_lines is not None:
+            current_step_lines.append(raw_line)
+            assert current_steps is not None
+            current_steps[-1] = "\n".join(current_step_lines)
+
+    return job_steps
+
+
 def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     workflow = _read(".github/workflows/ci.yml")
 
@@ -45,14 +92,23 @@ def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None
     """Every CI checkout must bind and verify the exact source head."""
     workflow = _read(".github/workflows/ci.yml")
     exact_source_expression = "${{ github.event.pull_request.head.sha || github.sha }}"
-    checkout_count = workflow.count("uses: actions/checkout@")
+    exact_verification = (
+        f'test "$(git rev-parse HEAD)" = "{exact_source_expression}"'
+    )
+    checkout_count = 0
+
+    for steps in _workflow_job_steps(workflow):
+        for index, step in enumerate(steps):
+            if "uses: actions/checkout@" not in step:
+                continue
+            checkout_count += 1
+            assert f"ref: {exact_source_expression}" in step
+            assert index + 1 < len(steps)
+            verification_step = steps[index + 1]
+            assert "- name: Verify exact source head" in verification_step
+            assert exact_verification in verification_step
 
     assert checkout_count > 0
-    assert workflow.count(f"ref: {exact_source_expression}") == checkout_count
-    assert workflow.count("name: Verify exact source head") == checkout_count
-    assert workflow.count(
-        f'test "$(git rev-parse HEAD)" = "{exact_source_expression}"'
-    ) == checkout_count
 
 
 def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
