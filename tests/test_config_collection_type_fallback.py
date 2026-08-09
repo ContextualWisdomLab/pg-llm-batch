@@ -8,6 +8,14 @@ from typing import Any
 from pg_llm_batch import config as config_module
 
 
+class _UncopyableFallback:
+    """Expose whether an unknown caller fallback is copied unexpectedly."""
+
+    def __deepcopy__(self, _memo: dict[int, Any]) -> "_UncopyableFallback":
+        """Reject copying because unknown-key fallback identity belongs to the caller."""
+        raise AssertionError("unknown caller fallback must not be copied")
+
+
 def _register_collection_defaults(monkeypatch: Any) -> tuple[dict[str, bool], list[str]]:
     """Register mutable test-only defaults and return their authoritative objects."""
     declared_mapping = {"enabled": True}
@@ -88,3 +96,10 @@ def test_mutable_declared_defaults_are_isolated_from_callers(monkeypatch: Any) -
     assert config_module._deserialize_value(
         "custom.sequence_value", '{"wrong":true}'
     ) == ["default"]
+
+
+def test_unknown_key_preserves_caller_fallback_identity() -> None:
+    """Unknown keys must return the caller-owned fallback without copying it."""
+    fallback = _UncopyableFallback()
+
+    assert config_module._default_value("unknown", "setting", fallback) is fallback
