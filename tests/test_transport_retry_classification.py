@@ -72,6 +72,10 @@ class _SequenceSession:
         return entry
 
 
+class ProviderNamedClientFailure(aiohttp.ClientError):
+    """Model a dependency-defined exception class whose name is untrusted."""
+
+
 def _credentials(_alias: str) -> GatewayCredentials:
     """Return deterministic credentials without touching external services."""
     return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
@@ -171,6 +175,37 @@ async def test_server_fingerprint_mismatch_is_not_retried(
         assert sensitive_detail not in str(caught.value)
     assert session.calls == 1
     assert sleeps == []
+
+
+async def test_dependency_defined_client_error_uses_bounded_error_type() -> None:
+    """Provider-defined class names must not enter exported transport diagnostics."""
+    failure = ProviderNamedClientFailure("gateway.example sensitive-provider-detail")
+    session = _SequenceSession([failure])
+    client = BatchAPIClient(
+        "postgresql://example",
+        _credentials,
+        max_retry_attempts=1,
+    )
+    client._session = session
+
+    with pytest.raises(GatewayError, match="Batch status transport failed") as caught:
+        async with client._request(
+            "get",
+            "https://gateway.example/v1/batches/batch-1",
+            operation="Batch status",
+        ):
+            pytest.fail("a transport failure must not hand off a response")
+
+    assert caught.value.response_data == {
+        "error_type": "ClientError",
+        "timeout_seconds": client.request_timeout_seconds,
+    }
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert "ProviderNamedClientFailure" not in str(caught.value.response_data)
+    assert "gateway.example" not in str(caught.value)
+    assert "sensitive-provider-detail" not in str(caught.value)
+    assert session.calls == 1
 
 
 async def test_timeout_remains_retryable_for_idempotent_get(
