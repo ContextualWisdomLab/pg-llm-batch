@@ -34,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Redacted public `/healthz` readiness output to omit database exceptions and
   other local diagnostic detail while preserving detailed operator diagnostics,
-  component readiness state, HTTP status semantics, and `Cache-Control: no-store`.
+  fixed required-component readiness state, HTTP status semantics, and
+  `Cache-Control: no-store`; unrecognized component names now remain on trusted
+  local surfaces instead of silently widening the public probe schema.
 - Made public `/healthz` readiness validation non-coercive: malformed readiness
   shapes and non-boolean state fail closed to HTTP 503 instead of allowing truth
   coercion to create false-ready evidence.
