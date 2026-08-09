@@ -27,15 +27,15 @@ def resolve_dsn(explicit: Optional[str] = None) -> str:
     """Resolve the Postgres DSN without overriding explicit operator intent.
 
     A supplied explicit argument (for example ``--dsn``) always owns the
-    database-target decision. An explicitly empty value is invalid and fails
-    closed; the environment fallback is consulted only when the argument is
-    omitted entirely.
+    database-target decision. An explicitly empty or whitespace-only value is
+    invalid and fails closed; the environment fallback is consulted only when
+    the argument is omitted entirely.
     """
     if explicit is not None:
-        if explicit == "":
+        if explicit.strip() == "":
             raise ConfigError(
-                "An explicit Postgres DSN must not be empty; omit --dsn to use "
-                f"{DSN_ENV_VAR}."
+                "An explicit Postgres DSN must not be empty or whitespace-only; "
+                f"omit --dsn to use {DSN_ENV_VAR}."
             )
         return explicit
 
