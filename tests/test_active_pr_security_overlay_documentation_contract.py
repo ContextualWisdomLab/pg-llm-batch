@@ -18,6 +18,13 @@ def _section(text: str, heading: str, next_heading: str) -> str:
     return text[start:end]
 
 
+def _active_pr_entry(text: str, pr_number: int) -> str:
+    """Return one PR's entry from the documentation-fitness ACTIVE-PR section."""
+    active = _section(text, "### ACTIVE-PR", "### SUPERSEDED / stale-stack work")
+    prefix = f"- #{pr_number} "
+    return next(line for line in active.splitlines() if line.startswith(prefix))
+
+
 def test_health_listener_overlay_tracks_exact_input_and_port_boundary() -> None:
     """PR #70's current listener-input boundary must be durable documentation."""
     trd = _read("docs/product/TRD.md")
@@ -113,3 +120,20 @@ def test_compose_overlay_tracks_complete_published_service_allowlist() -> None:
         assert "5432" in document
         assert "8080" in document
     assert "third" in trd and "published" in trd and "service" in trd
+
+
+def test_documentation_fitness_names_current_security_overlay_contracts() -> None:
+    """The ACTIVE-PR fitness snapshot must name the current security authorities."""
+    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
+
+    health = _active_pr_entry(fitness, 70)
+    assert "exec-form" in health and "shell" in health
+
+    gateway = _active_pr_entry(fitness, 71)
+    assert "exact-input" in gateway and "gateway" in gateway
+
+    secrets = _active_pr_entry(fitness, 87)
+    assert "wrong-key" in secrets and "fernet" in secrets
+
+    compose = _active_pr_entry(fitness, 91)
+    assert "allow-list" in compose and "published-service" in compose
