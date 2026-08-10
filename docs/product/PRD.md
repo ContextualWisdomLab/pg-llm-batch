@@ -223,6 +223,14 @@ Pin the repository `uv toolchain` version independently of the immutable setup a
 
 Move CI-only Python `quality tools` such as coverage/docstring tooling into reviewed dependency evidence instead of resolving ad hoc tool versions outside the project lock. The final design must keep the quality gate independently auditable, bind resolved tools into SBOM/provenance or equivalent governed evidence, preserve Python 3.14, and wait for #114/#88/#57 ownership boundaries before changing shared package/CI surfaces.
 
+### PRD-T26 — Prompt-content input outside process argv (Issue #116) — PLANNED
+
+Move `count-tokens` **prompt content** out of **process argv**. Add one bounded non-argv input authority such as stdin, a file descriptor, or a reviewed file-input surface; require exactly one selected text source, a finite byte/character budget, deterministic UTF-8 and newline semantics, and no rejected prompt reflection into diagnostics. Preserve the actual purpose-bound prompt content for token counting rather than blanket masking, and keep PostgreSQL `pg_tiktoken` as the token authority. Implementation waits for #85/#87 CLI and resource ownership to integrate or be superseded.
+
+### PRD-T27 — Credential-bearing PostgreSQL DSNs outside process argv (Issue #117) — PLANNED
+
+Prevent **credential-bearing PostgreSQL DSNs** from crossing the standalone CLI **process argv** boundary. Allow only explicitly classified credential-free locator forms in argv if retained at all; password-bearing connection authority must come from a secure bootstrap source such as the environment/secret-injection seam or another bounded non-argv mechanism. Preserve #89 explicit source precedence and #87 connection ownership/validation, reject unsafe or ambiguous DSN values before libpq, and never reflect rejected DSN content. Implementation waits for #85/#87/#89 to settle.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
