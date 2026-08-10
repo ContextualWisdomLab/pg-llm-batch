@@ -58,6 +58,8 @@ Issue #102 is planned bounded automatic provider reconciliation after #101; it m
 
 Issue #107 is the planned first-class OpenTelemetry optional dependency and live-conformance slice. Its canonical decision is [`opentelemetry-optional-dependency.md`](opentelemetry-optional-dependency.md). The base package must remain free of a mandatory OpenTelemetry dependency, and implementation is deferred while #57 owns release/package metadata and #106 owns the operation-span status contract.
 
+Issue #121 is the planned explicit provider-secret encryption deployment policy. Its canonical decision is [`provider-secret-encryption-policy.md`](provider-secret-encryption-policy.md). Protected main still permits deliberate local/development Base64 obfuscation when no Fernet key is configured; Issue #121 must add an explicit encryption-required mode, safe existing-row migration and bounded key rotation without presenting Base64 as encryption or racing #85/#87/#89.
+
 ## ADR content contract
 
 A material ADR should contain:
