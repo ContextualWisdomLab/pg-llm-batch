@@ -9,6 +9,22 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY_SQL = ROOT / "docker/postgres/init/03_cron_batch_retrieval.sql"
 DOCTORING = ROOT / "docs/doctoring/legacy-pgsql-http-retrieval.md"
 LEGACY_SOURCE_LITERAL = re.compile(r"\$legacy\$(.*?)\$legacy\$", re.DOTALL)
+RETIRED_SECRET_SOURCE = """
+DECLARE
+    rec RECORD;
+BEGIN
+    SELECT secret_value, is_encrypted INTO rec
+    FROM com_secrets WHERE secret_key = p_key LIMIT 1;
+    IF rec IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF rec.is_encrypted THEN
+        -- Encrypted at rest; cannot decrypt inside SQL without the app key.
+        RETURN NULL;
+    END IF;
+    RETURN convert_from(decode(rec.secret_value, 'base64'), 'UTF8');
+END;
+"""
 
 
 def _legacy_sql() -> str:
@@ -45,6 +61,13 @@ def test_bundled_sql_never_performs_credential_bearing_provider_http() -> None:
     fingerprints = LEGACY_SOURCE_LITERAL.findall(sql)
     assert any("http_get(" in fingerprint for fingerprint in fingerprints)
     assert any("gateway_api_key.default" in fingerprint for fingerprint in fingerprints)
+
+
+def test_retired_secret_helper_fingerprint_matches_protected_main_source() -> None:
+    """Cleanup must recognize the exact secret helper installed by protected main."""
+    fingerprints = LEGACY_SOURCE_LITERAL.findall(_legacy_sql())
+
+    assert RETIRED_SECRET_SOURCE in fingerprints
 
 
 def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
