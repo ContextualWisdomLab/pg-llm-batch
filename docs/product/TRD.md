@@ -51,6 +51,12 @@ Checkpoint, checkpoint-audit, snapshot-manifest, and tenant-RLS schema described
 
 The canonical engineering authority for sensitive content, credentials, provider disclosure, telemetry, and operational evidence is `docs/DATA_GOVERNANCE.md`. New persisted fields or emitted logs/metrics/traces shall receive an explicit **data classification** before release. Purpose/business authorization, retention, erasure/export, backup expiry, and data residency remain **host-owned** unless an accepted package ADR and implementation explicitly move that authority. Package-side redaction, bounded telemetry, or tenant RLS must not be treated as substitutes for host authorization.
 
+### TRD-D7 — Structured exception evidence ownership
+
+`PgLlmBatchError.details` and `GatewayError.response_data` are **structured exception evidence**, not persistence or audit records. **ACTIVE-PR #105** requires a **constructor-time shallow snapshot** of the **outer caller-owned mapping** so later caller-side additions, removals, or replacements cannot rewrite the package-owned outer evidence after construction.
+
+The snapshot must remain bounded and compatibility-preserving: **nested mutable values** remain shared, and direct mutation of the exception-owned public mapping remains possible. The live exception object is therefore not immutable and **not a durable audit record**. Durable audit evidence requires an explicitly serialized, bounded, authorized, and retained record outside the live exception object. This requirement remains ACTIVE-PR until #105 or a reviewed successor reaches protected main and receives fresh validation.
+
 ## 4. Provider HTTP requirements
 
 ### TRD-H1 — Credential-bearing destination validation
