@@ -27,6 +27,13 @@ class ModelMode(str, Enum):
 class BatchRequest:
     """A single prompt request to be counted and batched.
 
+    Runtime values are deliberately type-strict: ``user_prompt``, ``model``,
+    and ``id`` must already be exact strings, while ``system_prompt`` must be
+    ``None`` or an exact string. The model does not stringify caller objects or
+    reinterpret false-valued non-strings as empty prompts. Empty strings remain
+    accepted for compatibility; content-policy validation belongs to the host
+    or provider contract rather than this lightweight request record.
+
     Attributes:
         user_prompt: the user message / embedding input (required).
         model: model id understood by the target gateway.
