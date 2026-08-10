@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "docker/postgres/postgresql.conf.custom"
+DOCTORING = ROOT / "docs/doctoring/postgresql-logging-privacy.md"
 
 
 def _settings() -> dict[str, str]:
@@ -44,6 +45,23 @@ def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> 
     assert settings["pg_stat_statements.track_utility"].lower() == "off"
     assert settings["pg_stat_statements.track_planning"].lower() == "off"
     assert settings["pg_stat_statements.save"].lower() == "off"
+
+
+def test_activity_tracking_query_text_residual_is_explicit() -> None:
+    """Live pg_stat_activity query text must remain an explicit residual boundary."""
+    settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    assert settings["track_activities"].lower() == "on"
+    assert settings["track_activity_query_size"] == "1024"
+    for phrase in (
+        "pg_stat_activity",
+        "query text",
+        "track_activities",
+        "volatile",
+        "pg_read_all_stats",
+    ):
+        assert phrase in doctoring, phrase
 
 
 def test_optional_postgres_logging_does_not_claim_blanket_sql_logging_is_compliance() -> None:
