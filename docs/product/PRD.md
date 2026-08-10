@@ -231,6 +231,10 @@ Move `count-tokens` **prompt content** out of **process argv**. Add one bounded 
 
 Prevent **credential-bearing PostgreSQL DSNs** from crossing the standalone CLI **process argv** boundary. Allow only explicitly classified credential-free locator forms in argv if retained at all; password-bearing connection authority must come from a secure bootstrap source such as the environment/secret-injection seam or another bounded non-argv mechanism. Preserve #89 explicit source precedence and #87 connection ownership/validation, reject unsafe or ambiguous DSN values before libpq, and never reflect rejected DSN content. Implementation waits for #85/#87/#89 to settle.
 
+### PRD-T28 — PostgreSQL logging privacy (#119) — ACTIVE-PR
+
+Harden the optional PostgreSQL monitoring example using **selective disclosure** rather than blanket masking. ACTIVE-PR #119 disables package-default persistent SQL statement/bind-value logging and `pg_stat_statements` query-text collection/persistence while preserving the authorized production data needed by the batch workload. It explicitly retains bounded, **volatile** live `pg_stat_activity` query text while `track_activities` is enabled, treats privileged statistics access as deployment-owned authorization, and requires content-bearing audit/query-stat channels to have explicit purpose, least-privilege access, retention/deletion, encryption/storage, and incident handling. This does not claim that all PostgreSQL query text is absent, that the optional file is loaded automatically, or that any logging setting proves CSAP/SOC 2 or other certification.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
