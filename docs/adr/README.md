@@ -49,11 +49,14 @@ The following decisions are indexed by capability rather than promoted to protec
 - exact source-head CI evidence — #88;
 - explicit bootstrap-source precedence — #89;
 - loopback-only standalone Compose publication — #91;
-- fail-closed retirement of the legacy direct-SQL `pg_cron` + `pgsql-http` provider path while preserving historical retrieval evidence and keeping provider network/credential authority in the validated Python client — #101.
+- fail-closed retirement of the legacy direct-SQL `pg_cron` + `pgsql-http` provider path while preserving historical retrieval evidence and keeping provider network/credential authority in the validated Python client — #101;
+- description-free OpenTelemetry operation-span Error status with fail-open telemetry isolation — #106.
 
 Issue #90 is a planned operator-facing cancellation slice, not an accepted/shipped ADR. It is intentionally deferred while overlapping CLI/resource-ownership PRs remain active.
 
 Issue #102 is planned bounded automatic provider reconciliation after #101; it must use validated provider remote batch identity and the Python provider boundary rather than recreate direct-SQL provider networking. Issue #103 is the separate planned existing-volume migration needed before removing legacy `pg_cron`/`http` image packages, preload, and extension configuration. Its canonical design is [`legacy-postgresql-extension-retirement.md`](legacy-postgresql-extension-retirement.md). Neither issue is accepted/shipped behavior or a reason to invent new persistence in the ERD.
+
+Issue #107 is the planned first-class OpenTelemetry optional dependency and live-conformance slice. Its canonical decision is [`opentelemetry-optional-dependency.md`](opentelemetry-optional-dependency.md). The base package must remain free of a mandatory OpenTelemetry dependency, and implementation is deferred while #57 owns release/package metadata and #106 owns the operation-span status contract.
 
 ## ADR content contract
 
