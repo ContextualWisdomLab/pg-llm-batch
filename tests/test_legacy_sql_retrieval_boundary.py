@@ -2,11 +2,13 @@
 """Regression contracts for decommissioning direct SQL provider retrieval."""
 
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LEGACY_SQL = ROOT / "docker/postgres/init/03_cron_batch_retrieval.sql"
 DOCTORING = ROOT / "docs/doctoring/legacy-pgsql-http-retrieval.md"
+LEGACY_SOURCE_LITERAL = re.compile(r"\$legacy\$(.*?)\$legacy\$", re.DOTALL)
 
 
 def _legacy_sql() -> str:
@@ -14,15 +16,35 @@ def _legacy_sql() -> str:
     return LEGACY_SQL.read_text(encoding="utf-8")
 
 
+def _executable_cleanup_sql(sql: str) -> str:
+    """Return cleanup SQL with inert retired-helper fingerprints removed.
+
+    The cleanup deliberately embeds each historical PL/pgSQL helper body inside a
+    ``$legacy$`` dollar-quoted value so ``pg_proc.prosrc`` can be compared against
+    the exact retired definition before deletion.  Those values are data used for
+    identity verification, not executable provider-network authority.  Strip only
+    that reviewed literal class before assertions about executable SQL.
+    """
+    fingerprints = LEGACY_SOURCE_LITERAL.findall(sql)
+    assert len(fingerprints) == 4, "expected one exact source fingerprint per retired helper"
+    assert sql.count("helper_source IS DISTINCT FROM $legacy$") == 4
+    return LEGACY_SOURCE_LITERAL.sub("<retired-helper-source-fingerprint>", sql)
+
+
 def test_bundled_sql_never_performs_credential_bearing_provider_http() -> None:
     """Keep provider credentials and remote HTTP outside the database runtime."""
     sql = _legacy_sql()
+    executable_sql = _executable_cleanup_sql(sql)
 
-    assert "http_get(" not in sql
-    assert "http_header('Authorization'" not in sql
-    assert "CREATE OR REPLACE FUNCTION get_secret_value" not in sql
-    assert "CREATE OR REPLACE FUNCTION cron_fetch_batch_results" not in sql
-    assert "CREATE TABLE IF NOT EXISTS gateway_retrieval_logs" not in sql
+    assert "http_get(" not in executable_sql
+    assert "http_header('Authorization'" not in executable_sql
+    assert "CREATE OR REPLACE FUNCTION get_secret_value" not in executable_sql
+    assert "CREATE OR REPLACE FUNCTION cron_fetch_batch_results" not in executable_sql
+    assert "CREATE TABLE IF NOT EXISTS gateway_retrieval_logs" not in executable_sql
+
+    fingerprints = LEGACY_SOURCE_LITERAL.findall(sql)
+    assert any("http_get(" in fingerprint for fingerprint in fingerprints)
+    assert any("gateway_api_key.default" in fingerprint for fingerprint in fingerprints)
 
 
 def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
