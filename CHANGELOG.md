@@ -85,6 +85,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   intermediate state for runtime-sensitive changes, and incident/release closure
   requires fresh capability-specific post-merge evidence from the integrated
   protected revision while read-only dependency failures remain separate blockers.
+- Added scheduler/control-plane failure-recovery governance so a generic
+  scheduled-task error is classified separately from repository failure, the
+  authoritative hourly writer is not duplicated reflexively, oversized control
+  prompts are compacted instead of accumulating incident history, and recovery
+  resumes safe repository work in the same invocation before the normal double
+  exit sweep.
 - Consolidated immutable CI action, Python image, Rust toolchain image, and Ruff
   patch updates; setup-uv cache pruning is explicit to preserve the previous
   bounded cache-cost policy.
