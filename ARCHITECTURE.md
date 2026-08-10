@@ -185,6 +185,8 @@ flowchart LR
     ExactCI[Exact source-head CI #88]
     Release[Reproducible release evidence #57]
     Ops[Health / CLI / config / connection / compose hardening #70 #85 #86 #87 #89 #91]
+    RetireSQL[Retire direct-SQL provider retrieval #101]
+    Reconcile[Bounded automatic provider reconciliation Issue #102]
 
     Protected --> Tenant
     Protected --> Stream
@@ -198,9 +200,13 @@ flowchart LR
     Protected --> ExactCI
     ExactCI --> Release
     Protected --> Ops
+    Protected --> RetireSQL
+    RetireSQL --> Reconcile
 ```
 
 The checkpoint nodes above are the current active implementation chain. Superseded predecessor lineages are indexed in `docs/adr/README.md` and are deliberately excluded from this ACTIVE-PR overlay; their old evidence does not transfer to replacements.
+
+`ACTIVE-PR` #101 retires the legacy direct-SQL `pg_cron` + `pgsql-http` provider network path instead of creating a second provider credential/transport authority inside PostgreSQL. The supported provider network authority remains the validated Python `BatchAPIClient` / `DurableBatchAPIClient` boundary. **Issue #102 is PLANNED**, not implemented persistence or a shipped scheduler: it restores bounded automatic provider reconciliation only through validated durable provider remote identities, finite work/concurrency/restart semantics, and scheduling authority that is separate from provider credentials. This architecture does not invent a new ERD entity for #102 and does not imply distributed exactly-once delivery.
 
 The overlay is dependency-aware, not a claim that every PR must merge in the diagram's visual order; the live PR stack/base relations remain authoritative.
 
@@ -215,6 +221,7 @@ The overlay is dependency-aware, not a claim that every PR must merge in the dia
 7. **Evidence identity is architectural.** Commercial/release decisions must know which source/base/merge/check/review/artifact they are proving.
 8. **Database names are descriptive.** New package-owned objects use descriptive two-or-more-word snake_case by default.
 9. **Automation failure is a separate authority class.** Scheduler/prompt/tool failure does not become a product source finding without independent source evidence.
+10. **Provider networking has one package authority.** Direct-SQL provider HTTP is being retired by #101; any automatic reconciliation replacement must reuse the validated Python provider/credential boundary rather than reintroducing parallel database network authority.
 
 ## 9. Architecture decision and detail map
 
@@ -238,7 +245,3 @@ The overlay is dependency-aware, not a claim that every PR must merge in the dia
 - Semantic review vs infrastructure/policy evidence: `docs/automation/ADR-0004-review-evidence-separation.md`
 - Protected-main operational acceptance: `docs/automation/ADR-0005-protected-main-operational-acceptance.md`
 - Scheduler failure recovery: `docs/automation/ADR-0006-scheduler-failure-recovery.md`
-
-## 10. Change discipline
-
-A runtime, schema, API, security, deployment, CI, evidence, scheduler/control-plane, or release change that contradicts an invariant above requires either an ADR update/new ADR or an explicit correction to this architecture in the same change set. PR-body prose alone is not a durable architecture decision.
