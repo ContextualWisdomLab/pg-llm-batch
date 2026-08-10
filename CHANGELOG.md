@@ -38,6 +38,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   store constructor now closes an acquired connection when setup fails; and
   token configuration is validated before acquiring the cached `pg_tiktoken`
   session.
+- `TokenCounter.buffer_percentage` is now an **exact integer** from **0 through
+  50** and is validated **before PostgreSQL** extension setup or cached
+  token-counting connection acquisition; booleans, floats, strings, and
+  container values fail with bounded `ValidationError` instead of being
+  accepted or producing unrelated type failures.
 - A configured Fernet encryption key must now fail closed when the optional
   `cryptography` dependency is unavailable instead of silently downgrading the
   explicit encryption request to base64 obfuscation; the intentional no-key
