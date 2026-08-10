@@ -207,9 +207,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         )
 
     def _close_span_context(self, span_context: Any) -> None:
-        """Close an entered span context without exposing operation exceptions."""
-        if span_context is None:
-            return
+        """Close a span context whose entry has already completed successfully."""
         self._telemetry_or_default(
             lambda: span_context.__exit__(None, None, None),
             None,
