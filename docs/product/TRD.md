@@ -57,6 +57,10 @@ The canonical engineering authority for sensitive content, credentials, provider
 
 The snapshot must remain bounded and compatibility-preserving: **nested mutable values** remain shared, and direct mutation of the exception-owned public mapping remains possible. The live exception object is therefore not immutable and **not a durable audit record**. Durable audit evidence requires an explicitly serialized, bounded, authorized, and retained record outside the live exception object. This requirement remains ACTIVE-PR until #105 or a reviewed successor reaches protected main and receives fresh validation.
 
+### TRD-D8 — Endpoint-qualified tokenizer metadata
+
+Issue #108 is a PLANNED data-integrity follow-up for model metadata authority. When multiple provider endpoints advertise the same `model_id`, tokenizer selection must be **endpoint-qualified tokenizer** metadata rather than an ambiguous model-only lookup. The implementation must bind tokenizer resolution to the validated endpoint/model identity, fail closed on missing or conflicting metadata, preserve backwards compatibility only where one unambiguous mapping exists, and prove cross-endpoint isolation with realistic PostgreSQL tests before release.
+
 ## 4. Provider HTTP requirements
 
 ### TRD-H1 — Credential-bearing destination validation
@@ -230,6 +234,10 @@ Version bump, release creation, publication, and provenance acceptance shall use
 ### TRD-PKG4 — Reproducible component-image OS dependency set
 
 Issue #100 is PLANNED after #70 settles the authoritative Dockerfile command/healthcheck surface. Ordinary builds must not perform an unconstrained distribution upgrade or resolve unversioned operating-system packages from mutable repository state. The selected snapshot/version mechanism, package-source identity, resolved package set, controlled refresh procedure, rollback/emergency update path, and SBOM/provenance binding must be machine-checkable on the final source.
+
+### TRD-PKG5 — Single authoritative version source
+
+Issue #109 is a PLANNED release-integrity follow-up. Package metadata, the importable `__version__`, generated artifacts, release tags, and release acceptance evidence must derive from a **single authoritative version** source or from a machine-checked deterministic projection of that source. Drift between `pyproject.toml`, package runtime metadata, built distributions, and release/tag evidence must fail before publication, with rollback/recovery documented for an interrupted version bump.
 
 ## 12. Documentation requirements
 
