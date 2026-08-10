@@ -173,6 +173,30 @@ def test_cli_argv_security_and_privacy_gaps_have_canonical_owners() -> None:
         assert marker in traceability, marker
 
 
+def test_postgres_image_supply_chain_gap_has_canonical_owner() -> None:
+    """Keep the PostgreSQL image dependency-reproducibility gap distinct from component image work."""
+    prd = _read("docs/product/PRD.md")
+    trd = _read("docs/product/TRD.md")
+    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
+    traceability = _read("docs/TRACEABILITY.md")
+
+    for document in (prd, trd, fitness):
+        for phrase in (
+            "Issue #118",
+            "PostgreSQL image",
+            "pg_tiktoken",
+        ):
+            assert phrase in document, phrase
+
+    for phrase in (
+        "#118",
+        "PostgreSQL image",
+        "docker/postgres/Dockerfile",
+        "pg_tiktoken",
+    ):
+        assert phrase in traceability, phrase
+
+
 def test_sql_retirement_and_reconciliation_reach_architecture_and_operations() -> None:
     """Keep the retired network authority and replacement seam explicit end to end."""
     architecture = _read("ARCHITECTURE.md")
