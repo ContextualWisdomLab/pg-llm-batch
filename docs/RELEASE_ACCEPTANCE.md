@@ -99,6 +99,10 @@ Release preparation does not permit self-approval, synthetic approval, weakened 
 
 A COMMENTED review, commit status, bot text, reaction, dismissed review, author review, or model verdict is not automatically equivalent to formal independent approval.
 
+Protected `AGENTS.md` currently records that **code-owner review gates are disabled (on hold)** for the solo-maintainer organization state. This is a live governance constraint, not a reason to weaken CI/security/semantic-review evidence. **Do not re-enable** CODEOWNERS/code-owner review requirements until the authoritative organization/repository policy changes after the maintainer model changes. Independent approval remains a distinct evidence class **where required** by live policy or explicit CWL governance, but the held code-owner gate must not be inferred as universally mandatory from this document.
+
+Before treating approval as a release blocker, verify the current branch/ruleset/repository policy and distinguish a required semantic review or other independent approval from the intentionally held code-owner requirement. Stale PR-body wording and historical governance do not create a current approval gate.
+
 ## 9. Operational acceptance
 
 After source integration, **post-merge operational acceptance** must exercise changed operator/runtime surfaces from protected main where practical. This gate follows `docs/automation/ADR-0005-protected-main-operational-acceptance.md`: source merge is intermediate, and fresh protected-main evidence remains distinct from pull-request checks and reviews. Depending on the release, operational acceptance includes:
@@ -154,7 +158,7 @@ Reject release when any of the following is true:
 - source head or protected-base identity changed after evidence collection;
 - a required check is queued, pending, skipped, cancelled, absent, stale, neutral-required, rate-limited, or failed;
 - a valid unresolved source/security finding remains;
-- required independent approval is absent;
+- an independent approval that is **where required** by the current live policy/governance is absent;
 - migration/rollback or operational evidence is missing for a changed contract;
 - a new persisted/logged/emitted/provider-disclosed field lacks data classification or silently contradicts `docs/DATA_GOVERNANCE.md`;
 - package-owned logs/telemetry/health/errors expose secrets, prompt bodies, or raw provider response bodies outside a reviewed bounded contract;
@@ -162,6 +166,8 @@ Reject release when any of the following is true:
 - licensing/IP evidence contains an unknown or incompatible dependency license, missing required notice, or unverified ownership/title chain;
 - documentation advertises ACTIVE-PR behavior as shipped; or
 - publication would rely on invented, over-broad, or unverified credentials/permissions.
+
+The current code-owner review requirement is on hold and therefore is not itself a release rejection condition. If that live governance changes, update the canonical policy and reacquire evidence on the unchanged release candidate rather than assuming the historical hold or a historical approval still applies.
 
 ## 14. Post-release verification
 
