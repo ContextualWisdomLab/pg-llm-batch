@@ -60,3 +60,25 @@ def test_scheduler_failure_recovery_is_canonical_and_work_conserving() -> None:
     assert "same invocation" in uml
     assert "double exit sweep" in uml
     assert "duplicate scheduler" in uml
+
+
+def test_scheduler_recovery_rejects_silent_or_prompt_only_completion() -> None:
+    """User redirection must resume material work instead of ending silently."""
+    adr = _normalized(SCHEDULER_ADR)
+    operability = _normalized(OPERABILITY)
+    traceability = _normalized(TRACEABILITY)
+    fitness = _normalized(FITNESS)
+    uml = _normalized(UML)
+
+    for phrase in (
+        "silent completion",
+        "empty user-visible output",
+        "user redirection",
+        "prompt repair alone is not recovery",
+        "material safe repository action",
+    ):
+        assert phrase in adr, phrase
+
+    for document in (operability, traceability, fitness, uml):
+        assert "silent completion" in document
+        assert "material safe repository action" in document
