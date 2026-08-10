@@ -27,9 +27,10 @@ except ImportError:  # pragma: no cover
     psycopg = None  # type: ignore
 
 try:  # pragma: no cover - optional dependency
-    from cryptography.fernet import Fernet  # type: ignore
+    from cryptography.fernet import Fernet, InvalidToken  # type: ignore
 except ImportError:  # pragma: no cover
     Fernet = None  # type: ignore
+    InvalidToken = Exception  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +332,14 @@ class SecretStore:
                 raise ConfigError(
                     "Secret is encrypted but no Fernet key is configured to decrypt it"
                 )
-            return self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
+            decrypted: Optional[str]
+            try:
+                decrypted = self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
+            except (InvalidToken, UnicodeError):
+                decrypted = None
+            if decrypted is None:
+                raise ConfigError("stored encrypted secret is invalid")
+            return decrypted
         decoded: Optional[str]
         try:
             decoded = base64.b64decode(
