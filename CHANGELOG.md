@@ -35,6 +35,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `BatchAPIClient.wait_for_batch()` now requires `poll_interval_seconds` and
+  `timeout_seconds` to be finite positive numeric durations before credential
+  resolution or provider I/O, rejecting booleans, strings, `None`, NaN,
+  infinities, zero, and negative values before they can create invalid deadlines,
+  sleeps, or unrelated transport/type failures.
 - Provider HTTP error responses no longer export provider-controlled JSON,
   free-text bodies, debug fields, or cancellation messages through package
   diagnostics. Files upload, batch creation/status, and file download expose
