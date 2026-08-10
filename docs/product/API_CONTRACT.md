@@ -58,6 +58,10 @@ Public names added only by an ACTIVE-PR remain target interfaces until their imp
 
 Callers may depend on the documented package exception hierarchy for domain failures, but they must not parse free-form exception messages as a stable machine protocol unless a specific structured field is documented. Provider-controlled bodies, credentials, DSNs, and other confidential values are not part of the public error contract.
 
+### ACTIVE-PR `BatchRequest` runtime boundary (#104)
+
+`BatchRequest` is public on protected main, but exact runtime field typing is an **ACTIVE-PR** compatibility hardening until #104 integrates. The target requires `user_prompt`, `model`, and `id` to already be exact strings and `system_prompt` to be `None` or an exact string; it does not stringify non-string caller objects or reinterpret false-valued non-strings as empty content. Rejected values must not be exported through the resulting package validation message or structured details. Empty strings remain accepted for compatibility, and prompt/model content-policy validation remains host/provider-owned rather than being inferred by this lightweight record. This paragraph must be promoted to protected-main behavior only after the implementing source is integrated and revalidated there.
+
 ### Resource ownership
 
 Objects that acquire PostgreSQL connections, HTTP sessions, files, iterators, or other finite resources must expose and document deterministic ownership/closure behavior. ACTIVE-PR changes that harden cleanup do not become the protected-main contract until merged.
