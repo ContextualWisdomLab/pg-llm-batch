@@ -20,8 +20,9 @@ def test_bundled_sql_never_performs_credential_bearing_provider_http() -> None:
 
     assert "http_get(" not in sql
     assert "http_header('Authorization'" not in sql
-    assert "get_secret_value(" not in sql
+    assert "CREATE OR REPLACE FUNCTION get_secret_value" not in sql
     assert "CREATE OR REPLACE FUNCTION cron_fetch_batch_results" not in sql
+    assert "CREATE TABLE IF NOT EXISTS gateway_retrieval_logs" not in sql
 
 
 def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
@@ -37,6 +38,7 @@ def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
     assert "DROP FUNCTION IF EXISTS get_secret_value(TEXT)" in sql
     assert "DROP FUNCTION IF EXISTS get_config_value(TEXT)" in sql
     assert "cron.schedule(" not in sql
+    assert "DROP TABLE" not in sql
 
 
 def test_legacy_retrieval_doctoring_preserves_upgrade_and_authority_boundaries() -> None:
