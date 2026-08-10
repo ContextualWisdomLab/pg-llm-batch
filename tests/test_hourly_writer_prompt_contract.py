@@ -7,8 +7,16 @@ import re
 
 ROOT = Path(__file__).resolve().parents[1]
 PROMPT = ROOT / "docs/automation/HOURLY_WRITER_PROMPT.md"
+SCHEDULER_ADR = ROOT / "docs/automation/ADR-0006-scheduler-failure-recovery.md"
+TRACEABILITY = ROOT / "docs/TRACEABILITY.md"
+FITNESS = ROOT / "docs/DOCUMENTATION_FITNESS.md"
 MAX_PROMPT_BYTES = 8_000
 FULL_SHA = re.compile(r"\b[0-9a-f]{40}\b")
+
+
+def _normalized(path: Path) -> str:
+    """Return normalized lower-case Markdown for semantic assertions."""
+    return " ".join(path.read_text(encoding="utf-8").lower().split())
 
 
 def test_hourly_writer_prompt_is_compact_current_and_work_conserving() -> None:
@@ -42,7 +50,7 @@ def test_hourly_writer_prompt_is_compact_current_and_work_conserving() -> None:
 
 def test_hourly_writer_prompt_preserves_merge_and_writer_authority() -> None:
     """The compact prompt must not lose exact evidence or single-writer gates."""
-    normalized = " ".join(PROMPT.read_text(encoding="utf-8").lower().split())
+    normalized = _normalized(PROMPT)
 
     for phrase in (
         "hard writer lease",
@@ -54,3 +62,11 @@ def test_hourly_writer_prompt_preserves_merge_and_writer_authority() -> None:
         "active-pr behavior is not shipped",
     ):
         assert phrase in normalized, phrase
+
+
+def test_hourly_writer_prompt_is_discoverable_from_canonical_governance() -> None:
+    """Operators must find the compact prompt without chat or PR-body archaeology."""
+    for document in (SCHEDULER_ADR, TRACEABILITY, FITNESS):
+        normalized = _normalized(document)
+        assert "hourly_writer_prompt.md" in normalized
+        assert "compact hourly writer prompt" in normalized
