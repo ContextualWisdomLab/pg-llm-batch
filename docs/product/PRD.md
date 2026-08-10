@@ -167,6 +167,26 @@ Bind CI evidence to the exact source head, harden scheduled maintenance authorit
 
 Expose the existing validated provider cancellation primitive through a first-class `cancel --endpoint <alias> --batch-id <id>` operator command without adding automatic retry to the side-effecting cancellation request. This slice remains PLANNED while overlapping CLI secret-input/resource-ownership work in #85 and #87 is active and requires final exact-source acceptance after #88; it must not be represented as a protected-main CLI capability before those dependencies are resolved and the implementation is integrated.
 
+### PRD-T12 — Strict provider progress/control JSON (Issue #98) — PLANNED
+
+Reject malformed provider `request_counts` shapes, booleans/negative/string counters, and non-finite control JSON such as `NaN` or `Infinity` through one bounded package error rather than raw Python exceptions or non-standard structured output. Preserve the response-size, UTF-8, retry/replay, and provider-error confidentiality contracts owned by #71; implementation waits until that overlapping provider-control surface integrates or is superseded.
+
+### PRD-T13 — Deployment-specific PostgreSQL authentication (Issue #99) — PLANNED
+
+Remove the shared default PostgreSQL credential from standalone Compose without weakening #91's loopback publishing boundary. Fresh deployments must use an operator-provided or generated deployment-specific credential that is not committed, placed in process argv, shell-interpreted, or copied into logs/evidence; restart recovery and supported secret-character handling must be deterministic.
+
+### PRD-T14 — Reproducible component-image OS dependencies (Issue #100) — PLANNED
+
+Make the component image's operating-system package set reproducible and reviewable rather than depending on mutable `apt-get upgrade`/unversioned repository state. Preserve the non-root/no-shell readiness contracts owned by #70 and bind the resolved package set into SBOM/provenance evidence.
+
+### PRD-T15 — Retire direct-SQL provider retrieval (#101) — ACTIVE-PR
+
+Decommission the legacy `pg_cron` + `pgsql-http` direct-SQL provider retriever fail-closed. That path reads weaker database-visible secret material and treats a local batch UUID as a provider remote batch identifier without a reviewed identity binding. #101 keeps historical retrieval logs, unschedules only the exact legacy job, removes its helper functions, and leaves provider HTTP authority with `BatchAPIClient` / `DurableBatchAPIClient` rather than creating a second credential/network implementation in PostgreSQL.
+
+### PRD-T16 — Automatic provider reconciliation (Issue #102) — PLANNED
+
+Restore buyer-visible automatic provider reconciliation after #101 without resurrecting direct-SQL provider HTTP. A replacement worker/scheduler seam must operate only on validated durable remote identities, use the existing Python credential/destination/retry/response boundaries, be concurrency/restart safe under a finite work budget, and keep scheduling authority separate from provider credentials. It must not claim distributed exactly-once delivery and must wait for overlapping durable-lifecycle/resource-ownership surfaces when necessary.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
