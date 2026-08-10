@@ -166,6 +166,15 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         except (Exception, CancelledError):
             return default
 
+    def _enter_span_context(self, span_context: Any) -> tuple[Any, bool]:
+        """Enter an optional span context and report whether entry completed."""
+        if span_context is None:
+            return None, False
+        try:
+            return span_context.__enter__(), True
+        except (Exception, CancelledError):
+            return None, False
+
     def _use_span(self, span: Any, action: Callable[[Any], Any]) -> None:
         """Apply a span mutation only when a usable span was created."""
         if span is None:
@@ -227,9 +236,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 ),
                 None,
             )
-            span = None
-            if span_context is not None:
-                span = self._telemetry_or_default(span_context.__enter__, None)
+            span, span_entered = self._enter_span_context(span_context)
             self._use_span(
                 span,
                 lambda active_span: active_span.set_attribute(
@@ -255,7 +262,8 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                     ERROR_TYPE_ATTRIBUTE: error_type,
                 }
                 self._emit_measurements(started_at, attributes)
-                self._close_span_context(span_context)
+                if span_entered:
+                    self._close_span_context(span_context)
                 raise
 
             attributes = {
@@ -263,7 +271,8 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 OPERATION_OUTCOME_ATTRIBUTE: "success",
             }
             self._emit_measurements(started_at, attributes)
-            self._close_span_context(span_context)
+            if span_entered:
+                self._close_span_context(span_context)
             return result
         finally:
             self._observation_depth.reset(depth_token)
