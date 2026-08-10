@@ -40,8 +40,24 @@ HEALTH_REQUEST_TIMEOUT_SECONDS = 5.0
 HEALTH_MAX_CONCURRENT_REQUESTS = 32
 
 
+def _invalid_dsn_health_report() -> Dict[str, Any]:
+    """Return one body-safe local failure for an invalid database target."""
+    return {
+        "ready": False,
+        "components": [
+            {
+                "component": "database",
+                "is_ready": False,
+                "detail": "invalid Postgres DSN",
+            }
+        ],
+    }
+
+
 def check_health(dsn: str) -> Dict[str, Any]:
     """Return a detailed local readiness report for operators and the CLI."""
+    if type(dsn) is not str or not dsn.strip():
+        return _invalid_dsn_health_report()
     if psycopg is None:
         return {
             "ready": False,
