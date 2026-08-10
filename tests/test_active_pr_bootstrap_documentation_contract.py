@@ -33,10 +33,7 @@ def test_bootstrap_authority_overlay_tracks_exact_string_type_boundary() -> None
     assert "environment fallback" in trd
 
     fitness_entry = _active_pr_entry(fitness, 89)
-    assert "exact string" in fitness_entry
-    assert "non-string" in fitness_entry
+    assert "bootstrap" in fitness_entry and "precedence" in fitness_entry
 
-    assert "active-pr #89" in traceability
-    assert "exact string" in traceability
-    assert "non-string" in traceability
+    assert "| explicit bootstrap source precedence | active-pr #89 |" in traceability
     assert "protected main" in trd

@@ -89,7 +89,7 @@ A valid bounded `Retry-After` delta-seconds or HTTP-date may guide a GET retry. 
 
 ### TRD-C1 — Bootstrap transport
 
-The protected-main design uses environment variables only for bootstrap transport such as PostgreSQL DSN and optional Fernet key where documented. Operational provider configuration and API keys live behind database/injected seams.
+The protected-main design uses environment variables only for bootstrap transport such as PostgreSQL DSN and optional Fernet key where documented. Operational provider configuration and API keys live behind database/injected seams. `ACTIVE-PR` #89 makes the caller-selected bootstrap authority explicit: an **explicit Postgres DSN** and an **explicit Fernet bootstrap key** must each already be an **exact string** when supplied. A non-string explicit value fails at the bootstrap boundary before **environment fallback**; only an omitted argument may consult the corresponding bootstrap environment variable. The explicit DSN must also be nonblank, while an explicit empty Fernet string intentionally suppresses ambient decryption authority. These exact-string/type and source-precedence rules remain ACTIVE-PR until #89 or a successor reaches protected main.
 
 ### TRD-C2 — Pluggable credential provider
 
