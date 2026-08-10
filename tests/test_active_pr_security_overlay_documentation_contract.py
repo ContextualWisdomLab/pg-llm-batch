@@ -1,0 +1,70 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Contracts keeping canonical docs aligned with current security-overlay PRs."""
+
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _read(path: str) -> str:
+    """Read one UTF-8 repository document in normalized lowercase form."""
+    return (ROOT / path).read_text(encoding="utf-8").lower()
+
+
+def test_health_listener_overlay_tracks_exact_input_and_port_boundary() -> None:
+    """PR #70's current listener-input boundary must be durable documentation."""
+    trd = _read("docs/product/TRD.md")
+    operability = _read("docs/OPERABILITY.md")
+    threat = _read("docs/THREAT_MODEL.md")
+
+    for document in (trd, operability, threat):
+        assert "#70" in document
+        assert "c0" in document
+        assert "del" in document
+        assert "1..65535" in document
+    assert "non-boolean integer" in trd
+    assert "exact" in trd and "host" in trd
+
+
+def test_provider_error_overlay_tracks_body_independence_and_exception_privacy() -> None:
+    """PR #71 must document status-first errors and malformed-success privacy."""
+    trd = _read("docs/product/TRD.md")
+    governance = _read("docs/DATA_GOVERNANCE.md")
+    threat = _read("docs/THREAT_MODEL.md")
+
+    for document in (trd, governance, threat):
+        assert "#71" in document
+        assert "provider-error confidentiality" in document
+    assert "status" in trd and "before" in trd and "body" in trd
+    assert "malformed successful" in governance
+    assert "cause" in governance and "context" in governance
+    assert "malformed successful" in threat
+
+
+def test_secret_store_overlay_tracks_malformed_persistence_and_wrong_key_boundary() -> None:
+    """PR #87's current fail-closed decode/decrypt contract must be explicit."""
+    trd = _read("docs/product/TRD.md")
+    governance = _read("docs/DATA_GOVERNANCE.md")
+    threat = _read("docs/THREAT_MODEL.md")
+
+    for document in (trd, governance, threat):
+        assert "#87" in document
+        assert "base64" in document
+        assert "wrong" in document and "fernet" in document and "key" in document
+        assert "configerror" in document
+    assert "utf-8" in trd
+    assert "cause" in threat and "context" in threat
+
+
+def test_compose_overlay_tracks_complete_published_service_allowlist() -> None:
+    """PR #91 must constrain the entire published-port set, not two spot checks."""
+    trd = _read("docs/product/TRD.md")
+    operability = _read("docs/OPERABILITY.md")
+    threat = _read("docs/THREAT_MODEL.md")
+
+    for document in (trd, operability, threat):
+        assert "#91" in document
+        assert "allow-list" in document
+        assert "5432" in document
+        assert "8080" in document
+    assert "third" in trd and "published" in trd and "service" in trd
