@@ -9,12 +9,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ADR_PATH = ROOT / "docs/adr/legacy-postgresql-extension-retirement.md"
 INDEX_PATH = ROOT / "docs/adr/README.md"
+ARCHITECTURE_PATH = ROOT / "ARCHITECTURE.md"
 
 
 def test_legacy_extension_retirement_is_planned_and_dependency_bound() -> None:
     """Bind Issue #103 to the post-#101 upgrade-migration safety contract."""
     adr = ADR_PATH.read_text(encoding="utf-8")
     index = INDEX_PATH.read_text(encoding="utf-8")
+    architecture = ARCHITECTURE_PATH.read_text(encoding="utf-8")
     lowered = adr.lower()
 
     assert "](legacy-postgresql-extension-retirement.md)" in index
@@ -35,3 +37,7 @@ def test_legacy_extension_retirement_is_planned_and_dependency_bound() -> None:
     assert "upgraded legacy" in lowered
     assert "SBOM/provenance" in adr
     assert "Release Acceptance" in adr
+
+    assert "RetireExtensions" in architecture
+    assert "Issue #103" in architecture
+    assert "legacy-postgresql-extension-retirement.md" in architecture
