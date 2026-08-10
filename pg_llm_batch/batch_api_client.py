@@ -716,21 +716,25 @@ class BatchAPIClient:
         timeout_seconds: float = 3600.0,
     ) -> Dict[str, Any]:
         """Wait until a batch reaches a terminal state or the timeout expires."""
-        if poll_interval_seconds <= 0:
+        normalized_poll_interval = _normalize_retry_delay(
+            "poll_interval_seconds", poll_interval_seconds
+        )
+        if normalized_poll_interval <= 0:
             raise ValidationError(
                 field="poll_interval_seconds",
                 value=poll_interval_seconds,
-                reason="must be greater than zero",
+                reason="must be a finite number greater than zero",
             )
-        if timeout_seconds <= 0:
+        normalized_timeout = _normalize_retry_delay("timeout_seconds", timeout_seconds)
+        if normalized_timeout <= 0:
             raise ValidationError(
                 field="timeout_seconds",
                 value=timeout_seconds,
-                reason="must be greater than zero",
+                reason="must be a finite number greater than zero",
             )
 
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_seconds
+        deadline = loop.time() + normalized_timeout
         while True:
             status = await self.get_batch_status(batch_id, endpoint_alias)
             if status.get("is_complete"):
@@ -743,10 +747,10 @@ class BatchAPIClient:
                     response_data={
                         "batch_id": batch_id,
                         "last_status": status.get("status"),
-                        "timeout_seconds": timeout_seconds,
+                        "timeout_seconds": normalized_timeout,
                     },
                 )
-            await asyncio.sleep(min(poll_interval_seconds, remaining))
+            await asyncio.sleep(min(normalized_poll_interval, remaining))
 
     @staticmethod
     def _parse_jsonl_content(
