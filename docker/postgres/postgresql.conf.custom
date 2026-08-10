@@ -98,7 +98,11 @@ track_wal_io_timing = off
 # deployment opts in only for a concrete diagnostic need after measuring a
 # representative workload and accepting the added collection overhead.
 track_functions = 'none'
-track_commit_timestamp = on
+
+# PostgreSQL records extra per-transaction commit metadata in pg_commit_ts when
+# this server-start option is enabled, and the documented default is off. Keep
+# it opt-in unless a deployment has a concrete commit-timestamp/replication need.
+track_commit_timestamp = off
 stats_fetch_consistency = 'cache'
 compute_query_id = 'on'
 default_statistics_target = 100
@@ -143,6 +147,8 @@ cron.max_running_jobs = 10
 #   measured clock-read cost with pg_test_timing and accepts the runtime overhead.
 # - Keep track_functions off unless function-call statistics have a reviewed
 #   diagnostic purpose and measured representative-workload overhead.
+# - Keep track_commit_timestamp off unless commit-time metadata has a concrete
+#   purpose; enabling it requires server start and writes extra pg_commit_ts data.
 # - CSV output has a fixed client host:port field on emitted records. Keep
 #   log_connections/log_disconnections off unless connection-audit events have a
 #   reviewed purpose, access boundary, retention policy, and storage budget.
