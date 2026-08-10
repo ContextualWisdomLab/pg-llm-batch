@@ -6,9 +6,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PRD = ROOT / "docs/product/PRD.md"
-TRD = ROOT / "docs/product/TRD.md"
-TRACEABILITY = ROOT / "docs/TRACEABILITY.md"
-FITNESS = ROOT / "docs/DOCUMENTATION_FITNESS.md"
+ADR = ROOT / "docs/adr/opentelemetry-optional-dependency.md"
+ADR_INDEX = ROOT / "docs/adr/README.md"
 
 
 def _normalized(path: Path) -> str:
@@ -19,28 +18,32 @@ def _normalized(path: Path) -> str:
 def test_opentelemetry_optional_dependency_gap_is_canonical_and_planned() -> None:
     """Issue #107 must be visible without implying a shipped package extra."""
     prd = _normalized(PRD)
-    trd = _normalized(TRD)
-    traceability = _normalized(TRACEABILITY)
-    fitness = _normalized(FITNESS)
+    adr = _normalized(ADR)
+    index = _normalized(ADR_INDEX)
 
     for phrase in (
         "issue #107",
         "opentelemetry optional dependency",
         "planned",
         "base package",
+        "#57",
+        "#106",
     ):
         assert phrase in prd, phrase
 
     for phrase in (
-        "trd-pkg5",
+        "status: planned",
         "issue #107",
         "opentelemetry-api",
         "optional extra",
-        "base dependency set",
+        "base package dependency set",
+        "python 3.10, 3.12, and 3.14",
+        "100%",
+        "#57",
+        "#106",
     ):
-        assert phrase in trd, phrase
+        assert phrase in adr, phrase
 
-    assert "opentelemetry optional dependency and live conformance" in traceability
-    assert "planned #107" in traceability
-    assert "issue #107" in fitness
-    assert "opentelemetry optional dependency" in fitness
+    assert "](opentelemetry-optional-dependency.md)" in index
+    assert "issue #107" in index
+    assert "planned first-class opentelemetry optional dependency" in index
