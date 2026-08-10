@@ -92,7 +92,12 @@ log_timezone = 'UTC'
 # benchmark the target host with pg_test_timing and opt in deliberately.
 track_io_timing = off
 track_wal_io_timing = off
-track_functions = 'all'
+
+# Function-call timing/count collection is optional statistics work. PostgreSQL
+# defaults this setting to none; keep the generic profile at that boundary so a
+# deployment opts in only for a concrete diagnostic need after measuring a
+# representative workload and accepting the added collection overhead.
+track_functions = 'none'
 track_commit_timestamp = on
 stats_fetch_consistency = 'cache'
 compute_query_id = 'on'
@@ -136,6 +141,8 @@ cron.max_running_jobs = 10
 #   and incident/deletion procedure.
 # - Keep track_io_timing/track_wal_io_timing off unless the deployment has
 #   measured clock-read cost with pg_test_timing and accepts the runtime overhead.
+# - Keep track_functions off unless function-call statistics have a reviewed
+#   diagnostic purpose and measured representative-workload overhead.
 # - CSV output has a fixed client host:port field on emitted records. Keep
 #   log_connections/log_disconnections off unless connection-audit events have a
 #   reviewed purpose, access boundary, retention policy, and storage budget.
