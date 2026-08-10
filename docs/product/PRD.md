@@ -191,6 +191,22 @@ Restore buyer-visible automatic provider reconciliation after #101 without resur
 
 Make the documented optional operation-observability surface installable through a first-class package extra instead of requiring operators to reproduce a doctoring-only dependency constraint manually. The base package dependency set must remain unchanged; the planned extra must declare the supported `opentelemetry-api` range, keep SDK/exporter configuration host-owned, and add live optional-API conformance that proves success retains the default Unset span status while propagated failure receives the description-free Error semantics defined by ACTIVE-PR #106. This remains PLANNED while #57 owns release/package metadata and #106 owns the current operation-span status contract.
 
+### PRD-T18 — Endpoint-qualified tokenizer authority (Issue #108) — PLANNED
+
+Make tokenizer/model metadata endpoint-qualified and ambiguity-safe instead of selecting among duplicate provider-facing `model_id` rows by recency alone. A trusted endpoint identity must govern endpoint-specific tokenizer metadata, cross-endpoint ambiguity must fail closed, and stale `pg_cron` model-sync documentation must be removed unless a supported scheduler actually exists. Implementation waits for #87's active `TokenCounter` ownership and composes with #53 if tenant-qualified endpoint authority is required.
+
+### PRD-T19 — Single authoritative package version (Issue #109) — PLANNED
+
+Establish one machine-readable **single authoritative version** source so source checkout, built wheel/sdist metadata, installed distribution metadata, `pg_llm_batch.__version__`, SBOM/provenance, and release evidence cannot silently diverge. This is not a version bump. Implementation waits for #57's package/release metadata and the #53 stack's package-root surface to integrate or be superseded.
+
+### PRD-T20 — Explicit HTTP session ownership (Issue #110) — PLANNED
+
+Make `BatchAPIClient` **HTTP session ownership** deterministic for callers that use the async API outside `async with`. Provide an idempotent async cleanup contract such as `aclose`, define reopen/closed-client semantics and context nesting, and never close caller-owned shared sessions. Implementation waits for #71 because that PR is currently authoritative for `batch_api_client.py`; later composition must preserve #87 resource-lifecycle semantics where applicable.
+
+### PRD-T21 — Credential resolution concurrency (Issue #111) — PLANNED
+
+Move package-provided synchronous PostgreSQL **credential resolution concurrency** off the asyncio event-loop thread, or introduce an explicit bounded async resolver contract with a compatibility adapter. Resolution needs its own finite time/resource and cancellation policy, bounded worker/connection fan-out, deterministic connection ownership, and confidentiality-preserving errors. Implementation waits for #71 and adjacent #87/#86/#89 configuration/resource surfaces to settle and must not solve blocking by indefinitely caching plaintext secrets.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
