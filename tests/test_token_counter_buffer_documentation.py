@@ -37,3 +37,14 @@ def test_configured_resource_ceiling_boundary_is_authoritative() -> None:
         assert "max_files_per_job" in document
         assert "exact positive integer" in document
         assert "before postgresql" in document
+
+
+def test_effective_limit_uses_integer_arithmetic_contract() -> None:
+    """Docs must keep accepted integer ceilings out of float arithmetic."""
+    doctoring = _normalized(DOCTORING)
+    changelog = _normalized(CHANGELOG)
+
+    assert "max_tokens_per_batch * (100 - buffer_percentage) // 100" in doctoring
+    for document in (doctoring, changelog):
+        assert "integer arithmetic" in document
+        assert "float" in document
