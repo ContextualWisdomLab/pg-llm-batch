@@ -167,7 +167,7 @@ Protected main treats database, `pg_tiktoken`, and `com_config` as required read
 
 ### TRD-R2 — Standalone Compose
 
-The bundled Compose file provides PostgreSQL and component services and uses bootstrap DSN transport. Protected main publishes 5432/8080 without an explicit host IP. `ACTIVE-PR` #91 is the loopback-only standalone target and defines the complete host-published service allow-list: exactly the PostgreSQL service on TCP 5432 and the component service on TCP 8080, each published once to loopback. A third host-published service or an extra published port is outside that allow-list and must fail the deployment contract rather than being silently accepted.
+The bundled Compose file provides PostgreSQL and component services and uses bootstrap DSN transport. Protected main publishes 5432/8080 without an explicit host IP. `ACTIVE-PR` #91 is the loopback-only standalone target and defines the complete host-published service allow-list: exactly the PostgreSQL service on TCP 5432 and the component service on TCP 8080, each published once to loopback. A third host-published service or an extra port is outside that allow-list and must fail the deployment contract rather than being silently accepted.
 
 ### TRD-R3 — Embedded deployment
 
@@ -217,6 +217,18 @@ The following are distinct and non-substitutable: contributor/source head, PR ba
 
 Where repository/CWL policy requires qualifying independent non-author approval, no author comment, bot status, synthetic text, reaction, old-head review, or COMMENTED review is equivalent to that approval.
 
+### TRD-E5 — Declared Python compatibility matrix
+
+Issue #113 is PLANNED. Release evidence must make `Requires-Python` and tested supported minors consistent: either exercise every claimed minor through the supported matrix or narrow the declared range. Python 3.14 remains required. This composes with #88 exact-source CI and #57 release/package evidence and must not weaken either gate.
+
+### TRD-E6 — Deterministic uv toolchain
+
+**ACTIVE-PR #114** owns the repository **uv toolchain** pin through root `uv.toml` `required-version`, independently of the immutable setup action. The pinned executable version must drive locked sync/build checks uniformly; updates require reviewed reproducibility and rollback evidence. This remains ACTIVE-PR until protected integration and exact-source revalidation.
+
+### TRD-E7 — Locked CI quality tools
+
+Issue #115 is PLANNED. CI-only Python **quality tools** that determine coverage, docstring, and release evidence must resolve from a reviewed lock or equivalently immutable governed descriptor rather than ad hoc `uvx`/`--with` resolution. Their exact versions and source identity must be auditable and included in supply-chain evidence without coupling model or reviewer credentials.
+
 ## 11. Packaging and release requirements
 
 ### TRD-PKG1 — Package metadata
@@ -238,6 +250,10 @@ Issue #100 is PLANNED after #70 settles the authoritative Dockerfile command/hea
 ### TRD-PKG5 — Single authoritative version source
 
 Issue #109 is a PLANNED release-integrity follow-up. Package metadata, the importable `__version__`, generated artifacts, release tags, and release acceptance evidence must derive from a **single authoritative version** source or from a machine-checked deterministic projection of that source. Drift between `pyproject.toml`, package runtime metadata, built distributions, and release/tag evidence must fail before publication, with rollback/recovery documented for an interrupted version bump.
+
+### TRD-PKG6 — Typed package marker
+
+Issue #112 is PLANNED. The build backend and package configuration must include an exact `py.typed` marker in wheel and sdist outputs and in the installed distribution, with clean-archive reproducibility checks. This is package metadata/data rather than a runtime dependency and waits for #57/#53 package ownership to settle before implementation.
 
 ## 12. Documentation requirements
 
