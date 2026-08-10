@@ -53,7 +53,7 @@ The following decisions are indexed by capability rather than promoted to protec
 
 Issue #90 is a planned operator-facing cancellation slice, not an accepted/shipped ADR. It is intentionally deferred while overlapping CLI/resource-ownership PRs remain active.
 
-Issue #102 is planned bounded automatic provider reconciliation after #101; it must use validated provider remote batch identity and the Python provider boundary rather than recreate direct-SQL provider networking. Issue #103 is the separate planned existing-volume migration needed before removing legacy `pg_cron`/`http` image packages, preload, and extension configuration. Neither issue is an accepted/shipped ADR or a reason to invent new persistence in the ERD.
+Issue #102 is planned bounded automatic provider reconciliation after #101; it must use validated provider remote batch identity and the Python provider boundary rather than recreate direct-SQL provider networking. Issue #103 is the separate planned existing-volume migration needed before removing legacy `pg_cron`/`http` image packages, preload, and extension configuration. Its canonical design is [`legacy-postgresql-extension-retirement.md`](legacy-postgresql-extension-retirement.md). Neither issue is accepted/shipped behavior or a reason to invent new persistence in the ERD.
 
 ## ADR content contract
 
