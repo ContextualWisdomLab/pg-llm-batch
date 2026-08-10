@@ -6,6 +6,8 @@ The bundled direct-SQL provider retriever is retired. Provider-facing batch I/O 
 
 This is a fail-closed retirement, not a rewrite of the network client in PL/pgSQL. A replacement SQL client would have to duplicate destination validation, credential handling, remote-resource validation, bounded response/retry behavior, lifecycle ordering, and persistence semantics already owned by the Python path. Doing so would create two security authorities for the same provider operation.
 
+Fresh databases no longer create the `pg_cron` or `http` extensions. They retain only package-required `pgcrypto` plus the existing optional `pg_tiktoken` creation seam. This removes database-side scheduling/network authority from new installations while preserving the Python provider boundary. Existing volumes are not rewritten by Docker initialization, so previously installed extensions remain until an operator performs a separately reviewed migration. The PostgreSQL image packages remain temporarily available for upgrade compatibility and for cleanup of an already-installed `pg_cron` job; package/preload removal requires separate existing-volume startup and rollback evidence rather than being coupled to this fail-closed retirement.
+
 ## RCA
 
 Protected main scheduled `batch-result-retrieval` every minute and called `cron_fetch_batch_results()`. That function read a base URL from `com_config`, decoded a non-encrypted secret inside PostgreSQL, issued credential-bearing `http_get` calls, parsed provider payloads, and wrote request/batch completion state.
@@ -14,7 +16,7 @@ The first failing boundary is identity and authority, not a missing retry. The S
 
 The credential boundary is also incompatible. The SQL helper could only decode the base64-obfuscated form of `com_secrets`; it returned `NULL` for Fernet-protected values because the decryption key is intentionally application-side. Base64 is representation, not encryption. Reintroducing direct SQL retrieval by weakening the Fernet boundary or adding another database-visible decryption authority would be a security regression.
 
-Finally, the Python client already owns validated gateway authority, remote resource identifiers, bounded HTTP responses, retry/replay semantics, and provider-error handling. `DurableBatchAPIClient` adds ordered lifecycle persistence on top of that client rather than creating a second network implementation. The smallest correction is therefore to remove the unsupported SQL network path.
+Finally, the Python client already owns validated gateway authority, remote resource identifiers, bounded HTTP responses, retry/replay semantics, and provider-error handling. `DurableBatchAPIClient` adds ordered lifecycle persistence on top of that client rather than creating a second network implementation. The smallest correction is therefore to remove the unsupported SQL network path and stop enabling its database capabilities for fresh installations.
 
 ## Bounded implementation
 
@@ -22,9 +24,10 @@ Finally, the Python client already owns validated gateway authority, remote reso
 
 - if `pg_cron` is installed, enumerate visible jobs whose name is exactly `batch-result-retrieval` **and** whose command is exactly `SELECT cron_fetch_batch_results();`, then call `cron.unschedule` by numeric job ID; this avoids deleting an unrelated same-name job;
 - remove `cron_fetch_batch_results()`, `import_batch_results_jsonl(UUID, TEXT, TEXT)`, `get_secret_value(TEXT)`, and `get_config_value(TEXT)` if those legacy helpers exist;
-- never call `http_get`, never construct an `Authorization` header, never read provider credentials, and never create a replacement cron schedule;
-- preserve historical `gateway_retrieval_logs` data. The cleanup does not drop that table or any lifecycle/request table; and
-- leave the `http` extension itself unchanged in this slice because current health/container contracts are owned by separate active work. Extension pruning is a distinct integration decision after those owners settle.
+- never call `http_get`, never construct an `Authorization` header, never read provider credentials, and never create a replacement cron schedule; and
+- preserve historical `gateway_retrieval_logs` data. The cleanup does not drop that table or any lifecycle/request table.
+
+`01_extensions.sql` now omits `CREATE EXTENSION` for both `pg_cron` and `http` on fresh databases. The container still carries their operating-system packages for backward compatibility with existing volumes in this slice. That staged distinction is intentional: removing a library from an image while an upgraded data directory still records the corresponding extension/preload dependency can make recovery harder than first removing the unsafe application authority.
 
 No schema is invented to paper over the missing local/remote identity relation. No provider credential, lifecycle row, request payload, or existing log row is rewritten.
 
@@ -75,11 +78,12 @@ Do not resurrect the SQL retriever merely to restore automatic polling. A future
 Acceptance is falsifiable:
 
 1. repository tests prove the bundled SQL contains no credential-bearing provider HTTP and no `cron.schedule` call;
-2. replaying the cleanup on a database with the exact legacy job leaves zero matching name-and-command rows in `cron.job` and removes the four helper functions;
-3. historical retrieval-log data is not dropped; and
-4. ordinary provider operations continue through `BatchAPIClient` / `DurableBatchAPIClient`, not through PostgreSQL HTTP.
+2. fresh initialization does not create `pg_cron` or `http`, while required `pgcrypto` and optional `pg_tiktoken` behavior remain intact;
+3. replaying the cleanup on a database with the exact legacy job leaves zero matching name-and-command rows in `cron.job` and removes the four helper functions;
+4. historical retrieval-log data is not dropped; and
+5. ordinary provider operations continue through `BatchAPIClient` / `DurableBatchAPIClient`, not through PostgreSQL HTTP.
 
-Rollback must not restore the retired SQL network path. If this change exposes a missing operational scheduler, keep provider polling host-driven while designing a replacement against the same validated application boundary. Restoring the prior cron script would knowingly reintroduce the false local/remote identity and weaker secret authority that caused this retirement.
+Rollback must not restore the retired SQL network path. If this change exposes a missing operational scheduler, keep provider polling host-driven while designing a replacement against the same validated application boundary. Restoring the prior cron script would knowingly reintroduce the false local/remote identity and weaker secret authority that caused this retirement. Existing volumes keep their installed extension binaries in this stage, so rollback does not require recreating extensions on fresh databases merely to preserve old-volume recovery.
 
 ## References
 
