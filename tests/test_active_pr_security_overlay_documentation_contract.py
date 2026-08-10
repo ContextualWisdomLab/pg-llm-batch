@@ -11,6 +11,13 @@ def _read(path: str) -> str:
     return (ROOT / path).read_text(encoding="utf-8").lower()
 
 
+def _section(text: str, heading: str, next_heading: str) -> str:
+    """Return one canonical Markdown section bounded by adjacent headings."""
+    start = text.index(heading.lower())
+    end = text.index(next_heading.lower(), start)
+    return text[start:end]
+
+
 def test_health_listener_overlay_tracks_exact_input_and_port_boundary() -> None:
     """PR #70's current listener-input boundary must be durable documentation."""
     trd = _read("docs/product/TRD.md")
@@ -39,6 +46,29 @@ def test_health_listener_overlay_tracks_no_shell_container_authority() -> None:
         assert "8080" in document
     assert "pg_llm_batch_health_port" in threat
     assert "explicit" in operability and "override" in operability
+
+
+def test_gateway_url_overlay_distinguishes_main_normalization_from_exact_input_target() -> None:
+    """PR #71 must not be backported into the protected-main URL authority claim."""
+    trd = _read("docs/product/TRD.md")
+    threat = _read("docs/THREAT_MODEL.md")
+    gateway = _section(trd, "### trd-h1", "### trd-h2")
+
+    assert "protected main" in gateway
+    assert "stringif" in gateway
+    assert "strip" in gateway
+    assert "surrounding whitespace" in gateway
+    assert "active-pr" in gateway and "#71" in gateway
+    assert "exact string" in gateway
+    assert "before secret lookup" in gateway
+    assert "trailing" in gateway and "slash" in gateway
+    assert "after exact validation" in gateway
+
+    assert "#71" in threat
+    assert "stringif" in threat and "strip" in threat
+    assert "surrounding whitespace" in threat
+    assert "before secret lookup" in threat
+    assert "active-pr" in threat
 
 
 def test_provider_error_overlay_tracks_body_independence_and_exception_privacy() -> None:
