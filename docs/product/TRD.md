@@ -167,6 +167,12 @@ Ordinary telemetry failures and telemetry-originated cancellation must not chang
 
 Status construction and mutation are best-effort telemetry. An unavailable optional trace-status API, an ordinary telemetry failure during status construction, or `span.set_status()` failure must not replace the exact provider/application result or exception. This overlay remains ACTIVE-PR until #106 or a reviewed successor reaches protected main and receives fresh validation.
 
+### TRD-O5 — PostgreSQL logging privacy overlay
+
+**ACTIVE-PR #119** governs the optional PostgreSQL monitoring example. It must disable package-default persistent SQL statement/bind-value logging and `pg_stat_statements` query-text collection/persistence while preserving purpose-bound application data. The contract must explicitly distinguish those persistent secondary copies from `pg_stat_activity`: with `track_activities = on`, PostgreSQL can expose bounded current/recent **query text** in volatile activity state, with this example bounding the text by `track_activity_query_size = 1024`.
+
+That residual live-query surface is privileged operational data, not a claim of content-free telemetry. Deployments must restrict superuser/`pg_read_all_stats` access and audit privileged use; deployments that opt out with `track_activities = off` accept the corresponding operability loss. Content-bearing server logs or `pg_stat_statements` may be enabled only under an explicit purpose, authorization, retention/deletion, encryption/storage, access-audit, and incident contract. These controls are selective disclosure and do not by themselves prove CSAP, SOC 2, or other certification.
+
 ## 8. Readiness and deployment requirements
 
 ### TRD-R1 — Readiness decision
@@ -175,7 +181,7 @@ Protected main treats database, `pg_tiktoken`, and `com_config` as required read
 
 ### TRD-R2 — Standalone Compose
 
-The bundled Compose file provides PostgreSQL and component services and uses bootstrap DSN transport. Protected main publishes 5432/8080 without an explicit host IP. `ACTIVE-PR` #91 is the loopback-only standalone target and defines the complete host-published service allow-list: exactly the PostgreSQL service on TCP 5432 and the component service on TCP 8080, each published once to loopback. A third host-published service or an extra port is outside that allow-list and must fail the deployment contract rather than being silently accepted.
+The bundled Compose file provides PostgreSQL and component services and uses bootstrap DSN transport. Protected main publishes 5432/8080 without an explicit host IP. `ACTIVE-PR` #91 is the loopback-only standalone target and defines the complete host-published service allow-list: exactly the PostgreSQL service on TCP 5432 and the component service on TCP 8080, each published once to loopback. A third host-published service or an extra published port is outside that allow-list and must fail the deployment contract rather than being silently accepted.
 
 ### TRD-R3 — Embedded deployment
 
