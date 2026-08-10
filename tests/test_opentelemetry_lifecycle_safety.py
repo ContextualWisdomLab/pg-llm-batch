@@ -277,6 +277,31 @@ async def test_failed_span_entry_is_not_exited_after_provider_success(
     assert tracer.context.exit_calls == 0
 
 
+async def test_failed_span_entry_is_not_exited_after_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed telemetry entry cannot synthesize exit or replace provider failure."""
+    provider_error = RuntimeError("provider-failure")
+    tracer = FailingEnterTracer()
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        raise provider_error
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=tracer,
+        meter=CapturingMeter(),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await client.cancel_batch("batch-1", "default")
+
+    assert exc_info.value is provider_error
+    assert tracer.context.exit_calls == 0
+
+
 async def test_metric_cancellation_cannot_replace_successful_provider_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
