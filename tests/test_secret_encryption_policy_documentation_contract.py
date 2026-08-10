@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+ADR = "docs/adr/provider-secret-encryption-policy.md"
 
 
 def _normalized(path: str) -> str:
@@ -12,39 +13,35 @@ def _normalized(path: str) -> str:
     return " ".join((ROOT / path).read_text(encoding="utf-8").lower().split())
 
 
-def test_secret_encryption_policy_gap_is_owned_end_to_end() -> None:
-    """Issue #121 must remain explicit without claiming the policy is shipped."""
-    documents = {
-        "prd": _normalized("docs/product/PRD.md"),
-        "trd": _normalized("docs/product/TRD.md"),
-        "threat": _normalized("docs/THREAT_MODEL.md"),
-        "governance": _normalized("docs/DATA_GOVERNANCE.md"),
-        "operability": _normalized("docs/OPERABILITY.md"),
-        "fitness": _normalized("docs/DOCUMENTATION_FITNESS.md"),
-        "traceability": _normalized("docs/TRACEABILITY.md"),
-    }
+def test_secret_encryption_policy_gap_has_an_indexed_canonical_decision() -> None:
+    """Issue #121 must have one detailed, indexed PLANNED architecture decision."""
+    index = _normalized("docs/adr/README.md")
+    adr = _normalized(ADR)
 
-    for name, text in documents.items():
-        assert "#121" in text, name
+    assert "issue #121" in index
+    assert "](provider-secret-encryption-policy.md)" in index
 
     for phrase in (
-        "provider-secret encryption",
-        "planned",
-        "base64",
-        "fernet",
-        "encryption-required",
-    ):
-        assert phrase in documents["prd"], phrase
-        assert phrase in documents["trd"], phrase
-
-    for phrase in (
+        "status: planned — issue #121",
+        "provider-secret",
         "base64",
         "not encryption",
+        "fernet",
         "encryption-required",
+        "existing `is_encrypted = false` rows",
         "key rotation",
+        "multifernet",
+        "local/development",
+        "not implemented on protected `main`",
     ):
-        assert phrase in documents["threat"], phrase
-        assert phrase in documents["governance"], phrase
+        assert phrase in adr, phrase
 
-    assert "planned #121" in documents["traceability"]
-    assert "issue #121" in documents["fitness"]
+
+def test_secret_policy_does_not_overwrite_the_shipped_baseline() -> None:
+    """The planned ADR must remain compatible with documented protected-main behavior."""
+    trd = _normalized("docs/product/TRD.md")
+    threat = _normalized("docs/THREAT_MODEL.md")
+
+    assert "secretstore supports fernet encryption when configured" in trd
+    assert "base64 without a fernet key remains obfuscation, not encryption" in trd
+    assert "base64 remains obfuscation rather than encryption" in threat
