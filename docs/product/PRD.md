@@ -239,6 +239,10 @@ Harden the optional PostgreSQL monitoring example using **selective disclosure**
 
 Make the **PostgreSQL image** dependency graph explicit and reviewable instead of allowing ordinary release builds to resolve mutable Debian package state or regenerate the patched `pg_tiktoken` Cargo dependency graph from a live registry. The target keeps the exact `pg_tiktoken` source commit and fail-closed patch identity, removes unconstrained distribution upgrade drift, binds Debian source/package versions and a reviewed Cargo lock or equivalent immutable descriptor into SBOM/provenance, and proves clean rebuild dependency identity. This remains distinct from component-image Issue #100 and must not race the active #94→#97 PostgreSQL Dockerfile stack or bypass the #101/#103 existing-volume migration boundary.
 
+### PRD-T30 — Container-native storage-bounded PostgreSQL logging (Issue #120) — PLANNED
+
+After ACTIVE-PR #119 settles the privacy-safe PostgreSQL logging content boundary, make standalone/container log routing **container-native** and **storage-bounded** without reintroducing SQL, bind-value, connection-event, or query-stat disclosure. A supported container deployment shall be able to use stdout/stderr plus the container runtime or platform logging path, while any retained PostgreSQL-managed file profile must state its storage and cleanup prerequisites explicitly. File rotation is not business **retention**: retention, deletion, export, legal hold, residency, and external log shipping remain deployment-owned governance. This follow-up must preserve #119's selective-disclosure baseline and prove log retrieval after startup without weakening readiness or database behavior.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
