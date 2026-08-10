@@ -40,6 +40,7 @@ from .health import check_health, serve_healthz
 from .token_counter import TokenCounter
 
 MAX_SECRET_INPUT_CHARACTERS = 65_536
+SECRET_LINE_SEPARATORS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -65,14 +66,14 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
 
 
 def _validate_secret_input(value: str) -> str:
-    """Require one non-empty bounded line of secret input without echoing it."""
+    """Require one non-empty bounded logical line of secret input."""
     if not value:
         raise ConfigError("Secret value must not be empty")
     if len(value) > MAX_SECRET_INPUT_CHARACTERS:
         raise ConfigError(
             f"Secret value must not exceed {MAX_SECRET_INPUT_CHARACTERS} characters"
         )
-    if "\n" in value or "\r" in value:
+    if any(separator in value for separator in SECRET_LINE_SEPARATORS):
         raise ConfigError("Secret value must be a single line")
     return value
 
@@ -83,7 +84,8 @@ def _read_secret_input() -> str:
     Interactive terminals use :func:`getpass.getpass` and fail closed if the
     runtime cannot disable terminal echo. Non-interactive callers may pipe
     exactly one logical line on standard input; one trailing LF or CRLF line
-    ending is removed. Secret plaintext is never accepted through process
+    ending is removed. Other logical line separators remain data until the
+    validator rejects them. Secret plaintext is never accepted through process
     arguments.
     """
     is_tty = getattr(sys.stdin, "isatty", None)
