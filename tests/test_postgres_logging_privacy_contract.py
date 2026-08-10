@@ -29,10 +29,21 @@ def test_optional_postgres_logging_does_not_capture_sql_or_bind_values_by_defaul
     assert settings["log_min_duration_sample"] == "-1"
     assert settings["log_statement_sample_rate"] == "0"
     assert settings["log_transaction_sample_rate"] == "0"
+    assert settings["log_duration"].lower() == "off"
     assert settings["log_min_error_statement"].lower() == "panic"
     assert settings["log_parameter_max_length"] == "0"
     assert settings["log_parameter_max_length_on_error"] == "0"
     assert settings["log_error_verbosity"].lower() == "terse"
+
+
+def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> None:
+    """Representative query-text collection must be disabled in the package baseline."""
+    settings = _settings()
+
+    assert settings["pg_stat_statements.track"].lower() == "none"
+    assert settings["pg_stat_statements.track_utility"].lower() == "off"
+    assert settings["pg_stat_statements.track_planning"].lower() == "off"
+    assert settings["pg_stat_statements.save"].lower() == "off"
 
 
 def test_optional_postgres_logging_does_not_claim_blanket_sql_logging_is_compliance() -> None:
