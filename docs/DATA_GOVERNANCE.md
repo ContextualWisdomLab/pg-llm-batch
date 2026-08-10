@@ -47,6 +47,8 @@ Submitting a batch intentionally discloses request content and required metadata
 
 The package is responsible for its narrower transport boundary: validate configured destinations and resource identifiers, use reviewed TLS rules, keep side-effecting POST operations single-attempt unless a separately reviewed idempotency design changes that contract, and bound provider responses. **Provider-error confidentiality is not yet protected-main behavior at this documentation baseline.** ACTIVE-PR #71 changes Files upload, batch creation/status, output/error file download, and cancellation rejection so provider-controlled HTTP error JSON, free-text bodies, debug fields, and messages are not copied into package diagnostics/results; those changes remain ACTIVE-PR until integrated and revalidated on protected main.
 
+The same ACTIVE-PR #71 boundary covers malformed successful provider responses: invalid UTF-8 or JSON on a nominally successful response must produce fixed bounded diagnostics and must not retain provider bytes/text or decoder/parser exceptions through exported exception `cause` or `context`. This is important because confidentiality can be lost through exception chaining even when ordinary log formatting is redacted.
+
 The target package contract is to avoid reflecting raw provider response bodies into exported errors or logs. Until ACTIVE-PR #71 is protected, acquisition/release evidence must not describe that target as shipped solely because this documentation branch states it. Provider responses remain untrusted input, and successful TLS plus a valid provider response does not convert provider content into authorization instructions or a new package policy authority.
 
 ## 7. Credentials and secret authority
@@ -54,6 +56,8 @@ The target package contract is to avoid reflecting raw provider response bodies 
 Provider credential values are secret data. The package must never log them, return them in health/readiness output, include them in OpenTelemetry attributes, or place them in release/test evidence. The optional Fernet key is also sensitive bootstrap material and must remain outside logs/source/images and other ambient diagnostics.
 
 `com_secrets` supports Fernet-encrypted-at-rest storage when configured; the no-key fallback is base64-obfuscated local/dev behavior rather than encryption. Hosts needing stronger enterprise secret-management controls should inject credentials through the documented credential-provider seam instead of weakening package boundaries.
+
+ACTIVE-PR #87 tightens the persisted-secret trust boundary. In the no-key path, Base64 alphabet/padding and decoded UTF-8 are strict; malformed persisted data fails with bounded `ConfigError` instead of being repaired, guessed, or reflected. With Fernet configured, a wrong Fernet key or invalid encrypted value likewise fails as bounded `ConfigError`. Neither path may retain stored ciphertext/plaintext nor the lower-level decoder/cryptography failure through exported exception `cause` or `context`. These are ACTIVE-PR protections until #87 or a successor integrates.
 
 ## 8. Telemetry and diagnostics
 
@@ -98,10 +102,11 @@ For an exact release candidate, data governance is acceptable only when:
 
 1. this document matches the protected schema/runtime and all ACTIVE-PR overlays remain correctly labeled;
 2. package telemetry/log/error/health contracts do not expose secret or raw sensitive content beyond reviewed boundaries, including fresh protected-main proof of provider-error confidentiality if ACTIVE-PR #71 or a successor is part of the release candidate;
-3. provider destination/resource validation and response bounds pass their security tests;
-4. deployment documentation states host ownership of authorization, purpose, retention, erasure, backup, and residency;
-5. migrations/rollback do not silently destroy retained content/evidence; and
-6. any new persisted field or emitted signal is classified and traced before release.
+3. stored-secret decode/decrypt behavior has fresh bounded-error and exception-chain privacy evidence if ACTIVE-PR #87 or a successor is part of the release candidate;
+4. provider destination/resource validation and response bounds pass their security tests;
+5. deployment documentation states host ownership of authorization, purpose, retention, erasure, backup, and residency;
+6. migrations/rollback do not silently destroy retained content/evidence; and
+7. any new persisted field or emitted signal is classified and traced before release.
 
 This is an engineering control contract, not a claim of legal compliance, certification, or fitness for a particular regulated use without the embedding organization's separate assessment.
 
@@ -110,6 +115,7 @@ This is an engineering control contract, not a claim of legal compliance, certif
 - Protected persistence: `pg_llm_batch/schema.sql`.
 - Provider transport and response bounds: `pg_llm_batch/batch_api_client.py` and security/HTTP tests.
 - Provider-error confidentiality target and current implementation owner: ACTIVE-PR #71 plus `docs/doctoring/http-425-too-early-retries.md`; it becomes protected-main evidence only after integration and fresh validation.
+- Stored-secret malformed Base64/UTF-8 and wrong Fernet key target: ACTIVE-PR #87 plus its SecretStore tests/doctoring; it becomes protected-main evidence only after integration and fresh validation.
 - Credential storage/provider seam: configuration/secret-store modules and `docs/product/API_CONTRACT.md`.
 - Telemetry privacy boundary: `pg_llm_batch/observability.py` and `docs/doctoring/opentelemetry-operations.md`.
 - Threats and trust boundaries: `docs/THREAT_MODEL.md`.
