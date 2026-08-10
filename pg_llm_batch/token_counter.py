@@ -107,9 +107,6 @@ class TokenCounter:
         if psycopg is not None:
             self._pg_available = self._ensure_pg_tiktoken()
 
-    # ------------------------------------------------------------------
-    # Tokenizer resolution
-    # ------------------------------------------------------------------
     def get_tiktoken_name(self, model: str) -> str:
         """Return the tiktoken encoding/model name for ``model``.
 
@@ -135,9 +132,6 @@ class TokenCounter:
         self._encoder_cache[model] = info
         return info
 
-    # ------------------------------------------------------------------
-    # Counting
-    # ------------------------------------------------------------------
     def count_tokens(self, text: str, model: str) -> int:
         """Count tokens through pg_tiktoken or fail when it is unavailable."""
         if not text:
@@ -252,9 +246,6 @@ class TokenCounter:
         except Exception:
             pass
 
-    # ------------------------------------------------------------------
-    # Config helpers
-    # ------------------------------------------------------------------
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
         """Read a config value from the KV store, returning the default on any failure."""
         if self.config is not None:
@@ -265,9 +256,6 @@ class TokenCounter:
                 return default
         return default
 
-    # ------------------------------------------------------------------
-    # pg_tiktoken plumbing
-    # ------------------------------------------------------------------
     def _ensure_pg_tiktoken(self) -> bool:
         """Create the pg_tiktoken extension if possible, returning whether it is available."""
         if psycopg is None:
@@ -332,13 +320,33 @@ class BatchAccumulator:
         max_records: Optional[int] = None,
         max_bytes: Optional[int] = None,
     ) -> None:
-        """Initialize an accumulator with token, byte, and record limits."""
+        """Initialize an accumulator with validated byte and record ceilings."""
         self.token_counter = token_counter
         self.model = model
         self.token_limit = token_counter.effective_limit
-        self.max_records = max_records or token_counter.azure_max_records_per_file
-        self.max_bytes = max_bytes or token_counter.azure_max_bytes_per_file
+        self.max_records = self._resolve_positive_limit(
+            "max_records",
+            max_records,
+            token_counter.azure_max_records_per_file,
+        )
+        self.max_bytes = self._resolve_positive_limit(
+            "max_bytes",
+            max_bytes,
+            token_counter.azure_max_bytes_per_file,
+        )
         self.reset()
+
+    @staticmethod
+    def _resolve_positive_limit(field: str, explicit: Any, configured: Any) -> int:
+        """Select an explicit/configured resource ceiling and require a positive integer."""
+        selected = configured if explicit is None else explicit
+        if type(selected) is not int or selected <= 0:
+            raise ValidationError(
+                field=field,
+                value=selected,
+                reason="must be a positive integer",
+            )
+        return selected
 
     def reset(self) -> None:
         """Clear all accumulated lines and counters."""
@@ -358,7 +366,7 @@ class BatchAccumulator:
     @staticmethod
     def compute_byte_size(json_line: str) -> int:
         """Return the UTF-8 byte size including the JSONL newline."""
-        return len(json_line.encode("utf-8")) + 1  # include newline
+        return len(json_line.encode("utf-8")) + 1
 
     def would_exceed(self, tokens: int, byte_size: int) -> bool:
         """Report whether adding a line would exceed any active limit."""
