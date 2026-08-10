@@ -22,8 +22,8 @@
 # SHARED LIBRARIES (requires restart)
 # =============================================================================
 # pg_stat_statements can retain representative query text. Preloading the module
-# does not create the extension; deployments that enable it must treat query
-# text as a separately governed diagnostic data class.
+# does not create the extension and collection is disabled below. A deployment
+# that opts in must treat representative query text as a governed data class.
 shared_preload_libraries = 'pg_stat_statements,pg_cron'
 
 # Keep activity text bounded. Privileged activity/statistics access remains a
@@ -33,26 +33,27 @@ track_activity_query_size = 1024
 # =============================================================================
 # PG_STAT_STATEMENTS CONFIGURATION
 # =============================================================================
-# These settings preserve the optional statistics integration while reducing
-# utility-statement capture. Creating/reading the extension remains operator-
-# controlled and its representative query text is not an audit log substitute.
+# Query-level statement collection is opt-in because pg_stat_statements stores
+# representative query text. Operators that need it may override these settings
+# under a reviewed purpose/access/retention policy.
 pg_stat_statements.max = 10000
-pg_stat_statements.track = 'top'
+pg_stat_statements.track = 'none'
 pg_stat_statements.track_utility = off
-pg_stat_statements.track_planning = on
-pg_stat_statements.save = on
+pg_stat_statements.track_planning = off
+pg_stat_statements.save = off
 
 # =============================================================================
 # CONTENT-SAFE SERVER LOGGING BASELINE
 # =============================================================================
-# Do not persist SQL statement text merely to obtain operational evidence.
-# PostgreSQL can log duration separately without logging the statement text.
+# Do not persist SQL statement text or per-statement duration events merely to
+# obtain operational evidence. Higher-level database/application metrics remain
+# available below without forcing query-content retention.
 log_statement = 'none'
 log_min_duration_statement = -1
 log_min_duration_sample = -1
 log_statement_sample_rate = 0
 log_transaction_sample_rate = 0
-log_duration = on
+log_duration = off
 
 # Error messages remain available, but failing SQL text, bind values, QUERY, and
 # CONTEXT payloads are excluded from this baseline. PANIC is used because
@@ -93,7 +94,7 @@ track_activities = on
 # =============================================================================
 # LOG FILE SAFETY / ROTATION
 # =============================================================================
-# Rotation bounds file growth; they do not define retention. Retention, export,
+# Rotation bounds file growth; it does not define retention. Retention, export,
 # deletion, legal hold, backup expiry, residency, and external log-shipping are
 # host-owned data-governance decisions and must not be inferred from this file.
 log_rotation_age = 1h
@@ -114,10 +115,9 @@ cron.max_running_jobs = 10
 # OPERATOR NOTES
 # =============================================================================
 # - This example is not automatically loaded by the bundled image.
-# - Keep SQL/bind-value logging disabled unless a separately reviewed deployment
-#   has a concrete purpose, authorization model, minimal retention, access audit,
-#   encryption boundary, storage budget, and incident/deletion procedure.
+# - Keep SQL/bind-value logging and pg_stat_statements collection disabled unless
+#   a separately reviewed deployment has a concrete purpose, authorization
+#   model, minimal retention, access audit, encryption boundary, storage budget,
+#   and incident/deletion procedure.
 # - Prefer low-cardinality application telemetry and database operational metrics
 #   when query content is not needed to answer the operational question.
-# - pg_stat_statements query text can itself contain sensitive information in
-#   some cases; access to it must remain least-privilege and purpose-bound.
