@@ -187,6 +187,10 @@ Decommission the legacy `pg_cron` + `pgsql-http` direct-SQL provider retriever f
 
 Restore buyer-visible automatic provider reconciliation after #101 without resurrecting direct-SQL provider HTTP. A replacement worker/scheduler seam must operate only on validated durable remote identities, use the existing Python credential/destination/retry/response boundaries, be concurrency/restart safe under a finite work budget, and keep scheduling authority separate from provider credentials. It must not claim distributed exactly-once delivery and must wait for overlapping durable-lifecycle/resource-ownership surfaces when necessary.
 
+### PRD-T17 — OpenTelemetry optional dependency and live conformance (Issue #107) — PLANNED
+
+Make the documented optional operation-observability surface installable through a first-class package extra instead of requiring operators to reproduce a doctoring-only dependency constraint manually. The base package dependency set must remain unchanged; the planned extra must declare the supported `opentelemetry-api` range, keep SDK/exporter configuration host-owned, and add live optional-API conformance that proves success retains the default Unset span status while propagated failure receives the description-free Error semantics defined by ACTIVE-PR #106. This remains PLANNED while #57 owns release/package metadata and #106 owns the current operation-span status contract.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
