@@ -59,6 +59,10 @@ Rejected. **Prompt repair alone is not recovery**, and empty user-visible output
 8. **Silent completion** is prohibited while any material safe repository action exists. The absence of routine reporting does not permit the absence of repository execution or exact no-work proof.
 9. Before terminating after recovery, apply the normal **double exit sweep** from ADR-0001. A repaired scheduler does not waive any source, review, security, branch-protection, or release gate.
 
+## Compact prompt source
+
+`docs/automation/HOURLY_WRITER_PROMPT.md` is the discoverable **compact hourly writer prompt** source for the one authoritative external hourly task. It delegates detailed product and architecture truth to the repository canonical documents, excludes transient full commit identities, and is machine-checked for size and required writer/evidence/exit semantics. The file is not scheduler activation or run-success evidence; external scheduler state must still be refetched independently.
+
 ## Failure and recovery procedure
 
 1. Read the authoritative task state: enabled/disabled, cadence, last-run evidence, and current prompt identity.
@@ -84,6 +88,7 @@ Recovery is acceptable when evidence shows all applicable properties:
 - no duplicate scheduler was introduced as a reflexive remedy;
 - the failure boundary is classified separately from repository findings;
 - prompt compaction, when used, preserves the required execution and governance contracts;
+- the compact hourly writer prompt remains within its machine-checked size/evidence contract;
 - prompt repair alone is not recovery;
 - user redirection leads to a material safe repository action when one exists;
 - silent completion and empty user-visible output are not used as substitutes for execution or exact exit evidence;
