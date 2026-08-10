@@ -48,9 +48,12 @@ The following decisions are indexed by capability rather than promoted to protec
 - PostgreSQL connection ownership and cleanup — #87;
 - exact source-head CI evidence — #88;
 - explicit bootstrap-source precedence — #89;
-- loopback-only standalone Compose publication — #91.
+- loopback-only standalone Compose publication — #91;
+- fail-closed retirement of the legacy direct-SQL `pg_cron` + `pgsql-http` provider path while preserving historical retrieval evidence and keeping provider network/credential authority in the validated Python client — #101.
 
 Issue #90 is a planned operator-facing cancellation slice, not an accepted/shipped ADR. It is intentionally deferred while overlapping CLI/resource-ownership PRs remain active.
+
+Issue #102 is planned bounded automatic provider reconciliation after #101; it must use validated provider remote batch identity and the Python provider boundary rather than recreate direct-SQL provider networking. Issue #103 is the separate planned existing-volume migration needed before removing legacy `pg_cron`/`http` image packages, preload, and extension configuration. Neither issue is an accepted/shipped ADR or a reason to invent new persistence in the ERD.
 
 ## ADR content contract
 
