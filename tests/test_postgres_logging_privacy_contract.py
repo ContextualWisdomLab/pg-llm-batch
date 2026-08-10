@@ -46,6 +46,20 @@ def test_csv_logging_enables_the_required_logging_collector() -> None:
     assert settings["logging_collector"].lower() == "on"
 
 
+def test_csv_logging_collector_contract_is_documented() -> None:
+    """Doctoring must explain routing, restart, and retention semantics."""
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    for phrase in (
+        "logging_collector",
+        "csvlog",
+        "server start",
+        "log routing",
+        "does not define retention",
+    ):
+        assert phrase in doctoring, phrase
+
+
 def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> None:
     """Representative query-text collection must be disabled in the package baseline."""
     settings = _settings()
