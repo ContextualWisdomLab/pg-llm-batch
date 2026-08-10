@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-DOCTORING = Path("docs/doctoring/orchestrator-connection-lifecycle.md")
+DOCTORING = Path("docs/doctoring/token-counter-buffer-boundary.md")
 CHANGELOG = Path("CHANGELOG.md")
 
 
