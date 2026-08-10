@@ -3,8 +3,7 @@
 Standalone **and** embeddable Postgres LLM batch engine. It counts tokens
 **inside** PostgreSQL with [`pg_tiktoken`](https://github.com/postgresml/pg_tiktoken),
 assembles OpenAI-compatible JSONL batches under token/byte/record limits, and
-submits/polls/retrieves them against any OpenAI-compatible Batch API (OpenAI,
-Azure OpenAI, or a LiteLLM gateway).
+targets the OpenAI-compatible Files/Batches API shape. Provider compatibility is limited to documented and verified behavior; OpenAI, Azure OpenAI, and LiteLLM gateway deployments remain integration targets rather than a promise that every OpenAI-compatible extension behaves identically.
 
 Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and
 relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
