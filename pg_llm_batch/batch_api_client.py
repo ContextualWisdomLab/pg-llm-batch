@@ -682,7 +682,7 @@ class BatchAPIClient:
     async def get_batch_status(
         self, batch_id: str, endpoint_alias: str
     ) -> Dict[str, Any]:
-        """Poll a batch job and annotate progress/completion."""
+        """Poll a batch job and annotate validated progress/completion evidence."""
         validated_batch_id = _validate_resource_id(batch_id, "batch_id")
         creds = self._credentials(endpoint_alias)
         async with self._request(
@@ -698,13 +698,58 @@ class BatchAPIClient:
                     response_data={"error_type": "ProviderHTTPError"},
                 )
             result = await self._read_json_object(response, "Batch status")
-            counts = result.get("request_counts") or {}
+            status_value = result.get("status")
+            if type(status_value) is not str or not status_value:
+                raise GatewayError(
+                    "Batch status returned invalid status",
+                    status_code=response.status,
+                    response_data={
+                        "error_type": "InvalidBatchStatusPayload",
+                        "field": "status",
+                    },
+                )
+
+            counts_value = result.get("request_counts")
+            if counts_value is None:
+                counts: Dict[str, Any] = {}
+            elif type(counts_value) is dict:
+                counts = counts_value
+            else:
+                raise GatewayError(
+                    "Batch status returned invalid request_counts",
+                    status_code=response.status,
+                    response_data={
+                        "error_type": "InvalidBatchStatusPayload",
+                        "field": "request_counts",
+                    },
+                )
+
             total = counts.get("total", 0)
-            done = counts.get("completed", 0) + counts.get("failed", 0)
+            completed = counts.get("completed", 0)
+            failed = counts.get("failed", 0)
+            if (
+                type(total) is not int
+                or type(completed) is not int
+                or type(failed) is not int
+                or total < 0
+                or completed < 0
+                or failed < 0
+                or completed + failed > total
+            ):
+                raise GatewayError(
+                    "Batch status returned invalid request_counts",
+                    status_code=response.status,
+                    response_data={
+                        "error_type": "InvalidBatchStatusPayload",
+                        "field": "request_counts",
+                    },
+                )
+
+            done = completed + failed
             result["progress_percentage"] = (
                 round((done / total) * 100, 2) if total else 0
             )
-            result["is_complete"] = result.get("status") in TERMINAL_BATCH_STATUSES
+            result["is_complete"] = status_value in TERMINAL_BATCH_STATUSES
             return result
 
     async def wait_for_batch(
