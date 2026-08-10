@@ -175,9 +175,9 @@ Reject malformed provider `request_counts` shapes, booleans/negative/string coun
 
 Remove the shared default PostgreSQL credential from standalone Compose without weakening #91's loopback publishing boundary. Fresh deployments must use an operator-provided or generated deployment-specific credential that is not committed, placed in process argv, shell-interpreted, or copied into logs/evidence; restart recovery and supported secret-character handling must be deterministic.
 
-### PRD-T14 — Reproducible component-image OS dependencies (Issue #100) — PLANNED
+### PRD-T14 — Reproducible component container-image OS dependencies (Issue #100) — PLANNED
 
-Make the component image's operating-system package set reproducible and reviewable rather than depending on mutable `apt-get upgrade`/unversioned repository state. Preserve the non-root/no-shell readiness contracts owned by #70 and bind the resolved package set into SBOM/provenance evidence.
+Make the component container image's operating-system package set reproducible and reviewable rather than depending on mutable `apt-get upgrade`/unversioned repository state. Preserve the non-root/no-shell readiness contracts owned by #70 and bind the resolved package set into SBOM/provenance evidence.
 
 ### PRD-T15 — Retire direct-SQL provider retrieval (#101) — ACTIVE-PR
 
