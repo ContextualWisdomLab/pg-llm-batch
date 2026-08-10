@@ -65,8 +65,9 @@ A green check cannot replace independent approval, and an infrastructure failure
 | Exact source vs live-base evidence separation | ADR-0002 + ACTIVE-PR #88 | current source head and independently resolved live base must be separately recorded |
 | Semantic review vs infrastructure/policy evidence separation | `docs/automation/ADR-0004-review-evidence-separation.md` | infrastructure-only failure remains a blocker but must not become a synthetic source finding; unavailable semantic review records ABSTAIN/UNAVAILABLE and is rerun after the owning prerequisite materially changes |
 | Protected-main operational acceptance | `docs/automation/ADR-0005-protected-main-operational-acceptance.md` | source merge is intermediate; collect fresh capability-specific protected-main evidence before incident/release closure where applicable, while read-only dependency failure blocks only that acceptance lane |
+| Scheduler failure recovery | `docs/automation/ADR-0006-scheduler-failure-recovery.md` | classify generic scheduler/control-plane symptoms separately from repository failure; retain one authoritative enabled hourly task; compact prompt/control state when necessary; resume material repository work in the same invocation and finish through the normal double exit sweep |
 | Central `.github` ownership of reusable review/bootstrap defects | ADR-0002 + repository automation contract | pg-llm-batch treats leased central fixes read-only and does not weaken leaf product code |
-| Prompt/documentation updates are intermediate | ADR-0001 | control-plane change must hand back to executable repository work when safe |
+| Prompt/documentation updates are intermediate | ADR-0001 + ADR-0006 | control-plane change must hand back to executable repository work when safe |
 | Canonical documentation authority and maturity discipline | `docs/automation/ADR-0003-canonical-documentation-authority.md` | protected-main and ACTIVE-PR truth remain separate; machine-checkable fitness catches drift |
 | Data-governance/privacy authority | `docs/DATA_GOVERNANCE.md` | classify package-owned fields/signals; preserve purpose-bound utility; host retains authorization, retention, erasure, backup, and residency authority unless an accepted implementation explicitly moves that boundary |
 | Public compatibility/versioning authority | `docs/product/API_CONTRACT.md` | shipped, ACTIVE-PR, deprecated, and breaking behavior must be explicit and testable |
@@ -91,6 +92,7 @@ The checkpoint chain is currently linearized through replacements rather than de
 - Provider-error confidentiality: ACTIVE-PR #71 -> provider-error confidentiality regressions and retry/error doctoring -> `docs/DATA_GOVERNANCE.md`; do not promote this overlay to protected-main evidence before integration.
 - Durable state and schema: `pg_llm_batch/schema.sql` -> schema/lifecycle integration tests -> `docs/architecture/ERD.md` and `docs/DATA_GOVERNANCE.md`.
 - Runtime readiness: `pg_llm_batch/health.py` + database health helper -> health tests -> `docs/OPERABILITY.md` and public-data limits in `docs/DATA_GOVERNANCE.md`.
+- Autonomous scheduler failure recovery: task-state evidence + live GitHub evidence -> `docs/automation/ADR-0006-scheduler-failure-recovery.md` + `docs/OPERABILITY.md`; scheduler repair itself is not repository completion.
 - Telemetry privacy: `pg_llm_batch/observability.py` + observability tests -> `docs/doctoring/opentelemetry-operations.md` -> `docs/DATA_GOVERNANCE.md`.
 - Disclosure policy: `SECURITY.md` -> vulnerability-reporting process; threat-model/data-governance controls do not replace disclosure policy.
 - Exact-source workflow governance: `.github/workflows/ci.yml` -> workflow contract tests -> ACTIVE-PR #88 + ADR-0002.
@@ -100,6 +102,6 @@ The checkpoint chain is currently linearized through replacements rather than de
 
 ## Documentation maintenance
 
-When source/schema/workflow behavior changes, update the owning row and status in this file in the same bounded workstream or the single canonical documentation branch. New persisted fields, logs, metrics, traces, provider disclosures, or export surfaces must also be classified in `docs/DATA_GOVERNANCE.md`. If an ACTIVE-PR merges, replace its status with IMPLEMENTED-ON-PROTECTED-MAIN only after protected-main source is freshly verified. If it is closed/superseded, record the successor or remove the stale target claim.
+When source/schema/workflow behavior changes, update the owning row and status in this file in the same bounded workstream or the single canonical documentation branch. New persisted fields, logs, metrics, traces, provider disclosures, export surfaces, or autonomous-maintenance failure modes must also be classified by their authoritative documentation family. If an ACTIVE-PR merges, replace its status with IMPLEMENTED-ON-PROTECTED-MAIN only after protected-main source is freshly verified. If it is closed/superseded, record the successor or remove the stale target claim.
 
 Dated SHAs/run IDs belong in PR bodies or incident evidence, not this timeless matrix, except where a historical incident is necessary to explain a durable decision.
