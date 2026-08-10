@@ -33,6 +33,7 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 | Unbounded provider response memory/CPU | HTTP | bounded control responses and provider-file downloads; ACTIVE-PR #58 adds incremental result records | IMPLEMENTED-ON-PROTECTED-MAIN + ACTIVE-PR |
 | Unsafe replay after response handoff | HTTP | acquisition retry is bounded; ACTIVE-PR #71 explicitly hardens post-handoff no-replay and transport classification | PARTIAL / ACTIVE-PR |
 | Provider error or malformed successful payload is reflected into diagnostics/exception chains | HTTP | ACTIVE-PR #71 provider-error confidentiality classifies non-success operations from HTTP status before provider-body parsing and maps malformed successful UTF-8/JSON to fixed bounded diagnostics without retaining provider bytes/text or decoder/parser exceptions through exported cause/context. | ACTIVE-PR #71 |
+| Parallel direct-SQL provider HTTP bypasses validated credential, destination, or remote-identity authority | PostgreSQL→provider | ACTIVE-PR #101 retires the legacy `pg_cron` + `pgsql-http` network path, which can use weaker database-visible secret material and a local batch UUID where a provider remote identity is required. Provider networking remains in `BatchAPIClient` / `DurableBatchAPIClient`. Issue #102 is the PLANNED bounded automatic-reconciliation replacement and must reuse that Python authority instead of recreating database HTTP. | ACTIVE-PR #101 retirement / PLANNED Issue #102 replacement |
 | Malicious provider identifiers poison persistence/logging | HTTP→DB | strict resource identifier validation and bounded lifecycle metadata | IMPLEMENTED-ON-PROTECTED-MAIN |
 | Cross-tenant durable-state disclosure | DB | Protected main is not yet tenant-qualified for remote lifecycle; #53 adds trusted tenant scope + forced RLS | ACTIVE-PR |
 | Checkpoint corruption or competing consumer overwrite | DB | #60 adds tenant-qualified CAS checkpoint store, bounds and RLS | ACTIVE-PR |
@@ -60,6 +61,7 @@ The package may handle prompts, responses, provider metadata, and operational id
 - a standalone Compose host-publication outside the ACTIVE-PR #91 allow-list fails rather than broadening exposure silently;
 - a secret-entry path that cannot guarantee hidden terminal input must fail before accepting the provider credential rather than falling back to visible input;
 - malformed no-key Base64/UTF-8 persistence and wrong Fernet keys remain bounded `ConfigError` paths under ACTIVE-PR #87, not fallback-decryption opportunities;
+- under ACTIVE-PR #101, the legacy SQL retriever is removed rather than repaired into a second provider network authority; Issue #102 may restore automation only through validated provider remote identity and the Python credential/destination boundary;
 - a missing/queued/cancelled/stale required check is not success;
 - a status/comment/model message is not an independent formal approval;
 - a synthetic merge ref is not interchangeable with the exact contributor head;
