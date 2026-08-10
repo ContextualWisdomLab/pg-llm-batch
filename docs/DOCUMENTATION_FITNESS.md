@@ -89,14 +89,14 @@ Current material implementation/documentation owners include:
 - #96 — current linearized bounded checkpoint-audit pagination replacement on #95.
 - #97 — current linearized bounded checkpoint-audit snapshot-manifest replacement on #96.
 - #69 — hourly maintenance credential/writer-boundary hardening.
-- #70 — readiness redaction, concurrency, timeout, and listener hardening.
-- #71 — HTTP 425, permanent TLS/fingerprint, response-handoff, low-cardinality transport, and provider-error confidentiality hardening.
+- #70 — readiness redaction, bounded concurrency/read timeout, exact listener validation, and exec-form no-shell container command authority.
+- #71 — HTTP 425/TLS/response-handoff hardening, bounded transport/provider-error confidentiality, and exact-input gateway authority.
 - #85 — secret input outside process argv.
 - #86 — canonical typed configuration and mutable-state isolation.
-- #87 — deterministic PostgreSQL connection ownership/cleanup plus strict no-key secret decode behavior.
+- #87 — deterministic PostgreSQL connection ownership/cleanup, strict no-key Base64/UTF-8 decode, and bounded wrong-key Fernet failure.
 - #88 — exact source-head CI evidence.
 - #89 — explicit bootstrap-source precedence and blank-DSN rejection.
-- #91 — loopback-only standalone Compose port publishing.
+- #91 — loopback-only standalone Compose publishing with a complete published-service allow-list.
 - #93 — this canonical documentation authority, data-governance/privacy authority, licensing/IP diligence authority, foundational protected-main ADR record set, protected-main operational-acceptance governance, scheduler failure recovery authority, and code-owner review-governance reconciliation.
 
 Issue #90 is a **PLANNED** buyer-visible CLI cancellation slice whose implementation must wait until overlapping CLI/resource-lifecycle changes are protected or superseded.
