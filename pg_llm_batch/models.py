@@ -51,24 +51,24 @@ class BatchRequest:
         if type(self.user_prompt) is not str:
             raise ValidationError(
                 field="user_prompt",
-                value=self.user_prompt,
+                value="<redacted>",
                 reason="must be an exact string",
             )
         if type(self.model) is not str:
             raise ValidationError(
                 field="model",
-                value=self.model,
+                value="<redacted>",
                 reason="must be an exact string",
             )
         if self.system_prompt is not None and type(self.system_prompt) is not str:
             raise ValidationError(
                 field="system_prompt",
-                value=self.system_prompt,
+                value="<redacted>",
                 reason="must be None or an exact string",
             )
         if type(self.id) is not str:
             raise ValidationError(
                 field="id",
-                value=self.id,
+                value="<redacted>",
                 reason="must be an exact string",
             )
