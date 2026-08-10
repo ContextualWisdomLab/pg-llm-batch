@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ADR_PATH = ROOT / "docs/adr/legacy-postgresql-extension-retirement.md"
 INDEX_PATH = ROOT / "docs/adr/README.md"
 ARCHITECTURE_PATH = ROOT / "ARCHITECTURE.md"
+TRACEABILITY_PATH = ROOT / "docs/TRACEABILITY.md"
 
 
 def test_legacy_extension_retirement_is_planned_and_dependency_bound() -> None:
@@ -17,6 +18,7 @@ def test_legacy_extension_retirement_is_planned_and_dependency_bound() -> None:
     adr = ADR_PATH.read_text(encoding="utf-8")
     index = INDEX_PATH.read_text(encoding="utf-8")
     architecture = ARCHITECTURE_PATH.read_text(encoding="utf-8")
+    traceability = TRACEABILITY_PATH.read_text(encoding="utf-8")
     lowered = adr.lower()
 
     assert "](legacy-postgresql-extension-retirement.md)" in index
@@ -41,3 +43,7 @@ def test_legacy_extension_retirement_is_planned_and_dependency_bound() -> None:
     assert "RetireExtensions" in architecture
     assert "Issue #103" in architecture
     assert "legacy-postgresql-extension-retirement.md" in architecture
+
+    assert "Legacy PostgreSQL extension retirement" in traceability
+    assert "PLANNED #103" in traceability
+    assert "legacy-postgresql-extension-retirement.md" in traceability
