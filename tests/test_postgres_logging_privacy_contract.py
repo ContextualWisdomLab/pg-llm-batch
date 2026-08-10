@@ -37,6 +37,23 @@ def test_optional_postgres_logging_does_not_capture_sql_or_bind_values_by_defaul
     assert settings["log_error_verbosity"].lower() == "terse"
 
 
+def test_optional_timing_metrics_are_opt_in_for_predictable_overhead() -> None:
+    """Timing metrics with platform-dependent cost must remain explicit opt-ins."""
+    settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    assert settings["track_io_timing"].lower() == "off"
+    assert settings["track_wal_io_timing"].lower() == "off"
+    for phrase in (
+        "track_io_timing",
+        "track_wal_io_timing",
+        "pg_test_timing",
+        "timing overhead",
+        "opt-in",
+    ):
+        assert phrase in doctoring, phrase
+
+
 def test_csv_logging_enables_the_required_logging_collector() -> None:
     """A configured CSV destination must enable PostgreSQL's logging collector."""
     settings = _settings()
