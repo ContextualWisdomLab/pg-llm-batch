@@ -76,7 +76,7 @@ After #101, do not restore automatic polling by re-enabling direct-SQL HTTP. Unt
 | Migration failure | Preserve failure evidence; rollback only with the reviewed rollback path; never delete durable evidence to make a migration pass |
 | Checkpoint/audit conflict (ACTIVE-PR) | Re-read durable state, preserve tenant/consumer identity, use CAS/append-only rules; do not force overwrite |
 | CI/review infrastructure failure | Keep source and infrastructure findings separate; repair the owning control plane or wait locally while advancing unrelated work |
-| Scheduler/control-plane failure | Classify scheduler/activation, prompt/transport, tool, credential, dependency, and repository failure separately; repair only the proven boundary and resume unrelated repository work |
+| Scheduler/control-plane failure | Classify scheduler/activation, prompt/transport, tool, credential, dependency, repository, and silent-completion boundaries separately; repair only the proven boundary and resume a material safe repository action when one exists |
 
 ## Logging, telemetry and privacy
 
@@ -105,15 +105,16 @@ Capture exact source/package version, database migration state, affected command
 
 ## Autonomous scheduler/control-plane failure recovery
 
-A generic scheduled-task failure is a control-plane symptom, not proof of a pg-llm-batch **repository failure**. Use `docs/automation/ADR-0006-scheduler-failure-recovery.md` together with ADR-0001 and ADR-0002.
+A generic scheduled-task failure is a control-plane symptom, not proof of a pg-llm-batch **repository failure**. **Silent completion**, empty user-visible output, or a prompt-update acknowledgement without repository execution is also a control-plane symptom when a safe lane exists. Use `docs/automation/ADR-0006-scheduler-failure-recovery.md` together with ADR-0001 and ADR-0002.
 
 1. Refetch the authoritative automation state and verify whether the existing hourly task remains enabled before mutating scheduler configuration.
 2. Refetch protected `main`, the target PR/branch, and active-writer evidence independently. Do not infer repository failure from the scheduler banner.
-3. Classify the first failing boundary: scheduler/activation, prompt serialization or size, connector/tool execution, credentials/permissions, read-only dependency, or repository behavior.
+3. Classify the first failing boundary: scheduler/activation, prompt serialization or size, connector/tool execution, credentials/permissions, read-only dependency, repository behavior, or silent completion.
 4. If the existing hourly task is still authoritative, **do not create a duplicate scheduler** merely to clear the symptom. Do not disable the working task without evidence that it is unsafe.
 5. If prompt size or transport complexity is implicated, compact the existing prompt by replacing obsolete/redundant clauses rather than appending an incident transcript indefinitely.
-6. Scheduler/prompt repair is intermediate. Select and execute the next safe pg-llm-batch repository action in the **same invocation** whenever one exists.
-7. Finish only after the ordinary work-conserving double exit sweep proves there is no remaining execute-now repository lane or the practical invocation budget is genuinely exhausted.
+6. Scheduler/prompt repair is intermediate. **Prompt repair alone is not recovery.** Select and execute the next **material safe repository action** in the **same invocation** whenever one exists.
+7. Treat a report that the loop did nothing, stopped early, or returned empty user-visible output as **user redirection**. Re-check missed queue lanes and perform at least one material safe repository action when one exists before considering termination.
+8. Finish only after the ordinary work-conserving double exit sweep proves there is no remaining execute-now repository lane or the practical invocation budget is genuinely exhausted. Empty output is not a substitute for that evidence.
 
 If an external platform permission, authentication control, or safety policy makes scheduler repair impossible, record that exact prerequisite once. It blocks only the dependent scheduler lane; unrelated safe repository work remains executable.
 
@@ -123,4 +124,4 @@ Release only from an exact protected integrated head satisfying required CI/secu
 
 ## Escalation boundaries
 
-User/operator intervention is genuinely required when credentials/permissions are unavailable, destructive data-loss decisions cannot be inferred safely, an external independent approval is the sole remaining governance gate, or a product/security choice has irreconcilable trade-offs. A queued check, one blocked PR, one unavailable provider, or a recoverable scheduler failure is not a repository-wide stop condition.
+User/operator intervention is genuinely required when credentials/permissions are unavailable, destructive data-loss decisions cannot be inferred safely, an external independent approval is the sole remaining governance gate, or a product/security choice has irreconcilable trade-offs. A queued check, one blocked PR, one unavailable provider, a recoverable scheduler failure, or silent completion is not a repository-wide stop condition.
