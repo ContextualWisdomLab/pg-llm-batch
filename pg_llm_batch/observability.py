@@ -57,6 +57,12 @@ def _bounded_error_type(error: BaseException) -> str:
     return _ERROR_TYPE_NAMES.get(type(error), ERROR_TYPE_OTHER)
 
 
+def _resolve_error_status() -> Any:
+    """Build OpenTelemetry ``Status(ERROR)`` lazily from the optional trace API."""
+    trace = import_module("opentelemetry.trace")
+    return trace.Status(trace.StatusCode.ERROR)
+
+
 class _NoOpInstrument:
     """Accept metric calls when an injected meter cannot create an instrument."""
 
@@ -166,6 +172,13 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
             return
         self._telemetry_or_default(lambda: action(span), None)
 
+    def _mark_error_span_status(self, span: Any) -> None:
+        """Mark one failed span Error without exposing exception details."""
+        self._telemetry_or_default(
+            lambda: span.set_status(_resolve_error_status()),
+            None,
+        )
+
     def _emit_measurements(
         self,
         started_at: float,
@@ -235,6 +248,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                         error_type,
                     ),
                 )
+                self._mark_error_span_status(span)
                 attributes = {
                     OPERATION_NAME_ATTRIBUTE: operation_name,
                     OPERATION_OUTCOME_ATTRIBUTE: "error",
