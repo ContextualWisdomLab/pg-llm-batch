@@ -96,6 +96,12 @@ track_activities = on
 # =============================================================================
 # LOG FILE SAFETY / ROTATION
 # =============================================================================
+# PostgreSQL requires logging_collector for csvlog output. Enable it explicitly
+# so an operator applying this example gets the declared structured destination
+# instead of an internally inconsistent configuration. The collector changes
+# log routing, not the content-retention policy above, and requires server start.
+logging_collector = on
+
 # Rotation bounds file growth; it does not define retention. Retention, export,
 # deletion, legal hold, backup expiry, residency, and external log-shipping are
 # host-owned data-governance decisions and must not be inferred from this file.
