@@ -67,6 +67,7 @@ Protected main supports bounded provider-file download. ACTIVE-PR #58/#59/#60 ad
 | Migration failure | Preserve failure evidence; rollback only with the reviewed rollback path; never delete durable evidence to make a migration pass |
 | Checkpoint/audit conflict (ACTIVE-PR) | Re-read durable state, preserve tenant/consumer identity, use CAS/append-only rules; do not force overwrite |
 | CI/review infrastructure failure | Keep source and infrastructure findings separate; repair the owning control plane or wait locally while advancing unrelated work |
+| Scheduler/control-plane failure | Classify scheduler/activation, prompt/transport, tool, credential, dependency, and repository failure separately; repair only the proven boundary and resume unrelated repository work |
 
 ## Logging, telemetry and privacy
 
@@ -93,10 +94,24 @@ ACTIVE-PR #95 is the current linearized atomic checkpoint migration operator rep
 
 Capture exact source/package version, database migration state, affected command/API path, bounded error category, exact provider endpoint alias (not secret), workflow/run identity when the incident is CI-related, and whether evidence came from protected main or an active PR. Avoid storing transient run IDs in timeless architecture documents; incident records may be dated.
 
+## Autonomous scheduler/control-plane failure recovery
+
+A generic scheduled-task failure is a control-plane symptom, not proof of a pg-llm-batch **repository failure**. Use `docs/automation/ADR-0006-scheduler-failure-recovery.md` together with ADR-0001 and ADR-0002.
+
+1. Refetch the authoritative automation state and verify whether the existing hourly task remains enabled before mutating scheduler configuration.
+2. Refetch protected `main`, the target PR/branch, and active-writer evidence independently. Do not infer repository failure from the scheduler banner.
+3. Classify the first failing boundary: scheduler/activation, prompt serialization or size, connector/tool execution, credentials/permissions, read-only dependency, or repository behavior.
+4. If the existing hourly task is still authoritative, **do not create a duplicate scheduler** merely to clear the symptom. Do not disable the working task without evidence that it is unsafe.
+5. If prompt size or transport complexity is implicated, compact the existing prompt by replacing obsolete/redundant clauses rather than appending an incident transcript indefinitely.
+6. Scheduler/prompt repair is intermediate. Select and execute the next safe pg-llm-batch repository action in the **same invocation** whenever one exists.
+7. Finish only after the ordinary work-conserving double exit sweep proves there is no remaining execute-now repository lane or the practical invocation budget is genuinely exhausted.
+
+If an external platform permission, authentication control, or safety policy makes scheduler repair impossible, record that exact prerequisite once. It blocks only the dependent scheduler lane; unrelated safe repository work remains executable.
+
 ## Release and rollback operations
 
 Release only from an exact protected integrated head satisfying required CI/security/coverage/docstrings/package/provenance/review/migration/operational gates. ACTIVE-PR #57 adds stronger reproducible descriptor-pinned release evidence. If a release must be rolled back, use a known published artifact and compatible schema state; do not move a protected branch or mutate an old artifact to simulate rollback.
 
 ## Escalation boundaries
 
-User/operator intervention is genuinely required when credentials/permissions are unavailable, destructive data-loss decisions cannot be inferred safely, an external independent approval is the sole remaining governance gate, or a product/security choice has irreconcilable trade-offs. A queued check, one blocked PR, or one unavailable provider is not a repository-wide stop condition.
+User/operator intervention is genuinely required when credentials/permissions are unavailable, destructive data-loss decisions cannot be inferred safely, an external independent approval is the sole remaining governance gate, or a product/security choice has irreconcilable trade-offs. A queued check, one blocked PR, one unavailable provider, or a recoverable scheduler failure is not a repository-wide stop condition.
