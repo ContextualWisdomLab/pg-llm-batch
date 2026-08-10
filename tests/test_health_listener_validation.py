@@ -31,12 +31,15 @@ def test_serve_healthz_rejects_blank_host_before_socket_binding(
         health.serve_healthz("postgresql://example", host=host, port=8080)
 
 
-@pytest.mark.parametrize("host", [" 127.0.0.1", "127.0.0.1 ", "127.0.0.1\n", "local\x00host"])
+@pytest.mark.parametrize(
+    "host",
+    [" 127.0.0.1", "127.0.0.1 ", "127.0.0.1\n", "local\x00host", "local\x7fhost"],
+)
 def test_serve_healthz_rejects_malformed_host_text_before_socket_binding(
     monkeypatch: pytest.MonkeyPatch,
     host: str,
 ) -> None:
-    """Whitespace-padded or NUL-bearing hosts fail at the package boundary."""
+    """Whitespace-padded or ASCII-control-bearing hosts fail before binding."""
     monkeypatch.setattr(http.server, "HTTPServer", _UnexpectedHTTPServer)
 
     with pytest.raises(ValidationError, match="host"):
