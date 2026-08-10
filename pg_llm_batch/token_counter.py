@@ -76,11 +76,11 @@ class TokenCounter:
             resolved_buffer = self._resolve_config_value(
                 "token_limits", "buffer_percentage", self.DEFAULT_BUFFER_PERCENTAGE
             )
-        if not 0 <= resolved_buffer <= 50:
+        if type(resolved_buffer) is not int or not 0 <= resolved_buffer <= 50:
             raise ValidationError(
                 field="buffer_percentage",
                 value=resolved_buffer,
-                reason="buffer percentage must be between 0 and 50",
+                reason="buffer percentage must be an integer between 0 and 50",
             )
         self.buffer_percentage = resolved_buffer
 
