@@ -10,6 +10,7 @@ ADR_INDEX = ROOT / "docs/adr/README.md"
 OPERABILITY = ROOT / "docs/OPERABILITY.md"
 TRACEABILITY = ROOT / "docs/TRACEABILITY.md"
 FITNESS = ROOT / "docs/DOCUMENTATION_FITNESS.md"
+UML = ROOT / "docs/architecture/UML.md"
 
 
 def _normalized(path: Path) -> str:
@@ -26,6 +27,7 @@ def test_scheduler_failure_recovery_is_canonical_and_work_conserving() -> None:
     operability = _normalized(OPERABILITY)
     traceability = _normalized(TRACEABILITY)
     fitness = _normalized(FITNESS)
+    uml = _normalized(UML)
 
     assert "](../automation/adr-0006-scheduler-failure-recovery.md)" in index
 
@@ -52,3 +54,9 @@ def test_scheduler_failure_recovery_is_canonical_and_work_conserving() -> None:
     assert "adr-0006-scheduler-failure-recovery.md" in traceability
     assert "scheduler failure recovery" in fitness
     assert "present-current" in fitness
+
+    assert "scheduler failure recovery" in uml
+    assert "generic scheduled-task failure" in uml
+    assert "same invocation" in uml
+    assert "double exit sweep" in uml
+    assert "duplicate scheduler" in uml
