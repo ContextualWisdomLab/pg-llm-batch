@@ -41,13 +41,13 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Bootstrap transport only.
+      # Bootstrap transport only. The component image owns its default health
+      # port; alternate ports require an explicit command/healthcheck override.
       PG_LLM_BATCH_DSN: "postgresql://pgllm:pgllm@postgres:5432/pgllm"
-      PG_LLM_BATCH_HEALTH_PORT: "8080"
     ports:
       # The bundled standalone profile is deliberately host-local. Operators
       # expose production health/API surfaces only through reviewed ingress.
       - "127.0.0.1:8080:8080"
 
 volumes:
-  pgdata:
+  pgdata:/var/lib/postgresql/data
