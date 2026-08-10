@@ -26,7 +26,7 @@ Optional CWL integrations remain external dependencies. Failure of a sibling ser
 - provider reachability, which is not implied by database health;
 - GitHub CI/review health, which is development-control evidence rather than application runtime readiness.
 
-ACTIVE-PR #70/#91 harden public readiness disclosure, bounded request handling and listener exposure; until merged, those changes are not protected-main guarantees.
+ACTIVE-PR #70 hardens public readiness disclosure, bounded request handling, statement/read timeouts, concurrency, listener defaults, and listener-input validation. Its current listener contract rejects host values with leading/trailing or embedded whitespace, ASCII C0 control characters, or DEL; it accepts only a non-empty exact string rather than trimming/stringifying caller input. Port must be a non-boolean integer in `1..65535`, and validation occurs before socket creation. ACTIVE-PR #91 separately constrains the complete standalone host-published service allow-list to loopback PostgreSQL TCP 5432 and component TCP 8080, each exactly once; an additional host-published service or port is outside that target contract. Until protected integration, neither overlay is a protected-main guarantee.
 
 ## Startup checks
 
@@ -60,6 +60,8 @@ Protected main supports bounded provider-file download. ACTIVE-PR #58/#59/#60 ad
 | Failure | Expected response |
 | --- | --- |
 | Invalid configuration/identifier | Fail closed; correct configuration; do not retry blindly |
+| Invalid readiness listener host/port (ACTIVE-PR #70) | Reject before socket creation; do not trim/stringify an invalid host or coerce booleans/strings into a port |
+| Unexpected Compose host publication (ACTIVE-PR #91) | Reject any published service/port outside the loopback 5432/8080 allow-list; do not widen host exposure as a compatibility fallback |
 | PostgreSQL unavailable | Stop dependent operation; restore DB connectivity; verify transaction/migration state before retry |
 | Provider transient GET acquisition failure | Allow only the bounded reviewed retry policy; respect Retry-After within configured limits |
 | Provider permanent/TLS/identity failure | Do not loop; correct trust/configuration boundary |
