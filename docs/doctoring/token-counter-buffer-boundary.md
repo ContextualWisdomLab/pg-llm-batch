@@ -10,11 +10,13 @@
 
 Validation happens **before PostgreSQL** extension setup or token-counting connection acquisition. Invalid configuration therefore fails with bounded `ValidationError` and cannot create a database session, attempt `CREATE EXTENSION`, or delegate type semantics to lower layers.
 
-A value of 0 is a valid explicit buffer choice and means no token-limit buffer. Values above 50 or below 0 are invalid rather than silently clamped. A valid integer is retained exactly and the effective limit remains:
+A value of 0 is a valid explicit buffer choice and means no token-limit buffer. Values above 50 or below 0 are invalid rather than silently clamped. A valid integer is retained exactly, and the effective limit is calculated with integer arithmetic rather than converting an accepted batch ceiling to float:
 
 ```text
-effective_limit = int(max_tokens_per_batch * (1 - buffer_percentage / 100))
+effective_limit = max_tokens_per_batch * (100 - buffer_percentage) // 100
 ```
+
+For positive integer ceilings this preserves the existing floor/truncation behavior while avoiding floating-point precision loss and `OverflowError` for very large exact integer configuration values.
 
 ## Configured TokenCounter resource ceilings
 
@@ -36,7 +38,7 @@ This boundary is applied when the accumulator is constructed, before any JSONL r
 
 `tests/test_token_counter_buffer_boundary.py` exercises booleans, floats, strings, lists, and dictionaries with a PostgreSQL seam that raises if connection acquisition is attempted. The regression therefore proves both the buffer type/range contract and its ordering before PostgreSQL I/O.
 
-`tests/test_token_counter_limit_config_boundary.py` parametrizes all five configured hard ceilings across booleans, zero, negative integers, floats, strings, lists, and dictionaries. Its forbidden-PostgreSQL seam proves every malformed ceiling fails before `pg_tiktoken` or PostgreSQL acquisition.
+`tests/test_token_counter_limit_config_boundary.py` parametrizes all five configured hard ceilings across booleans, zero, negative integers, floats, strings, lists, and dictionaries. Its forbidden-PostgreSQL seam proves every malformed ceiling fails before `pg_tiktoken` or PostgreSQL acquisition. It also proves an extremely large exact `per_batch` integer can be buffered with integer arithmetic without float conversion or overflow.
 
 `tests/test_batch_accumulator_limit_boundary.py` proves that explicit `max_records` and `max_bytes` accept only exact positive integers, that explicit zero is rejected instead of selecting a default, that malformed configured defaults fail after selection, and that reviewed positive explicit ceilings override configured defaults exactly.
 
@@ -44,9 +46,9 @@ This boundary is applied when the accumulator is constructed, before any JSONL r
 
 ## Recovery and rollback
 
-If `buffer_percentage` fails validation, correct the stored or explicit value to an integer from 0 through 50 and retry. If any configured `per_batch`, `per_request`, `max_records_per_file`, `max_bytes_per_file`, or `max_files_per_job` ceiling fails, repair it to an exact positive integer before retrying. If an accumulator ceiling fails, provide an exact positive integer or repair the configured default. Do not coerce malformed values, clamp them silently, or use truthiness fallback to restore a run: those remedies make resource authority depend on Python conversion behavior rather than an explicit contract.
+If `buffer_percentage` fails validation, correct the stored or explicit value to an integer from 0 through 50 and retry. If any configured `per_batch`, `per_request`, `max_records_per_file`, `max_bytes_per_file`, or `max_files_per_job` ceiling fails, repair it to an exact positive integer before retrying. If an accumulator ceiling fails, provide an exact positive integer or repair the configured default. Do not coerce malformed values, clamp them silently, reintroduce float arithmetic for integer resource ceilings, or use truthiness fallback to restore a run: those remedies make resource authority depend on Python conversion behavior rather than an explicit contract.
 
-No schema or persisted representation changes. A mechanical code revert is possible, but it would restore acceptance of malformed configured resource ceilings, coercible buffer values, or truthiness-based accumulator ceilings, including explicit zero silently becoming a configured default. Such rollback therefore requires a separately reviewed compatibility reason rather than routine incident recovery.
+No schema or persisted representation changes. A mechanical code revert is possible, but it would restore acceptance of malformed configured resource ceilings, coercible buffer values, truthiness-based accumulator ceilings, or floating-point conversion of exact integer batch limits, including explicit zero silently becoming a configured default. Such rollback therefore requires a separately reviewed compatibility reason rather than routine incident recovery.
 
 ## References
 
