@@ -168,14 +168,17 @@ No CWL service owns pg-llm-batch application tables by direct cross-service data
 
 ## 9. Scheduler failure recovery
 
-The autonomous writer is an external control plane, not a pg-llm-batch application-table owner. A **generic scheduled-task failure** therefore begins as control-plane incident evidence; it is not a repository failure until independent repository evidence establishes one.
+The autonomous writer is an external control plane, not a pg-llm-batch application-table owner. A **generic scheduled-task failure**, **silent completion**, or **empty user-visible output** therefore begins as control-plane incident evidence; none is a repository failure until independent repository evidence establishes one. **User redirection** after a premature or empty result requires the loop to refetch live state and resume a **material safe repository action** when one exists. Prompt repair alone is not recovery.
 
 ```mermaid
 flowchart TD
     START[Hourly scheduler invocation] --> EXEC[Execute live pg-llm-batch queue]
     EXEC --> OK[Repository action / proof / defer decision]
     EXEC --> FAIL[Generic scheduled-task failure]
+    EXEC --> SILENT[Silent completion / empty user-visible output]
     FAIL --> REFRESH[Refetch authoritative scheduler + GitHub state]
+    SILENT --> REDIRECT[User redirection / premature-stop evidence]
+    REDIRECT --> REFRESH
     REFRESH --> CLASSIFY{First failing boundary}
     CLASSIFY --> SCHED[Scheduler / activation]
     CLASSIFY --> PROMPT[Prompt size / transport]
@@ -183,15 +186,17 @@ flowchart TD
     CLASSIFY --> AUTH[Credential / permission]
     CLASSIFY --> DEP[Read-only dependency]
     CLASSIFY --> REPO[Repository behavior]
+    CLASSIFY --> NOOP[Silent / prompt-only completion]
     SCHED --> REPAIR[Smallest feasible control repair]
     PROMPT --> COMPACT[Compact obsolete prompt history]
     TOOL --> REPAIR
     AUTH --> DEFER[Defer only affected lane]
     DEP --> DEFER
     REPO --> RCA[Repository RCA / test-first repair]
+    NOOP --> REPAIR
     COMPACT --> REPAIR
     REPAIR --> NODUP[Retain one authoritative scheduler; no duplicate scheduler]
-    NODUP --> SAME[Resume material repository work in same invocation]
+    NODUP --> SAME[Resume material safe repository action in same invocation]
     RCA --> SAME
     DEFER --> SAME
     OK --> SAME
@@ -199,7 +204,7 @@ flowchart TD
     SWEEP1 -->|safe work exists| EXEC
     SWEEP1 -->|no safe work| SWEEP2[Double exit sweep 2]
     SWEEP2 -->|safe work exists| EXEC
-    SWEEP2 -->|none / practical budget exhausted| END[End invocation]
+    SWEEP2 -->|none / practical budget exhausted| END[End invocation with exact exit evidence]
 ```
 
-ADR-0006 owns this scheduler failure recovery decision. Prompt or scheduler repair is intermediate and does not waive source, review, branch-protection, security, or release gates. Scheduler state remains operational evidence outside the product ERD; `docs/architecture/ERD.md` intentionally does not invent automation persistence.
+ADR-0006 owns this scheduler failure recovery decision. Silent completion and prompt or scheduler repair are intermediate and do not waive source, review, branch-protection, security, or release gates. Scheduler state remains operational evidence outside the product ERD; `docs/architecture/ERD.md` intentionally does not invent automation persistence.
