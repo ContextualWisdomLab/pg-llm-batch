@@ -32,8 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Rejected any non-string **explicit Postgres DSN** and non-string **explicit
-  Fernet** bootstrap key with bounded `ConfigError` **before environment
+- Tightened **bootstrap secret-key precedence** and database-target authority:
+  any non-string **explicit Postgres DSN** and non-string **explicit Fernet**
+  bootstrap key now fail with bounded `ConfigError` **before environment
   fallback**; explicitly empty or whitespace-only Postgres DSNs still fail
   before libpq target selection, a whitespace-only environment DSN cannot select
   ambient libpq defaults, and an explicit empty optional Fernet key remains
