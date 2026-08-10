@@ -44,6 +44,29 @@ def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
     assert "DROP TABLE" not in sql
 
 
+def test_helper_cleanup_refuses_same_signature_function_substitution() -> None:
+    """Do not delete an operator function merely because it reuses a legacy signature."""
+    sql = _legacy_sql()
+
+    for regprocedure in (
+        "public.cron_fetch_batch_results()",
+        "public.import_batch_results_jsonl(uuid,text,text)",
+        "public.get_secret_value(text)",
+        "public.get_config_value(text)",
+    ):
+        assert f"to_regprocedure('{regprocedure}')" in sql
+    for legacy_marker in (
+        "gateway_api_key.default",
+        "llm_requests",
+        "com_secrets",
+        "com_config",
+    ):
+        assert legacy_marker in sql
+    assert "FROM pg_catalog.pg_proc" in sql
+    assert "RAISE EXCEPTION" in sql
+    assert "DROP FUNCTION IF EXISTS public." not in sql
+
+
 def test_legacy_retrieval_doctoring_preserves_upgrade_and_authority_boundaries() -> None:
     """Keep existing-volume remediation and the authoritative provider path explicit."""
     doctoring = DOCTORING.read_text(encoding="utf-8")
