@@ -85,6 +85,7 @@ BEGIN
         RETURN NULL;
     END IF;
     IF rec.is_encrypted THEN
+        -- Encrypted at rest; cannot decrypt inside SQL without the app key.
         RETURN NULL;
     END IF;
     RETURN convert_from(decode(rec.secret_value, 'base64'), 'UTF8');
