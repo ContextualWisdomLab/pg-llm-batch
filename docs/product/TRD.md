@@ -133,6 +133,10 @@ Issue #116 is PLANNED. The `count-tokens` command must not require **prompt cont
 
 Issue #117 is PLANNED. A **credential-bearing PostgreSQL DSN** must not cross **process argv** in the standalone CLI. If argv retains any DSN-like locator, it must be explicitly classified credential-free; password-bearing connection authority must come from the established environment/secret-injection bootstrap seam or another reviewed bounded non-argv source. Preserve #89's exact explicit-versus-ambient source precedence and #87's store/connection ownership and validation. Unsafe, blank, ambiguous, or wrongly typed DSN inputs must fail **before libpq** target selection where the package owns the boundary, and rejected diagnostics must not reflect credential-bearing DSN content. Implementation waits for #85/#87/#89 to integrate or be superseded.
 
+### TRD-C8 — Explicit provider-secret encryption policy (Issue #121) — PLANNED
+
+Provider-secret persistence must gain an explicit **encryption-required** deployment mode while retaining a deliberate local/development compatibility mode. Protected main's Base64 path remains obfuscation, **not encryption**. In encryption-required mode, missing or unusable **Fernet** authority must fail before a provider-secret write; existing `is_encrypted = FALSE` rows must be detected before activation and either re-encrypted atomically or leave activation failed without destructive loss. The implementation must define bounded **key rotation**/recovery, prevent secret/ciphertext/key/credential-bearing-DSN disclosure in diagnostics or readiness, and preserve host-provided credential providers. Detailed migration, MultiFernet-or-equivalent rotation constraints, rollback, and acceptance are owned by `docs/adr/provider-secret-encryption-policy.md`. Implementation waits for #85/#87/#89 to integrate or be superseded.
+
 ## 6. Tenancy and authorization requirements
 
 ### TRD-A1 — Current state
