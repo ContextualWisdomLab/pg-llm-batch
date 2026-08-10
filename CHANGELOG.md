@@ -40,6 +40,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   diagnostics. Files upload, batch creation/status, and file download expose
   only the status plus fixed `ProviderHTTPError`; cancellation rejection exposes
   only the status plus the fixed package reason.
+- Malformed successful provider responses now fail with fixed bounded package
+  diagnostics without retaining provider bytes, decoded text, or parser/decoder
+  exceptions; malformed provider response exception links are removed from the
+  exported `GatewayError` cause/context chain.
 - Dependency-defined transport exception class names never enter exported
   diagnostics or retry warning logs; acquisition failures use the closed
   `ServerFingerprintMismatch`, `ClientConnectorCertificateError`,
