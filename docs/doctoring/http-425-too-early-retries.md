@@ -22,6 +22,8 @@ For those statuses, retry behavior remains bounded by `max_retry_attempts` and `
 
 `BatchAPIClient.wait_for_batch()` treats its caller-supplied scheduling controls as resource-authority inputs. Both `poll_interval_seconds` and `timeout_seconds` must be finite positive numeric values; booleans, strings, `None`, NaN, infinities, zero, and negative values fail with `ValidationError` **before credential resolution or provider I/O**. The validated values alone determine the monotonic deadline and bounded sleep interval, so malformed caller input cannot create an unbounded sleep, a non-finite deadline, or an unrelated transport/type failure.
 
+Provider batch-status evidence is also fail-closed before progress or terminal-state decisions are derived. A successful status response must contain a **non-empty status string**. If `request_counts` is present, it must be a JSON object; `total`, `completed`, and `failed` must each be a **non-negative integer** (exact Python integers, not booleans or coercible strings), and `completed + failed` must not exceed `total`. Missing `request_counts` remains compatible with providers that omit counters and is treated as zero counts. Any malformed status or counter shape raises a fixed body-free `InvalidBatchStatusPayload` diagnostic identifying only the field (`status` or `request_counts`); provider-controlled values are not copied into the exported diagnostic.
+
 TLS handshake and certificate failures are never retried automatically. An `aiohttp.ClientSSLError`, including a connector TLS handshake or certificate-verification error, fails after the first request-acquisition attempt and is translated to the existing bounded, body-free transport diagnostic. Certificate fingerprint mismatches are never retried automatically. An `aiohttp.ServerFingerprintMismatch` fails after the first request-acquisition attempt through the same bounded diagnostic path. Request-acquisition timeouts and other non-TLS `aiohttp.ClientError` failures retain the bounded GET retry path. This classification does not change response-status retries or create any POST replay path.
 
 Provider uploads, batch creation, and batch cancellation are POST operations and remain single-attempt. HTTP 500 also remains single-attempt by default. Any future provider-specific 500 retry policy, or any proposal to retry TLS trust failures, requires a separate explicit contract, deterministic tests, and security/reliability review.
@@ -36,7 +38,7 @@ Dependency-defined transport exception class names never enter exported diagnost
 
 Provider-controlled HTTP error bodies are also excluded from exported package diagnostics. Files upload, batch creation, batch status, and output/error file download return only the HTTP status plus the fixed `ProviderHTTPError` category when the provider responds with a non-success status. Batch-cancellation rejection returns the status plus the fixed reason `Batch cancellation rejected by provider`. These paths decide on status before parsing or decoding the provider body, so provider error JSON, free-text bodies, email addresses, credential-like strings, debug fields, and provider-specific error types cannot be copied into `GatewayError.response_data`, cancellation results, exception details, or package logs by those error paths. Successful responses retain the existing bounded UTF-8 and JSON parsing contracts.
 
-Malformed successful provider responses are also treated as confidentiality-sensitive input. If a nominally successful control-plane response contains invalid UTF-8 or invalid JSON, translation to `GatewayError` must not retain provider bytes, decoded provider text, or parser/decoder exceptions through an exception cause or context link. The caller receives only the fixed bounded package diagnostic for the malformed response; provider-controlled content remains unavailable through exported exception links.
+Malformed successful provider responses are also treated as confidentiality-sensitive input. If a nominally successful control-plane response contains invalid UTF-8 or invalid JSON, translation to `GatewayError` must not retain provider bytes, decoded provider text, or parser/decoder exceptions through an exception cause or context link. The caller receives only the fixed bounded package diagnostic for the malformed response; provider-controlled content remains unavailable through exported exception links. The same body-free principle applies to malformed successful batch status evidence: `InvalidBatchStatusPayload` reports only the affected field rather than echoing status strings, counters, or arbitrary provider structures.
 
 The response-status retry decision uses only the HTTP status and bounded `Retry-After` guidance. Provider response bodies do not decide whether a request is replayed. Existing credential, HTTPS, no-redirect, response-size, and post-response-handoff no-replay controls remain unchanged.
 
@@ -50,11 +52,15 @@ Retry warnings identify only an HTTP status or one closed transport category. Th
 
 For a non-success provider response, operators receive the status code and the fixed package category/reason rather than the provider's body. Correlate deeper provider-side diagnostics using provider-owned request identifiers or provider observability available through an authorized administrative channel; do not reintroduce raw provider error bodies into generic application exceptions merely for convenience.
 
+If a successful batch-status response violates the status/count shape contract, operators receive `InvalidBatchStatusPayload` and the fixed offending field name. Do not reinterpret such a provider payload as zero progress or non-terminal state: malformed evidence is not a safe lifecycle observation.
+
 ## Recovery and rollback
 
 No persistent state, schema, migration, background job, credential, or trust-store change is involved. Operational recovery for TLS failures is to correct the endpoint certificate, trust chain, hostname, configured fingerprint, proxy/service-mesh TLS policy, or other deployment cause and then issue a new caller-controlled request. The client does not retry around the failure automatically.
 
-Rollback consists of removing 425 from the closed retry set and reverting the associated retry-classification tests and documentation. In-flight requests are not migrated or reconstructed. Reintroducing automatic TLS retries, dependency-defined class names in diagnostics, raw provider error content in package-level diagnostics, or non-finite/implicitly coerced `wait_for_batch()` scheduling controls is not a routine rollback step; any of those changes requires a separately reviewed reliability/security contract.
+For malformed successful status evidence, recovery is to correct the provider/gateway response contract or adapter and issue a new status read. The package does not coerce malformed counters or statuses into apparently valid progress evidence.
+
+Rollback consists of removing 425 from the closed retry set and reverting the associated retry-classification tests and documentation. In-flight requests are not migrated or reconstructed. Reintroducing automatic TLS retries, dependency-defined class names in diagnostics, raw provider error content in package-level diagnostics, non-finite/implicitly coerced `wait_for_batch()` scheduling controls, or malformed batch-status coercion is not a routine rollback step; any of those changes requires a separately reviewed reliability/security contract.
 
 ## Verification
 
@@ -64,6 +70,10 @@ Permanent regression coverage requires that:
 - the exact default status set is `{408, 425, 429, 502, 503, 504}`;
 - HTTP 500 remains outside that set and is single-attempt;
 - `poll_interval_seconds` and `timeout_seconds` accept only finite positive numeric durations and reject invalid values before credential/provider access;
+- a successful batch-status response requires a non-empty status string;
+- `request_counts`, when present, is an object whose `total`, `completed`, and `failed` values are exact non-negative integers;
+- `completed + failed` never exceeds `total` before progress is calculated;
+- malformed status/counter evidence exports only `InvalidBatchStatusPayload` plus the fixed field name;
 - TLS connector handshake and certificate-verification failures each perform exactly one GET and zero retry sleeps;
 - certificate fingerprint mismatch performs exactly one GET and zero retry sleeps while exporting no peer hostname or fingerprint bytes;
 - request-acquisition timeouts retain one bounded retry under the configured attempt policy;
@@ -71,7 +81,7 @@ Permanent regression coverage requires that:
 - Files upload, batch creation, batch status, and file-download HTTP errors expose only `ProviderHTTPError` plus status and never provider-controlled error bodies;
 - cancellation rejection exposes only the fixed package reason plus status and never the provider message;
 - malformed successful provider responses cannot retain provider content through an exception cause or context link;
-- public, contributor, changelog, ADR, and doctoring text all state the same fail-closed TLS and provider-error confidentiality boundaries; and
+- public, contributor, changelog, ADR, and doctoring text all state the same fail-closed TLS, provider-error confidentiality, wait-resource, and batch-status-evidence boundaries; and
 - the existing project gates continue to prove 100% production statement and branch coverage plus 100% public docstrings.
 
 ## References
