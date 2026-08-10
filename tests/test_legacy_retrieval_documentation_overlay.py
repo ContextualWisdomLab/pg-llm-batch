@@ -16,7 +16,7 @@ def test_readme_labels_legacy_sql_retrieval_as_active_pr_retirement() -> None:
     assert "ACTIVE-PR #101" in readme
     assert "legacy direct-SQL" in readme
     assert "fresh databases" in readme
-    assert "does not create `pg_cron` or `http`" in readme
+    assert "do not create `pg_cron` or `http`" in readme
     assert "Issue #102" in readme
     assert "(or) pg_cron job  cron_fetch_batch_results()  polls + imports results via pgsql-http" not in readme
     assert "PostgreSQL with `pg_tiktoken`, `pg_cron`, and `http`" not in readme
