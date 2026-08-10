@@ -13,6 +13,8 @@ from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
+from .exceptions import ValidationError
+
 
 class ModelMode(str, Enum):
     """Model invocation mode used when assembling JSONL request lines."""
@@ -36,3 +38,30 @@ class BatchRequest:
     model: str
     system_prompt: Optional[str] = None
     id: str = field(default_factory=lambda: uuid4().hex)
+
+    def __post_init__(self) -> None:
+        """Reject non-string values before they reach counting or gateway seams."""
+        if type(self.user_prompt) is not str:
+            raise ValidationError(
+                field="user_prompt",
+                value=self.user_prompt,
+                reason="must be an exact string",
+            )
+        if type(self.model) is not str:
+            raise ValidationError(
+                field="model",
+                value=self.model,
+                reason="must be an exact string",
+            )
+        if self.system_prompt is not None and type(self.system_prompt) is not str:
+            raise ValidationError(
+                field="system_prompt",
+                value=self.system_prompt,
+                reason="must be None or an exact string",
+            )
+        if type(self.id) is not str:
+            raise ValidationError(
+                field="id",
+                value=self.id,
+                reason="must be an exact string",
+            )
