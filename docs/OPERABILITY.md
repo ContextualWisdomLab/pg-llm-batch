@@ -55,6 +55,12 @@ Submit/poll/retrieve through governed provider configuration. Durable remote lif
 
 Protected main supports bounded provider-file download. ACTIVE-PR #58/#59/#60 add incremental records, prefix checkpoints and durable checkpoint state. Operators must not rely on those recovery semantics until they are protected-main integrated.
 
+### Legacy direct-SQL retrieval transition
+
+Protected main still contains the legacy `pg_cron` + `pgsql-http` direct-SQL retriever. `ACTIVE-PR` #101 decommissions that network authority fail closed because it can use weaker database-visible secret material and a local batch UUID where a **provider remote batch** identity is required without a reviewed binding. #101 preserves historical retrieval logs, unschedules only the exact legacy job, removes its helper functions, and keeps authenticated provider networking in `BatchAPIClient` / `DurableBatchAPIClient`. Unscheduling the old job does not cancel an already-running provider request.
+
+After #101, do not restore automatic polling by re-enabling direct-SQL HTTP. Until a supported replacement is integrated, use current bounded Python/CLI provider operations under deployment-owned scheduling. **Issue #102 is PLANNED** to restore automatic provider **reconciliation** through validated durable endpoint + provider remote batch identity, a **finite** per-run work budget, concurrency/crash-restart safety, and scheduling authority separate from provider credentials. It is not protected-main behavior, does not create a distributed exactly-once guarantee, and does not imply new persistence before implementing source/schema exists.
+
 ## Failure classes and operator response
 
 | Failure | Expected response |
