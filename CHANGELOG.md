@@ -34,10 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Removed plaintext secret values from `config set-secret` process arguments;
   interactive entry now uses a no-echo prompt and fails closed if terminal echo
-  suppression is unavailable, automation can supply one bounded logical line
-  over standard input with fail-closed shape validation, and rejected legacy
-  argv values are redacted from argument-parser diagnostics instead of being
-  reflected into logs or captured stderr.
+  suppression is unavailable. Automation accepts one bounded logical line over
+  standard input, removes only one terminal LF/CRLF framing sequence, and rejects
+  vertical tab, form feed, ASCII file/group/record separators, Unicode Next Line,
+  U+2028, and U+2029 before `SecretStore` construction. Rejected legacy argv
+  values remain redacted from parser diagnostics instead of being reflected into
+  logs or captured stderr.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
