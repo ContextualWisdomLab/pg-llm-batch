@@ -10,12 +10,13 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 - PostgreSQL configuration, request, batch, lifecycle, payload, and result metadata;
 - prompt/request content stored for batch construction;
 - remote provider identifiers and lifecycle evidence;
+- bounded structured exception evidence used for diagnostics and reconciliation;
 - package/release artifacts and provenance evidence;
 - exact-source CI/review evidence used to decide whether code may reach protected main.
 
 ## Trust boundaries
 
-1. **Caller/host → package API/CLI.** Caller-controlled strings, DSNs, provider identifiers, prompts, files, and configuration are untrusted until validated.
+1. **Caller/host → package API/CLI.** Caller-controlled strings, DSNs, provider identifiers, prompts, files, configuration, and structured error mappings are untrusted until validated or bounded by the public contract.
 2. **Package → PostgreSQL.** PostgreSQL is the durable authority for package-owned state. Connection identity, RLS applicability, transaction ownership, and migration state are security boundaries.
 3. **Package → provider HTTP endpoint.** The remote service and every response body/header/identifier are external and untrusted. Credentials authorize a request; they do not make provider output trusted application data.
 4. **Repository source → CI/review control plane.** A PR source head, a GitHub synthetic merge ref, a live base branch, a check result, and an independent review are distinct evidence authorities.
@@ -29,6 +30,7 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 | Bootstrap Fernet key disclosure through ambient process state | Host/bootstrap | `PG_LLM_BATCH_SECRET_KEY` is optional sensitive bootstrap secret material, distinct from database-backed provider credentials; deployment secret injection, scope, rotation, and environment exposure remain host responsibilities | IMPLEMENTED-ON-PROTECTED-MAIN boundary |
 | Ambient environment or coercion silently changes explicit bootstrap authority | Bootstrap/config | Protected main exposes the current bootstrap/config interfaces but does not yet enforce the stronger exact-authority contract. ACTIVE-PR #89 requires an **explicit Postgres DSN** and an **explicit Fernet** bootstrap key to already be an **exact string** when supplied; a non-string explicit value fails before **environment fallback**, and only an omitted argument may consult the corresponding ambient bootstrap variable. An explicit DSN must be nonblank, while an explicit empty Fernet string intentionally suppresses ambient decryption authority. | IMPLEMENTED-ON-PROTECTED-MAIN baseline + ACTIVE-PR #89 hardening |
 | Malformed persisted secret or wrong Fernet key leaks stored values or cryptography detail | DB→SecretStore | ACTIVE-PR #87 requires strict Base64 alphabet/padding and strict UTF-8 in the no-key path; malformed persistence becomes bounded `ConfigError`. A wrong Fernet key or invalid encrypted value also becomes bounded `ConfigError`, without retaining ciphertext or the underlying cryptography error through exception cause/context. Base64 remains obfuscation rather than encryption. | ACTIVE-PR #87 |
+| Caller-owned mapping mutation rewrites structured exception evidence after construction | Caller/host → package error boundary | **ACTIVE-PR #105** takes a **shallow snapshot** of the outer caller-owned mapping at construction so later caller-side additions, removals, or replacements cannot rewrite package-owned outer evidence. Nested mutable values and direct mutation of the exception-owned public mapping remain possible, so the **live exception object** is **not an audit record** and must not be treated as immutable durable evidence. | ACTIVE-PR #105 |
 | SSRF or unsafe provider destination | HTTP | Protected main **stringifies** the configured gateway value and **strips surrounding whitespace** before URL validation, then rejects remaining whitespace/control/backslash ambiguity, unsafe authority/query/fragment/ports, and non-loopback HTTP. `ACTIVE-PR` #71 tightens authority selection: a stringifiable non-string or leading/trailing whitespace/control/backslash fails **before secret lookup**; an accepted trailing slash is normalized only after exact validation. | IMPLEMENTED-ON-PROTECTED-MAIN normalization + ACTIVE-PR #71 exact-input hardening |
 | Unbounded provider response memory/CPU | HTTP | bounded control responses and provider-file downloads; ACTIVE-PR #58 adds incremental result records | IMPLEMENTED-ON-PROTECTED-MAIN + ACTIVE-PR |
 | Unsafe replay after response handoff | HTTP | acquisition retry is bounded; ACTIVE-PR #71 explicitly hardens post-handoff no-replay and transport classification | PARTIAL / ACTIVE-PR |
@@ -49,7 +51,9 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 
 ## Privacy and data governance
 
-The package may handle prompts, responses, provider metadata, and operational identifiers that can contain personal or confidential information. Default risk treatment is purpose-bound authorization, least privilege, tenant/service identity, encryption in transit and for secret material, bounded retention/export decisions owned by the deployment, and minimal diagnostics. Blanket masking is not a substitute for authorization and can destroy batch utility. Provider response text must not be copied into logs or telemetry merely to aid debugging. ACTIVE-PR #71 extends that rule to malformed successful provider payloads and exported exception cause/context; ACTIVE-PR #87 applies the same bounded-diagnostic principle to malformed stored secrets and wrong Fernet keys.
+The package may handle prompts, responses, provider metadata, operational identifiers, and structured exception evidence that can contain personal or confidential information. Default risk treatment is purpose-bound authorization, least privilege, tenant/service identity, encryption in transit and for secret material, bounded retention/export decisions owned by the deployment, and minimal diagnostics. Blanket masking is not a substitute for authorization and can destroy batch utility. Provider response text must not be copied into logs or telemetry merely to aid debugging. ACTIVE-PR #71 extends that rule to malformed successful provider payloads and exported exception cause/context; ACTIVE-PR #87 applies the same bounded-diagnostic principle to malformed stored secrets and wrong Fernet keys.
+
+ACTIVE-PR #105 reduces alias-driven drift in the outer structured exception mapping but does not create immutable or durable audit evidence. A live exception object must not be retained as an audit system merely because the original caller-owned outer mapping was snapshotted. Hosts that require durable evidence must serialize a separately bounded, authorized, retained representation and must decide how nested content is classified.
 
 ## Fail-closed rules
 
@@ -62,6 +66,7 @@ The package may handle prompts, responses, provider metadata, and operational id
 - a secret-entry path that cannot guarantee hidden terminal input must fail before accepting the provider credential rather than falling back to visible input;
 - malformed no-key Base64/UTF-8 persistence and wrong Fernet keys remain bounded `ConfigError` paths under ACTIVE-PR #87, not fallback-decryption opportunities;
 - under ACTIVE-PR #101, the legacy SQL retriever is removed rather than repaired into a second provider network authority; Issue #102 may restore automation only through validated provider remote identity and the Python credential/destination boundary;
+- under ACTIVE-PR #105, the package snapshots only the outer caller-owned error mapping; callers and operators must not infer deep immutability, append-only provenance, or durable audit authority from that boundary;
 - a missing/queued/cancelled/stale required check is not success;
 - a status/comment/model message is not an independent formal approval;
 - a synthetic merge ref is not interchangeable with the exact contributor head;
@@ -71,6 +76,8 @@ The package may handle prompts, responses, provider metadata, and operational id
 
 Security changes require an explicit rollback or recovery path in the owning ADR/doctoring. Rollback must never silently erase durable evidence or weaken a trust boundary. For database changes, use reviewed forward/rollback migrations and protect non-empty evidence stores. For CI/review changes, revert to the last known protected-main workflow only if doing so preserves exact-source identity, least privilege, and required-gate semantics.
 
+For ACTIVE-PR #105, rollback means restoring the previously reviewed exception-construction semantics and reclassifying affected documentation/tests; it must not reinterpret already emitted mutable exception objects as trustworthy historical audit evidence.
+
 ## Verification
 
-Security acceptance combines deterministic tests, live PostgreSQL integration where persistence is involved, SAST/dependency/security checks, exact-head workflow identity, independent review where required, and protected-main operational evidence for control-plane changes. No one channel substitutes for the others.
+Security acceptance combines deterministic tests, live PostgreSQL integration where persistence is involved, SAST/dependency/security checks, exact-head workflow identity, independent review where required, and protected-main operational evidence for control-plane changes. For #105, verification must prove outer caller-alias isolation, absent-response handling, coverage, and the documented non-immutability boundary. No one channel substitutes for the others.
