@@ -96,6 +96,46 @@ def test_fitness_and_traceability_do_not_hide_new_gap_owners() -> None:
         assert marker in traceability, marker
 
 
+def test_new_packaging_and_compatibility_gaps_have_canonical_owners() -> None:
+    """Track the newest packaging, compatibility, and quality-tool gaps end to end."""
+    prd = _read("docs/product/PRD.md")
+    trd = _read("docs/product/TRD.md")
+    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
+    traceability = _read("docs/TRACEABILITY.md")
+
+    active_targets = prd.split("## 6. Active product targets", 1)[1].split(
+        "## 7. Non-goals", 1
+    )[0]
+    for phrase in (
+        "Issue #112",
+        "py.typed",
+        "Issue #113",
+        "Requires-Python",
+        "#114",
+        "uv toolchain",
+        "Issue #115",
+        "quality tools",
+    ):
+        assert phrase in active_targets, phrase
+
+    for phrase in (
+        "Issue #112",
+        "py.typed",
+        "Issue #113",
+        "Requires-Python",
+        "ACTIVE-PR #114",
+        "uv toolchain",
+        "Issue #115",
+        "quality tools",
+    ):
+        assert phrase in trd, phrase
+
+    for marker in ("Issue #112", "Issue #113", "#114", "Issue #115"):
+        assert marker in fitness, marker
+    for marker in ("#112", "#113", "#114", "#115"):
+        assert marker in traceability, marker
+
+
 def test_sql_retirement_and_reconciliation_reach_architecture_and_operations() -> None:
     """Keep the retired network authority and replacement seam explicit end to end."""
     architecture = _read("ARCHITECTURE.md")
