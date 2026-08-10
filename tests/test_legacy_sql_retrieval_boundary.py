@@ -29,14 +29,16 @@ def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
     """Make replaying the init script a fail-closed cleanup for old installs."""
     sql = _legacy_sql()
 
+    assert "FROM pg_catalog.pg_extension" in sql
     assert "jobname = 'batch-result-retrieval'" in sql
     assert "cron.unschedule(legacy_job.jobid)" in sql
-    assert "DROP FUNCTION IF EXISTS cron_fetch_batch_results()" in sql
-    assert (
-        "DROP FUNCTION IF EXISTS import_batch_results_jsonl(UUID, TEXT, TEXT)" in sql
-    )
-    assert "DROP FUNCTION IF EXISTS get_secret_value(TEXT)" in sql
-    assert "DROP FUNCTION IF EXISTS get_config_value(TEXT)" in sql
+    for signature in (
+        "cron_fetch_batch_results()",
+        "import_batch_results_jsonl(UUID, TEXT, TEXT)",
+        "get_secret_value(TEXT)",
+        "get_config_value(TEXT)",
+    ):
+        assert f"DROP FUNCTION IF EXISTS public.{signature}" in sql
     assert "cron.schedule(" not in sql
     assert "DROP TABLE" not in sql
 
