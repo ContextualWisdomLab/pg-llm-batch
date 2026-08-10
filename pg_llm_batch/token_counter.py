@@ -84,28 +84,54 @@ class TokenCounter:
             )
         self.buffer_percentage = resolved_buffer
 
-        max_tokens_per_batch = self._resolve_config_value(
-            "token_limits", "per_batch", self.DEFAULT_MAX_TOKENS_PER_BATCH
+        max_tokens_per_batch = self._require_positive_limit(
+            "max_tokens_per_batch",
+            self._resolve_config_value(
+                "token_limits", "per_batch", self.DEFAULT_MAX_TOKENS_PER_BATCH
+            ),
         )
         self.token_limit = max_tokens_per_batch
         self.effective_limit = int(
             max_tokens_per_batch * (1 - self.buffer_percentage / 100)
         )
-        self.default_model_limit = self._resolve_config_value(
-            "token_limits", "per_request", self.DEFAULT_MODEL_LIMIT
+        self.default_model_limit = self._require_positive_limit(
+            "default_model_limit",
+            self._resolve_config_value(
+                "token_limits", "per_request", self.DEFAULT_MODEL_LIMIT
+            ),
         )
-        self.azure_max_records_per_file = self._resolve_config_value(
-            "azure_limits", "max_records_per_file", self.DEFAULT_AZURE_MAX_RECORDS
+        self.azure_max_records_per_file = self._require_positive_limit(
+            "azure_max_records_per_file",
+            self._resolve_config_value(
+                "azure_limits", "max_records_per_file", self.DEFAULT_AZURE_MAX_RECORDS
+            ),
         )
-        self.azure_max_bytes_per_file = self._resolve_config_value(
-            "azure_limits", "max_bytes_per_file", self.DEFAULT_AZURE_MAX_BYTES
+        self.azure_max_bytes_per_file = self._require_positive_limit(
+            "azure_max_bytes_per_file",
+            self._resolve_config_value(
+                "azure_limits", "max_bytes_per_file", self.DEFAULT_AZURE_MAX_BYTES
+            ),
         )
-        self.azure_max_files_per_job = self._resolve_config_value(
-            "azure_limits", "max_files_per_job", self.DEFAULT_AZURE_MAX_FILES
+        self.azure_max_files_per_job = self._require_positive_limit(
+            "azure_max_files_per_job",
+            self._resolve_config_value(
+                "azure_limits", "max_files_per_job", self.DEFAULT_AZURE_MAX_FILES
+            ),
         )
 
         if psycopg is not None:
             self._pg_available = self._ensure_pg_tiktoken()
+
+    @staticmethod
+    def _require_positive_limit(field: str, value: Any) -> int:
+        """Require a configured resource ceiling to be an exact positive integer."""
+        if type(value) is not int or value <= 0:
+            raise ValidationError(
+                field=field,
+                value=value,
+                reason="must be a positive integer",
+            )
+        return value
 
     def get_tiktoken_name(self, model: str) -> str:
         """Return the tiktoken encoding/model name for ``model``.
