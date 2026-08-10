@@ -18,7 +18,7 @@ DECLARE
 BEGIN
     IF EXISTS (
         SELECT 1
-        FROM pg_extension
+        FROM pg_catalog.pg_extension
         WHERE extname = 'pg_cron'
     ) THEN
         FOR legacy_job IN
@@ -32,7 +32,7 @@ BEGIN
 END
 $$;
 
-DROP FUNCTION IF EXISTS cron_fetch_batch_results();
-DROP FUNCTION IF EXISTS import_batch_results_jsonl(UUID, TEXT, TEXT);
-DROP FUNCTION IF EXISTS get_secret_value(TEXT);
-DROP FUNCTION IF EXISTS get_config_value(TEXT);
+DROP FUNCTION IF EXISTS public.cron_fetch_batch_results();
+DROP FUNCTION IF EXISTS public.import_batch_results_jsonl(UUID, TEXT, TEXT);
+DROP FUNCTION IF EXISTS public.get_secret_value(TEXT);
+DROP FUNCTION IF EXISTS public.get_config_value(TEXT);
