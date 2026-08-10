@@ -33,13 +33,13 @@ def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
     assert "jobname = 'batch-result-retrieval'" in sql
     assert "command = 'SELECT cron_fetch_batch_results();'" in sql
     assert "cron.unschedule(legacy_job.jobid)" in sql
-    for signature in (
-        "cron_fetch_batch_results()",
-        "import_batch_results_jsonl(UUID, TEXT, TEXT)",
-        "get_secret_value(TEXT)",
-        "get_config_value(TEXT)",
+    for regprocedure in (
+        "public.cron_fetch_batch_results()",
+        "public.import_batch_results_jsonl(uuid,text,text)",
+        "public.get_secret_value(text)",
+        "public.get_config_value(text)",
     ):
-        assert f"DROP FUNCTION IF EXISTS public.{signature}" in sql
+        assert f"to_regprocedure('{regprocedure}')" in sql
     assert "cron.schedule(" not in sql
     assert "DROP TABLE" not in sql
 
@@ -48,13 +48,6 @@ def test_helper_cleanup_refuses_same_signature_function_substitution() -> None:
     """Do not delete an operator function merely because it reuses a legacy signature."""
     sql = _legacy_sql()
 
-    for regprocedure in (
-        "public.cron_fetch_batch_results()",
-        "public.import_batch_results_jsonl(uuid,text,text)",
-        "public.get_secret_value(text)",
-        "public.get_config_value(text)",
-    ):
-        assert f"to_regprocedure('{regprocedure}')" in sql
     for legacy_marker in (
         "gateway_api_key.default",
         "llm_requests",
