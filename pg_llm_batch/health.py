@@ -104,11 +104,7 @@ def check_health(dsn: str) -> Dict[str, Any]:
             ", ".join(sorted(duplicate_required)),
         )
 
-    ready = (
-        not missing
-        and not duplicate_required
-        and all(required_states.values())
-    )
+    ready = not missing and not duplicate_required and all(required_states.values())
     return {"ready": ready, "components": components}
 
 
@@ -153,9 +149,8 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
             {"component": component_name, "is_ready": is_ready}
         )
 
-    required_ready = (
-        set(required_states) == REQUIRED_COMPONENTS
-        and all(required_states.values())
+    required_ready = set(required_states) == REQUIRED_COMPONENTS and all(
+        required_states.values()
     )
     return {"ready": ready and required_ready, "components": public_components}
 
@@ -166,7 +161,10 @@ def _validate_listener(host: Any, port: Any) -> tuple[str, int]:
         not isinstance(host, str)
         or not host
         or host != host.strip()
-        or any(character.isspace() or ord(character) < 32 for character in host)
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in host
+        )
     ):
         raise ValidationError(
             field="host",
