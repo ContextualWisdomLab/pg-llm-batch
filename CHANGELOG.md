@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   default, while the bundled container explicitly opts into `0.0.0.0` so broad
   listener exposure is a reviewable deployment decision rather than an implicit
   CLI default.
+- Removed shell-expanded health-port configuration from the component image:
+  both the readiness-server `CMD` and Docker `HEALTHCHECK` now use exec-form JSON
+  at the fixed image default port `8080`, so environment text cannot become shell
+  command syntax before Python listener validation. Custom ports require an
+  explicit command and healthcheck override.
 - Redacted public `/healthz` readiness output to omit database exceptions and
   other local diagnostic detail while preserving detailed operator diagnostics,
   fixed required-component readiness state, HTTP status semantics, and
