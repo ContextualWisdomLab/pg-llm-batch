@@ -32,7 +32,7 @@ def test_opentelemetry_optional_dependency_gap_is_canonical_and_planned() -> Non
         assert phrase in prd, phrase
 
     for phrase in (
-        "status: planned",
+        "**status:** planned",
         "issue #107",
         "opentelemetry-api",
         "optional extra",
