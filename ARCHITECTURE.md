@@ -162,6 +162,10 @@ Optional observer failure is best effort and cannot replace the application resu
 
 Readiness fails when required DB/tokenizer/config components are not available. Current protected main exposes local diagnostic detail in the health response; #70 is the ACTIVE-PR hardening target for public redaction and bounded concurrent/read work.
 
+### 6.6 Autonomous scheduler/control-plane failure
+
+The hourly autonomous maintainer is an external operational control plane, not part of the product runtime or product database. A generic scheduled-task failure is therefore a control-plane incident until independent evidence establishes a repository defect. Scheduler recovery preserves one authoritative enabled writer, distinguishes scheduler/activation, prompt/transport, connector/tool, credential/permission, read-only dependency, and repository failure classes, and resumes safe pg-llm-batch work in the same invocation. Prompt or scheduler repair is intermediate and cannot replace the normal double exit sweep, source/review/security gates, or branch-local writer lease. The durable decision is `docs/automation/ADR-0006-scheduler-failure-recovery.md`; the executable flow is diagrammed in `docs/architecture/UML.md`.
+
 ## 7. Active-PR overlay
 
 The following overlay is intentionally **not** part of the protected-main as-built architecture until integrated:
@@ -210,21 +214,31 @@ The overlay is dependency-aware, not a claim that every PR must merge in the dia
 6. **Active PR is not shipped architecture.** Every overlay item must be relabeled after merge/closure/supersession.
 7. **Evidence identity is architectural.** Commercial/release decisions must know which source/base/merge/check/review/artifact they are proving.
 8. **Database names are descriptive.** New package-owned objects use descriptive two-or-more-word snake_case by default.
+9. **Automation failure is a separate authority class.** Scheduler/prompt/tool failure does not become a product source finding without independent source evidence.
 
 ## 9. Architecture decision and detail map
 
 - Product outcomes: `docs/product/PRD.md`
 - Technical requirements: `docs/product/TRD.md`
+- Public API/schema/versioning: `docs/product/API_CONTRACT.md`
 - UML: `docs/architecture/UML.md`
 - ERD/data model: `docs/architecture/ERD.md`
 - Security/threats: `docs/THREAT_MODEL.md`
+- Data governance/privacy: `docs/DATA_GOVERNANCE.md`
 - Tests/evidence: `docs/TEST_STRATEGY.md`
 - Operations/recovery: `docs/OPERABILITY.md`
+- Release/rollback/provenance: `docs/RELEASE_ACCEPTANCE.md`
+- Licensing/IP diligence: `docs/LICENSING_AND_IP.md`
 - Traceability: `docs/TRACEABILITY.md`
+- Documentation fitness: `docs/DOCUMENTATION_FITNESS.md`
 - ADR index: `docs/adr/README.md`
-- Maintenance governance: `docs/automation/ADR-0001-work-conserving-maintenance.md`
+- Work-conserving maintenance: `docs/automation/ADR-0001-work-conserving-maintenance.md`
 - Evidence identity/writer lease: `docs/automation/ADR-0002-evidence-identity-and-writer-lease.md`
+- Canonical documentation authority: `docs/automation/ADR-0003-canonical-documentation-authority.md`
+- Semantic review vs infrastructure/policy evidence: `docs/automation/ADR-0004-review-evidence-separation.md`
+- Protected-main operational acceptance: `docs/automation/ADR-0005-protected-main-operational-acceptance.md`
+- Scheduler failure recovery: `docs/automation/ADR-0006-scheduler-failure-recovery.md`
 
 ## 10. Change discipline
 
-A runtime, schema, API, security, deployment, CI, evidence, or release change that contradicts an invariant above requires either an ADR update/new ADR or an explicit correction to this architecture in the same change set. PR-body prose alone is not a durable architecture decision.
+A runtime, schema, API, security, deployment, CI, evidence, scheduler/control-plane, or release change that contradicts an invariant above requires either an ADR update/new ADR or an explicit correction to this architecture in the same change set. PR-body prose alone is not a durable architecture decision.
