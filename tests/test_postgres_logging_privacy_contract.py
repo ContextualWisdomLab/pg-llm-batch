@@ -37,6 +37,15 @@ def test_optional_postgres_logging_does_not_capture_sql_or_bind_values_by_defaul
     assert settings["log_error_verbosity"].lower() == "terse"
 
 
+def test_csv_logging_enables_the_required_logging_collector() -> None:
+    """A configured CSV destination must enable PostgreSQL's logging collector."""
+    settings = _settings()
+    destinations = {item.strip() for item in settings["log_destination"].split(",")}
+
+    assert "csvlog" in destinations
+    assert settings["logging_collector"].lower() == "on"
+
+
 def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> None:
     """Representative query-text collection must be disabled in the package baseline."""
     settings = _settings()
