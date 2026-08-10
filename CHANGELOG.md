@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token-counting connection acquisition; booleans, floats, strings, and
   container values fail with bounded `ValidationError` instead of being
   accepted or producing unrelated type failures.
+- `BatchAccumulator.max_records` and `BatchAccumulator.max_bytes` now require an
+  **exact positive integer** after explicit/configured selection. **Explicit
+  zero** no longer behaves like omission and cannot silently select a larger
+  **configured default**; malformed configured defaults fail closed before any
+  JSONL record is accumulated.
 - A configured Fernet encryption key must now fail closed when the optional
   `cryptography` dependency is unavailable instead of silently downgrading the
   explicit encryption request to base64 obfuscation; the intentional no-key
