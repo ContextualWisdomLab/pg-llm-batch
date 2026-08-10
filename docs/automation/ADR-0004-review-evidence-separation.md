@@ -10,6 +10,8 @@ A pull-request review can become unavailable before a reviewer has enough eviden
 
 Historically, an automated review path can express such a failure as `CHANGES_REQUESTED`. That state is useful as a merge-readiness blocker, but it becomes misleading if the infrastructure failure is rendered as a synthetic source-code finding with an invented path, line, severity, root cause, or code-fix instruction. The repository already separates exact contributor head, PR-base snapshot, live base, synthetic integration revisions, checks, semantic review, and independent approval. This ADR makes the semantic-review versus infrastructure/policy distinction an explicit durable decision.
 
+Protected `AGENTS.md` also records a separate governance constraint: **code-owner review gates are disabled (on hold)** because the organization currently has a single maintainer. That hold prevents an unsatisfiable CODEOWNERS/code-owner approval rule from being recreated accidentally. It is distinct from semantic-review evidence and from any other independent approval that live repository or CWL governance may require.
+
 ## Alternatives
 
 1. **Translate every review-path failure into a source finding.** Rejected. Coverage bootstrap, runner, provider, permission, branch-policy, and other infrastructure failures do not prove a defect in the changed source.
@@ -43,15 +45,24 @@ The following remain distinct authorities:
 - check/workflow evidence — proof about the commit actually exercised;
 - semantic source review — source-backed findings or an explicit abstention/unavailable result;
 - infrastructure or policy blocker — a non-source gate that can block readiness;
-- independent approval — qualifying non-author formal approval when live repository policy or governance requires it.
+- independent approval — qualifying non-author formal approval when live repository policy or governance requires it; and
+- code-owner review configuration — currently disabled and on hold under protected `AGENTS.md`, not an implied permanent approval requirement.
 
 No status, comment, model output, infrastructure failure, or synthetic integration revision substitutes automatically for another authority.
+
+### Current code-owner review hold
+
+The repository's protected guidance says the code-owner review requirements are disabled and **on hold** while there is a single maintainer. Automation and documentation must not re-enable CODEOWNERS-based or code-owner approval gates until that governance condition changes through an authoritative repository/org decision.
+
+This hold does not convert unavailable semantic review into success and does not waive any review or approval that is **where required** by the current live repository/CWL policy. Conversely, independent approval **must not be inferred as a universal merge requirement** from this ADR, a PR body, an automation prompt, or a stale historical rule. Every merge/release decision must first determine what the live policy actually requires for the unchanged exact head.
 
 ## Consequences
 
 The repository may show both a non-passing merge gate and zero source findings at the same time. This is intentional. It prevents false attribution to product code while preserving fail-closed governance. Operators and maintainers must repair the actual failing owner rather than mutating a clean leaf branch merely to obtain a different automation result.
 
 Evidence envelopes and documentation may need an explicit blocker classification plus semantic `ABSTAIN`/`UNAVAILABLE` field. Existing GitHub review states remain usable as transport, but their body and downstream interpretation must preserve this distinction.
+
+The code-owner hold also means documentation must not turn a historical or organization-wide policy snapshot into an unsatisfiable mandatory approval rule. A future multi-maintainer governance change may supersede the hold, but until then it remains a live repository constraint.
 
 ## Failure and recovery
 
@@ -67,17 +78,19 @@ When semantic review is unavailable:
 
 If a reviewer later obtains valid source evidence, that fresh exact-head semantic result supersedes the abstention for the reviewed revision. If the source head or relevant live base changes, prior semantic evidence must be re-evaluated according to repository policy.
 
+If a workflow or document attempts to require code-owner approval while the protected hold remains active, treat that as governance drift: retain the hold, remove the unsatisfiable inferred requirement, and re-evaluate the remaining review gates from live policy rather than weakening unrelated checks.
+
 ## Security and governance impact
 
-This decision is fail-closed. It does not waive coverage, security, branch protection, required review, or independent approval. It reduces the risk that infrastructure outages are misdiagnosed as code vulnerabilities, that maintainers make unnecessary source changes to satisfy synthetic findings, or that a genuine unavailable review is falsely presented as success.
+This decision is fail-closed. It does not waive coverage, security, branch protection, required semantic review, or independent approval **where required**. It reduces the risk that infrastructure outages are misdiagnosed as code vulnerabilities, that maintainers make unnecessary source changes to satisfy synthetic findings, or that a genuine unavailable review is falsely presented as success.
 
-The distinction also protects auditability: a diligence reviewer can tell whether a blocked merge is caused by source semantics, infrastructure, policy, or independent-approval governance instead of reconstructing that cause from prose.
+The code-owner hold prevents a different governance failure: recreating an approval gate that a solo maintainer cannot satisfy. The distinction protects auditability because a diligence reviewer can tell whether a blocked merge is caused by source semantics, infrastructure, policy, an actually applicable independent-approval requirement, or an intentionally disabled code-owner gate instead of reconstructing that cause from prose.
 
 ## Compatibility and migration
 
 No package runtime, database schema, provider protocol, CLI, or public Python API changes are required by this ADR. Review/evidence producers should migrate incrementally by adding explicit blocker classification and semantic abstention/unavailable semantics while retaining existing GitHub checks/reviews as transport where necessary.
 
-Existing historical `CHANGES_REQUESTED` reviews caused solely by infrastructure or policy failure remain non-passing evidence until superseded by fresh review; they must not be retroactively relabeled as source defects.
+Existing historical `CHANGES_REQUESTED` reviews caused solely by infrastructure or policy failure remain non-passing evidence until superseded by fresh review; they must not be retroactively relabeled as source defects. Historical documentation that treated independent/code-owner approval as universally mandatory must instead defer to the live policy and the protected code-owner hold.
 
 ## Verification
 
@@ -87,11 +100,13 @@ Acceptance requires machine-checkable or reviewable evidence that:
 - an unavailable semantic review records `ABSTAIN` or an equivalent unavailable outcome;
 - no infrastructure-only failure fabricates a source path, line, severity, root cause, or code-fix instruction;
 - the evidence records the exact contributor head and applicable live base identity;
-- merge readiness remains fail-closed while required evidence is unavailable; and
-- independent approval remains a separate authority where required.
+- merge readiness remains fail-closed while required evidence is unavailable;
+- independent approval remains a separate authority where required;
+- the protected code-owner review hold is represented explicitly; and
+- no canonical document silently re-enables or universalizes that held gate.
 
-Repository documentation and review workflows that claim this contract should include regressions for infrastructure-only failure, source-backed finding, semantic abstention, stale-head invalidation, and successful fresh-review recovery.
+Repository documentation and review workflows that claim this contract should include regressions for infrastructure-only failure, source-backed finding, semantic abstention, stale-head invalidation, successful fresh-review recovery, and the solo-maintainer code-owner hold.
 
 ## Rollback and supersession
 
-Rollback removes this explicit classification contract but must not convert infrastructure failures into source findings or approvals. A superseding ADR must preserve a falsifiable distinction between source-semantic evidence and non-source merge-readiness evidence, define unavailable-review behavior, retain exact contributor head and live base binding, and preserve independent approval as a separate authority. Until such an ADR is accepted, this decision remains the repository governance target.
+Rollback removes this explicit classification contract but must not convert infrastructure failures into source findings or approvals, and must not silently re-enable the held code-owner gate. A superseding ADR must preserve a falsifiable distinction between source-semantic evidence and non-source merge-readiness evidence, define unavailable-review behavior, retain exact contributor head and live base binding, state the then-current code-owner governance, and preserve independent approval as a separate authority where required. Until such an ADR is accepted, this decision remains the repository governance target.
