@@ -10,6 +10,8 @@ pg-llm-batch can process prompts, provider configuration, identifiers, lifecycle
 
 The former example enabled `log_statement = 'all'`, slow/sample statement logging, transaction statement sampling, verbose error output, and `pg_stat_statements` collection/persistence, and described blanket SQL logging plus jurisdiction-specific multi-year retention as if they were generally required for compliance. PostgreSQL 16 explicitly warns that logged statements can reveal sensitive data and plaintext passwords, and extended-query protocol statement logging can include bind parameter values. PostgreSQL also documents that `pg_stat_statements` stores representative query text, with normalization caveats. The old example therefore made disclosure and retention a side effect of generic monitoring guidance rather than an explicit data-governance decision.
 
+A separate operability inconsistency remained after the privacy repair: the example selected `csvlog` but did not enable `logging_collector`. PostgreSQL 16 explicitly requires the collector to generate CSV-format log output. An operator could therefore apply a configuration that advertised structured CSV logging and rotation without satisfying the server-start prerequisite that makes that destination effective.
+
 ## Decision
 
 The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs and makes query-text statistics collection opt-in:
@@ -26,6 +28,14 @@ The reviewed baseline keeps ordinary SQL statement text and bind values out of s
 Connection, disconnection, checkpoint, lock-wait, temporary-file, autovacuum, I/O, WAL, function, commit-timestamp, query-ID, table/index, and activity-state telemetry remain available. This is not a claim that every remaining monitoring surface is content-free: live activity tracking has the separate residual boundary below.
 
 This is **selective disclosure**, not blanket masking. The source data remains available to the authorized application/database path. If an embedding organization has a genuine requirement for content-bearing database audit logs or query-level `pg_stat_statements`, it must enable that separately under a purpose-specific authorization, least-privilege access model, retention/deletion schedule, encryption/storage boundary, access audit, legal basis, and incident procedure.
+
+## CSV log routing and retention boundary
+
+The optional example keeps `log_destination = 'csvlog'` for structured operational records and now sets `logging_collector = on`, because PostgreSQL requires the collector to generate CSV-format output. `logging_collector` is a **server start** parameter: applying the file therefore requires a restart/start boundary before the declared CSV destination becomes effective.
+
+This change repairs **log routing** only. It does not widen the event/content classes permitted by the privacy settings above, and enabling the collector **does not define retention**. PostgreSQL's rotation knobs bound individual file age/size; they do not establish business retention, deletion, legal hold, backup expiry, residency, or external log-shipping policy. Those remain deployment-owned governance decisions. Operators should size and protect the collector's destination storage and keep file permissions/access aligned with the data classifications that remain in operational metadata.
+
+If a deployment intentionally routes server logs to a platform-owned stderr/journald/logging pipeline instead of PostgreSQL-managed CSV files, it should use a deployment overlay that changes both destination and related collector/rotation settings coherently rather than leaving an ineffective `csvlog` declaration.
 
 ## Live `pg_stat_activity` residual boundary
 
@@ -49,11 +59,15 @@ RED source `72f3e1c245c4a26d1778802bab0661973143fe04` added `tests/test_postgres
 
 A second test-first refinement on `9014c1337486c29208757178aade3d70f2d132a8` added explicit opt-in requirements for `pg_stat_statements` and disabled per-statement duration logging before the corresponding configuration change. Subsequent source `52f7879d875eb86a58ab9f93142d324b2ecd31be` implements that narrower content-retention boundary.
 
-RED source `0984c66e8d7a6ba713446860b575bf582bc74c41` then made the remaining live-activity assurance explicit. CI `31432404368` failed the intended contract because the doctoring did not yet name `pg_stat_activity` or its live query-text visibility. This document closes that documentation boundary without disabling the operationally useful activity collector. No predecessor or synthetic-merge result transfers to later heads; final acceptance requires fresh validation of the unchanged final source under current repository governance.
+RED source `0984c66e8d7a6ba713446860b575bf582bc74c41` then made the remaining live-activity assurance explicit. CI `31432404368` failed the intended contract because the doctoring did not yet name `pg_stat_activity` or its live query-text visibility. This document closes that documentation boundary without disabling the operationally useful activity collector.
+
+RED source `4111a9fba56920046a0a9eb83ccce4ca87d8f418` added the CSV routing regression. CI `31434551317` failed on Python 3.14 with `KeyError: 'logging_collector'`, proving the optional file selected `csvlog` without its required collector. Production source `9e40e38ed071288341d8854fe678a181d7c3dc51` enables the collector. Documentation RED `dc168c154a23371d94739b84241c787e677cc94d` then failed CI `31434729307` because this doctoring had not yet explained the routing, restart, and retention boundary. No predecessor or synthetic-merge result transfers to later heads; final acceptance requires fresh validation of the unchanged final source under current repository governance.
 
 ## Rollback and recovery
 
 If the safer baseline prevents an operator from satisfying a documented, purpose-specific audit requirement, do **not** restore blanket logging in the package default. Instead, maintain a deployment-owned overlay that enables only the necessary event/content classes for the authorized scope, defines access/retention/deletion, and can be disabled independently. If accidental content logging is discovered, stop the content-bearing logging path, preserve only evidence required by the incident/legal process, rotate or revoke exposed credentials where relevant, and follow the deployment's deletion/backup-expiry procedure for unnecessary copies.
+
+If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. Rollback must not silently restore broad SQL/bind logging or fixed retention claims.
 
 ## APA 7 references
 
