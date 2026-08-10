@@ -46,6 +46,7 @@ Evidence listed for an ACTIVE-PR belongs only to that implementation PR's exact 
 | Deployment-specific standalone PostgreSQL credential | PLANNED #99 | Issue #99; overlapping #91 Compose surface | remove shared default credential without weakening loopback-only publishing; prove arbitrary secret characters, restart, wrong-secret failure, and non-disclosure | PRD, TRD follow-up |
 | Reproducible component-image OS dependencies | PLANNED #100 | Issue #100; overlapping #70 Dockerfile surface | replace mutable upgrade/unversioned resolution with machine-checkable package-source/version/snapshot evidence bound into SBOM/provenance | PRD, TRD, release follow-up |
 | Automatic provider reconciliation through validated Python boundary | PLANNED #102 | Issue #102; durable lifecycle identity + provider client | restore bounded scheduled/worker reconciliation only after #101 and overlapping lifecycle/resource surfaces settle; no direct SQL HTTP and no distributed exactly-once claim | PRD, TRD, operability follow-up |
+| Legacy PostgreSQL extension retirement | PLANNED #103 | Issue #103; post-#101 existing-volume extension/runtime cleanup | after #101 reaches protected main, prove clean fresh database and upgraded legacy-volume migration, dependency-safe `pg_cron`/`pgsql-http` removal, rollback/recovery, SBOM/provenance, and Release Acceptance; never use `DROP EXTENSION ... CASCADE` | `docs/adr/legacy-postgresql-extension-retirement.md`, PRD, TRD, operability follow-up |
 
 ## Evidence-identity traceability
 
