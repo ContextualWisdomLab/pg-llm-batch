@@ -25,6 +25,8 @@ def test_prd_tracks_current_unshipped_gap_queue() -> None:
         "Issue #99",
         "Issue #100",
         "Issue #102",
+        "Issue #108",
+        "Issue #109",
     ):
         assert marker in active_targets, marker
 
@@ -33,6 +35,8 @@ def test_prd_tracks_current_unshipped_gap_queue() -> None:
     assert "shared default PostgreSQL credential" in active_targets
     assert "container" in active_targets and "reproduc" in active_targets.lower()
     assert "non-finite" in active_targets
+    assert "endpoint-qualified" in active_targets
+    assert "single authoritative" in active_targets
 
 
 def test_trd_keeps_legacy_sql_http_outside_provider_authority() -> None:
@@ -61,14 +65,34 @@ def test_trd_keeps_legacy_sql_http_outside_provider_authority() -> None:
     assert "distributed exactly-once" in reliability_section
 
 
+def test_trd_tracks_tokenizer_and_release_version_authority_gaps() -> None:
+    """Keep endpoint tokenizer and release-version authority gaps explicit."""
+    trd = _read("docs/product/TRD.md")
+    for phrase in (
+        "Issue #108",
+        "endpoint-qualified tokenizer",
+        "Issue #109",
+        "single authoritative version",
+    ):
+        assert phrase in trd, phrase
+
+
 def test_fitness_and_traceability_do_not_hide_new_gap_owners() -> None:
     """Keep the maturity snapshot and traceability aligned with live gap owners."""
     fitness = _read("docs/DOCUMENTATION_FITNESS.md")
     traceability = _read("docs/TRACEABILITY.md")
 
-    for marker in ("#101", "Issue #98", "Issue #99", "Issue #100", "Issue #102"):
+    for marker in (
+        "#101",
+        "Issue #98",
+        "Issue #99",
+        "Issue #100",
+        "Issue #102",
+        "Issue #108",
+        "Issue #109",
+    ):
         assert marker in fitness, marker
-    for marker in ("#101", "#98", "#99", "#100", "#102"):
+    for marker in ("#101", "#98", "#99", "#100", "#102", "#108", "#109"):
         assert marker in traceability, marker
 
 
