@@ -91,8 +91,8 @@ class TokenCounter:
             ),
         )
         self.token_limit = max_tokens_per_batch
-        self.effective_limit = int(
-            max_tokens_per_batch * (1 - self.buffer_percentage / 100)
+        self.effective_limit = (
+            max_tokens_per_batch * (100 - self.buffer_percentage) // 100
         )
         self.default_model_limit = self._require_positive_limit(
             "default_model_limit",
