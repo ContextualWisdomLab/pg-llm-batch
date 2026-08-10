@@ -39,6 +39,7 @@ This model covers pg-llm-batch as a standalone PostgreSQL-backed batch orchestra
 | Audit evidence mutation | DB | #94 carries append-only audit table, forced RLS, UPDATE/DELETE/TRUNCATE rejection | ACTIVE-PR |
 | Connection exhaustion through leaked owners | Package→DB | explicit owner cleanup exists in some paths; #87 closes remaining operation/construction lifetime gaps | ACTIVE-PR |
 | Readiness endpoint leaks diagnostics or is resource-exhausted | Operator/HTTP | current health endpoint exists; #70 hardens redaction, timeout and concurrency. The same ACTIVE-PR validates the listener before socket creation: host is an exact non-empty string with no whitespace and no ASCII C0 control or DEL characters, and port is a non-boolean integer in `1..65535`. | ACTIVE-PR #70 |
+| Environment-controlled health-port text becomes shell command syntax before application validation | Container command authority | ACTIVE-PR #70 removes `PG_LLM_BATCH_HEALTH_PORT` from the executable image command path and requires **exec-form** JSON for the readiness server and healthcheck at fixed default port `8080`; a custom port requires an explicit coordinated command/healthcheck override rather than shell expansion. | ACTIVE-PR #70 |
 | Standalone deployment unexpectedly exposes another host service/port | Compose/host network | ACTIVE-PR #91 binds the complete host-published service allow-list to loopback PostgreSQL TCP 5432 and component TCP 8080, each once; a third published service or extra port fails the contract. | ACTIVE-PR #91 |
 | Release artifact TOCTOU or substitution | Build/release | #57 carries descriptor-pinned reproducibility and artifact-identity checks | ACTIVE-PR |
 | CI accepts evidence from wrong commit | GitHub control plane | #88 binds CI checkout/verification to exact source head | ACTIVE-PR |
@@ -53,6 +54,7 @@ The package may handle prompts, responses, provider metadata, and operational id
 
 - malformed identifiers, unsafe destinations, impossible bounds, unsupported migration state, stale checkpoint evidence, or authorization ambiguity fail closed;
 - malformed readiness listener hosts—including ASCII C0 control or DEL characters—or non-boolean/non-integer/out-of-range ports fail before socket creation under ACTIVE-PR #70;
+- the ACTIVE-PR #70 container boundary keeps readiness server and healthcheck execution in exec-form JSON at port 8080 and never evaluates `PG_LLM_BATCH_HEALTH_PORT` through a shell; custom ports require explicit deployment overrides;
 - a standalone Compose host-publication outside the ACTIVE-PR #91 allow-list fails rather than broadening exposure silently;
 - a secret-entry path that cannot guarantee hidden terminal input must fail before accepting the provider credential rather than falling back to visible input;
 - malformed no-key Base64/UTF-8 persistence and wrong Fernet keys remain bounded `ConfigError` paths under ACTIVE-PR #87, not fallback-decryption opportunities;
