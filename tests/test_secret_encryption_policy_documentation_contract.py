@@ -35,7 +35,7 @@ def test_secret_encryption_policy_gap_has_an_indexed_canonical_decision() -> Non
     assert "](provider-secret-encryption-policy.md)" in index
 
     for phrase in (
-        "status: planned — issue #121",
+        "**status:** planned — issue #121",
         "provider-secret",
         "base64",
         "not encryption",
