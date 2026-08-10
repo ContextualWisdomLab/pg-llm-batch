@@ -19,6 +19,28 @@ def test_base_error_rendering_and_default_details():
     assert coded.details == {"reason": "specific"}
 
 
+def test_error_detail_mappings_snapshot_constructor_inputs():
+    """Structured error evidence must not drift with caller-owned mappings."""
+    details = {"phase": "prepare"}
+    error = PgLlmBatchError("failed", details=details)
+    details["phase"] = "mutated"
+    details["new"] = "late"
+
+    assert error.details == {"phase": "prepare"}
+
+    response_data = {"retry": True, "provider": "bounded"}
+    gateway = GatewayError("unavailable", 503, response_data)
+    response_data["retry"] = False
+    response_data["late"] = "mutation"
+
+    assert gateway.response_data == {"retry": True, "provider": "bounded"}
+    assert gateway.details["response_data"] == {
+        "retry": True,
+        "provider": "bounded",
+    }
+    assert gateway.response_data is gateway.details["response_data"]
+
+
 def test_token_limit_error_preserves_counts_and_optional_batch():
     error = TokenLimitExceededError(1200, 1000, batch_id="batch-1")
     assert "1,200 > 1,000" in str(error)
