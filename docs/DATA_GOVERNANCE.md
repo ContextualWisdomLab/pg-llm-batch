@@ -65,9 +65,17 @@ The protected-main opt-in OpenTelemetry path is package-owned only for bounded o
 
 Health/readiness and ordinary operator diagnostics follow the same principle: expose enough bounded information to operate the component, but never log or return raw prompt text or secret values. The stronger provider HTTP error redaction described in section 6 is **ACTIVE-PR #71**, not protected-main evidence at this baseline; exact release acceptance must verify its integrated behavior before claiming provider-error confidentiality as shipped.
 
+### ACTIVE-PR structured exception evidence (#105)
+
+`PgLlmBatchError.details` and `GatewayError.response_data` are **structured exception evidence**, but a live exception object is **not an audit record**. ACTIVE-PR #105 introduces a **constructor-time shallow snapshot** of the supplied outer caller-owned mapping so later caller-side additions, removals, or replacements cannot rewrite the package-owned outer evidence after construction.
+
+The target is deliberately bounded. It does not deep-copy arbitrary caller object graphs; **nested mutable values** remain shared. Direct mutation of the exception-owned public mapping also remains possible for compatibility. The snapshot therefore reduces alias-driven diagnostic drift but is not immutable, append-only, cryptographically protected, or durable evidence. Hosts needing an audit record must serialize, bound, authorize, and persist a separate representation under their audit/retention controls. This overlay remains **ACTIVE-PR #105** until protected integration and fresh validation.
+
 ## 9. Logging and evidence
 
 Package-owned logs, CI output, review evidence, release artifacts, SBOM/provenance records, and incident summaries **must not log** secret values, prompt bodies, raw provider response bodies, or full DSNs containing credentials. Tests should use synthetic non-secret fixtures and should assert that error translation does not retain sensitive values through exception messages, causes, or contexts where those surfaces are externally observable.
+
+Structured exception evidence must not be treated as immutable audit authority merely because it has been detached from an original caller-owned outer mapping. For durable evidence, hosts must create an explicitly bounded and governed record rather than retaining a live exception object.
 
 When incident investigation requires sensitive source data, access and export are host-owned privileged operations. Preserve minimum necessary evidence, record purpose and actor through the host's audit system, and avoid copying raw content into immutable public build/review artifacts.
 
@@ -103,10 +111,11 @@ For an exact release candidate, data governance is acceptable only when:
 1. this document matches the protected schema/runtime and all ACTIVE-PR overlays remain correctly labeled;
 2. package telemetry/log/error/health contracts do not expose secret or raw sensitive content beyond reviewed boundaries, including fresh protected-main proof of provider-error confidentiality if ACTIVE-PR #71 or a successor is part of the release candidate;
 3. stored-secret decode/decrypt behavior has fresh bounded-error and exception-chain privacy evidence if ACTIVE-PR #87 or a successor is part of the release candidate;
-4. provider destination/resource validation and response bounds pass their security tests;
-5. deployment documentation states host ownership of authorization, purpose, retention, erasure, backup, and residency;
-6. migrations/rollback do not silently destroy retained content/evidence; and
-7. any new persisted field or emitted signal is classified and traced before release.
+4. structured exception evidence has fresh caller-alias isolation and non-immutability-contract evidence if ACTIVE-PR #105 or a successor is part of the release candidate;
+5. provider destination/resource validation and response bounds pass their security tests;
+6. deployment documentation states host ownership of authorization, purpose, retention, erasure, backup, and residency;
+7. migrations/rollback do not silently destroy retained content/evidence; and
+8. any new persisted field or emitted signal is classified and traced before release.
 
 This is an engineering control contract, not a claim of legal compliance, certification, or fitness for a particular regulated use without the embedding organization's separate assessment.
 
@@ -116,6 +125,7 @@ This is an engineering control contract, not a claim of legal compliance, certif
 - Provider transport and response bounds: `pg_llm_batch/batch_api_client.py` and security/HTTP tests.
 - Provider-error confidentiality target and current implementation owner: ACTIVE-PR #71 plus `docs/doctoring/http-425-too-early-retries.md`; it becomes protected-main evidence only after integration and fresh validation.
 - Stored-secret malformed Base64/UTF-8 and wrong Fernet key target: ACTIVE-PR #87 plus its SecretStore tests/doctoring; it becomes protected-main evidence only after integration and fresh validation.
+- Structured exception evidence constructor snapshot target: ACTIVE-PR #105 plus `docs/doctoring/structured-error-evidence-integrity.md`; it becomes protected-main evidence only after integration and fresh validation and does not create an audit-record claim.
 - Credential storage/provider seam: configuration/secret-store modules and `docs/product/API_CONTRACT.md`.
 - Telemetry privacy boundary: `pg_llm_batch/observability.py` and `docs/doctoring/opentelemetry-operations.md`.
 - Threats and trust boundaries: `docs/THREAT_MODEL.md`.
