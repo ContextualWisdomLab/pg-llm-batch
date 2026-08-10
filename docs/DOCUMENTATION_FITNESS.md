@@ -106,6 +106,7 @@ Current material implementation/documentation owners include:
 
 ### PLANNED
 
+- Issue #107 — planned first-class **OpenTelemetry optional dependency** and live-conformance package contract after #57 and #106 settle; the base package remains free of a mandatory OpenTelemetry dependency until that separately reviewed slice integrates.
 - Issue #90 — buyer-visible CLI cancellation after overlapping CLI/resource-ownership work settles.
 - Issue #98 — reject malformed provider progress and non-finite control JSON after the overlapping #71 provider-control surface settles.
 - Issue #99 — remove the shared default PostgreSQL credential from standalone Compose after #91 establishes the authoritative publishing boundary.
