@@ -58,6 +58,12 @@ Public names added only by an ACTIVE-PR remain target interfaces until their imp
 
 Callers may depend on the documented package exception hierarchy for domain failures, but they must not parse free-form exception messages as a stable machine protocol unless a specific structured field is documented. Provider-controlled bodies, credentials, DSNs, and other confidential values are not part of the public error contract.
 
+### ACTIVE-PR structured exception evidence boundary (#105)
+
+`PgLlmBatchError.details` and `GatewayError.response_data` are public structured exception surfaces on protected main, but caller-alias isolation is an **ACTIVE-PR #105** compatibility hardening until that branch integrates. The target behavior takes a **constructor-time shallow snapshot** of the supplied outer mapping. Later additions, removals, or replacements through the original caller-owned mapping must not rewrite the exception's package-owned outer evidence. `GatewayError.response_data` and `details["response_data"]` refer to the same package-owned snapshot.
+
+This target is **not immutable** evidence. Direct mutation of the exception-owned public mapping remains possible for compatibility, and nested mutable values remain shared because the snapshot is shallow. The live Python exception object is not a cryptographic, append-only, or durable audit record. Callers needing durable audit evidence must serialize a separately governed bounded representation. This paragraph becomes protected-main behavior only after #105 or a reviewed successor is integrated and freshly revalidated.
+
 ### ACTIVE-PR `BatchRequest` runtime boundary (#104)
 
 `BatchRequest` is public on protected main, but exact runtime field typing is an **ACTIVE-PR** compatibility hardening until #104 integrates. The target requires `user_prompt`, `model`, and `id` to already be exact strings and `system_prompt` to be `None` or an exact string; it does not stringify non-string caller objects or reinterpret false-valued non-strings as empty content. Rejected values must not be exported through the resulting package validation message or structured details. Empty strings remain accepted for compatibility, and prompt/model content-policy validation remains host/provider-owned rather than being inferred by this lightweight record. This paragraph must be promoted to protected-main behavior only after the implementing source is integrated and revalidated there.
