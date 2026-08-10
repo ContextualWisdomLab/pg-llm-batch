@@ -54,6 +54,22 @@ def test_optional_timing_metrics_are_opt_in_for_predictable_overhead() -> None:
         assert phrase in doctoring, phrase
 
 
+def test_function_statistics_are_opt_in_for_bounded_monitoring_overhead() -> None:
+    """Function-call timing must not be enabled for every deployment by default."""
+    settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    assert settings["track_functions"].lower() == "none"
+    for phrase in (
+        "track_functions",
+        "function statistics",
+        "statistics collection",
+        "overhead",
+        "opt-in",
+    ):
+        assert phrase in doctoring, phrase
+
+
 def test_csv_logging_enables_the_required_logging_collector() -> None:
     """A configured CSV destination must enable PostgreSQL's logging collector."""
     settings = _settings()
