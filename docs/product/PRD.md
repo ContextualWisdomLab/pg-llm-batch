@@ -235,6 +235,10 @@ Prevent **credential-bearing PostgreSQL DSNs** from crossing the standalone CLI 
 
 Harden the optional PostgreSQL monitoring example using **selective disclosure** rather than blanket masking. ACTIVE-PR #119 disables package-default persistent SQL statement/bind-value logging and `pg_stat_statements` query-text collection/persistence while preserving the authorized production data needed by the batch workload. It explicitly retains bounded, **volatile** live `pg_stat_activity` query text while `track_activities` is enabled, treats privileged statistics access as deployment-owned authorization, and requires content-bearing audit/query-stat channels to have explicit purpose, least-privilege access, retention/deletion, encryption/storage, and incident handling. This does not claim that all PostgreSQL query text is absent, that the optional file is loaded automatically, or that any logging setting proves CSAP/SOC 2 or other certification.
 
+### PRD-T29 — Reproducible PostgreSQL image inputs (Issue #118) — PLANNED
+
+Make the **PostgreSQL image** dependency graph explicit and reviewable instead of allowing ordinary release builds to resolve mutable Debian package state or regenerate the patched `pg_tiktoken` Cargo dependency graph from a live registry. The target keeps the exact `pg_tiktoken` source commit and fail-closed patch identity, removes unconstrained distribution upgrade drift, binds Debian source/package versions and a reviewed Cargo lock or equivalent immutable descriptor into SBOM/provenance, and proves clean rebuild dependency identity. This remains distinct from component-image Issue #100 and must not race the active #94→#97 PostgreSQL Dockerfile stack or bypass the #101/#103 existing-volume migration boundary.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
