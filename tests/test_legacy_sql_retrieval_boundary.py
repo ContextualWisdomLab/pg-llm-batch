@@ -83,5 +83,9 @@ def test_legacy_retrieval_doctoring_preserves_upgrade_and_authority_boundaries()
         "to_regprocedure('public.import_batch_results_jsonl(uuid,text,text)')",
         "to_regprocedure('public.get_secret_value(text)')",
         "to_regprocedure('public.get_config_value(text)')",
+        "same-signature function",
+        "fails closed",
+        "unschedule is committed",
+        "manual review",
     ):
         assert required in doctoring
