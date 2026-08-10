@@ -24,6 +24,7 @@ The following records capture architectural choices already implemented on prote
 | [`docs/automation/ADR-0003-canonical-documentation-authority.md`](../automation/ADR-0003-canonical-documentation-authority.md) | Keep one source-bound documentation graph with explicit fitness/maturity and machine-checkable drift controls | ACTIVE-PR (#93) |
 | [`docs/automation/ADR-0004-review-evidence-separation.md`](../automation/ADR-0004-review-evidence-separation.md) | Keep infrastructure/policy blockers separate from semantic source findings; unavailable semantic review abstains rather than synthesizing code defects | ACTIVE-PR (#93) |
 | [`docs/automation/ADR-0005-protected-main-operational-acceptance.md`](../automation/ADR-0005-protected-main-operational-acceptance.md) | Source merge is intermediate; require capability-specific protected-main operational acceptance before incident/release closure where applicable | ACTIVE-PR (#93) |
+| [`docs/automation/ADR-0006-scheduler-failure-recovery.md`](../automation/ADR-0006-scheduler-failure-recovery.md) | Treat generic scheduler failures as control-plane incidents, preserve one authoritative hourly task, compact control prompts when needed, and resume repository work in the same invocation | ACTIVE-PR (#93) |
 
 ## Feature decisions carried by active implementation PRs
 
