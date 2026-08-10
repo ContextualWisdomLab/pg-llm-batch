@@ -69,3 +69,16 @@ def test_component_image_does_not_shell_expand_health_port_configuration() -> No
 
     assert "PG_LLM_BATCH_HEALTH_PORT" not in dockerfile
     assert 'CMD ["curl", "-fsS", "http://localhost:8080/healthz"]' in dockerfile
+
+
+def test_container_readiness_shell_boundary_is_documented() -> None:
+    """Authoritative readiness docs must retain the no-shell execution boundary."""
+    adr = (_ROOT / "docs/adr/0014-public-healthz-readiness.md").read_text(
+        encoding="utf-8"
+    ).lower()
+    agents = (_ROOT / "AGENTS.md").read_text(encoding="utf-8").lower()
+
+    for text in (adr, agents):
+        assert "exec-form" in text
+        assert "shell" in text
+        assert "8080" in text
