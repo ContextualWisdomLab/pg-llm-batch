@@ -18,14 +18,19 @@ The credential boundary is also incompatible. The SQL helper could only decode t
 
 Finally, the Python client already owns validated gateway authority, remote resource identifiers, bounded HTTP responses, retry/replay semantics, and provider-error handling. `DurableBatchAPIClient` adds ordered lifecycle persistence on top of that client rather than creating a second network implementation. The smallest correction is therefore to remove the unsupported SQL network path and stop enabling its database capabilities for fresh installations.
 
+A later cleanup audit found a second identity defect: exact cron-job matching was followed by unconditional `DROP FUNCTION IF EXISTS` calls on four generic public signatures. An operator may legitimately replace a legacy function while retaining the same signature. Signature-only deletion would then destroy unrelated operator code. The cleanup now treats a same-signature function as untrusted until its current catalog definition still matches the retired helper's characteristic implementation.
+
 ## Bounded implementation
 
 `03_cron_batch_retrieval.sql` now performs only cleanup:
 
 - if `pg_cron` is installed, enumerate visible jobs whose name is exactly `batch-result-retrieval` **and** whose command is exactly `SELECT cron_fetch_batch_results();`, then call `cron.unschedule` by numeric job ID; this avoids deleting an unrelated same-name job;
-- remove `cron_fetch_batch_results()`, `import_batch_results_jsonl(UUID, TEXT, TEXT)`, `get_secret_value(TEXT)`, and `get_config_value(TEXT)` if those legacy helpers exist;
+- resolve each legacy helper with `to_regprocedure(...)`, inspect its current `pg_catalog.pg_proc` / language metadata, and remove it only when the signature plus language, volatility, invoker-security shape, and characteristic retired implementation markers still match;
+- if a same-signature function has been replaced or materially changed, the helper-removal block fails closed with a fixed error instead of deleting it. That substituted function requires manual review;
 - never call `http_get`, never construct an `Authorization` header, never read provider credentials, and never create a replacement cron schedule; and
 - preserve historical `gateway_retrieval_logs` data. The cleanup does not drop that table or any lifecycle/request table.
+
+The exact job-removal block and helper-identity block are separate SQL statements. With the documented `psql -v ON_ERROR_STOP=1 -f ...` invocation and normal psql autocommit, the exact legacy job unschedule is committed before a later same-signature helper mismatch raises its fail-closed exception. This ordering prioritizes stopping future unsafe provider calls while refusing destructive function deletion whose identity cannot be proven.
 
 `01_extensions.sql` now omits `CREATE EXTENSION` for both `pg_cron` and `http` on fresh databases. The container still carries their operating-system packages for backward compatibility with existing volumes in this slice. That staged distinction is intentional: removing a library from an image while an upgraded data directory still records the corresponding extension/preload dependency can make recovery harder than first removing the unsafe application authority.
 
@@ -51,7 +56,9 @@ WHERE jobname = 'batch-result-retrieval'
   AND command = 'SELECT cron_fetch_batch_results();';
 ```
 
-The acceptance result is zero rows for that exact name-and-command identity. An unrelated job that merely reuses the same name is outside this cleanup boundary. Also verify the removed functions are absent:
+The acceptance result is zero rows for that exact name-and-command identity. An unrelated job that merely reuses the same name is outside this cleanup boundary.
+
+Also inspect the legacy helper signatures:
 
 ```sql
 SELECT
@@ -61,7 +68,7 @@ SELECT
     to_regprocedure('public.get_config_value(text)') AS config_reader;
 ```
 
-All four values must be `NULL`.
+On an unmodified legacy installation all four values must be `NULL` after successful cleanup. If the cleanup instead refuses a same-signature function because its current definition no longer matches the retired implementation, do **not** bypass the guard or drop it by signature alone. Confirm first that the exact legacy cron job is absent, then perform manual review of the substituted function's ownership, callers, body, dependencies, and intended lifecycle before deciding whether it should remain or be removed.
 
 Unscheduling prevents future starts; it does not retroactively erase a provider call that was already running before remediation began. During incident remediation, inspect `cron.job_run_details` and provider-side request evidence for an in-flight or recently completed run. If a credential might have crossed an unintended boundary, rotate it through the normal secret-management path rather than storing a replacement key in SQL.
 
@@ -79,9 +86,10 @@ Acceptance is falsifiable:
 
 1. repository tests prove the bundled SQL contains no credential-bearing provider HTTP and no `cron.schedule` call;
 2. fresh initialization does not create `pg_cron` or `http`, while required `pgcrypto` and optional `pg_tiktoken` behavior remain intact;
-3. replaying the cleanup on a database with the exact legacy job leaves zero matching name-and-command rows in `cron.job` and removes the four helper functions;
-4. historical retrieval-log data is not dropped; and
-5. ordinary provider operations continue through `BatchAPIClient` / `DurableBatchAPIClient`, not through PostgreSQL HTTP.
+3. replaying the cleanup on a database with the exact legacy job leaves zero matching name-and-command rows in `cron.job`;
+4. unmodified legacy helper definitions are removed, while a same-signature function whose identity no longer matches the retired implementation fails closed and is preserved for manual review;
+5. historical retrieval-log data is not dropped; and
+6. ordinary provider operations continue through `BatchAPIClient` / `DurableBatchAPIClient`, not through PostgreSQL HTTP.
 
 Rollback must not restore the retired SQL network path. If this change exposes a missing operational scheduler, keep provider polling host-driven while designing a replacement against the same validated application boundary. Restoring the prior cron script would knowingly reintroduce the false local/remote identity and weaker secret authority that caused this retirement. Existing volumes keep their installed extension binaries in this stage, so rollback does not require recreating extensions on fresh databases merely to preserve old-volume recovery.
 
