@@ -31,6 +31,7 @@ def test_bundled_sql_unschedules_and_removes_the_legacy_retriever() -> None:
 
     assert "FROM pg_catalog.pg_extension" in sql
     assert "jobname = 'batch-result-retrieval'" in sql
+    assert "command = 'SELECT cron_fetch_batch_results();'" in sql
     assert "cron.unschedule(legacy_job.jobid)" in sql
     for signature in (
         "cron_fetch_batch_results()",
