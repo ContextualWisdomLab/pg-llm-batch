@@ -70,3 +70,36 @@ def test_fitness_and_traceability_do_not_hide_new_gap_owners() -> None:
         assert marker in fitness, marker
     for marker in ("#101", "#98", "#99", "#100", "#102"):
         assert marker in traceability, marker
+
+
+def test_sql_retirement_and_reconciliation_reach_architecture_and_operations() -> None:
+    """Keep the retired network authority and replacement seam explicit end to end."""
+    architecture = _read("ARCHITECTURE.md")
+    threat_model = _read("docs/THREAT_MODEL.md")
+    operability = _read("docs/OPERABILITY.md")
+    adr_index = _read("docs/adr/README.md")
+
+    active_overlay = architecture.split("## 7. Active-PR overlay", 1)[1].split(
+        "## 8. Architecture invariants", 1
+    )[0]
+    for phrase in ("#101", "direct-SQL", "Issue #102", "reconciliation"):
+        assert phrase in active_overlay, phrase
+
+    for phrase in ("pg_cron", "pgsql-http", "#101", "Issue #102"):
+        assert phrase in threat_model, phrase
+
+    for phrase in (
+        "#101",
+        "Issue #102",
+        "direct-SQL",
+        "provider remote batch",
+        "finite",
+        "reconciliation",
+    ):
+        assert phrase in operability, phrase
+
+    feature_decisions = adr_index.split("## Feature decisions carried by active implementation PRs", 1)[1].split(
+        "## ADR content contract", 1
+    )[0]
+    for phrase in ("#101", "direct-SQL", "Issue #102", "reconciliation"):
+        assert phrase in feature_decisions, phrase
