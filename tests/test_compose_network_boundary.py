@@ -87,6 +87,19 @@ def test_standalone_compose_publishes_database_and_health_only_on_loopback() -> 
     _assert_standalone_port_contract(_compose_model())
 
 
+def test_standalone_compose_does_not_override_legacy_health_port_environment() -> None:
+    """The standalone profile must not advertise an inert shell-era health-port knob."""
+    model = _compose_model()
+    services = model.get("services")
+    assert isinstance(services, dict)
+    component = services.get("component")
+    assert isinstance(component, dict)
+    environment = component.get("environment")
+    assert isinstance(environment, dict)
+
+    assert "PG_LLM_BATCH_HEALTH_PORT" not in environment
+
+
 def test_standalone_port_contract_rejects_an_unexpected_published_service() -> None:
     """Adding another host-published service must fail the standalone boundary."""
     model: dict[str, Any] = {
