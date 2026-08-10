@@ -21,15 +21,21 @@ reviewable explicit database target. The same target ambiguity exists for a
 truthiness-only environment check accepts that value and can delegate effective
 database selection to libpq defaults. For the optional Fernet key, an explicit
 empty value can silently inherit an ambient bootstrap key and therefore select a
-different decryption authority than the caller requested. At an operator
-boundary, fallback must not replace explicit input merely because that input is
-false-valued, and every selected required database target must contain
-non-whitespace content.
+different decryption authority than the caller requested. Non-string explicit
+values are a separate authority defect: a bytes DSN can cross the bootstrap
+boundary without the documented string contract, while integers or containers
+can fail later with unrelated Python attribute errors. A non-string explicit
+Fernet value can likewise reach a downstream secret-store constructor even
+though bootstrap authority is defined as text. At an operator boundary,
+fallback must not replace explicit input merely because that input is false-valued,
+and every selected required database target must contain non-whitespace content.
 
 ## Contract
 
-`resolve_dsn()` distinguishes source absence from source value:
+`resolve_dsn()` distinguishes source absence, source type, and source value:
 
+- an **explicit Postgres DSN** must be an exact string; any non-string explicit
+  value fails closed with `ConfigError` **before environment fallback** or libpq;
 - a nonblank explicit DSN wins over the environment and is retained byte-for-byte;
 - an explicitly supplied empty or whitespace-only string fails closed with
   `ConfigError` and does not consult `PG_LLM_BATCH_DSN` or reach libpq;
@@ -42,6 +48,9 @@ non-whitespace content.
 `resolve_secret_key()` applies the same source-precedence rule while retaining
 its optional-value semantics:
 
+- an **explicit Fernet** bootstrap key must be an exact string; any non-string
+  explicit value fails closed with `ConfigError` **before environment fallback**
+  or downstream secret-store construction;
 - a non-empty explicit key wins over the environment;
 - an **explicit empty Fernet** bootstrap key is preserved as the empty string
   and never replaced by an **ambient bootstrap key**;
@@ -74,6 +83,12 @@ DSN** boundary to remain visible in both doctoring and CHANGELOG.
 ambient `PG_LLM_BATCH_SECRET_KEY` present, `resolve_secret_key("")` returns the
 explicit empty string rather than the ambient key.
 
+`tests/test_bootstrap_type_boundary.py` separately proves that booleans,
+integers, bytes, and containers supplied as an explicit Postgres DSN or explicit
+Fernet bootstrap key raise bounded `ConfigError` before environment fallback.
+The environment is deliberately populated in those regressions so a rejected
+non-string value cannot be confused with ordinary omitted-input fallback.
+
 Existing bootstrap tests continue to prove that nonblank explicit values win
 without normalization, omitted arguments use their valid environment values,
 an omitted DSN without usable environment configuration fails, and an omitted
@@ -91,28 +106,33 @@ to whitespace-only explicit values before the production guard recognized
 those inputs. Source head `434583021c04e11739c9a8649c6f5bcccfafde7a`
 then exposed the remaining ambient variant: whitespace-only
 `PG_LLM_BATCH_DSN` values were still accepted when the explicit argument was
-omitted. These are fail-first development evidence, not final acceptance
-evidence.
+omitted. RED `c140ee069eb498a0b98902a8956e046b7eb35039`
+then demonstrated the non-string authority gap: integer/container DSNs raised
+raw attribute errors, bytes DSNs crossed the boundary, and non-string Fernet
+values were accepted. Production head `6319d21648bd9176909b026ca17e69624cd4fbc9`
+closes that type boundary before fallback. These RED results are fail-first
+development evidence, not final acceptance evidence.
 
 The DSN repair consults the environment only when `explicit is None` and rejects
-empty or whitespace-only required values from either source before libpq access.
-Nonblank explicit and environment DSNs are returned unchanged; the guard does
-not trim, rewrite, or otherwise normalize valid connection strings. The
-optional-key repair likewise consults the environment only when `explicit is
-None`, but preserves any explicitly supplied string because an empty optional
-key is a valid statement of absence rather than an invalid database target.
-Final acceptance still requires the full repository CI, security, and review
-evidence on the final unchanged source head under the exact-source evidence
-policy.
+non-string, empty, or whitespace-only required explicit values before libpq
+access. Nonblank explicit and environment DSNs are returned unchanged; the
+guard does not trim, rewrite, or otherwise normalize valid connection strings.
+The optional-key repair likewise consults the environment only when `explicit is
+None`, accepts only explicit strings, and preserves an explicitly supplied empty
+string because an empty optional key is a valid statement of absence rather than
+an invalid database target. Final acceptance still requires the full repository
+CI, security, and review evidence on the final unchanged source head under the
+exact-source evidence policy.
 
 ## Rollback
 
 Rollback is the ordinary Git revert of this bounded bootstrap change. Rolling
-back restores ambiguity between omitted and explicitly empty inputs and permits
+back restores ambiguity between omitted and explicitly empty inputs, permits
 whitespace-only explicit or environment DSNs to reach lower-level connection
-defaults: required DSNs can silently retarget a command or lose a reviewable
-target, and optional Fernet key selection can silently inherit an ambient
-decryption authority. A rollback is appropriate only if a documented
+defaults, and reopens the non-string authority path: required DSNs can silently
+retarget a command, lose a reviewable text target, or fail with unrelated Python
+errors, and optional Fernet key selection can silently inherit an ambient or
+non-string decryption authority. A rollback is appropriate only if a documented
 compatibility contract requires that ambiguity and a safer explicit migration
 is provided.
 
