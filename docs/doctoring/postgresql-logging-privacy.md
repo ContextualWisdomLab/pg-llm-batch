@@ -16,9 +16,11 @@ A further privacy review found that the example still enabled `log_connections` 
 
 A reliability/performance review then found that the generic optional profile enabled both `track_io_timing` and `track_wal_io_timing` unconditionally. PostgreSQL documents that each setting repeatedly queries the operating system for the current time and can impose significant platform-dependent **timing overhead**, and specifically recommends `pg_test_timing` to measure that cost. A generic monitoring example should therefore not silently opt every deployment into timing instrumentation whose cost depends on the target host.
 
+The same statistics review found `track_functions = all`. PostgreSQL's cumulative **statistics collection** has execution cost, and `track_functions` specifically collects call counts and elapsed execution time for procedural-language and SQL functions when enabled. The PostgreSQL default is `none`. Enabling **function statistics** across every deployment therefore creates avoidable instrumentation **overhead** without proving that the resulting data is needed for a concrete operational question.
+
 ## Decision
 
-The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs, makes query-text statistics collection opt-in, avoids connection-event logging unless a deployment has an explicit need, and keeps platform-dependent timing instrumentation opt-in:
+The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs, makes query-text statistics collection opt-in, avoids connection-event logging unless a deployment has an explicit need, and keeps platform-dependent timing and function instrumentation opt-in:
 
 - `log_statement = none`;
 - `log_min_duration_statement = -1` and `log_min_duration_sample = -1`;
@@ -28,12 +30,13 @@ The reviewed baseline keeps ordinary SQL statement text and bind values out of s
 - `log_min_error_statement = PANIC` so ordinary errors do not add failing statement text;
 - `log_error_verbosity = terse` so PostgreSQL omits `DETAIL`, `HINT`, `QUERY`, and `CONTEXT` error fields;
 - `log_connections = off` and `log_disconnections = off` so connection lifecycle events are **opt-in** rather than an unconditional source of client-network records;
-- `pg_stat_statements.track = none`, planning/utility tracking off, and `save = off` so preloading the module does not silently start representative-query retention if the extension is present; and
-- `track_io_timing = off` and `track_wal_io_timing = off` so platform-dependent timing overhead is not imposed until an operator has measured and accepted it.
+- `pg_stat_statements.track = none`, planning/utility tracking off, and `save = off` so preloading the module does not silently start representative-query retention if the extension is present;
+- `track_io_timing = off` and `track_wal_io_timing = off` so platform-dependent timing overhead is not imposed until an operator has measured and accepted it; and
+- `track_functions = none` so function-call timing/count collection remains an **opt-in** diagnostic instead of package-default work.
 
-Checkpoint, lock-wait, temporary-file, autovacuum, function, commit-timestamp, query-ID, table/index, and activity-state telemetry remain available. I/O and WAL timing remain available as an explicit opt-in. This is not a claim that every remaining monitoring surface is content-free or cost-free: CSV client metadata, live activity tracking, and optional timing instrumentation have explicit residual boundaries below.
+Checkpoint, lock-wait, temporary-file, autovacuum, commit-timestamp, query-ID, table/index, and activity-state telemetry remain available. I/O, WAL, and function statistics remain available as explicit opt-ins. This is not a claim that every remaining monitoring surface is content-free or cost-free: CSV client metadata, live activity tracking, and the remaining cumulative statistics have explicit residual boundaries.
 
-This is **selective disclosure**, not blanket masking. The source data remains available to the authorized application/database path. If an embedding organization has a genuine requirement for content-bearing database audit logs, connection audit events, query-level `pg_stat_statements`, or high-resolution I/O timing, it must enable that separately under a purpose-specific authorization, least-privilege access model, retention/deletion schedule where data is persisted, encryption/storage boundary, access audit, legal basis where applicable, performance budget, and incident procedure.
+This is **selective disclosure**, not blanket masking. The source data remains available to the authorized application/database path. If an embedding organization has a genuine requirement for content-bearing database audit logs, connection audit events, query-level `pg_stat_statements`, high-resolution I/O timing, or function-call statistics, it must enable that separately under a purpose-specific authorization, least-privilege access model, retention/deletion schedule where data is persisted, encryption/storage boundary, access audit, legal basis where applicable, performance budget, and incident procedure.
 
 ## CSV log routing and retention boundary
 
@@ -50,6 +53,14 @@ PostgreSQL documents `track_io_timing` and `track_wal_io_timing` as disabled by 
 A deployment that needs block/WAL timing must treat the feature as an **opt-in** performance decision. Measure the target host with PostgreSQL's `pg_test_timing`, evaluate the result under representative workload and concurrency, and enable only the timing classes whose diagnostic value justifies the measured runtime cost. The package does not assume that cloud, VM, bare-metal, or container clock-read costs are interchangeable, and a green functional test is not evidence that the timing overhead is acceptable for a production workload.
 
 Disabling these two timing collectors does not disable ordinary database activity counters, query identifiers, activity-state visibility, checkpoint/lock/autovacuum events, or application-level telemetry. It only avoids imposing optional high-frequency clock reads before a deployment has established a performance budget.
+
+## Function-statistics overhead boundary
+
+PostgreSQL documents that cumulative **statistics collection** adds some execution overhead and that `track_functions` defaults to `none`. Setting it to `all` collects **function statistics** for procedural-language functions and SQL-language functions that PostgreSQL considers trackable, including call counts and execution time. That can be useful for targeted diagnosis, but it is not necessary for every pg-llm-batch deployment.
+
+The generic profile therefore keeps `track_functions = none`. A deployment may **opt-in** to `pl` or `all` only when function-level attribution answers a concrete operational question. Before enabling it, measure representative workload and concurrency with the deployment's normal observability stack active, compare throughput/latency/CPU effects against the same workload with function tracking disabled, and record the accepted performance budget. Functional correctness alone is not evidence that instrumentation overhead is commercially acceptable.
+
+This change does not disable `track_counts`, `track_activities`, query identifiers, checkpoint/lock/autovacuum logging, or application-level OpenTelemetry. If function statistics prove too expensive or are no longer needed, rollback is simply to restore `track_functions = none`; no business data migration is required.
 
 ## Client-network metadata residual boundary
 
@@ -89,13 +100,15 @@ RED source `29bd3c5ff153ae75a503106104b522147b200ce2` added a connection-metadat
 
 RED source `923f1ec87e5296efe96e9e4f1f5438ae99fabe2a` added the timing-overhead contract. CI `31436821943` failed exactly because `track_io_timing` remained `on` (`1 failed, 356 passed, 3 deselected` on Python 3.10); the same test also requires `track_wal_io_timing` to remain opt-in and this doctoring to bind the decision to `pg_test_timing`. Production source `88133a4755fcd7599331958e8ea269cce6dd83a6` turns both timing collectors off in the generic profile. This document closes the documented feasibility/measurement boundary without removing the metrics from deployments that explicitly accept their measured cost.
 
+RED source `64fed077663877d939a86b9641bbb5960ddb3823` added the function-statistics contract. CI `31437980674` failed exactly because `track_functions` remained `all` (`1 failed, 357 passed, 3 deselected` on Python 3.10). Production source `ee555f69ab08a1eb000ed546945e29a7e34312ab` restores PostgreSQL's generic `none` boundary. This document adds the purpose/measurement/rollback contract so an operator can still opt in to function-call statistics after accepting representative-workload overhead rather than receiving it silently.
+
 No predecessor or synthetic-merge result transfers to later heads; final acceptance requires fresh validation of the unchanged final source under current repository governance.
 
 ## Rollback and recovery
 
 If the safer baseline prevents an operator from satisfying a documented, purpose-specific audit requirement, do **not** restore blanket logging in the package default. Instead, maintain a deployment-owned overlay that enables only the necessary event/content classes for the authorized scope, defines access/retention/deletion, and can be disabled independently. If accidental content or unnecessary client-network logging is discovered, stop the relevant logging path, preserve only evidence required by the incident/legal process, rotate or revoke exposed credentials where relevant, and follow the deployment's deletion/backup-expiry procedure for unnecessary copies.
 
-If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. If timing telemetry imposes unacceptable overhead, disable `track_io_timing` and `track_wal_io_timing` and re-establish a measurement baseline before any narrower re-enable. Rollback must not silently restore broad SQL/bind logging, unconditional connection event logging, fixed retention claims, or unmeasured timing instrumentation.
+If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. If timing telemetry imposes unacceptable overhead, disable `track_io_timing` and `track_wal_io_timing` and re-establish a measurement baseline before any narrower re-enable. If function statistics impose unacceptable overhead or no longer have a reviewed diagnostic purpose, restore `track_functions = none`. Rollback must not silently restore broad SQL/bind logging, unconditional connection event logging, fixed retention claims, or unmeasured instrumentation.
 
 ## APA 7 references
 
