@@ -34,6 +34,8 @@ Dependency-defined transport exception class names never enter exported diagnost
 
 Provider-controlled HTTP error bodies are also excluded from exported package diagnostics. Files upload, batch creation, batch status, and output/error file download return only the HTTP status plus the fixed `ProviderHTTPError` category when the provider responds with a non-success status. Batch-cancellation rejection returns the status plus the fixed reason `Batch cancellation rejected by provider`. These paths decide on status before parsing or decoding the provider body, so provider error JSON, free-text bodies, email addresses, credential-like strings, debug fields, and provider-specific error types cannot be copied into `GatewayError.response_data`, cancellation results, exception details, or package logs by those error paths. Successful responses retain the existing bounded UTF-8 and JSON parsing contracts.
 
+Malformed successful provider responses are also treated as confidentiality-sensitive input. If a nominally successful control-plane response contains invalid UTF-8 or invalid JSON, translation to `GatewayError` must not retain provider bytes, decoded provider text, or parser/decoder exceptions through an exception cause or context link. The caller receives only the fixed bounded package diagnostic for the malformed response; provider-controlled content remains unavailable through exported exception links.
+
 The response-status retry decision uses only the HTTP status and bounded `Retry-After` guidance. Provider response bodies do not decide whether a request is replayed. Existing credential, HTTPS, no-redirect, response-size, and post-response-handoff no-replay controls remain unchanged.
 
 ## Operational behavior
@@ -65,6 +67,7 @@ Permanent regression coverage requires that:
 - a dependency-defined `aiohttp.ClientError` subclass is retried under the existing bounded policy but exports and logs only `ClientError`, with no subclass name or message;
 - Files upload, batch creation, batch status, and file-download HTTP errors expose only `ProviderHTTPError` plus status and never provider-controlled error bodies;
 - cancellation rejection exposes only the fixed package reason plus status and never the provider message;
+- malformed successful provider responses cannot retain provider content through an exception cause or context link;
 - public, contributor, changelog, ADR, and doctoring text all state the same fail-closed TLS and provider-error confidentiality boundaries; and
 - the existing project gates continue to prove 100% production statement and branch coverage plus 100% public docstrings.
 
