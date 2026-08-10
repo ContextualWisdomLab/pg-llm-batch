@@ -243,6 +243,10 @@ Make the **PostgreSQL image** dependency graph explicit and reviewable instead o
 
 After ACTIVE-PR #119 settles the privacy-safe PostgreSQL logging content boundary, make standalone/container log routing **container-native** and **storage-bounded** without reintroducing SQL, bind-value, connection-event, or query-stat disclosure. A supported container deployment shall be able to use stdout/stderr plus the container runtime or platform logging path, while any retained PostgreSQL-managed file profile must state its storage and cleanup prerequisites explicitly. File rotation is not business **retention**: retention, deletion, export, legal hold, residency, and external log shipping remain deployment-owned governance. This follow-up must preserve #119's selective-disclosure baseline and prove log retrieval after startup without weakening readiness or database behavior.
 
+### PRD-T31 — Explicit provider-secret encryption policy (Issue #121) — PLANNED
+
+Make **provider-secret encryption** an explicit deployment policy instead of allowing a missing Fernet key to silently select the protected-main Base64-only development path. Base64 remains obfuscation, **not encryption**. A deployment selecting **encryption-required** operation must fail before provider-secret persistence when usable Fernet authority is missing or invalid, detect and safely migrate existing unencrypted rows, and define bounded **key rotation** and recovery without weakening the host-provided credential seam. This remains PLANNED while #85, #87, and #89 own overlapping secret-input, storage/resource, and bootstrap-authority surfaces; its detailed decision is `docs/adr/provider-secret-encryption-policy.md`.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
