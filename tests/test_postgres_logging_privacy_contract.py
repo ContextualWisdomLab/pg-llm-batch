@@ -70,6 +70,22 @@ def test_function_statistics_are_opt_in_for_bounded_monitoring_overhead() -> Non
         assert phrase in doctoring, phrase
 
 
+def test_commit_timestamp_tracking_is_opt_in_for_bounded_transaction_metadata() -> None:
+    """Commit timestamps must not create extra transaction metadata without purpose."""
+    settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    assert settings["track_commit_timestamp"].lower() == "off"
+    for phrase in (
+        "track_commit_timestamp",
+        "pg_commit_ts",
+        "server start",
+        "default is off",
+        "opt-in",
+    ):
+        assert phrase in doctoring, phrase
+
+
 def test_csv_logging_enables_the_required_logging_collector() -> None:
     """A configured CSV destination must enable PostgreSQL's logging collector."""
     settings = _settings()
