@@ -45,15 +45,27 @@ def test_serve_healthz_cli_allows_explicit_container_binding() -> None:
 
 
 def test_component_image_explicitly_requests_container_wide_binding() -> None:
-    """The executable top-level Docker CMD must opt in to all-interface binding."""
+    """The executable top-level Docker CMD must opt in without a shell boundary."""
     lines = (_ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines()
     cmd_lines = [line for line in lines if line.startswith("CMD ")]
 
     assert len(cmd_lines) == 1
     command = json.loads(cmd_lines[0].removeprefix("CMD "))
     assert command == [
-        "sh",
-        "-c",
-        "python -m pg_llm_batch serve-healthz --host 0.0.0.0 "
-        "--port ${PG_LLM_BATCH_HEALTH_PORT}",
+        "python",
+        "-m",
+        "pg_llm_batch",
+        "serve-healthz",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8080",
     ]
+
+
+def test_component_image_does_not_shell_expand_health_port_configuration() -> None:
+    """Container readiness commands must not execute env-controlled shell text."""
+    dockerfile = (_ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "PG_LLM_BATCH_HEALTH_PORT" not in dockerfile
+    assert 'CMD ["curl", "-fsS", "http://localhost:8080/healthz"]' in dockerfile
