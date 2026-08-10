@@ -166,15 +166,26 @@ def _is_loopback_host(hostname: str) -> bool:
 
 def _normalize_gateway_url(value: Any) -> str:
     """Validate and normalize a credential-bearing gateway base URL."""
-    raw = str(value).strip()
+    if not isinstance(value, str):
+        raise GatewayError(
+            "Gateway base_url must be an exact string URL without whitespace, "
+            "controls, or backslashes"
+        )
+    raw = value
     if (
         not raw
+        or raw != raw.strip()
         or "\\" in raw
-        or any(character.isspace() or ord(character) < 32 for character in raw)
+        or any(
+            character.isspace()
+            or ord(character) < 32
+            or ord(character) == 127
+            for character in raw
+        )
     ):
         raise GatewayError(
-            "Gateway base_url must be a valid URL without whitespace, controls, "
-            "or backslashes"
+            "Gateway base_url must be an exact string URL without whitespace, "
+            "controls, or backslashes"
         )
 
     try:
