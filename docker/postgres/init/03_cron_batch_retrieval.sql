@@ -25,6 +25,7 @@ BEGIN
             SELECT jobid
             FROM cron.job
             WHERE jobname = 'batch-result-retrieval'
+              AND command = 'SELECT cron_fetch_batch_results();'
         LOOP
             PERFORM cron.unschedule(legacy_job.jobid);
         END LOOP;
