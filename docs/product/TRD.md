@@ -173,6 +173,10 @@ Status construction and mutation are best-effort telemetry. An unavailable optio
 
 That residual live-query surface is privileged operational data, not a claim of content-free telemetry. Deployments must restrict superuser/`pg_read_all_stats` access and audit privileged use; deployments that opt out with `track_activities = off` accept the corresponding operability loss. Content-bearing server logs or `pg_stat_statements` may be enabled only under an explicit purpose, authorization, retention/deletion, encryption/storage, access-audit, and incident contract. These controls are selective disclosure and do not by themselves prove CSAP, SOC 2, or other certification.
 
+### TRD-O6 — Container-native storage-bounded PostgreSQL logging (Issue #120) — PLANNED
+
+After #119 establishes the privacy-safe event/content baseline, the standalone/container logging path must become **container-native** and **storage-bounded** without regressing that boundary. A supported deployment shall be able to route PostgreSQL operational records through stdout/stderr and the container runtime/platform logging path without requiring unmanaged package-owned file accumulation. If a PostgreSQL-managed file destination remains supported, its storage budget, cleanup prerequisite, rotation behavior, and rollback must be explicit; rotation alone is not business **retention**. Kubernetes/Compose guidance may delegate retention, encryption, access control, export, and deletion to host logging infrastructure, but must preserve #119's SQL/bind/query-stat and client-network disclosure constraints and verify that logs remain retrievable after startup without changing readiness/database behavior.
+
 ## 8. Readiness and deployment requirements
 
 ### TRD-R1 — Readiness decision
@@ -268,6 +272,10 @@ Issue #109 is a PLANNED release-integrity follow-up. Package metadata, the impor
 ### TRD-PKG6 — Typed package marker
 
 Issue #112 is PLANNED. The build backend and package configuration must include an exact `py.typed` marker in wheel and sdist outputs and in the installed distribution, with clean-archive reproducibility checks. This is package metadata/data rather than a runtime dependency and waits for #57/#53 package ownership to settle before implementation.
+
+### TRD-PKG7 — Reproducible PostgreSQL image inputs (Issue #118) — PLANNED
+
+The **PostgreSQL image** build must make Debian package source/version identity, build-only toolchain inputs, the exact `pg_tiktoken` commit and patch, and the resulting Rust dependency graph deterministic and reviewable. Ordinary release builds must not perform an unconstrained distribution upgrade or run an unreviewed live-registry dependency resolution in place of a repository-owned immutable descriptor. A reviewed lock or equivalent evidence must support fail-closed locked fetch/install, and SBOM/provenance must bind the declared PostgreSQL image inputs to the resulting image. This remains distinct from component-image Issue #100 and must wait for the active #94→#97 Dockerfile owner plus #101/#103 migration/package boundaries rather than race them.
 
 ## 12. Documentation requirements
 
