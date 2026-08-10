@@ -207,6 +207,22 @@ Make `BatchAPIClient` **HTTP session ownership** deterministic for callers that 
 
 Move package-provided synchronous PostgreSQL **credential resolution concurrency** off the asyncio event-loop thread, or introduce an explicit bounded async resolver contract with a compatibility adapter. Resolution needs its own finite time/resource and cancellation policy, bounded worker/connection fan-out, deterministic connection ownership, and confidentiality-preserving errors. Implementation waits for #71 and adjacent #87/#86/#89 configuration/resource surfaces to settle and must not solve blocking by indefinitely caching plaintext secrets.
 
+### PRD-T22 — Typed-package marker (Issue #112) — PLANNED
+
+Publish a standards-conformant `py.typed` marker with the built distribution so downstream type checkers can treat the package's inline annotations as supported package data. The marker, wheel/sdist contents, installed distribution, and package-data configuration must remain reproducible and machine-checked. Implementation waits for #57/#53 package-surface ownership to settle and must not modify their active metadata in parallel.
+
+### PRD-T23 — Declared Python compatibility evidence (Issue #113) — PLANNED
+
+Reconcile `Requires-Python >=3.10` with evidence across every claimed supported minor, or narrow the declared compatibility range to exactly what the release process proves. The target must make the declared `Requires-Python` contract, CI matrix, built metadata, and release acceptance agree rather than silently skipping unsupported minors; implementation composes with #88 exact-source CI and #57 release/package evidence.
+
+### PRD-T24 — Deterministic uv toolchain (#114) — ACTIVE-PR
+
+Pin the repository `uv toolchain` version independently of the immutable setup action so dependency/environment/package operations do not drift as `latest` changes. ACTIVE-PR #114 owns the root `uv.toml` exact requirement and its reproducibility/rollback contract; it does not change runtime package dependencies or package version.
+
+### PRD-T25 — Locked CI quality tools (Issue #115) — PLANNED
+
+Move CI-only Python `quality tools` such as coverage/docstring tooling into reviewed dependency evidence instead of resolving ad hoc tool versions outside the project lock. The final design must keep the quality gate independently auditable, bind resolved tools into SBOM/provenance or equivalent governed evidence, preserve Python 3.14, and wait for #114/#88/#57 ownership boundaries before changing shared package/CI surfaces.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
