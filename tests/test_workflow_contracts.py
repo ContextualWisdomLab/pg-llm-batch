@@ -38,6 +38,8 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     assert "uv build --no-sources" in workflow
     assert "docker build --tag pg-llm-batch:ci ." in workflow
     assert "docker build --tag pg-llm-batch-postgres:ci docker/postgres" in workflow
+    assert "Run legacy SQL cleanup integration smoke" in workflow
+    assert "tests/smoke_legacy_sql_cleanup.sh" in workflow
     _assert_external_actions_are_pinned(workflow)
 
 
