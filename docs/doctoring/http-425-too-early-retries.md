@@ -20,6 +20,8 @@ The default retryable GET status set is exactly `{408, 425, 429, 502, 503, 504}`
 
 For those statuses, retry behavior remains bounded by `max_retry_attempts` and `retry_max_delay_seconds`. A valid `Retry-After` value within the configured maximum is honored. Otherwise the existing equal-jitter exponential fallback is used. The current response context is exited before the sleep and next request, so a retry does not retain the prior response resource.
 
+`BatchAPIClient.wait_for_batch()` treats its caller-supplied scheduling controls as resource-authority inputs. Both `poll_interval_seconds` and `timeout_seconds` must be finite positive numeric values; booleans, strings, `None`, NaN, infinities, zero, and negative values fail with `ValidationError` **before credential resolution or provider I/O**. The validated values alone determine the monotonic deadline and bounded sleep interval, so malformed caller input cannot create an unbounded sleep, a non-finite deadline, or an unrelated transport/type failure.
+
 TLS handshake and certificate failures are never retried automatically. An `aiohttp.ClientSSLError`, including a connector TLS handshake or certificate-verification error, fails after the first request-acquisition attempt and is translated to the existing bounded, body-free transport diagnostic. Certificate fingerprint mismatches are never retried automatically. An `aiohttp.ServerFingerprintMismatch` fails after the first request-acquisition attempt through the same bounded diagnostic path. Request-acquisition timeouts and other non-TLS `aiohttp.ClientError` failures retain the bounded GET retry path. This classification does not change response-status retries or create any POST replay path.
 
 Provider uploads, batch creation, and batch cancellation are POST operations and remain single-attempt. HTTP 500 also remains single-attempt by default. Any future provider-specific 500 retry policy, or any proposal to retry TLS trust failures, requires a separate explicit contract, deterministic tests, and security/reliability review.
@@ -52,7 +54,7 @@ For a non-success provider response, operators receive the status code and the f
 
 No persistent state, schema, migration, background job, credential, or trust-store change is involved. Operational recovery for TLS failures is to correct the endpoint certificate, trust chain, hostname, configured fingerprint, proxy/service-mesh TLS policy, or other deployment cause and then issue a new caller-controlled request. The client does not retry around the failure automatically.
 
-Rollback consists of removing 425 from the closed retry set and reverting the associated retry-classification tests and documentation. In-flight requests are not migrated or reconstructed. Reintroducing automatic TLS retries, dependency-defined class names in diagnostics, or raw provider error content in package-level diagnostics is not a routine rollback step; any of those changes requires a separately reviewed security contract.
+Rollback consists of removing 425 from the closed retry set and reverting the associated retry-classification tests and documentation. In-flight requests are not migrated or reconstructed. Reintroducing automatic TLS retries, dependency-defined class names in diagnostics, raw provider error content in package-level diagnostics, or non-finite/implicitly coerced `wait_for_batch()` scheduling controls is not a routine rollback step; any of those changes requires a separately reviewed reliability/security contract.
 
 ## Verification
 
@@ -61,6 +63,7 @@ Permanent regression coverage requires that:
 - 425 on GET releases the first response and retries through the existing bounded delay path;
 - the exact default status set is `{408, 425, 429, 502, 503, 504}`;
 - HTTP 500 remains outside that set and is single-attempt;
+- `poll_interval_seconds` and `timeout_seconds` accept only finite positive numeric durations and reject invalid values before credential/provider access;
 - TLS connector handshake and certificate-verification failures each perform exactly one GET and zero retry sleeps;
 - certificate fingerprint mismatch performs exactly one GET and zero retry sleeps while exporting no peer hostname or fingerprint bytes;
 - request-acquisition timeouts retain one bounded retry under the configured attempt policy;
