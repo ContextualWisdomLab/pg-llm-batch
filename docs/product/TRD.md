@@ -85,6 +85,14 @@ A valid bounded `Retry-After` delta-seconds or HTTP-date may guide a GET retry. 
 
 `ACTIVE-PR` #71 also owns the current provider-error confidentiality target. For governed Files/Batches operations, a non-success HTTP status is classified from the status before provider-controlled body parsing, so an error body is not required to decide the bounded exported error category. A malformed successful UTF-8 or JSON response must fail with fixed bounded diagnostics and must not retain provider bytes/text or decoder/parser exceptions through exported exception `cause` or `context`. These status-first and malformed-success protections remain `ACTIVE-PR` until protected integration and fresh validation.
 
+### TRD-H9 — Retire the legacy direct-SQL provider client
+
+`ACTIVE-PR` #101 decommissions the bundled `pg_cron` + `pgsql-http` provider retriever rather than attempting to secure a second network/credential implementation inside PostgreSQL. The legacy path can decode only the weaker base64-obfuscated secret representation and treats a **local batch UUID** as if it were a **provider remote batch** identifier even though protected main has no reviewed local-to-remote identity binding for that operation. The cleanup must unschedule only the exact legacy job identity, remove its helper functions, retain historical retrieval logs, and never create credential-bearing database HTTP. Provider authority remains `BatchAPIClient` / `DurableBatchAPIClient`. This is ACTIVE-PR until #101 integrates and receives fresh protected-main acceptance.
+
+### TRD-H10 — Strict provider progress/control values
+
+Issue #98 is a PLANNED follow-up to the overlapping #71 provider-control surface. Successful provider JSON must not allow malformed `request_counts`, boolean/negative/string counters, `NaN`, `Infinity`, or other non-finite control values to escape as raw runtime exceptions or non-standard structured output. The accepted shape/counter invariants must fail closed through bounded package diagnostics while preserving the existing control-response size, strict UTF-8, retry/replay, and provider-error confidentiality contracts.
+
 ## 5. Configuration and credential requirements
 
 ### TRD-C1 — Bootstrap transport
@@ -149,6 +157,10 @@ The bundled Compose file provides PostgreSQL and component services and uses boo
 
 Embedding services may import the package directly and own ingress, service identity, DSN acquisition, tenant authorization, external secret management, telemetry resource/export configuration, and higher-level transaction boundaries.
 
+### TRD-R4 — Deployment-specific standalone database credential
+
+Issue #99 is PLANNED after #91 settles the authoritative Compose network surface. A fresh standalone deployment must not rely on the repository-wide literal PostgreSQL password as an authentication default. PostgreSQL and the component must share one deployment-specific operator-provided or generated bootstrap credential without placing that credential in committed files, process argv, shell-interpreted text, logs, or evidence; arbitrary supported secret characters, wrong-secret rejection, restart persistence, and recovery must be tested.
+
 ## 9. Reliability and recovery requirements
 
 ### TRD-REL1 — Idempotent local preparation
@@ -166,6 +178,10 @@ Durable lifecycle errors shall retain enough bounded phase/operation/order/valid
 ### TRD-REL4 — Audit target
 
 `ACTIVE-PR` #94/#96/#97 defines the current linearized append-only acceptance evidence, stable pagination, and snapshot-manifest chain. #79/#83/#84 are superseded implementation lines and their checks/reviews do not transfer. Audit evidence does not make a PostgreSQL owner/superuser cryptographically unable to modify data; that residual boundary must remain explicit.
+
+### TRD-REL5 — Automatic provider reconciliation after SQL retirement
+
+Issue #102 is the PLANNED **automatic provider reconciliation** replacement for the unsafe retired SQL polling behavior. It must operate on validated durable endpoint + provider remote identities, call the existing Python provider/credential boundary, impose a finite per-run work budget, and define single-flight or equivalent concurrency plus crash/restart reconciliation semantics. External scheduling authority must remain separate from provider credentials. The worker must not imply **distributed exactly-once** delivery; cross-system side effects still require explicit host idempotency/outbox/reconciliation where the package contract does not own them.
 
 ## 10. CI, evidence, and review requirements
 
@@ -198,6 +214,10 @@ Protected main builds `pg-llm-batch` version `0.1.0`, Python >=3.10, Apache-2.0,
 ### TRD-PKG3 — Protected integration only
 
 Version bump, release creation, publication, and provenance acceptance shall use an exact integrated protected head after all required checks, independent review, security, packaging, migration/recovery, and operational gates are satisfied.
+
+### TRD-PKG4 — Reproducible component-image OS dependency set
+
+Issue #100 is PLANNED after #70 settles the authoritative Dockerfile command/healthcheck surface. Ordinary builds must not perform an unconstrained distribution upgrade or resolve unversioned operating-system packages from mutable repository state. The selected snapshot/version mechanism, package-source identity, resolved package set, controlled refresh procedure, rollback/emergency update path, and SBOM/provenance binding must be machine-checkable on the final source.
 
 ## 12. Documentation requirements
 
