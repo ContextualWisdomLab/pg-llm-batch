@@ -40,6 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution or provider I/O, rejecting booleans, strings, `None`, NaN,
   infinities, zero, and negative values before they can create invalid deadlines,
   sleeps, or unrelated transport/type failures.
+- Batch status responses now fail closed with `InvalidBatchStatusPayload` when
+  the provider does not return a **non-empty status string**, when
+  `request_counts` is not an object, when `total`, `completed`, or `failed` is
+  not a **non-negative integer**, or when `completed + failed` exceeds `total`;
+  malformed provider values are not copied into exported diagnostics.
 - Provider HTTP error responses no longer export provider-controlled JSON,
   free-text bodies, debug fields, or cancellation messages through package
   diagnostics. Files upload, batch creation/status, and file download expose
