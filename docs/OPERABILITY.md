@@ -26,7 +26,7 @@ Optional CWL integrations remain external dependencies. Failure of a sibling ser
 - provider reachability, which is not implied by database health;
 - GitHub CI/review health, which is development-control evidence rather than application runtime readiness.
 
-ACTIVE-PR #70 hardens public readiness disclosure, bounded request handling, statement/read timeouts, concurrency, listener defaults, and listener-input validation. Its current listener contract rejects host values with leading/trailing or embedded whitespace, ASCII C0 control characters, or DEL; it accepts only a non-empty exact string rather than trimming/stringifying caller input. Port must be a non-boolean integer in `1..65535`, and validation occurs before socket creation. ACTIVE-PR #91 separately constrains the complete standalone host-published service allow-list to loopback PostgreSQL TCP 5432 and component TCP 8080, each exactly once; an additional host-published service or port is outside that target contract. Until protected integration, neither overlay is a protected-main guarantee.
+ACTIVE-PR #70 hardens public readiness disclosure, bounded request handling, statement/read timeouts, concurrency, listener defaults, and listener-input validation. Its current listener contract rejects host values with leading/trailing or embedded whitespace, ASCII C0 control characters, or DEL; it accepts only a non-empty exact string rather than trimming/stringifying caller input. Port must be a non-boolean integer in `1..65535`, and validation occurs before socket creation. The same ACTIVE-PR removes the shell from the bundled readiness command path: server `CMD` and healthcheck use Docker **exec-form** JSON at the fixed image default port `8080`. A deployment that needs another port must make an **explicit** coordinated command and healthcheck **override**; it must not rely on shell expansion of environment-controlled health-port text. ACTIVE-PR #91 separately constrains the complete standalone host-published service allow-list to loopback PostgreSQL TCP 5432 and component TCP 8080, each exactly once; an additional host-published service or port is outside that target contract. Until protected integration, neither overlay is a protected-main guarantee.
 
 ## Startup checks
 
@@ -61,6 +61,7 @@ Protected main supports bounded provider-file download. ACTIVE-PR #58/#59/#60 ad
 | --- | --- |
 | Invalid configuration/identifier | Fail closed; correct configuration; do not retry blindly |
 | Invalid readiness listener host/port (ACTIVE-PR #70) | Reject before socket creation; do not trim/stringify an invalid host or coerce booleans/strings into a port |
+| Readiness container command drift (ACTIVE-PR #70) | Preserve exec-form server and healthcheck execution at fixed default port 8080; custom ports require explicit command + healthcheck override, never a shell-expanded environment shortcut |
 | Unexpected Compose host publication (ACTIVE-PR #91) | Reject any published service/port outside the loopback 5432/8080 allow-list; do not widen host exposure as a compatibility fallback |
 | PostgreSQL unavailable | Stop dependent operation; restore DB connectivity; verify transaction/migration state before retry |
 | Provider transient GET acquisition failure | Allow only the bounded reviewed retry policy; respect Retry-After within configured limits |
