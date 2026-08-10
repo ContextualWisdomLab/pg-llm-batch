@@ -68,3 +68,19 @@ def test_configured_resource_ceiling_requires_exact_positive_integer(
             "postgresql://example",
             config=_Config(category, key, invalid_value),
         )
+
+
+def test_huge_exact_batch_limit_uses_integer_buffer_arithmetic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An exact positive integer ceiling must not overflow through float math."""
+    monkeypatch.setattr(token_counter, "psycopg", None)
+    huge_limit = 10**1_000
+
+    counter = token_counter.TokenCounter(
+        "postgresql://example",
+        config=_Config("token_limits", "per_batch", huge_limit),
+    )
+
+    assert counter.token_limit == huge_limit
+    assert counter.effective_limit == huge_limit * 95 // 100
