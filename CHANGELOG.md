@@ -49,7 +49,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   require an **exact positive integer** **before PostgreSQL** extension/session
   acquisition; booleans, zero, negative integers, floats, strings, and
   containers fail with bounded `ValidationError` instead of implicit coercion
-  or unrelated arithmetic errors.
+  or unrelated arithmetic errors. Buffered `per_batch` limits now use integer
+  arithmetic end-to-end rather than float conversion, avoiding precision loss
+  and overflow for very large exact integer ceilings.
 - `BatchAccumulator.max_records` and `BatchAccumulator.max_bytes` now require an
   **exact positive integer** after explicit/configured selection. **Explicit
   zero** no longer behaves like omission and cannot silently select a larger
