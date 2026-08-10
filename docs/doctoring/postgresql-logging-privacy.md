@@ -18,9 +18,11 @@ A reliability/performance review then found that the generic optional profile en
 
 The same statistics review found `track_functions = all`. PostgreSQL's cumulative **statistics collection** has execution cost, and `track_functions` specifically collects call counts and elapsed execution time for procedural-language and SQL functions when enabled. The PostgreSQL default is `none`. Enabling **function statistics** across every deployment therefore creates avoidable instrumentation **overhead** without proving that the resulting data is needed for a concrete operational question.
 
+A further transaction-metadata review found `track_commit_timestamp = on`. PostgreSQL documents this as a server-start option whose **default is off**, and its transaction-processing documentation states that enabling it records additional information in the `pg_commit_ts` directory for committed transactions. Commit-time metadata can be useful for specific replication/conflict or forensic questions, but collecting an additional persistent transaction record for every deployment without a defined consumer is not a neutral monitoring default.
+
 ## Decision
 
-The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs, makes query-text statistics collection opt-in, avoids connection-event logging unless a deployment has an explicit need, and keeps platform-dependent timing and function instrumentation opt-in:
+The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs, makes query-text statistics collection opt-in, avoids connection-event logging unless a deployment has an explicit need, and keeps platform-dependent timing, function, and commit-timestamp instrumentation opt-in:
 
 - `log_statement = none`;
 - `log_min_duration_statement = -1` and `log_min_duration_sample = -1`;
@@ -31,12 +33,13 @@ The reviewed baseline keeps ordinary SQL statement text and bind values out of s
 - `log_error_verbosity = terse` so PostgreSQL omits `DETAIL`, `HINT`, `QUERY`, and `CONTEXT` error fields;
 - `log_connections = off` and `log_disconnections = off` so connection lifecycle events are **opt-in** rather than an unconditional source of client-network records;
 - `pg_stat_statements.track = none`, planning/utility tracking off, and `save = off` so preloading the module does not silently start representative-query retention if the extension is present;
-- `track_io_timing = off` and `track_wal_io_timing = off` so platform-dependent timing overhead is not imposed until an operator has measured and accepted it; and
-- `track_functions = none` so function-call timing/count collection remains an **opt-in** diagnostic instead of package-default work.
+- `track_io_timing = off` and `track_wal_io_timing = off` so platform-dependent timing overhead is not imposed until an operator has measured and accepted it;
+- `track_functions = none` so function-call timing/count collection remains an **opt-in** diagnostic instead of package-default work; and
+- `track_commit_timestamp = off` so additional per-transaction commit metadata is not written without a concrete purpose.
 
-Checkpoint, lock-wait, temporary-file, autovacuum, commit-timestamp, query-ID, table/index, and activity-state telemetry remain available. I/O, WAL, and function statistics remain available as explicit opt-ins. This is not a claim that every remaining monitoring surface is content-free or cost-free: CSV client metadata, live activity tracking, and the remaining cumulative statistics have explicit residual boundaries.
+Checkpoint, lock-wait, temporary-file, autovacuum, query-ID, table/index, and activity-state telemetry remain available. I/O, WAL, function, and commit-timestamp evidence remain available as explicit opt-ins. This is not a claim that every remaining monitoring surface is content-free or cost-free: CSV client metadata, live activity tracking, and the remaining cumulative statistics have explicit residual boundaries.
 
-This is **selective disclosure**, not blanket masking. The source data remains available to the authorized application/database path. If an embedding organization has a genuine requirement for content-bearing database audit logs, connection audit events, query-level `pg_stat_statements`, high-resolution I/O timing, or function-call statistics, it must enable that separately under a purpose-specific authorization, least-privilege access model, retention/deletion schedule where data is persisted, encryption/storage boundary, access audit, legal basis where applicable, performance budget, and incident procedure.
+This is **selective disclosure**, not blanket masking. The source data remains available to the authorized application/database path. If an embedding organization has a genuine requirement for content-bearing database audit logs, connection audit events, query-level `pg_stat_statements`, high-resolution I/O timing, function-call statistics, or commit timestamps, it must enable that separately under a purpose-specific authorization, least-privilege access model, retention/deletion schedule where data is persisted, encryption/storage boundary, access audit, legal basis where applicable, performance/storage budget, and incident procedure.
 
 ## CSV log routing and retention boundary
 
@@ -61,6 +64,14 @@ PostgreSQL documents that cumulative **statistics collection** adds some executi
 The generic profile therefore keeps `track_functions = none`. A deployment may **opt-in** to `pl` or `all` only when function-level attribution answers a concrete operational question. Before enabling it, measure representative workload and concurrency with the deployment's normal observability stack active, compare throughput/latency/CPU effects against the same workload with function tracking disabled, and record the accepted performance budget. Functional correctness alone is not evidence that instrumentation overhead is commercially acceptable.
 
 This change does not disable `track_counts`, `track_activities`, query identifiers, checkpoint/lock/autovacuum logging, or application-level OpenTelemetry. If function statistics prove too expensive or are no longer needed, rollback is simply to restore `track_functions = none`; no business data migration is required.
+
+## Commit-timestamp metadata boundary
+
+PostgreSQL documents `track_commit_timestamp` as a boolean **server start** parameter whose **default is off**. When it is enabled, PostgreSQL records commit times and stores additional committed-transaction information in the `pg_commit_ts` directory. Those records support APIs such as `pg_xact_commit_timestamp()` and may be useful for specific replication-conflict or forensic workflows, but they are not required by pg-llm-batch's ordinary queue, lifecycle, readiness, or provider operations.
+
+The generic profile therefore keeps `track_commit_timestamp = off`. A deployment may **opt-in** only when it has a concrete consumer for commit-time evidence and has accepted the extra transaction-metadata storage/write path plus the server-start change boundary. The decision should state which operator or replication procedure consumes the data, who may access it, and how the deployment handles restart/rollback. Enabling the setting is not a substitute for application audit events, durable checkpoint evidence, or release provenance.
+
+Turning the option off again is a server-start configuration change; it does not erase or rewrite pg-llm-batch business tables. PostgreSQL also documents that commit timestamp information is eventually removed during vacuum, so this facility must not be treated as a package-owned durable audit-retention mechanism.
 
 ## Client-network metadata residual boundary
 
@@ -102,13 +113,15 @@ RED source `923f1ec87e5296efe96e9e4f1f5438ae99fabe2a` added the timing-overhead 
 
 RED source `64fed077663877d939a86b9641bbb5960ddb3823` added the function-statistics contract. CI `31437980674` failed exactly because `track_functions` remained `all` (`1 failed, 357 passed, 3 deselected` on Python 3.10). Production source `ee555f69ab08a1eb000ed546945e29a7e34312ab` restores PostgreSQL's generic `none` boundary. This document adds the purpose/measurement/rollback contract so an operator can still opt in to function-call statistics after accepting representative-workload overhead rather than receiving it silently.
 
+RED source `755487e1830fb7defc64626b3f5d6b301c1aa2f1` adds the commit-timestamp contract before the configuration repair. At that source, the new regression is deterministically RED because the optional profile still sets `track_commit_timestamp = on`. Production source `54476a262b354a88065b0c30d9188e0002b2846c` restores PostgreSQL's documented default-off boundary. This doctoring closes the explicit purpose, `pg_commit_ts`, server-start, rollback, and non-audit-retention semantics without removing commit timestamps from deployments that deliberately require them.
+
 No predecessor or synthetic-merge result transfers to later heads; final acceptance requires fresh validation of the unchanged final source under current repository governance.
 
 ## Rollback and recovery
 
 If the safer baseline prevents an operator from satisfying a documented, purpose-specific audit requirement, do **not** restore blanket logging in the package default. Instead, maintain a deployment-owned overlay that enables only the necessary event/content classes for the authorized scope, defines access/retention/deletion, and can be disabled independently. If accidental content or unnecessary client-network logging is discovered, stop the relevant logging path, preserve only evidence required by the incident/legal process, rotate or revoke exposed credentials where relevant, and follow the deployment's deletion/backup-expiry procedure for unnecessary copies.
 
-If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. If timing telemetry imposes unacceptable overhead, disable `track_io_timing` and `track_wal_io_timing` and re-establish a measurement baseline before any narrower re-enable. If function statistics impose unacceptable overhead or no longer have a reviewed diagnostic purpose, restore `track_functions = none`. Rollback must not silently restore broad SQL/bind logging, unconditional connection event logging, fixed retention claims, or unmeasured instrumentation.
+If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. If timing telemetry imposes unacceptable overhead, disable `track_io_timing` and `track_wal_io_timing` and re-establish a measurement baseline before any narrower re-enable. If function statistics impose unacceptable overhead or no longer have a reviewed diagnostic purpose, restore `track_functions = none`. If commit timestamps are no longer needed, restore `track_commit_timestamp = off` and restart under the deployment's change procedure. Rollback must not silently restore broad SQL/bind logging, unconditional connection event logging, fixed retention claims, or unmeasured/unneeded instrumentation.
 
 ## APA 7 references
 
@@ -119,5 +132,9 @@ PostgreSQL Global Development Group. (2026). *PostgreSQL 16 documentation: Error
 PostgreSQL Global Development Group. (2026). *PostgreSQL 16 documentation: Run-time statistics*. https://www.postgresql.org/docs/16/runtime-config-statistics.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 16 documentation: The cumulative statistics system*. https://www.postgresql.org/docs/16/monitoring-stats.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 16 documentation: Replication*. https://www.postgresql.org/docs/16/runtime-config-replication.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 16 documentation: Transactions and identifiers*. https://www.postgresql.org/docs/16/transaction-id.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 16 documentation: pg_stat_statements—Track statistics of SQL planning and execution*. https://www.postgresql.org/docs/16/pgstatstatements.html
