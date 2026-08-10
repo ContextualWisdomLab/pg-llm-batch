@@ -15,6 +15,13 @@ argument values. A legacy invocation can therefore disclose the same credential
 through captured stderr unless unknown values are redacted before the parser
 terminates.
 
+A second framing boundary is the meaning of “one logical line.” Treating only
+LF and CR as line separators is incomplete: terminal and text protocols also use
+vertical tab, form feed, ASCII file/group/record separators, Unicode Next Line,
+Unicode Line Separator, and Unicode Paragraph Separator. Accepting any of those
+inside a secret would let a value cross the one-line contract under one parser
+while being split into multiple logical records by another downstream tool.
+
 ## Contract
 
 The command accepts only the secret key in process arguments:
@@ -33,14 +40,23 @@ The value is acquired separately:
 - when standard input is non-interactive, exactly one bounded logical line is
   read from standard input so an existing secret-management process can pipe a
   value without placing it in the `pg_llm_batch` process argument vector;
-- one terminal LF or CRLF is removed from non-interactive input;
-- empty, multiline, carriage-return-containing, and values longer than 65,536
-  characters fail closed before `SecretStore` is constructed or written;
+- exactly one **terminal LF/CRLF** framing sequence may be removed by the
+  non-interactive reader;
+- the resulting value must contain none of LF, CR, **vertical tab**, **form
+  feed**, ASCII file/group/record separators, Unicode **Next Line** (U+0085),
+  **U+2028** Line Separator, or **U+2029** Paragraph Separator;
+- empty values and values longer than 65,536 characters fail closed before
+  `SecretStore` is constructed or written;
 - rejected unrecognized argv values are replaced with a fixed `<redacted>`
   placeholder before `argparse` emits its standard error diagnostic, while
   non-value parser diagnostics retain their ordinary behavior; and
 - errors, success output, captured test output, and test/runtime logs never
   include a supplied runtime secret value.
+
+Only terminal LF/CRLF is normalization performed by the stdin reader. Other
+logical separators remain part of the candidate value until the validator
+rejects them, so a caller cannot smuggle an alternate line boundary by relying
+on normalization differences.
 
 The non-interactive path intentionally does not define or require a particular
 external secret manager. Deployment owners may connect their existing
@@ -56,6 +72,14 @@ aborts before an echoed fallback can read plaintext, piped input is bounded and
 single-line, common terminal line endings are normalized, and unsafe shapes fail
 closed. `tests/test_bootstrap_cli.py` keeps the existing CLI routing test while
 providing its fixture value through stdin.
+
+`tests/test_cli_secret_unicode_line_boundaries.py` expands the one-line
+regression to vertical tab, form feed, ASCII file/group/record separators,
+Unicode Next Line, U+2028, and U+2029, both embedded and trailing. It also
+requires the rejected runtime value to stay out of the exported `ConfigError`.
+`tests/test_cli_secret_unicode_line_documentation.py` keeps those separator names
+and the terminal LF/CRLF-only normalization contract in both this doctoring
+record and CHANGELOG.
 
 The development sequence is intentionally test-first. PR CI run `31298176124`
 was triggered from RED source head `e8b256992b34a8651ab5a2f0cef350d5fbde4b75`
@@ -88,6 +112,15 @@ observed Python 3.12 job). Production head
 `unrecognized arguments:` suffix with a fixed placeholder. CI run
 `31301227713`, Security Scan `31301227710`, and SAST Semgrep `31301227739` all
 completed successfully on that source head.
+
+The logical-line-separator RED at `9cca9f1b5a4096da3148d02d68845204ee0a64dc`
+failed all sixteen embedded/trailing alternate-separator regressions because the
+old validator rejected only LF and CR. Production head
+`bd342cc84d459662c97a5a0f4c9b4b1b271dc005` closes the full separator set.
+Documentation RED `2c961d7a79e2eb6abfd3523cf27358ddfb580bd3`
+then failed only the missing authoritative separator/framing language (`1 failed,
+376 passed, 3 deselected` on the observed Python 3.12 job). These RED results are
+development provenance rather than final acceptance.
 
 These PR-triggered runs remain development evidence under the current
 synthetic-merge checkout workflow; final acceptance still requires the
