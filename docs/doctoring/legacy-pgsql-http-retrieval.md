@@ -51,10 +51,10 @@ The acceptance result is zero rows. Also verify the removed functions are absent
 
 ```sql
 SELECT
-    to_regprocedure('cron_fetch_batch_results()') AS cron_fetch,
-    to_regprocedure('import_batch_results_jsonl(uuid,text,text)') AS importer,
-    to_regprocedure('get_secret_value(text)') AS secret_reader,
-    to_regprocedure('get_config_value(text)') AS config_reader;
+    to_regprocedure('public.cron_fetch_batch_results()') AS cron_fetch,
+    to_regprocedure('public.import_batch_results_jsonl(uuid,text,text)') AS importer,
+    to_regprocedure('public.get_secret_value(text)') AS secret_reader,
+    to_regprocedure('public.get_config_value(text)') AS config_reader;
 ```
 
 All four values must be `NULL`.
