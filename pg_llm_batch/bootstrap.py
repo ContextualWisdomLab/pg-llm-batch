@@ -27,11 +27,14 @@ def resolve_dsn(explicit: Optional[str] = None) -> str:
     """Resolve a nonblank Postgres DSN without overriding explicit operator intent.
 
     A supplied explicit argument (for example ``--dsn``) always owns the
-    database-target decision. Empty or whitespace-only explicit and environment
-    values fail closed; the environment fallback is consulted only when the
-    explicit argument is omitted entirely. Valid DSNs are returned unchanged.
+    database-target decision. It must be an exact string; empty, whitespace-only,
+    or non-string explicit inputs fail closed before environment fallback. The
+    environment is consulted only when the explicit argument is omitted entirely.
+    Valid DSN strings are returned unchanged.
     """
     if explicit is not None:
+        if not isinstance(explicit, str):
+            raise ConfigError("An explicit Postgres DSN must be a string")
         if explicit.strip() == "":
             raise ConfigError(
                 "An explicit Postgres DSN must not be empty or whitespace-only; "
@@ -53,8 +56,12 @@ def resolve_secret_key(explicit: Optional[str] = None) -> Optional[str]:
 
     The environment is consulted only when the caller omits the argument.
     Supplying an empty string explicitly disables the ambient bootstrap key
-    rather than silently selecting a different decryption authority.
+    rather than silently selecting a different decryption authority. Any other
+    explicit value must be a string so invalid caller types fail at the bootstrap
+    authority boundary instead of reaching the secret store.
     """
     if explicit is not None:
+        if not isinstance(explicit, str):
+            raise ConfigError("An explicit Fernet bootstrap key must be a string")
         return explicit
     return os.environ.get(SECRET_KEY_ENV_VAR)
