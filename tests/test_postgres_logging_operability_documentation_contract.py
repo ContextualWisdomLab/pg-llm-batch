@@ -18,11 +18,11 @@ def _normalized(path: Path) -> str:
 
 
 def _issue_entry(text: str, issue_number: int) -> str:
-    """Return the heading-bounded entry that owns a planned issue."""
+    """Return the level-three-heading section that owns a planned issue."""
     match = re.search(
-        rf"### [^#]*\(issue #{issue_number}\)[^#]*?(?=### |\Z)",
+        rf"^### [^\n]*\(issue #{issue_number}\)[^\n]*\n(?P<body>.*?)(?=^### |\Z)",
         text,
-        flags=re.IGNORECASE | re.DOTALL,
+        flags=re.IGNORECASE | re.DOTALL | re.MULTILINE,
     )
     assert match is not None, f"missing Issue #{issue_number} canonical entry"
     return " ".join(match.group(0).lower().split())
