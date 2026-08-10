@@ -58,5 +58,9 @@ def test_legacy_retrieval_doctoring_preserves_upgrade_and_authority_boundaries()
         "llm_remote_batch_jobs",
         "local batch UUID",
         "Fernet",
+        "to_regprocedure('public.cron_fetch_batch_results()')",
+        "to_regprocedure('public.import_batch_results_jsonl(uuid,text,text)')",
+        "to_regprocedure('public.get_secret_value(text)')",
+        "to_regprocedure('public.get_config_value(text)')",
     ):
         assert required in doctoring
