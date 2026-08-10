@@ -30,14 +30,16 @@ ENV PATH="/app/.venv/bin:${PATH}"
 # Run as a non-root user (trivy DS-0002).
 USER appuser
 
-# Bootstrap transport only: DSN + optional Fernet key are injected as env.
-ENV PG_LLM_BATCH_DSN="" \
-    PG_LLM_BATCH_HEALTH_PORT=8080
+# Bootstrap transport only: the DSN is injected as env. The health listener uses
+# the image's fixed exposed port by default; deployments that need another port
+# must override the executable command explicitly rather than shell-expanding env.
+ENV PG_LLM_BATCH_DSN=""
 
 EXPOSE 8080
 
-# Container health command hits the same readiness path /healthz serves.
+# Container health command hits the same readiness path /healthz serves without a
+# shell boundary, so environment text cannot become executable command syntax.
 HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
-    CMD curl -fsS "http://localhost:${PG_LLM_BATCH_HEALTH_PORT}/healthz" || exit 1
+    CMD ["curl", "-fsS", "http://localhost:8080/healthz"]
 
-CMD ["sh", "-c", "python -m pg_llm_batch serve-healthz --host 0.0.0.0 --port ${PG_LLM_BATCH_HEALTH_PORT}"]
+CMD ["python", "-m", "pg_llm_batch", "serve-healthz", "--host", "0.0.0.0", "--port", "8080"]
