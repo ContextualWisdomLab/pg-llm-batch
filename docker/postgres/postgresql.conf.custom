@@ -86,8 +86,12 @@ log_timezone = 'UTC'
 # =============================================================================
 # PERFORMANCE / STATISTICS TRACKING
 # =============================================================================
-track_io_timing = on
-track_wal_io_timing = on
+# PostgreSQL documents that I/O timing repeatedly reads the operating-system
+# clock and can impose significant platform-dependent overhead. Keep both timing
+# collectors off in the general example; deployments that need them should
+# benchmark the target host with pg_test_timing and opt in deliberately.
+track_io_timing = off
+track_wal_io_timing = off
 track_functions = 'all'
 track_commit_timestamp = on
 stats_fetch_consistency = 'cache'
@@ -130,6 +134,8 @@ cron.max_running_jobs = 10
 #   a separately reviewed deployment has a concrete purpose, authorization
 #   model, minimal retention, access audit, encryption boundary, storage budget,
 #   and incident/deletion procedure.
+# - Keep track_io_timing/track_wal_io_timing off unless the deployment has
+#   measured clock-read cost with pg_test_timing and accepts the runtime overhead.
 # - CSV output has a fixed client host:port field on emitted records. Keep
 #   log_connections/log_disconnections off unless connection-audit events have a
 #   reviewed purpose, access boundary, retention policy, and storage budget.
