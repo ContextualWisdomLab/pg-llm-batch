@@ -32,12 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Rejected explicitly empty or whitespace-only bootstrap Postgres DSNs before
-  environment fallback or libpq target selection, rejected a whitespace-only
-  environment DSN before libpq can select ambient connection defaults, and
-  corrected bootstrap secret-key precedence so an explicit empty optional key
-  is never replaced by an ambient `PG_LLM_BATCH_SECRET_KEY`; environment
-  fallback now applies only when the corresponding explicit value is omitted.
+- Rejected any non-string **explicit Postgres DSN** and non-string **explicit
+  Fernet** bootstrap key with bounded `ConfigError` **before environment
+  fallback**; explicitly empty or whitespace-only Postgres DSNs still fail
+  before libpq target selection, a whitespace-only environment DSN cannot select
+  ambient libpq defaults, and an explicit empty optional Fernet key remains
+  empty rather than inheriting `PG_LLM_BATCH_SECRET_KEY`.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
