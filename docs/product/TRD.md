@@ -149,6 +149,12 @@ Package-owned telemetry shall not export prompts, provider bodies, credentials, 
 
 Ordinary telemetry failures and telemetry-originated cancellation must not change provider-call results or replace the application exception. Process-level control-flow exceptions not explicitly classified for isolation must not be silently swallowed.
 
+### TRD-O4 — Operation span failure status overlay
+
+**ACTIVE-PR #106** makes propagated operation failures queryable by setting OpenTelemetry `StatusCode.ERROR` **without a description** while retaining the package's stricter confidentiality boundary: automatic exception recording remains disabled, provider/caller exception messages are not copied into span status, and the existing finite `error.type` vocabulary remains the only package-owned error attribute. The **success status unset** behavior is deliberate and must remain the OpenTelemetry default rather than synthesizing an OK status.
+
+Status construction and mutation are best-effort telemetry. An unavailable optional trace-status API, an ordinary telemetry failure during status construction, or `span.set_status()` failure must not replace the exact provider/application result or exception. This overlay remains ACTIVE-PR until #106 or a reviewed successor reaches protected main and receives fresh validation.
+
 ## 8. Readiness and deployment requirements
 
 ### TRD-R1 — Readiness decision
