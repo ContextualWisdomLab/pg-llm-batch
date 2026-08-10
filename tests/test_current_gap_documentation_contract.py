@@ -136,6 +136,43 @@ def test_new_packaging_and_compatibility_gaps_have_canonical_owners() -> None:
         assert marker in traceability, marker
 
 
+def test_cli_argv_security_and_privacy_gaps_have_canonical_owners() -> None:
+    """Keep prompt-content and credential-bearing DSN argv gaps explicit end to end."""
+    prd = _read("docs/product/PRD.md")
+    trd = _read("docs/product/TRD.md")
+    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
+    traceability = _read("docs/TRACEABILITY.md")
+
+    active_targets = prd.split("## 6. Active product targets", 1)[1].split(
+        "## 7. Non-goals", 1
+    )[0]
+    for phrase in (
+        "Issue #116",
+        "count-tokens",
+        "prompt content",
+        "process argv",
+        "Issue #117",
+        "credential-bearing PostgreSQL DSNs",
+    ):
+        assert phrase in active_targets, phrase
+
+    for phrase in (
+        "Issue #116",
+        "count-tokens",
+        "prompt content",
+        "process argv",
+        "Issue #117",
+        "credential-bearing PostgreSQL DSN",
+        "before libpq",
+    ):
+        assert phrase in trd, phrase
+
+    for marker in ("Issue #116", "Issue #117"):
+        assert marker in fitness, marker
+    for marker in ("#116", "#117"):
+        assert marker in traceability, marker
+
+
 def test_sql_retirement_and_reconciliation_reach_architecture_and_operations() -> None:
     """Keep the retired network authority and replacement seam explicit end to end."""
     architecture = _read("ARCHITECTURE.md")
