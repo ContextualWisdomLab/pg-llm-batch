@@ -39,4 +39,6 @@ def test_health_rejects_invalid_database_targets_before_libpq(
             }
         ],
     }
-    assert str(invalid_dsn) not in report["components"][0]["detail"]
+    rendered_value = str(invalid_dsn)
+    if rendered_value:
+        assert rendered_value not in report["components"][0]["detail"]
