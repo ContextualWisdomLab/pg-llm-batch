@@ -81,6 +81,10 @@ Automatic retries shall not duplicate side-effecting provider operations by defa
 
 A valid bounded `Retry-After` delta-seconds or HTTP-date may guide a GET retry. Invalid guidance falls back to bounded jitter; syntactically valid guidance above the configured maximum shall not create an unbounded sleep.
 
+### TRD-H8 — Provider-error confidentiality overlay
+
+`ACTIVE-PR` #71 also owns the current provider-error confidentiality target. For governed Files/Batches operations, a non-success HTTP status is classified from the status before provider-controlled body parsing, so an error body is not required to decide the bounded exported error category. A malformed successful UTF-8 or JSON response must fail with fixed bounded diagnostics and must not retain provider bytes/text or decoder/parser exceptions through exported exception `cause` or `context`. These status-first and malformed-success protections remain `ACTIVE-PR` until protected integration and fresh validation.
+
 ## 5. Configuration and credential requirements
 
 ### TRD-C1 — Bootstrap transport
@@ -98,6 +102,10 @@ The protected-main design uses environment variables only for bootstrap transpor
 ### TRD-C4 — Typed configuration target
 
 Protected main has database-backed typed defaults but open #86 owns stronger canonical write/collection-shape/mutable-cache behavior. The technical target is deterministic read-after-write/reload semantics without caller mutation of package-owned state.
+
+### TRD-C5 — Stored-secret decoding/decryption overlay
+
+`ACTIVE-PR` #87 owns the current fail-closed stored-secret target. The no-key local/development path must accept only strict Base64 alphabet/padding and strict UTF-8; malformed persisted data must produce a bounded `ConfigError` rather than leaking raw stored content. When Fernet is configured, a wrong Fernet key or invalid encrypted value must also become a bounded `ConfigError` without retaining ciphertext or the underlying cryptography exception through exported exception cause/context. Base64 without a Fernet key remains obfuscation, not encryption. These protections are not protected-main guarantees until #87 or a successor integrates.
 
 ## 6. Tenancy and authorization requirements
 
@@ -131,11 +139,11 @@ Ordinary telemetry failures and telemetry-originated cancellation must not chang
 
 ### TRD-R1 — Readiness decision
 
-Protected main treats database, `pg_tiktoken`, and `com_config` as required readiness components and exposes a CLI health command plus `/healthz`. Current behavior includes component details and a simple HTTP server; #70 owns stronger redaction, concurrency, statement/read timeout, and listener defaults.
+Protected main treats database, `pg_tiktoken`, and `com_config` as required readiness components and exposes a CLI health command plus `/healthz`. Current behavior includes component details and a simple HTTP server. `ACTIVE-PR` #70 owns stronger redaction, bounded concurrency, database statement timeout, request-read timeout, and listener defaults, plus exact listener-input validation before socket creation: host must be an exact non-empty string with no leading/trailing or embedded whitespace and no ASCII C0 control or DEL characters; the accepted host is not trimmed or stringified; port must be a non-boolean integer in `1..65535`.
 
 ### TRD-R2 — Standalone Compose
 
-The bundled Compose file provides PostgreSQL and component services and uses bootstrap DSN transport. Protected main publishes 5432/8080 without an explicit host IP; #91 is the `ACTIVE-PR` security target for loopback-only standalone publication.
+The bundled Compose file provides PostgreSQL and component services and uses bootstrap DSN transport. Protected main publishes 5432/8080 without an explicit host IP. `ACTIVE-PR` #91 is the loopback-only standalone target and defines the complete host-published service allow-list: exactly the PostgreSQL service on TCP 5432 and the component service on TCP 8080, each published once to loopback. A third host-published service or an extra published port is outside that allow-list and must fail the deployment contract rather than being silently accepted.
 
 ### TRD-R3 — Embedded deployment
 
