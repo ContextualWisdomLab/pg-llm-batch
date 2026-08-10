@@ -32,6 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Made readiness database authority explicit and fail-closed: an invalid Postgres DSN, including a non-string or whitespace-only value, now returns a body-safe local failure before psycopg and libpq can apply ambient/default connection selection.
 - Made direct `serve-healthz` CLI invocation bind to loopback `127.0.0.1` by
   default, while the bundled container explicitly opts into `0.0.0.0` so broad
   listener exposure is a reviewable deployment decision rather than an implicit
