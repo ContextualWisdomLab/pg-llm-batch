@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Documentation contract for deterministic uv toolchain selection."""
+
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+DOCTORING = ROOT / "docs/doctoring/uv-toolchain-reproducibility.md"
+
+
+def test_uv_toolchain_doctoring_records_reproducibility_and_recovery() -> None:
+    """The exact uv pin must retain rationale, update, rollback, and standards."""
+    assert DOCTORING.exists(), "missing uv toolchain reproducibility doctoring"
+    normalized = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    for phrase in (
+        "required-version",
+        "==0.12.3",
+        "falling back to latest",
+        "update procedure",
+        "rollback",
+        "setup-uv",
+        "python 3.14",
+        "astral software",
+        "apa 7",
+    ):
+        assert phrase in normalized, phrase
