@@ -60,6 +60,23 @@ def test_csv_logging_collector_contract_is_documented() -> None:
         assert phrase in doctoring, phrase
 
 
+def test_connection_event_logging_is_opt_in_and_network_metadata_is_documented() -> None:
+    """Connection events must not create avoidable client-network log copies."""
+    settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    assert settings["log_connections"].lower() == "off"
+    assert settings["log_disconnections"].lower() == "off"
+    for phrase in (
+        "client host:port",
+        "log_connections",
+        "log_disconnections",
+        "client network metadata",
+        "opt-in",
+    ):
+        assert phrase in doctoring, phrase
+
+
 def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> None:
     """Representative query-text collection must be disabled in the package baseline."""
     settings = _settings()
