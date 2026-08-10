@@ -33,11 +33,11 @@ class Secrets:
         return "secret"
 
 
-def test_credentials_provider_normalizes_https_and_allows_loopback_http():
-    """Production URLs require HTTPS while explicit local development remains usable."""
+def test_credentials_provider_normalizes_exact_https_and_allows_loopback_http():
+    """Production URLs require exact HTTPS while explicit local development remains usable."""
     secure_secrets = Secrets()
     secure = config_credentials_provider(
-        Config(" https://api.example/v1/ "), secure_secrets
+        Config("https://api.example/v1/"), secure_secrets
     )("default")
     assert secure == GatewayCredentials(url="https://api.example/v1", api_key="secret")
     assert secure_secrets.calls == ["gateway_api_key.default"]
