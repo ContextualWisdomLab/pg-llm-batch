@@ -36,8 +36,10 @@ $$;
 -- Function names/signatures are not sufficient deletion authority. An operator may
 -- have replaced one of these generic public helpers after the legacy installer ran.
 -- Unscheduling above is committed independently by psql in its normal autocommit
--- mode; this block then removes only definitions that still retain the retired
--- helper's characteristic body, language, volatility, and invoker-security shape.
+-- mode; this block removes a helper only when pg_proc retains the exact retired
+-- PL/pgSQL source body plus the reviewed language/volatility/invoker-security shape.
+-- Characteristic substring markers are deliberately insufficient because modified
+-- operator code can preserve those markers while changing behavior.
 DO $$
 DECLARE
     helper_oid OID;
@@ -56,9 +58,57 @@ BEGIN
         IF helper_language <> 'plpgsql'
            OR helper_volatility <> 'v'
            OR helper_security_definer
-           OR position('gateway_api_key.default' IN helper_source) = 0
-           OR position('llm_batches' IN helper_source) = 0
-           OR position('import_batch_results_jsonl' IN helper_source) = 0 THEN
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    base_url TEXT;
+    api_key TEXT;
+    rec RECORD;
+    start_ts TIMESTAMPTZ;
+    res http_response;
+    status TEXT;
+    output_id TEXT;
+BEGIN
+    base_url := get_config_value('gateway.base_url');
+    api_key := get_secret_value('gateway_api_key.default');
+    IF base_url IS NULL OR api_key IS NULL THEN
+        INSERT INTO gateway_retrieval_logs(status, error)
+        VALUES ('error', 'Missing gateway.base_url or gateway_api_key.default');
+        RETURN;
+    END IF;
+
+    FOR rec IN
+        SELECT b.batch_uuid, b.batch_uuid::text AS gateway_batch_id,
+               b.input_file_path AS input_file_id
+        FROM llm_batches b
+        WHERE b.batch_status IN ('validating', 'in_progress', 'finalizing', 'processing')
+    LOOP
+        start_ts := clock_timestamp();
+        res := http_get(rtrim(base_url, '/') || '/v1/batches/' || rec.gateway_batch_id,
+                        ARRAY[http_header('Authorization', 'Bearer ' || api_key)]);
+        status := NULL;
+        output_id := NULL;
+        BEGIN
+            status := (res.content::json)->>'status';
+            output_id := (res.content::json)->>'output_file_id';
+        EXCEPTION WHEN others THEN
+            status := NULL;
+        END;
+        INSERT INTO gateway_retrieval_logs(batch_uuid, input_file_id, status, http_code, latency_ms)
+        VALUES (rec.batch_uuid, rec.input_file_id, COALESCE(status, 'unknown'),
+                res.status, EXTRACT(MILLISECOND FROM clock_timestamp() - start_ts)::int);
+
+        IF status IN ('completed', 'succeeded', 'done') AND output_id IS NOT NULL THEN
+            res := http_get(rtrim(base_url, '/') || '/v1/files/' || output_id || '/content',
+                            ARRAY[http_header('Authorization', 'Bearer ' || api_key)]);
+            PERFORM import_batch_results_jsonl(rec.batch_uuid, output_id, res.content);
+            UPDATE llm_batches SET batch_status = 'completed', updated_at = NOW()
+             WHERE batch_uuid = rec.batch_uuid;
+            INSERT INTO gateway_retrieval_logs(batch_uuid, output_file_id, status, http_code)
+            VALUES (rec.batch_uuid, output_id, 'imported', res.status);
+        END IF;
+    END LOOP;
+END;
+$legacy$ THEN
             RAISE EXCEPTION 'Refusing to drop public.cron_fetch_batch_results(): definition does not match the retired legacy helper'
                 USING ERRCODE = '55000',
                       HINT = 'Review the same-signature function manually; the legacy cron job has already been unscheduled when this file is run with psql autocommit.';
@@ -76,9 +126,43 @@ BEGIN
         IF helper_language <> 'plpgsql'
            OR helper_volatility <> 'v'
            OR helper_security_definer
-           OR position('llm_requests' IN helper_source) = 0
-           OR position('request_status = ''completed''' IN helper_source) = 0
-           OR position('response_metadata = obj' IN helper_source) = 0 THEN
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    updated_count INTEGER := 0;
+    line TEXT;
+    obj JSONB;
+    custom_id TEXT;
+    response JSONB;
+    usage JSONB;
+BEGIN
+    FOR line IN SELECT * FROM regexp_split_to_table(COALESCE(p_content, ''), E'\n') LOOP
+        line := btrim(line);
+        CONTINUE WHEN line = '';
+        BEGIN
+            obj := line::jsonb;
+        EXCEPTION WHEN others THEN
+            CONTINUE;
+        END;
+        custom_id := obj->>'custom_id';
+        CONTINUE WHEN custom_id IS NULL OR custom_id = '';
+        response := obj->'response'->'body';
+        usage := response->'usage';
+        UPDATE llm_requests
+           SET request_status = 'completed',
+               response_content = response->'choices'->0->'message'->>'content',
+               response_metadata = obj,
+               prompt_tokens = COALESCE((usage->>'prompt_tokens')::INT, prompt_tokens),
+               completion_tokens = COALESCE((usage->>'completion_tokens')::INT, completion_tokens),
+               total_tokens = COALESCE((usage->>'total_tokens')::INT, total_tokens),
+               completed_at = NOW()
+         WHERE request_uuid = custom_id::uuid;
+        IF FOUND THEN
+            updated_count := updated_count + 1;
+        END IF;
+    END LOOP;
+    RETURN updated_count;
+END;
+$legacy$ THEN
             RAISE EXCEPTION 'Refusing to drop public.import_batch_results_jsonl(uuid,text,text): definition does not match the retired legacy helper'
                 USING ERRCODE = '55000',
                       HINT = 'Review the same-signature function manually; unrelated operator code is never deleted by signature alone.';
@@ -96,9 +180,21 @@ BEGIN
         IF helper_language <> 'plpgsql'
            OR helper_volatility <> 's'
            OR helper_security_definer
-           OR position('com_secrets' IN helper_source) = 0
-           OR position('rec.is_encrypted' IN helper_source) = 0
-           OR position('decode(rec.secret_value, ''base64'')' IN helper_source) = 0 THEN
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    rec RECORD;
+BEGIN
+    SELECT secret_value, is_encrypted INTO rec
+    FROM com_secrets WHERE secret_key = p_key LIMIT 1;
+    IF rec IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF rec.is_encrypted THEN
+        RETURN NULL;
+    END IF;
+    RETURN convert_from(decode(rec.secret_value, 'base64'), 'UTF8');
+END;
+$legacy$ THEN
             RAISE EXCEPTION 'Refusing to drop public.get_secret_value(text): definition does not match the retired legacy helper'
                 USING ERRCODE = '55000',
                       HINT = 'Review the same-signature function manually; unrelated operator code is never deleted by signature alone.';
@@ -116,8 +212,14 @@ BEGIN
         IF helper_language <> 'plpgsql'
            OR helper_volatility <> 's'
            OR helper_security_definer
-           OR position('com_config' IN helper_source) = 0
-           OR position('config_key = p_key' IN helper_source) = 0 THEN
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    v TEXT;
+BEGIN
+    SELECT config_value INTO v FROM com_config WHERE config_key = p_key LIMIT 1;
+    RETURN v;
+END;
+$legacy$ THEN
             RAISE EXCEPTION 'Refusing to drop public.get_config_value(text): definition does not match the retired legacy helper'
                 USING ERRCODE = '55000',
                       HINT = 'Review the same-signature function manually; unrelated operator code is never deleted by signature alone.';
