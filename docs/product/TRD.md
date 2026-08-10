@@ -55,7 +55,7 @@ The canonical engineering authority for sensitive content, credentials, provider
 
 ### TRD-H1 — Credential-bearing destination validation
 
-Gateway base URLs shall be validated before use. Protected main requires HTTP(S) syntax with a hostname, rejects user information/query/fragment/invalid port/ambiguous whitespace or backslashes, and requires HTTPS for non-loopback destinations.
+Gateway base URLs shall be validated before credential use. On protected main, `_normalize_gateway_url()` first **stringifies** the configured value with `str(value)` and **strips surrounding whitespace** before parsing; it then rejects an empty normalized value, remaining whitespace/control characters or backslashes, user information, query/fragment, invalid ports, and unsecured non-loopback HTTP. That normalization means protected main can accept a stringifiable non-string value or an otherwise valid URL surrounded by whitespace, so it is not an exact caller-authority boundary. `ACTIVE-PR` #71 tightens the target: the gateway value must already be an **exact string**; stringifiable non-string inputs and leading/trailing whitespace, controls, or backslashes fail **before secret lookup**; and only an accepted trailing path **slash** may be normalized **after exact validation**. The exact-input behavior remains ACTIVE-PR until protected integration and fresh validation.
 
 ### TRD-H2 — Provider identifier validation
 
