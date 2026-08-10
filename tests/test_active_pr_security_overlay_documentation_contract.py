@@ -26,6 +26,21 @@ def test_health_listener_overlay_tracks_exact_input_and_port_boundary() -> None:
     assert "exact" in trd and "host" in trd
 
 
+def test_health_listener_overlay_tracks_no_shell_container_authority() -> None:
+    """PR #70's container command path must remain data, never shell syntax."""
+    trd = _read("docs/product/TRD.md")
+    operability = _read("docs/OPERABILITY.md")
+    threat = _read("docs/THREAT_MODEL.md")
+
+    for document in (trd, operability, threat):
+        assert "#70" in document
+        assert "exec-form" in document
+        assert "shell" in document
+        assert "8080" in document
+    assert "pg_llm_batch_health_port" in threat
+    assert "explicit" in operability and "override" in operability
+
+
 def test_provider_error_overlay_tracks_body_independence_and_exception_privacy() -> None:
     """PR #71 must document status-first errors and malformed-success privacy."""
     trd = _read("docs/product/TRD.md")
