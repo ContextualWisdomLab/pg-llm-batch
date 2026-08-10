@@ -20,7 +20,7 @@ Finally, the Python client already owns validated gateway authority, remote reso
 
 `03_cron_batch_retrieval.sql` now performs only cleanup:
 
-- if `pg_cron` is installed, enumerate visible jobs whose name is exactly `batch-result-retrieval` and call `cron.unschedule` by numeric job ID;
+- if `pg_cron` is installed, enumerate visible jobs whose name is exactly `batch-result-retrieval` **and** whose command is exactly `SELECT cron_fetch_batch_results();`, then call `cron.unschedule` by numeric job ID; this avoids deleting an unrelated same-name job;
 - remove `cron_fetch_batch_results()`, `import_batch_results_jsonl(UUID, TEXT, TEXT)`, `get_secret_value(TEXT)`, and `get_config_value(TEXT)` if those legacy helpers exist;
 - never call `http_get`, never construct an `Authorization` header, never read provider credentials, and never create a replacement cron schedule;
 - preserve historical `gateway_retrieval_logs` data. The cleanup does not drop that table or any lifecycle/request table; and
@@ -39,15 +39,16 @@ psql "$PG_LLM_BATCH_DSN" -v ON_ERROR_STOP=1 \
   -f docker/postgres/init/03_cron_batch_retrieval.sql
 ```
 
-Then verify that no future legacy invocation remains:
+Then verify that no future invocation of the exact legacy job remains:
 
 ```sql
 SELECT jobid, jobname, schedule, command
 FROM cron.job
-WHERE jobname = 'batch-result-retrieval';
+WHERE jobname = 'batch-result-retrieval'
+  AND command = 'SELECT cron_fetch_batch_results();';
 ```
 
-The acceptance result is zero rows. Also verify the removed functions are absent:
+The acceptance result is zero rows for that exact name-and-command identity. An unrelated job that merely reuses the same name is outside this cleanup boundary. Also verify the removed functions are absent:
 
 ```sql
 SELECT
@@ -74,7 +75,7 @@ Do not resurrect the SQL retriever merely to restore automatic polling. A future
 Acceptance is falsifiable:
 
 1. repository tests prove the bundled SQL contains no credential-bearing provider HTTP and no `cron.schedule` call;
-2. replaying the cleanup on a database with the legacy named job leaves zero matching rows in `cron.job` and removes the four helper functions;
+2. replaying the cleanup on a database with the exact legacy job leaves zero matching name-and-command rows in `cron.job` and removes the four helper functions;
 3. historical retrieval-log data is not dropped; and
 4. ordinary provider operations continue through `BatchAPIClient` / `DurableBatchAPIClient`, not through PostgreSQL HTTP.
 
