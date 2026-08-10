@@ -83,7 +83,7 @@ jobs:
         run: uv build --no-sources
 
   container-builds:
-    name: Container builds
+    name: Container builds and PostgreSQL cleanup smoke
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -101,3 +101,5 @@ jobs:
         run: docker build --tag pg-llm-batch:ci .
       - name: Build PostgreSQL image
         run: docker build --tag pg-llm-batch-postgres:ci docker/postgres
+      - name: Run legacy SQL cleanup integration smoke
+        run: bash tests/smoke_legacy_sql_cleanup.sh
