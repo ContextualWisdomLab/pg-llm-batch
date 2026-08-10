@@ -236,3 +236,43 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT to_regprocedure('public.get_config_value(text)') IS NOT NULL")" = "t"
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT public.get_config_value('operator-value')")" = "operator-value"
+
+# Matching only characteristic body markers is still unsafe: an operator can
+# intentionally extend the old PL/pgSQL helper while preserving every marker
+# used by a substring classifier. Any definition change must remain operator
+# owned and fail closed instead of being deleted as though it were the exact
+# retired helper.
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP FUNCTION public.get_config_value(text);
+CREATE FUNCTION public.get_config_value(p_key text)
+RETURNS text AS $$
+DECLARE
+    v text;
+BEGIN
+    IF p_key = 'operator-marker' THEN
+        RETURN 'operator-preserved';
+    END IF;
+    SELECT config_value INTO v FROM com_config WHERE config_key = p_key LIMIT 1;
+    RETURN v;
+END;
+$$ LANGUAGE plpgsql STABLE;
+
+SELECT cron.schedule(
+    'batch-result-retrieval',
+    '0 0 1 1 *',
+    $$SELECT cron_fetch_batch_results();$$
+);
+SQL
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${cleanup_sql}"; then
+  echo "cleanup unexpectedly accepted a marker-preserving modified helper" >&2
+  exit 1
+fi
+
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM cron.job WHERE jobname = 'batch-result-retrieval' AND command = 'SELECT cron_fetch_batch_results();'")" = "0"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT to_regprocedure('public.get_config_value(text)') IS NOT NULL")" = "t"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT public.get_config_value('operator-marker')")" = "operator-preserved"
