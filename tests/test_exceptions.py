@@ -41,6 +41,15 @@ def test_error_detail_mappings_snapshot_constructor_inputs():
     assert gateway.response_data is gateway.details["response_data"]
 
 
+def test_gateway_error_preserves_absent_response_data():
+    """The snapshot boundary must preserve the existing optional-data contract."""
+    gateway = GatewayError("offline")
+
+    assert gateway.status_code is None
+    assert gateway.response_data is None
+    assert gateway.details == {"status_code": None, "response_data": None}
+
+
 def test_token_limit_error_preserves_counts_and_optional_batch():
     error = TokenLimitExceededError(1200, 1000, batch_id="batch-1")
     assert "1,200 > 1,000" in str(error)
