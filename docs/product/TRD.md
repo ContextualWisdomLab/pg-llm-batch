@@ -125,6 +125,14 @@ Protected main has database-backed typed defaults but open #86 owns stronger can
 
 `ACTIVE-PR` #87 owns the current fail-closed stored-secret target. The no-key local/development path must accept only strict Base64 alphabet/padding and strict UTF-8; malformed persisted data must produce a bounded `ConfigError` rather than leaking raw stored content. When Fernet is configured, a wrong Fernet key or invalid encrypted value must also become a bounded `ConfigError` without retaining ciphertext or the underlying cryptography exception through exported exception cause/context. Base64 without a Fernet key remains obfuscation, not encryption. These protections are not protected-main guarantees until #87 or a successor integrates.
 
+### TRD-C6 — Prompt-content CLI source privacy
+
+Issue #116 is PLANNED. The `count-tokens` command must not require **prompt content** in **process argv**. A reviewed replacement shall expose exactly one selected bounded non-argv source, such as stdin, an inherited file descriptor, or a deliberately opened file surface; impose finite input bytes/characters before tokenization; define deterministic UTF-8 and terminal-newline behavior; and reject conflicting sources before database/tokenizer work. Rejected input diagnostics must never echo prompt content. The production text itself must remain intact for purpose-bound token counting rather than being destructively masked, and PostgreSQL `pg_tiktoken` remains the token authority. Implementation waits for #85/#87 to settle their overlapping CLI/resource ownership.
+
+### TRD-C7 — Credential-bearing PostgreSQL DSN CLI source authority
+
+Issue #117 is PLANNED. A **credential-bearing PostgreSQL DSN** must not cross **process argv** in the standalone CLI. If argv retains any DSN-like locator, it must be explicitly classified credential-free; password-bearing connection authority must come from the established environment/secret-injection bootstrap seam or another reviewed bounded non-argv source. Preserve #89's exact explicit-versus-ambient source precedence and #87's store/connection ownership and validation. Unsafe, blank, ambiguous, or wrongly typed DSN inputs must fail **before libpq** target selection where the package owns the boundary, and rejected diagnostics must not reflect credential-bearing DSN content. Implementation waits for #85/#87/#89 to integrate or be superseded.
+
 ## 6. Tenancy and authorization requirements
 
 ### TRD-A1 — Current state
