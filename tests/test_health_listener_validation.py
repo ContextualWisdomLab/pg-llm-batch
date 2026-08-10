@@ -31,6 +31,18 @@ def test_serve_healthz_rejects_blank_host_before_socket_binding(
         health.serve_healthz("postgresql://example", host=host, port=8080)
 
 
+@pytest.mark.parametrize("host", [" 127.0.0.1", "127.0.0.1 ", "127.0.0.1\n", "local\x00host"])
+def test_serve_healthz_rejects_malformed_host_text_before_socket_binding(
+    monkeypatch: pytest.MonkeyPatch,
+    host: str,
+) -> None:
+    """Whitespace-padded or NUL-bearing hosts fail at the package boundary."""
+    monkeypatch.setattr(http.server, "HTTPServer", _UnexpectedHTTPServer)
+
+    with pytest.raises(ValidationError, match="host"):
+        health.serve_healthz("postgresql://example", host=host, port=8080)
+
+
 @pytest.mark.parametrize("port", [True, 0, -1, 65536, 1.5, "8080"])
 def test_serve_healthz_rejects_invalid_port_before_socket_binding(
     monkeypatch: pytest.MonkeyPatch,
