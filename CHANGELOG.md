@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   token-counting connection acquisition; booleans, floats, strings, and
   container values fail with bounded `ValidationError` instead of being
   accepted or producing unrelated type failures.
+- Configured `TokenCounter` hard ceilings `token_limits.per_batch`,
+  `token_limits.per_request`, `azure_limits.max_records_per_file`,
+  `azure_limits.max_bytes_per_file`, and `azure_limits.max_files_per_job` now
+  require an **exact positive integer** **before PostgreSQL** extension/session
+  acquisition; booleans, zero, negative integers, floats, strings, and
+  containers fail with bounded `ValidationError` instead of implicit coercion
+  or unrelated arithmetic errors.
 - `BatchAccumulator.max_records` and `BatchAccumulator.max_bytes` now require an
   **exact positive integer** after explicit/configured selection. **Explicit
   zero** no longer behaves like omission and cannot silently select a larger
