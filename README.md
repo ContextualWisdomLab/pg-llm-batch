@@ -34,9 +34,9 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
                      │
                      ▼
         BatchAPIClient.upload_jsonl → create_batch_job → wait_for_batch → download_results
-                     │
-   (or) pg_cron job  cron_fetch_batch_results()  polls + imports results via pgsql-http
 ```
+
+Protected `main` at the documentation baseline still contains a **legacy direct-SQL** `pg_cron` + pgsql-http provider retriever. **ACTIVE-PR #101** retires that path fail-closed and keeps provider network/credential authority in `BatchAPIClient` / `DurableBatchAPIClient`; its target fresh databases do not create `pg_cron` or `http`. The image packages remain temporarily for existing-volume cleanup/rollback compatibility, and Issue #103 tracks their later removal behind a reviewed migration. Issue #102 separately tracks replacement automatic reconciliation through the validated Python boundary. None of those ACTIVE-PR/PLANNED changes is shipped merely because it is documented here.
 
 | Piece | Module |
 | --- | --- |
@@ -51,8 +51,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 
 ## Requirements
 
-- PostgreSQL with `pg_tiktoken`, `pg_cron`, and `http` (pgsql-http). The bundled
-  image (`docker/postgres/Dockerfile`) builds all three.
+- PostgreSQL with `pg_tiktoken` for standalone token counting. At the protected-main baseline the bundled PostgreSQL image also carries and initializes legacy `pg_cron`/pgsql-http support; ACTIVE-PR #101 stops fresh databases from creating those two extensions while retaining the image packages temporarily for existing-volume compatibility.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
 
 ---
@@ -266,7 +265,7 @@ pytest                       # unit tests (fakes, no DB needed)
 
 docker compose up -d --build postgres
 PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
-    pytest -m integration    # against the real pg_tiktoken + pg_cron container
+    pytest -m integration    # against the real standalone PostgreSQL container
 ```
 
 ## Docs
