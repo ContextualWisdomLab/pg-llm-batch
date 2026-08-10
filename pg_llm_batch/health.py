@@ -162,11 +162,19 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
 
 def _validate_listener(host: Any, port: Any) -> tuple[str, int]:
     """Validate one explicit readiness listener before any socket is created."""
-    if not isinstance(host, str) or not host.strip():
+    if (
+        not isinstance(host, str)
+        or not host
+        or host != host.strip()
+        or any(character.isspace() or ord(character) < 32 for character in host)
+    ):
         raise ValidationError(
             field="host",
             value=host,
-            reason="must be a non-empty listener hostname or address",
+            reason=(
+                "must be a non-empty listener hostname or address without "
+                "surrounding whitespace or control characters"
+            ),
         )
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65_535:
         raise ValidationError(
