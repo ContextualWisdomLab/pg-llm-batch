@@ -187,6 +187,7 @@ flowchart LR
     Ops[Health / CLI / config / connection / compose hardening #70 #85 #86 #87 #89 #91]
     RetireSQL[Retire direct-SQL provider retrieval #101]
     Reconcile[Bounded automatic provider reconciliation Issue #102]
+    RetireExtensions[Retire legacy extension runtime Issue #103]
 
     Protected --> Tenant
     Protected --> Stream
@@ -202,11 +203,12 @@ flowchart LR
     Protected --> Ops
     Protected --> RetireSQL
     RetireSQL --> Reconcile
+    RetireSQL --> RetireExtensions
 ```
 
 The checkpoint nodes above are the current active implementation chain. Superseded predecessor lineages are indexed in `docs/adr/README.md` and are deliberately excluded from this ACTIVE-PR overlay; their old evidence does not transfer to replacements.
 
-`ACTIVE-PR` #101 retires the legacy direct-SQL `pg_cron` + `pgsql-http` provider network path instead of creating a second provider credential/transport authority inside PostgreSQL. The supported provider network authority remains the validated Python `BatchAPIClient` / `DurableBatchAPIClient` boundary. **Issue #102 is PLANNED**, not implemented persistence or a shipped scheduler: it restores bounded automatic provider reconciliation only through validated durable provider remote identities, finite work/concurrency/restart semantics, and scheduling authority that is separate from provider credentials. This architecture does not invent a new ERD entity for #102 and does not imply distributed exactly-once delivery.
+`ACTIVE-PR` #101 retires the legacy direct-SQL `pg_cron` + `pgsql-http` provider network path instead of creating a second provider credential/transport authority inside PostgreSQL. The supported provider network authority remains the validated Python `BatchAPIClient` / `DurableBatchAPIClient` boundary. **Issue #102 is PLANNED**, not implemented persistence or a shipped scheduler: it restores bounded automatic provider reconciliation only through validated durable provider remote identities, finite work/concurrency/restart semantics, and scheduling authority that is separate from provider credentials. This architecture does not invent a new ERD entity for #102 and does not imply distributed exactly-once delivery. **Issue #103 is separately PLANNED** after the protected-main #101 result: it removes legacy `pg_cron`/`pgsql-http` runtime, package, and preload authority only after an existing-volume migration proves exact retired-job/helper cleanup, preservation of historical package data, and fail-closed handling of unrelated dependants. #103 is independent of #102 and adds no package persistence; its canonical decision is `docs/adr/legacy-postgresql-extension-retirement.md`.
 
 The overlay is dependency-aware, not a claim that every PR must merge in the diagram's visual order; the live PR stack/base relations remain authoritative.
 
@@ -222,6 +224,7 @@ The overlay is dependency-aware, not a claim that every PR must merge in the dia
 8. **Database names are descriptive.** New package-owned objects use descriptive two-or-more-word snake_case by default.
 9. **Automation failure is a separate authority class.** Scheduler/prompt/tool failure does not become a product source finding without independent source evidence.
 10. **Provider networking has one package authority.** Direct-SQL provider HTTP is being retired by #101; any automatic reconciliation replacement must reuse the validated Python provider/credential boundary rather than reintroducing parallel database network authority.
+11. **Legacy extension removal is migration-gated.** Package/preload removal follows proven existing-volume cleanup and never uses `CASCADE` to erase unrelated dependencies.
 
 ## 9. Architecture decision and detail map
 
@@ -245,3 +248,4 @@ The overlay is dependency-aware, not a claim that every PR must merge in the dia
 - Semantic review vs infrastructure/policy evidence: `docs/automation/ADR-0004-review-evidence-separation.md`
 - Protected-main operational acceptance: `docs/automation/ADR-0005-protected-main-operational-acceptance.md`
 - Scheduler failure recovery: `docs/automation/ADR-0006-scheduler-failure-recovery.md`
+- Legacy PostgreSQL extension retirement: `docs/adr/legacy-postgresql-extension-retirement.md`
