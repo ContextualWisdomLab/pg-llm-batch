@@ -2,8 +2,9 @@
 # Copyright (c) ContextualWisdomLab.
 """OpenAI-compatible Batch API client (memory-only JSONL).
 
-Talks to any OpenAI-compatible ``/files`` + ``/batches`` endpoint (OpenAI,
-Azure OpenAI, a LiteLLM gateway, ...). Credentials are resolved through a
+This client targets the OpenAI-compatible ``/files`` + ``/batches`` API shape
+used by OpenAI, Azure OpenAI, and LiteLLM gateway deployments; provider-specific
+extensions require independent verification. Credentials are resolved through a
 pluggable ``credentials`` seam (default: the Postgres KV/secret store) — never
 from ``os.getenv``. JSONL payloads are streamed from Postgres, never disk.
 
