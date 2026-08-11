@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from pg_llm_batch.exceptions import ValidationError
 
 
@@ -66,3 +68,14 @@ def test_validation_error_requires_explicit_opt_in_for_safe_value_evidence() -> 
 
     assert error.details["value"] == safe_value
     assert "5" in str(error)
+
+
+def test_validation_error_rejects_ambiguous_disclosure_authority() -> None:
+    """The diagnostic disclosure switch must itself be an exact boolean."""
+    with pytest.raises(TypeError, match="expose_value must be a bool"):
+        ValidationError(
+            field="max_retry_attempts",
+            value=5,
+            reason="must be between one and ten",
+            expose_value=1,  # type: ignore[arg-type]
+        )
