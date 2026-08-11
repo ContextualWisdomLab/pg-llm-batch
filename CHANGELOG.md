@@ -95,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bound repository CI checkouts to the exact pull-request source head and verify
+  the checked-out commit before tests, coverage, packaging, or container gates.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.
