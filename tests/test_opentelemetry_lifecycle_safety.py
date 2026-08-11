@@ -41,6 +41,22 @@ class CapturingSpanContext:
         return None
 
 
+class FailingEnterSpanContext:
+    """Track whether cleanup is called after telemetry context entry fails."""
+
+    def __init__(self) -> None:
+        self.exit_calls = 0
+
+    def __enter__(self) -> CapturingSpan:
+        """Model a telemetry context that fails before it is entered."""
+        raise RuntimeError("span entry unavailable")
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Record an invalid exit attempt after failed entry."""
+        self.exit_calls += 1
+        return None
+
+
 class CapturingTracer:
     """Create inspectable span contexts for lifecycle tests."""
 
@@ -56,6 +72,21 @@ class CapturingTracer:
         span = CapturingSpan()
         self.spans.append(span)
         return CapturingSpanContext(span)
+
+
+class FailingEnterTracer:
+    """Return one span context whose entry fails before activation."""
+
+    def __init__(self) -> None:
+        self.context = FailingEnterSpanContext()
+
+    def start_as_current_span(
+        self,
+        _name: str,
+        **_kwargs: Any,
+    ) -> FailingEnterSpanContext:
+        """Return the deterministic failed-entry context."""
+        return self.context
 
 
 class CancellingTracer:
@@ -220,6 +251,55 @@ async def test_tracer_cancellation_cannot_skip_successful_provider_operation(
 
     assert result is expected
     assert calls == 1
+
+
+async def test_failed_span_entry_is_not_exited_after_provider_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A context that never entered must not receive a synthetic exit call."""
+    expected = {"success": True}
+    tracer = FailingEnterTracer()
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        return expected
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=tracer,
+        meter=CapturingMeter(),
+    )
+
+    result = await client.cancel_batch("batch-1", "default")
+
+    assert result is expected
+    assert tracer.context.exit_calls == 0
+
+
+async def test_failed_span_entry_is_not_exited_after_provider_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failed telemetry entry cannot synthesize exit or replace provider failure."""
+    provider_error = RuntimeError("provider-failure")
+    tracer = FailingEnterTracer()
+
+    async def parent_method(_self: BatchAPIClient, *_args: Any, **_kwargs: Any) -> Any:
+        raise provider_error
+
+    monkeypatch.setattr(BatchAPIClient, "cancel_batch", parent_method)
+    client = OpenTelemetryBatchAPIClient(
+        "postgresql://example",
+        credentials,
+        tracer=tracer,
+        meter=CapturingMeter(),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        await client.cancel_batch("batch-1", "default")
+
+    assert exc_info.value is provider_error
+    assert tracer.context.exit_calls == 0
 
 
 async def test_metric_cancellation_cannot_replace_successful_provider_result(
