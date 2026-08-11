@@ -7,6 +7,10 @@ from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.models import BatchRequest
 
 
+class StringSubclass(str):
+    """A deliberately non-exact string type for runtime-boundary tests."""
+
+
 def test_batch_request_rejects_false_valued_non_string_prompt():
     with pytest.raises(ValidationError) as captured:
         BatchRequest(user_prompt=0, model="gpt-4o")
@@ -27,6 +31,24 @@ def test_batch_request_rejects_non_string_optional_and_identifier_fields():
     with pytest.raises(ValidationError) as captured:
         BatchRequest(user_prompt="hello", model="gpt-4o", id=0)
     assert captured.value.details["field"] == "id"
+
+
+@pytest.mark.parametrize("field", ("user_prompt", "model", "system_prompt", "id"))
+def test_batch_request_rejects_string_subclasses(field):
+    """Every exact-string boundary must reject ``str`` subclasses."""
+    kwargs = {
+        "user_prompt": "hello",
+        "model": "gpt-4o",
+        "system_prompt": None,
+        "id": "request-1",
+    }
+    kwargs[field] = StringSubclass("value")
+
+    with pytest.raises(ValidationError) as captured:
+        BatchRequest(**kwargs)
+
+    assert captured.value.details["field"] == field
+    assert captured.value.details["value"] == "<redacted>"
 
 
 def test_batch_request_validation_does_not_export_rejected_values():
