@@ -86,6 +86,24 @@ def test_commit_timestamp_tracking_is_opt_in_for_bounded_transaction_metadata() 
         assert phrase in doctoring, phrase
 
 
+def test_high_volume_temp_and_autovacuum_logging_is_not_unconditionally_enabled() -> None:
+    """Generic monitoring must not emit every temp-file and autovacuum event."""
+    settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    assert settings["log_temp_files"] == "-1"
+    assert settings["log_autovacuum_min_duration"] == "10min"
+    for phrase in (
+        "log_temp_files",
+        "temporary file names and sizes",
+        "log_autovacuum_min_duration",
+        "logs all autovacuum actions",
+        "10min",
+        "opt-in",
+    ):
+        assert phrase in doctoring, phrase
+
+
 def test_csv_logging_enables_the_required_logging_collector() -> None:
     """A configured CSV destination must enable PostgreSQL's logging collector."""
     settings = _settings()
