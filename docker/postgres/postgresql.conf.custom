@@ -22,10 +22,13 @@
 # =============================================================================
 # SHARED LIBRARIES (requires restart)
 # =============================================================================
-# pg_stat_statements can retain representative query text. Preloading the module
-# does not create the extension and collection is disabled below. A deployment
-# that opts in must treat representative query text as a governed data class.
-shared_preload_libraries = 'pg_stat_statements,pg_cron'
+# Query statistics are a true opt-in. PostgreSQL documents that loading
+# pg_stat_statements reserves shared memory even when pg_stat_statements.track
+# is none, so this general profile does not preload the module. A deployment
+# that needs query-level statistics must deliberately add pg_stat_statements to
+# shared_preload_libraries, restart PostgreSQL, create the extension in the
+# intended database, and enable only the reviewed tracking surface.
+shared_preload_libraries = 'pg_cron'
 
 # pg_stat_activity remains a volatile live-query surface while track_activities
 # is enabled. Bound its retained text and restrict pg_read_all_stats/superuser
@@ -36,8 +39,9 @@ track_activity_query_size = 1024
 # PG_STAT_STATEMENTS CONFIGURATION
 # =============================================================================
 # Query-level statement collection is opt-in because pg_stat_statements stores
-# representative query text. Operators that need it may override these settings
-# under a reviewed purpose/access/retention policy.
+# representative query text. These placeholder settings remain fail-safe if an
+# operator later preloads the module; collection stays disabled until explicitly
+# changed under a reviewed purpose/access/retention policy.
 pg_stat_statements.max = 10000
 pg_stat_statements.track = 'none'
 pg_stat_statements.track_utility = off
@@ -111,7 +115,10 @@ track_functions = 'none'
 # it opt-in unless a deployment has a concrete commit-timestamp/replication need.
 track_commit_timestamp = off
 stats_fetch_consistency = 'cache'
-compute_query_id = 'on'
+# Keep the PostgreSQL default auto mode instead of forcing query-ID calculation
+# for every statement. Adding pg_stat_statements later can request query IDs as
+# documented, without imposing that work on deployments that leave it disabled.
+compute_query_id = 'auto'
 default_statistics_target = 100
 track_counts = on
 track_activities = on
@@ -146,10 +153,10 @@ cron.max_running_jobs = 10
 # OPERATOR NOTES
 # =============================================================================
 # - This example is not automatically loaded by the bundled image.
-# - Keep SQL/bind-value logging and pg_stat_statements collection disabled unless
-#   a separately reviewed deployment has a concrete purpose, authorization
-#   model, minimal retention, access audit, encryption boundary, storage budget,
-#   and incident/deletion procedure.
+# - Keep SQL/bind-value logging and pg_stat_statements collection/preloading
+#   disabled unless a separately reviewed deployment has a concrete purpose,
+#   authorization model, minimal retention, access audit, encryption boundary,
+#   storage/performance budget, and incident/deletion procedure.
 # - Keep all-temp-file logging disabled and do not lower the 10-minute autovacuum
 #   threshold without a defined diagnostic purpose and bounded log-storage plan.
 # - Keep track_io_timing/track_wal_io_timing off unless the deployment has
