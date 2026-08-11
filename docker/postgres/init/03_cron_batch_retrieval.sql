@@ -1,100 +1,70 @@
 -- SPDX-License-Identifier: Apache-2.0
--- pg_cron + http based batch result retrieval and import.
--- Requires com_config entries: gateway.base_url, and secret gateway_api_key.<alias>.
--- The gateway credentials are read from the KV stores (never os.getenv).
+-- Decommission the legacy pg_cron + pgsql-http provider retrieval path.
+--
+-- Provider HTTP authority belongs to the Python BatchAPIClient / DurableBatchAPIClient
+-- boundary, which validates endpoint authority, remote resource identifiers,
+-- credential handling, response bounds, retry semantics, and durable lifecycle state.
+-- The former SQL retriever could not preserve those contracts and also treated a
+-- local llm_batches.batch_uuid as though it were a provider remote batch ID.
+--
+-- Fresh standalone databases execute this file after pg_cron is installed and
+-- therefore never create the legacy job/functions. Existing deployments may replay
+-- this file with the same job owner (or a superuser) to remove future executions.
+-- Existing gateway_retrieval_logs data is intentionally retained for audit/history.
 
-CREATE EXTENSION IF NOT EXISTS pg_cron;
-CREATE EXTENSION IF NOT EXISTS http;
-
-CREATE TABLE IF NOT EXISTS gateway_retrieval_logs (
-    log_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    batch_uuid UUID,
-    input_file_id TEXT,
-    output_file_id TEXT,
-    status TEXT,
-    http_code INT,
-    latency_ms INT,
-    error TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Read a plain config value out of the com_config KV table.
-CREATE OR REPLACE FUNCTION get_config_value(p_key TEXT)
-RETURNS TEXT AS $$
+DO $$
 DECLARE
-    v TEXT;
+    legacy_job RECORD;
 BEGIN
-    SELECT config_value INTO v FROM com_config WHERE config_key = p_key LIMIT 1;
-    RETURN v;
-END;
-$$ LANGUAGE plpgsql STABLE;
-
--- Read a secret. Only usable for base64-obfuscated (unencrypted) secrets from
--- inside SQL; Fernet-encrypted secrets are decrypted app-side. Local/dev
--- containers store the gateway key base64-only so the cron job can use it.
-CREATE OR REPLACE FUNCTION get_secret_value(p_key TEXT)
-RETURNS TEXT AS $$
-DECLARE
-    rec RECORD;
-BEGIN
-    SELECT secret_value, is_encrypted INTO rec
-    FROM com_secrets WHERE secret_key = p_key LIMIT 1;
-    IF rec IS NULL THEN
-        RETURN NULL;
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_extension
+        WHERE extname = 'pg_cron'
+    ) THEN
+        FOR legacy_job IN
+            SELECT jobid
+            FROM cron.job
+            WHERE jobname = 'batch-result-retrieval'
+              AND command = 'SELECT cron_fetch_batch_results();'
+        LOOP
+            PERFORM cron.unschedule(legacy_job.jobid);
+        END LOOP;
     END IF;
-    IF rec.is_encrypted THEN
-        -- Encrypted at rest; cannot decrypt inside SQL without the app key.
-        RETURN NULL;
-    END IF;
-    RETURN convert_from(decode(rec.secret_value, 'base64'), 'UTF8');
-END;
-$$ LANGUAGE plpgsql STABLE;
+END
+$$;
 
--- Import results JSONL: match custom_id -> request_uuid and record usage.
-CREATE OR REPLACE FUNCTION import_batch_results_jsonl(
-    p_batch_uuid UUID,
-    p_output_file_id TEXT,
-    p_content TEXT
-) RETURNS INTEGER AS $$
+-- Function names/signatures are not sufficient deletion authority. An operator may
+-- have replaced one of these generic public helpers after the legacy installer ran.
+-- Unscheduling above is committed independently by psql in its normal autocommit
+-- mode. Helper identity proof and deletion then run in one bounded transaction.
+-- PostgreSQL function creation/replacement writes pg_catalog.pg_proc under a
+-- RowExclusiveLock, so a SHARE lock on that catalog prevents a concurrent function
+-- replacement from landing between the exact pg_proc identity read and DROP. If
+-- conflicting DDL cannot quiesce within five seconds, cleanup fails closed instead
+-- of waiting without bound or deleting against stale identity evidence.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE pg_catalog.pg_proc IN SHARE MODE;
+
+DO $$
 DECLARE
-    updated_count INTEGER := 0;
-    line TEXT;
-    obj JSONB;
-    custom_id TEXT;
-    response JSONB;
-    usage JSONB;
+    helper_oid OID;
+    helper_source TEXT;
+    helper_language NAME;
+    helper_volatility "char";
+    helper_security_definer BOOLEAN;
 BEGIN
-    FOR line IN SELECT * FROM regexp_split_to_table(COALESCE(p_content, ''), E'\n') LOOP
-        line := btrim(line);
-        CONTINUE WHEN line = '';
-        BEGIN
-            obj := line::jsonb;
-        EXCEPTION WHEN others THEN
-            CONTINUE;
-        END;
-        custom_id := obj->>'custom_id';
-        CONTINUE WHEN custom_id IS NULL OR custom_id = '';
-        response := obj->'response'->'body';
-        usage := response->'usage';
-        UPDATE llm_requests
-           SET request_status = 'completed',
-               response_content = response->'choices'->0->'message'->>'content',
-               response_metadata = obj,
-               prompt_tokens = COALESCE((usage->>'prompt_tokens')::INT, prompt_tokens),
-               completion_tokens = COALESCE((usage->>'completion_tokens')::INT, completion_tokens),
-               total_tokens = COALESCE((usage->>'total_tokens')::INT, total_tokens),
-               completed_at = NOW()
-         WHERE request_uuid = custom_id::uuid;
-        IF FOUND THEN
-            updated_count := updated_count + 1;
-        END IF;
-    END LOOP;
-    RETURN updated_count;
-END;
-$$ LANGUAGE plpgsql;
-
--- Poll submitted/in-progress batches, fetch output, import JSONL.
-CREATE OR REPLACE FUNCTION cron_fetch_batch_results() RETURNS VOID AS $$
+    helper_oid := to_regprocedure('public.cron_fetch_batch_results()');
+    IF helper_oid IS NOT NULL THEN
+        SELECT p.prosrc, l.lanname, p.provolatile, p.prosecdef
+          INTO helper_source, helper_language, helper_volatility, helper_security_definer
+          FROM pg_catalog.pg_proc AS p
+          JOIN pg_catalog.pg_language AS l ON l.oid = p.prolang
+         WHERE p.oid = helper_oid;
+        IF helper_language <> 'plpgsql'
+           OR helper_volatility <> 'v'
+           OR helper_security_definer
+           OR helper_source IS DISTINCT FROM $legacy$
 DECLARE
     base_url TEXT;
     api_key TEXT;
@@ -144,11 +114,125 @@ BEGIN
         END IF;
     END LOOP;
 END;
-$$ LANGUAGE plpgsql;
+$legacy$ THEN
+            RAISE EXCEPTION 'Refusing to drop public.cron_fetch_batch_results(): definition does not match the retired legacy helper'
+                USING ERRCODE = '55000',
+                      HINT = 'Review the same-signature function manually; the legacy cron job has already been unscheduled when this file is run with psql autocommit.';
+        END IF;
+        EXECUTE 'DROP FUNCTION public.cron_fetch_batch_results()';
+    END IF;
 
-SELECT cron.schedule(
-    'batch-result-retrieval',
-    '* * * * *',
-    $$SELECT cron_fetch_batch_results();$$
-)
-WHERE NOT EXISTS (SELECT 1 FROM cron.job WHERE jobname = 'batch-result-retrieval');
+    helper_oid := to_regprocedure('public.import_batch_results_jsonl(uuid,text,text)');
+    IF helper_oid IS NOT NULL THEN
+        SELECT p.prosrc, l.lanname, p.provolatile, p.prosecdef
+          INTO helper_source, helper_language, helper_volatility, helper_security_definer
+          FROM pg_catalog.pg_proc AS p
+          JOIN pg_catalog.pg_language AS l ON l.oid = p.prolang
+         WHERE p.oid = helper_oid;
+        IF helper_language <> 'plpgsql'
+           OR helper_volatility <> 'v'
+           OR helper_security_definer
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    updated_count INTEGER := 0;
+    line TEXT;
+    obj JSONB;
+    custom_id TEXT;
+    response JSONB;
+    usage JSONB;
+BEGIN
+    FOR line IN SELECT * FROM regexp_split_to_table(COALESCE(p_content, ''), E'\n') LOOP
+        line := btrim(line);
+        CONTINUE WHEN line = '';
+        BEGIN
+            obj := line::jsonb;
+        EXCEPTION WHEN others THEN
+            CONTINUE;
+        END;
+        custom_id := obj->>'custom_id';
+        CONTINUE WHEN custom_id IS NULL OR custom_id = '';
+        response := obj->'response'->'body';
+        usage := response->'usage';
+        UPDATE llm_requests
+           SET request_status = 'completed',
+               response_content = response->'choices'->0->'message'->>'content',
+               response_metadata = obj,
+               prompt_tokens = COALESCE((usage->>'prompt_tokens')::INT, prompt_tokens),
+               completion_tokens = COALESCE((usage->>'completion_tokens')::INT, completion_tokens),
+               total_tokens = COALESCE((usage->>'total_tokens')::INT, total_tokens),
+               completed_at = NOW()
+         WHERE request_uuid = custom_id::uuid;
+        IF FOUND THEN
+            updated_count := updated_count + 1;
+        END IF;
+    END LOOP;
+    RETURN updated_count;
+END;
+$legacy$ THEN
+            RAISE EXCEPTION 'Refusing to drop public.import_batch_results_jsonl(uuid,text,text): definition does not match the retired legacy helper'
+                USING ERRCODE = '55000',
+                      HINT = 'Review the same-signature function manually; unrelated operator code is never deleted by signature alone.';
+        END IF;
+        EXECUTE 'DROP FUNCTION public.import_batch_results_jsonl(uuid,text,text)';
+    END IF;
+
+    helper_oid := to_regprocedure('public.get_secret_value(text)');
+    IF helper_oid IS NOT NULL THEN
+        SELECT p.prosrc, l.lanname, p.provolatile, p.prosecdef
+          INTO helper_source, helper_language, helper_volatility, helper_security_definer
+          FROM pg_catalog.pg_proc AS p
+          JOIN pg_catalog.pg_language AS l ON l.oid = p.prolang
+         WHERE p.oid = helper_oid;
+        IF helper_language <> 'plpgsql'
+           OR helper_volatility <> 's'
+           OR helper_security_definer
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    rec RECORD;
+BEGIN
+    SELECT secret_value, is_encrypted INTO rec
+    FROM com_secrets WHERE secret_key = p_key LIMIT 1;
+    IF rec IS NULL THEN
+        RETURN NULL;
+    END IF;
+    IF rec.is_encrypted THEN
+        -- Encrypted at rest; cannot decrypt inside SQL without the app key.
+        RETURN NULL;
+    END IF;
+    RETURN convert_from(decode(rec.secret_value, 'base64'), 'UTF8');
+END;
+$legacy$ THEN
+            RAISE EXCEPTION 'Refusing to drop public.get_secret_value(text): definition does not match the retired legacy helper'
+                USING ERRCODE = '55000',
+                      HINT = 'Review the same-signature function manually; unrelated operator code is never deleted by signature alone.';
+        END IF;
+        EXECUTE 'DROP FUNCTION public.get_secret_value(text)';
+    END IF;
+
+    helper_oid := to_regprocedure('public.get_config_value(text)');
+    IF helper_oid IS NOT NULL THEN
+        SELECT p.prosrc, l.lanname, p.provolatile, p.prosecdef
+          INTO helper_source, helper_language, helper_volatility, helper_security_definer
+          FROM pg_catalog.pg_proc AS p
+          JOIN pg_catalog.pg_language AS l ON l.oid = p.prolang
+         WHERE p.oid = helper_oid;
+        IF helper_language <> 'plpgsql'
+           OR helper_volatility <> 's'
+           OR helper_security_definer
+           OR helper_source IS DISTINCT FROM $legacy$
+DECLARE
+    v TEXT;
+BEGIN
+    SELECT config_value INTO v FROM com_config WHERE config_key = p_key LIMIT 1;
+    RETURN v;
+END;
+$legacy$ THEN
+            RAISE EXCEPTION 'Refusing to drop public.get_config_value(text): definition does not match the retired legacy helper'
+                USING ERRCODE = '55000',
+                      HINT = 'Review the same-signature function manually; unrelated operator code is never deleted by signature alone.';
+        END IF;
+        EXECUTE 'DROP FUNCTION public.get_config_value(text)';
+    END IF;
+END
+$$;
+COMMIT;
