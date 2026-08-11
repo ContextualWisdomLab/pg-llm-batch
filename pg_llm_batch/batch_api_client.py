@@ -316,7 +316,16 @@ class BatchAPIClient:
                 reason="must not exceed retry_max_delay_seconds",
             )
         self.postgres_dsn = postgres_dsn
-        self._credentials = credentials
+
+        def _validated_credentials(endpoint_alias: str) -> GatewayCredentials:
+            """Revalidate custom credential destinations before authenticated I/O."""
+            resolved = credentials(endpoint_alias)
+            return GatewayCredentials(
+                url=_normalize_gateway_url(resolved.url),
+                api_key=resolved.api_key,
+            )
+
+        self._credentials = _validated_credentials
         self.request_timeout_seconds = normalized_timeout
         self.max_download_bytes = max_download_bytes
         self.max_control_response_bytes = max_control_response_bytes
