@@ -5,11 +5,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRD = ROOT / "docs/product/PRD.md"
-TRD = ROOT / "docs/product/TRD.md"
-DATA_GOVERNANCE = ROOT / "docs/DATA_GOVERNANCE.md"
-TRACEABILITY = ROOT / "docs/TRACEABILITY.md"
-FITNESS = ROOT / "docs/DOCUMENTATION_FITNESS.md"
+ADR = ROOT / "docs/adr/virtual-jsonl-payload-integrity.md"
+ADR_INDEX = ROOT / "docs/adr/README.md"
 
 
 def _normalized(path: Path) -> str:
@@ -18,40 +15,34 @@ def _normalized(path: Path) -> str:
 
 
 def test_virtual_payload_integrity_gap_has_canonical_owner() -> None:
-    """Issue #124 must be planned without claiming persistence hardening is shipped."""
-    prd = _normalized(PRD)
-    trd = _normalized(TRD)
-    governance = _normalized(DATA_GOVERNANCE)
-    traceability = _normalized(TRACEABILITY)
-    fitness = _normalized(FITNESS)
+    """Issue #124 must have one discoverable planned ADR without shipped claims."""
+    adr = _normalized(ADR)
+    index = _normalized(ADR_INDEX)
 
     for phrase in (
         "persisted virtual jsonl payload integrity",
-        "issue #124",
-        "planned",
-        "malformed persisted payload",
+        "status: planned — issue #124",
+        "implementation baseline: protected `main` does **not** yet enforce",
+        "llm_batch_file_payloads.content",
+        "_normalize_payload_content()",
+        "before credential resolution",
         "before provider i/o",
+        "fail closed",
+        "prompt/request jsonl content must not be reflected",
+        "python 3.10, 3.12, and 3.14",
+        "100% owned production statement/branch coverage",
+        "rfc 8259",
+        "postgresql 18 documentation: json types",
+        "postgresql 18 documentation: constraints",
     ):
-        assert phrase in prd, phrase
+        assert phrase in adr, phrase
 
     for phrase in (
-        "persisted virtual jsonl payload integrity",
         "issue #124",
-        "planned",
-        "llm_batch_file_payloads",
-        "fail closed",
+        "planned persisted virtual jsonl payload-integrity boundary",
+        "virtual-jsonl-payload-integrity.md",
+        "before credential resolution or provider i/o",
     ):
-        assert phrase in trd, phrase
+        assert phrase in index, phrase
 
-    for phrase in (
-        "persisted virtual jsonl payload",
-        "issue #124",
-        "provider disclosure",
-        "fail closed",
-    ):
-        assert phrase in governance, phrase
-
-    assert "persisted virtual jsonl payload integrity" in traceability
-    assert "planned #124" in traceability
-    assert "virtual jsonl payload integrity" in fitness
-    assert "#124" in fitness
+    assert "implemented-on-protected-main" not in adr.split("## context", 1)[0]
