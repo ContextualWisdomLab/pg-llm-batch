@@ -113,7 +113,7 @@ async def test_persistent_get_transport_failure_raises_after_retry_budget(
         await client.get_batch_status("batch-1", "default")
 
     assert exc_info.value.response_data == {
-        "error_type": "ClientConnectionError",
+        "error_type": "ClientError",
         "timeout_seconds": 9.0,
     }
     assert sleeps == [0.5, 1.0]
