@@ -1,21 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Canonical PRD coverage for recently accepted buyer-visible gaps."""
+"""Canonical documentation coverage for recently accepted buyer-visible gaps."""
 
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 PRD = ROOT / "docs/product/PRD.md"
+TRACEABILITY = ROOT / "docs/TRACEABILITY.md"
+FITNESS = ROOT / "docs/DOCUMENTATION_FITNESS.md"
 
 
-def _normalized_prd() -> str:
-    """Return normalized lower-case PRD text for bounded semantic assertions."""
-    return " ".join(PRD.read_text(encoding="utf-8").lower().split())
+def _normalized(path: Path) -> str:
+    """Return normalized lower-case Markdown for bounded semantic assertions."""
+    return " ".join(path.read_text(encoding="utf-8").lower().split())
 
 
 def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
     """Recent accepted issues must remain explicit PLANNED product targets."""
-    prd = _normalized_prd()
+    prd = _normalized(PRD)
 
     required = {
         "#124": "virtual jsonl payload integrity",
@@ -45,5 +47,27 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
     provisioning_pos = prd.index("#134")
     provisioning = prd[max(0, provisioning_pos - 180): provisioning_pos + 1_500]
     assert "active-pr #86" in provisioning
+    assert "#87" in provisioning
+    assert "#89" in provisioning
+
+
+def test_latest_buyer_gaps_are_traceable_and_fitness_classified() -> None:
+    """Issues #132 and #134 must not live only in the PRD or issue tracker."""
+    traceability = _normalized(TRACEABILITY)
+    fitness = _normalized(FITNESS)
+
+    for document in (traceability, fitness):
+        assert "#132" in document
+        assert "generic validation diagnostic confidentiality" in document
+        assert "#134" in document
+        assert "runtime config/secret provisioning authority" in document
+
+    provisioning_pos = traceability.index("#134")
+    provisioning = traceability[max(0, provisioning_pos - 240): provisioning_pos + 1_500]
+    assert "planned" in provisioning
+    assert "com_config" in provisioning
+    assert "com_secrets" in provisioning
+    assert "least-privilege" in provisioning
+    assert "#86" in provisioning
     assert "#87" in provisioning
     assert "#89" in provisioning
