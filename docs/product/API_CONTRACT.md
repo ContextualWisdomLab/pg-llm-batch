@@ -68,6 +68,12 @@ This target is **not immutable** evidence. Direct mutation of the exception-owne
 
 `BatchRequest` is public on protected main, but exact runtime field typing is an **ACTIVE-PR** compatibility hardening until #104 integrates. The target requires `user_prompt`, `model`, and `id` to already be exact strings and `system_prompt` to be `None` or an exact string; it does not stringify non-string caller objects or reinterpret false-valued non-strings as empty content. Rejected values must not be exported through the resulting package validation message or structured details. Empty strings remain accepted for compatibility, and prompt/model content-policy validation remains host/provider-owned rather than being inferred by this lightweight record. This paragraph must be promoted to protected-main behavior only after the implementing source is integrated and revalidated there.
 
+### PLANNED `GatewayCredentials` representation confidentiality (#128)
+
+Protected main exports `GatewayCredentials` as a plain data-class value object whose generated `repr()` includes the secret-bearing `api_key`; `str()` follows that representation because no separate string contract exists. **PLANNED #128** hardens only this representation boundary after the active provider-client owner #71 integrates or is superseded. The target keeps the constructor shape, direct `api_key` attribute access, and existing equality/hash behavior compatible while excluding the API key from ordinary object representation and allowing only non-secret identity/destination information that is already safe to expose.
+
+A safe representation is **not arbitrary serialization** safety. Direct attribute access, `__dict__`, `dataclasses.asdict()`, pickling, caller-defined serializers, or other reflection remain separate authorities unless an implementation explicitly governs them. The eventual regression must use a unique secret sentinel and prove it cannot appear through `repr()`/`str()` or package-owned logs, exceptions, telemetry, and examples merely because the credentials object is rendered. This remains PLANNED behavior, not a protected-main guarantee.
+
 ### Resource ownership
 
 Objects that acquire PostgreSQL connections, HTTP sessions, files, iterators, or other finite resources must expose and document deterministic ownership/closure behavior. ACTIVE-PR changes that harden cleanup do not become the protected-main contract until merged.
