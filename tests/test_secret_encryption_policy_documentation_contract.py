@@ -74,6 +74,6 @@ def test_secret_policy_does_not_overwrite_the_shipped_baseline() -> None:
     trd = _normalized("docs/product/TRD.md")
     threat = _normalized("docs/THREAT_MODEL.md")
 
-    assert "secretstore supports fernet encryption when configured" in trd
+    assert "`secretstore` supports fernet encryption when configured" in trd
     assert "base64 without a fernet key remains obfuscation, not encryption" in trd
     assert "base64 remains obfuscation rather than encryption" in threat
