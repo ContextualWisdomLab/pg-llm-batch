@@ -40,7 +40,7 @@ Rejected as the initial universal remedy. A constraint can prevent some future m
 
 ### D. Define one canonical persisted shape, validate it on read, and consider a separately proven schema constraint
 
-Chosen. The Python reconstruction boundary must fail closed on unsupported persisted shape and contradictory text/count evidence before provider effects. A schema constraint may be added only with explicit existing-volume detection, migration, rollback/recovery, and package/container schema-mirror evidence.
+Chosen. The Python reconstruction boundary must fail closed on unsupported persisted shape and contradictory text/count evidence before provider I/O. A schema constraint may be added only with explicit existing-volume detection, migration, rollback/recovery, and package/container schema-mirror evidence.
 
 ## Decision
 
@@ -49,7 +49,7 @@ Chosen. The Python reconstruction boundary must fail closed on unsupported persi
 3. The `text` member shall be present and shall have the exact supported string type. Missing or malformed text is corruption, not an empty payload.
 4. The `line_count` member shall be present, shall be an exact non-boolean non-negative integer, and shall agree with the validated persisted JSONL record/framing count. Contradictory count metadata is corruption rather than advisory data.
 5. Whether additional object members remain forward-compatible or are rejected is an implementation compatibility decision, but any accepted extension must not weaken `text`/`line_count` validation or create another source of upload authority.
-6. Reconstructed content shall satisfy the package's bounded JSONL framing contract before external provider I/O. The implementation must preserve valid multiline payload byte identity and newline semantics while rejecting malformed records through bounded package-domain errors.
+6. Reconstructed content shall satisfy the package's bounded JSONL framing contract before provider I/O. The implementation must preserve valid multiline payload byte identity and newline semantics while rejecting malformed records through bounded package-domain errors.
 7. Persisted-payload validation shall complete before gateway credential resolution and before any HTTP request. The regression must prove zero credential-provider calls and zero provider calls for malformed durable state.
 8. Error messages, structured details, logs, telemetry, and exception links shall identify only a fixed/bounded failure class and validated non-content identity needed for recovery. Prompt/request JSONL content must not be reflected.
 9. If a PostgreSQL `CHECK` constraint is later selected, it is a separate migration decision within Issue #124. Existing rows must be inspected first; incompatible data fails closed into operator remediation. No `DELETE`, coercive rewrite, or `DROP ... CASCADE` behavior is implied by this ADR.
