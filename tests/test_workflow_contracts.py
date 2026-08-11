@@ -153,14 +153,17 @@ def test_workflow_step_field_matching_ignores_comments_and_unrelated_values() ->
     """Comment or nested text must not masquerade as workflow step fields."""
     decoy = """      - name: Decoy
         # uses: actions/checkout@0000000000000000000000000000000000000000
+        # persist-credentials: false
         env:
           NOTE: uses: actions/checkout@0000000000000000000000000000000000000000
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
         run: echo 'uses: actions/checkout@0000000000000000000000000000000000000000'
 """
 
     assert _step_top_level_field(decoy, "uses") is None
     assert _step_nested_field(decoy, "with", "ref") is None
+    assert _step_nested_field(decoy, "with", "persist-credentials") is None
 
 
 def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None:
@@ -179,6 +182,7 @@ def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None
                 continue
             checkout_count += 1
             assert _step_nested_field(step, "with", "ref") == exact_source_expression
+            assert _step_nested_field(step, "with", "persist-credentials") == "false"
             assert index + 1 < len(steps)
             verification_step = steps[index + 1]
             assert _step_top_level_field(verification_step, "name") == (
