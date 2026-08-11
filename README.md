@@ -276,12 +276,16 @@ produce body-free structured diagnostics.
 
 ### Idempotent GET retries
 
-Provider `GET` operations use up to three total attempts for `408`, `429`,
-`502`, `503`, and `504` and for supported transport failures. Bounded RFC 9110
-`Retry-After` delta-seconds or HTTP dates are honored. Malformed guidance uses
-equal-jitter exponential fallback; valid guidance above the configured maximum
-is refused. Side-effecting upload, creation, and cancellation `POST` operations
-are not retried automatically.
+Provider `GET` operations use up to three total attempts for `408`, `425`, `429`,
+`502`, `503`, and `504` and for retryable aiohttp transport failures. TLS
+handshake and certificate failures are never retried automatically; they fail
+after the first attempt because repeating a request cannot repair peer identity
+or TLS policy. Certificate fingerprint mismatches are never retried automatically
+for the same peer-identity reason. Bounded RFC 9110 `Retry-After` delta-seconds
+or HTTP dates are honored. Malformed guidance uses equal-jitter exponential
+fallback; valid guidance above the configured maximum is refused. Side-effecting
+upload, creation, and cancellation `POST` operations are not retried
+automatically.
 
 ## OpenTelemetry
 

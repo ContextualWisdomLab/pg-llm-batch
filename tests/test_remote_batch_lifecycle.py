@@ -504,7 +504,11 @@ async def test_durable_client_does_not_record_failed_cancel() -> None:
 
     result = await client.cancel_batch("batch-1", "primary")
 
-    assert result == {"success": False, "reason": "already complete"}
+    assert result == {
+        "success": False,
+        "reason": "Batch cancellation rejected by provider",
+        "status_code": 409,
+    }
     assert recorded == []
 
 
