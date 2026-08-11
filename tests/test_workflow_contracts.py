@@ -24,6 +24,114 @@ def _assert_external_actions_are_pinned(workflow: str) -> None:
         assert re.search(r"@[0-9a-f]{40}(?:\s|$)", target), target
 
 
+def _workflow_job_steps(workflow: str) -> list[list[str]]:
+    """Return raw step blocks for every top-level job in a workflow."""
+    job_steps: list[list[str]] = []
+    current_steps: list[str] | None = None
+    current_step_lines: list[str] | None = None
+    inside_steps = False
+
+    for raw_line in workflow.splitlines():
+        stripped = raw_line.strip()
+        indent = len(raw_line) - len(raw_line.lstrip())
+
+        if indent == 2 and stripped.endswith(":") and not stripped.startswith("-"):
+            inside_steps = False
+            current_steps = None
+            current_step_lines = None
+            continue
+
+        if indent == 4 and stripped == "steps:":
+            current_steps = []
+            job_steps.append(current_steps)
+            current_step_lines = None
+            inside_steps = True
+            continue
+
+        if not inside_steps:
+            continue
+
+        if indent == 6 and stripped.startswith("- "):
+            current_step_lines = [raw_line]
+            assert current_steps is not None
+            current_steps.append("\n".join(current_step_lines))
+            continue
+
+        if stripped and indent <= 4:
+            inside_steps = False
+            current_steps = None
+            current_step_lines = None
+            continue
+
+        if current_step_lines is not None:
+            current_step_lines.append(raw_line)
+            assert current_steps is not None
+            current_steps[-1] = "\n".join(current_step_lines)
+
+    return job_steps
+
+
+def _yaml_scalar_value(value: str) -> str:
+    """Return one simple YAML scalar without a trailing inline comment."""
+    normalized = value.strip()
+    if " #" in normalized:
+        normalized = normalized.split(" #", 1)[0].rstrip()
+    return normalized
+
+
+def _step_top_level_field(step: str, field: str) -> str | None:
+    """Read one actual top-level workflow-step field, excluding comments."""
+    lines = step.splitlines()
+    first_line = next((line for line in lines if line.strip()), "")
+    if not first_line:
+        return None
+    base_indent = len(first_line) - len(first_line.lstrip())
+    patterns = (
+        re.compile(rf"^\s{{{base_indent}}}-\s+{re.escape(field)}:\s*(.*?)\s*$"),
+        re.compile(rf"^\s{{{base_indent + 2}}}{re.escape(field)}:\s*(.*?)\s*$"),
+    )
+
+    for raw_line in lines:
+        if raw_line.lstrip().startswith("#"):
+            continue
+        for pattern in patterns:
+            match = pattern.match(raw_line)
+            if match:
+                return _yaml_scalar_value(match.group(1))
+    return None
+
+
+def _step_nested_field(step: str, mapping: str, field: str) -> str | None:
+    """Read one direct child field from a workflow-step mapping."""
+    lines = step.splitlines()
+    first_line = next((line for line in lines if line.strip()), "")
+    if not first_line:
+        return None
+    base_indent = len(first_line) - len(first_line.lstrip())
+    mapping_indent = base_indent + 2
+    field_indent = base_indent + 4
+    in_mapping = False
+
+    for raw_line in lines:
+        stripped = raw_line.strip()
+        if not stripped or raw_line.lstrip().startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip())
+        if indent == mapping_indent and re.fullmatch(
+            rf"{re.escape(mapping)}:\s*", stripped
+        ):
+            in_mapping = True
+            continue
+        if in_mapping and indent <= mapping_indent:
+            in_mapping = False
+        if not in_mapping or indent != field_indent:
+            continue
+        match = re.fullmatch(rf"{re.escape(field)}:\s*(.*?)\s*", stripped)
+        if match:
+            return _yaml_scalar_value(match.group(1))
+    return None
+
+
 def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     workflow = _read(".github/workflows/ci.yml")
 
@@ -41,6 +149,50 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     assert "Run legacy SQL cleanup integration smoke" in workflow
     assert "tests/smoke_legacy_sql_cleanup.sh" in workflow
     _assert_external_actions_are_pinned(workflow)
+
+
+def test_workflow_step_field_matching_ignores_comments_and_unrelated_values() -> None:
+    """Comment or nested text must not masquerade as workflow step fields."""
+    decoy = """      - name: Decoy
+        # uses: actions/checkout@0000000000000000000000000000000000000000
+        # persist-credentials: false
+        env:
+          NOTE: uses: actions/checkout@0000000000000000000000000000000000000000
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+        run: echo 'uses: actions/checkout@0000000000000000000000000000000000000000'
+"""
+
+    assert _step_top_level_field(decoy, "uses") is None
+    assert _step_nested_field(decoy, "with", "ref") is None
+    assert _step_nested_field(decoy, "with", "persist-credentials") is None
+
+
+def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None:
+    """Every CI checkout must bind and verify the exact source head."""
+    workflow = _read(".github/workflows/ci.yml")
+    exact_source_expression = "${{ github.event.pull_request.head.sha || github.sha }}"
+    exact_verification = (
+        f'test "$(git rev-parse HEAD)" = "{exact_source_expression}"'
+    )
+    checkout_count = 0
+
+    for steps in _workflow_job_steps(workflow):
+        for index, step in enumerate(steps):
+            uses = _step_top_level_field(step, "uses")
+            if uses is None or not uses.startswith("actions/checkout@"):
+                continue
+            checkout_count += 1
+            assert _step_nested_field(step, "with", "ref") == exact_source_expression
+            assert _step_nested_field(step, "with", "persist-credentials") == "false"
+            assert index + 1 < len(steps)
+            verification_step = steps[index + 1]
+            assert _step_top_level_field(verification_step, "name") == (
+                "Verify exact source head"
+            )
+            assert _step_top_level_field(verification_step, "run") == exact_verification
+
+    assert checkout_count > 0
 
 
 def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
