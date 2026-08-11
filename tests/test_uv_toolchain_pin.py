@@ -27,17 +27,20 @@ def _setup_uv_step_blocks(workflow: str) -> list[str]:
             continue
 
         uses_indent = len(line) - len(line.lstrip())
-        step_start = uses_index
-        while step_start > 0:
-            candidate = lines[step_start - 1]
-            stripped = candidate.lstrip()
-            indent = len(candidate) - len(stripped)
-            if stripped.startswith("- ") and indent < uses_indent:
-                step_start -= 1
-                break
-            step_start -= 1
+        if line.lstrip().startswith("- uses:"):
+            step_start = uses_index
         else:
-            raise AssertionError("setup-uv use is not contained in a workflow step")
+            step_start = uses_index
+            while step_start > 0:
+                candidate = lines[step_start - 1]
+                stripped = candidate.lstrip()
+                indent = len(candidate) - len(stripped)
+                if stripped.startswith("- ") and indent < uses_indent:
+                    step_start -= 1
+                    break
+                step_start -= 1
+            else:
+                raise AssertionError("setup-uv use is not contained in a workflow step")
 
         step_indent = len(lines[step_start]) - len(lines[step_start].lstrip())
         step_end = len(lines)
