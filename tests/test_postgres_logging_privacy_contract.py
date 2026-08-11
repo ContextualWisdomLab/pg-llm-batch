@@ -154,6 +154,17 @@ def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> 
     assert settings["pg_stat_statements.save"].lower() == "off"
 
 
+def test_query_statistics_preload_is_opt_in_for_bounded_shared_memory() -> None:
+    """Disabled query statistics must not still reserve preload/query-id resources."""
+    settings = _settings()
+    preloaded = {
+        item.strip() for item in settings["shared_preload_libraries"].split(",")
+    }
+
+    assert "pg_stat_statements" not in preloaded
+    assert settings["compute_query_id"].lower() == "auto"
+
+
 def test_activity_tracking_query_text_residual_is_explicit() -> None:
     """Live pg_stat_activity query text must remain an explicit residual boundary."""
     settings = _settings()
