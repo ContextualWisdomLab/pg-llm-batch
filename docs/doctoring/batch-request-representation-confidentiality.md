@@ -20,7 +20,7 @@ The package therefore prefers purpose-bound access and selective disclosure over
 
 ## Compatibility
 
-The constructor signature and accepted values are unchanged. The runtime type checks introduced by #104 remain unchanged. Equality semantics remain unchanged because the fields continue to use the data-class default `compare=True`; only representation participation changes. No schema, provider transport, credential, CLI, persistence, or release interface changes.
+The constructor signature is unchanged, but runtime accepted values are intentionally narrowed by #104: `user_prompt`, `model`, and `id` require exact `str` values, while `system_prompt` accepts only `None` or an exact `str`. Empty strings remain accepted for compatibility. Equality semantics remain unchanged because the fields continue to use the data-class default `compare=True`; only representation participation changes. No schema, provider transport, credential, CLI, persistence, or release interface changes.
 
 ## Verification
 
