@@ -224,9 +224,9 @@ def config_credentials_provider(
     def _provider(endpoint_alias: str) -> GatewayCredentials:
         """Resolve the base URL and API key for one endpoint alias from the stores."""
         url = config_store.get("gateway", endpoint_alias, None)
-        if not url:
+        if url is None:
             url = config_store.get("gateway", "base_url", None)
-        if not url:
+        if url is None:
             raise GatewayError(
                 f"No gateway base_url configured for alias '{endpoint_alias}'"
             )
