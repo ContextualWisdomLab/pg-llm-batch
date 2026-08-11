@@ -11,14 +11,21 @@ DOCTORING = ROOT / "docs/doctoring/uv-toolchain-reproducibility.md"
 def test_uv_toolchain_doctoring_records_reproducibility_and_recovery() -> None:
     """The exact uv pin must retain rationale, update, rollback, and standards."""
     assert DOCTORING.exists(), "missing uv toolchain reproducibility doctoring"
-    normalized = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
+
+    raw = DOCTORING.read_text(encoding="utf-8").lower()
+    normalized = " ".join(raw.split())
+
+    assert 'required-version = "==0.12.3"' in raw
+    assert "## update procedure" in raw
+    assert "## rollback and recovery" in raw
+    assert (
+        "do not recover by deleting `uv.toml`, broadening the specifier, "
+        "or selecting `latest`"
+        in normalized
+    )
 
     for phrase in (
-        "required-version",
-        "==0.12.3",
         "falling back to latest",
-        "update procedure",
-        "rollback",
         "setup-uv",
         "python 3.14",
         "astral software",
