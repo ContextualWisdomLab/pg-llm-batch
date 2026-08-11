@@ -21,8 +21,8 @@ def test_virtual_payload_integrity_gap_has_canonical_owner() -> None:
 
     for phrase in (
         "persisted virtual jsonl payload integrity",
-        "status: planned — issue #124",
-        "implementation baseline: protected `main` does **not** yet enforce",
+        "planned — issue #124",
+        "protected `main` does **not** yet enforce this decision",
         "llm_batch_file_payloads.content",
         "_persist_payloads()",
         "_normalize_payload_content()",
