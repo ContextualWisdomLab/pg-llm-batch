@@ -105,6 +105,23 @@ def test_helper_cleanup_refuses_same_signature_function_substitution() -> None:
     assert "DROP FUNCTION IF EXISTS public." not in sql
 
 
+def test_helper_identity_check_and_drop_are_catalog_lock_atomic() -> None:
+    """Prevent concurrent function replacement between identity proof and deletion."""
+    sql = _legacy_sql()
+    first_identity_read = sql.index("helper_oid := to_regprocedure")
+    unschedule_end = sql.index("$$;", sql.index("cron.unschedule"))
+
+    lock_timeout = "SET LOCAL lock_timeout = '5s';"
+    catalog_lock = "LOCK TABLE pg_catalog.pg_proc IN SHARE MODE;"
+
+    assert "BEGIN;" in sql[unschedule_end:first_identity_read]
+    assert lock_timeout in sql[unschedule_end:first_identity_read]
+    assert catalog_lock in sql[unschedule_end:first_identity_read]
+    assert sql.index(lock_timeout, unschedule_end) < sql.index(catalog_lock, unschedule_end)
+    assert sql.index(catalog_lock, unschedule_end) < first_identity_read
+    assert sql.rstrip().endswith("COMMIT;")
+
+
 def test_legacy_retrieval_doctoring_preserves_upgrade_and_authority_boundaries() -> None:
     """Keep existing-volume remediation and the authoritative provider path explicit."""
     doctoring = DOCTORING.read_text(encoding="utf-8")
