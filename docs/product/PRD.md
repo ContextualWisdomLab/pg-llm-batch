@@ -251,6 +251,10 @@ Make **provider-secret encryption** an explicit deployment policy instead of all
 
 Define finite **PostgreSQL connection timeout** and package-owned statement/lock wait budgets instead of allowing core database operations to inherit potentially unbounded client/server waits. The final design must distinguish ordinary lookup/persistence operations from longer migration work, preserve #89's exact DSN-source authority and #87's deterministic connection ownership, avoid silently reconfiguring caller-owned transactions, and keep timeout diagnostics free of DSNs, SQL text, bind values, credentials, prompts, and provider payloads. Implementation waits for #87/#89 and the #53 durable transaction stack to integrate or be superseded; #70's readiness-specific statement bound remains a separate contract.
 
+### PRD-T33 — PostgreSQL transport encryption and server identity (Issue #123) — PLANNED
+
+Make remote PostgreSQL transport security explicit instead of inheriting libpq's opportunistic default. A deployment-selectable secure remote mode must reject downgrade-capable `sslmode` values such as `disable`, `allow`, and `prefer`, support certificate-validated `verify-full` as the preferred security-sensitive target, preserve an explicitly governed `verify-ca`/host-owned alternative where appropriate, and keep local Unix-socket or deliberate loopback development compatible without silently treating locality as a production trust decision. The package must use Psycopg/libpq-compatible conninfo parsing rather than ad-hoc DSN rewriting, keep CA/client-certificate material deployment-owned, preserve #89 source authority, and never echo DSNs or certificate/credential material in diagnostics. The detailed decision and rollback/test contract are owned by `docs/adr/postgresql-transport-security.md`; source implementation waits for #87/#89 and overlapping #53 database/transaction ownership to settle.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
