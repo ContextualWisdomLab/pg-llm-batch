@@ -77,8 +77,15 @@ log_checkpoints = on
 log_connections = off
 log_disconnections = off
 log_lock_waits = on
-log_temp_files = 0
-log_autovacuum_min_duration = 0
+
+# PostgreSQL documents that zero logs every temporary file name/size and every
+# autovacuum action respectively. Avoid those unconditional high-volume event
+# streams in the generic profile: temporary-file logging is off by default, and
+# autovacuum logging stays at PostgreSQL's documented 10-minute threshold.
+# Deployments may opt in to a lower threshold after defining a concrete purpose,
+# storage/retention budget, and operator response path.
+log_temp_files = -1
+log_autovacuum_min_duration = 10min
 log_replication_commands = off
 log_hostname = off
 log_timezone = 'UTC'
@@ -143,6 +150,8 @@ cron.max_running_jobs = 10
 #   a separately reviewed deployment has a concrete purpose, authorization
 #   model, minimal retention, access audit, encryption boundary, storage budget,
 #   and incident/deletion procedure.
+# - Keep all-temp-file logging disabled and do not lower the 10-minute autovacuum
+#   threshold without a defined diagnostic purpose and bounded log-storage plan.
 # - Keep track_io_timing/track_wal_io_timing off unless the deployment has
 #   measured clock-read cost with pg_test_timing and accepts the runtime overhead.
 # - Keep track_functions off unless function-call statistics have a reviewed
