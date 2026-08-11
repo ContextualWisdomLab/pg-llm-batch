@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Token-counting diagnostic confidentiality now keeps generic PostgreSQL/Psycopg
+  exception text out of package-owned debug logs: the generic database-failure
+  path emits only a fixed package-owned category, while the distinct
+  `UndefinedFunction` availability warning and no-Python-tokenizer-fallback
+  authority remain unchanged.
 - Released orchestrator-owned and CLI-owned configuration, secret, and
   token-counting PostgreSQL connections deterministically after successful,
   failed, and partially constructed operations; each partially initialized
