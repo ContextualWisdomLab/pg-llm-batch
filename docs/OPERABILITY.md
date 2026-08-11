@@ -78,6 +78,14 @@ After #101, do not restore automatic polling by re-enabling direct-SQL HTTP. Unt
 | CI/review infrastructure failure | Keep source and infrastructure findings separate; repair the owning control plane or wait locally while advancing unrelated work |
 | Scheduler/control-plane failure | Classify scheduler/activation, prompt/transport, tool, credential, dependency, repository, and silent-completion boundaries separately; repair only the proven boundary and resume a material safe repository action when one exists |
 
+## Planned PostgreSQL wait-budget policy
+
+**Issue #122 is PLANNED.** Protected main has package-created **PostgreSQL connection** paths that use ordinary Psycopg/libpq acquisition and, outside the readiness-specific ACTIVE-PR #70 path, no general package-owned finite database **timeout** contract. A stalled acquisition, blocked lock, or long-running statement can therefore hold an operator/worker action beyond the package's otherwise bounded provider-I/O behavior.
+
+The planned policy must add a finite package-owned connection-acquisition budget and operation-class-specific statement/lock budgets. It must preserve exact DSN source authority, avoid reflecting credential-bearing DSNs, and apply transaction/session-local controls only where pg-llm-batch owns the connection/transaction. It must not silently reconfigure caller-owned injected transactions. Ordinary lookup/persistence and migration operations may require different reviewed limits; one arbitrary global server timeout is not the target.
+
+When a package-owned database timeout occurs, the affected transaction must be cancelled/rolled back before success is reported. Operators should receive only a bounded operation/phase category, not SQL text, bind values, DSNs, prompts, credentials, provider data, or arbitrary database exception content. Acceptance requires realistic PostgreSQL lock-contention, statement-cancellation/rollback, recovery/retry, and normal-path tests after #87/#89 and the #53 durable transaction stack settle.
+
 ## Logging, telemetry and privacy
 
 Logs and telemetry should carry bounded low-cardinality operational facts: operation class, success/failure category, timing, counts, and stable non-sensitive identifiers where necessary. They should not contain API keys, raw secret values, full provider payloads, arbitrary exception text from untrusted dependencies, or sensitive prompts/responses by default. Optional OpenTelemetry is an observer, not an authority; telemetry failure must not corrupt application semantics.
