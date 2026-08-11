@@ -104,7 +104,9 @@ erDiagram
     llm_endpoints ||--o{ llm_endpoint_models : advertises
 ```
 
-All entities above are **IMPLEMENTED-ON-PROTECTED-MAIN** at the documentation baseline. `llm_remote_batch_jobs` uses composite UNIQUE `(endpoint_alias, remote_batch_id)` as the durable provider-facing identity and idempotency key on protected main; `remote_job_uuid` remains its row primary key. ACTIVE-PR #53 introduces trusted tenant qualification and forced RLS; that tenant boundary is not claimed here as shipped.
+All entities above are **IMPLEMENTED-ON-PROTECTED-MAIN** at the documentation baseline. `llm_remote_batch_jobs` uses composite UNIQUE `(endpoint_alias, remote_batch_id)` as the durable provider-facing identity and idempotency key on protected main; `remote_job_uuid` remains its row primary key. ACTIVE-PR #53 introduces trusted tenant qualification and forced RLS for the remote lifecycle projection; that tenant boundary is not claimed here as shipped.
+
+The protected-main content-bearing work tables `llm_queues`, `llm_batches`, `llm_batch_files`, `llm_batch_file_payloads`, `llm_requests`, and `llm_jsonl_lines` are **not tenant-qualified**. ACTIVE-PR #53 is a **remote lifecycle** isolation slice and does not retrofit those core tables. Issue #130 is the PLANNED follow-up for tenant-scoped content-bearing work state after the protected #53 and #87 results can be composed safely. This ERD therefore does not imply end-to-end tenant isolation and does not invent `tenant_scope` columns, keys, policies, or relationships that do not yet exist.
 
 ## ACTIVE-PR persistence overlay
 
