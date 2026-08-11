@@ -62,6 +62,8 @@ Issue #121 is the planned explicit provider-secret encryption deployment policy.
 
 Issue #123 is the planned explicit PostgreSQL transport-encryption and server-identity policy. Its canonical decision is [`postgresql-transport-security.md`](postgresql-transport-security.md). Protected main currently delegates the selected DSN to Psycopg/libpq without a package-owned `sslmode` policy; Issue #123 must provide an explicit secure remote mode, prefer certificate-validated `verify-full` for security-sensitive deployments, preserve deliberately governed local/host-owned connection authority, and compose only after #87/#89 and overlapping #53 connection/transaction ownership settle.
 
+Issue #124 is the planned persisted virtual JSONL payload-integrity boundary. Its canonical decision is [`virtual-jsonl-payload-integrity.md`](virtual-jsonl-payload-integrity.md). Protected main can currently coerce malformed `llm_batch_file_payloads.content` JSONB into empty or non-JSONL text; Issue #124 must define one persisted payload shape and fail closed before credential resolution or provider I/O without reflecting prompt/request content. Source/schema implementation waits for overlapping #71 and #87/#53 ownership to settle.
+
 ## ADR content contract
 
 A material ADR should contain:
