@@ -255,6 +255,30 @@ Define finite **PostgreSQL connection timeout** and package-owned statement/lock
 
 Make remote PostgreSQL transport security explicit instead of inheriting libpq's opportunistic default. A deployment-selectable secure remote mode must reject downgrade-capable `sslmode` values such as `disable`, `allow`, and `prefer`, support certificate-validated `verify-full` as the preferred security-sensitive target, preserve an explicitly governed `verify-ca`/host-owned alternative where appropriate, and keep local Unix-socket or deliberate loopback development compatible without silently treating locality as a production trust decision. The package must use Psycopg/libpq-compatible conninfo parsing rather than ad-hoc DSN rewriting, keep CA/client-certificate material deployment-owned, preserve #89 source authority, and never echo DSNs or certificate/credential material in diagnostics. The detailed decision and rollback/test contract are owned by `docs/adr/postgresql-transport-security.md`; source implementation waits for #87/#89 and overlapping #53 database/transaction ownership to settle.
 
+### PRD-T34 — Virtual JSONL payload integrity (Issue #124) — PLANNED
+
+Make the package-owned `llm_batch_file_payloads.content` representation explicit and fail closed on malformed or contradictory durable JSONL state before credential resolution or provider I/O. Reject arbitrary JSONB coercion, missing or invalid `text`/`line_count`, framing/count mismatch, and unsupported top-level shapes while preserving exact valid disk-free payload bytes. Source implementation must compose with ACTIVE-PR #71 for provider upload authority and ACTIVE-PR #87 / ACTIVE-PR #53 for database/resource/schema ownership rather than racing those surfaces.
+
+### PRD-T35 — Lifecycle diagnostic confidentiality (Issue #125) — PLANNED
+
+Bound durable lifecycle reservation/persistence failure evidence to a finite package-owned category vocabulary and prevent dynamic exception class names, arbitrary lower-layer exception text, and retained `__cause__`/`__context__` objects from becoming exported recovery evidence. Preserve trusted reconciliation fields and the distinction between pre-provider reservation failure and post-provider persistence failure. Implementation waits for ACTIVE-PR #53 or its protected successor because that branch owns the durable lifecycle root.
+
+### PRD-T36 — pg_tiktoken extension authority (Issue #126) — PLANNED
+
+Separate `pg_tiktoken` provisioning from ordinary runtime token counting so request execution never performs `CREATE EXTENSION` as a side effect. Provisioning/migrations own extension installation; the runtime `TokenCounter` uses a read-only readiness/capability check under least privilege and fails through bounded diagnostics when the extension/functions are unavailable. Implementation waits for ACTIVE-PR #87 and later composes with Issue #108 endpoint-qualified tokenizer metadata.
+
+### PRD-T37 — Durable lifecycle status and endpoint validation (Issue #127) — PLANNED
+
+Validate durable provider-controlled `batch_status` and `batch_endpoint` before persistence using a finite reviewed status vocabulary or bounded extension policy and an exact bounded relative-endpoint grammar. Cancellation transitional/terminal semantics must be explicit, and provider response data must never select credential or destination authority. Implementation waits for ACTIVE-PR #53 and must compose with ACTIVE-PR #71 / Issue #98 without transferring that branch's evidence.
+
+### PRD-T38 — Provider credential representation confidentiality (Issue #128) — PLANNED
+
+Keep provider API keys out of ordinary `GatewayCredentials` `repr()`/`str()` while preserving constructor shape, direct attribute access, and existing equality compatibility. A safe representation is not a claim that `__dict__`, `dataclasses.asdict()`, pickling, or caller-defined serialization is redacted. Implementation waits for ACTIVE-PR #71 because that branch currently owns the provider-client surface.
+
+### PRD-T39 — Exact orchestrator batch-key authority (Issue #129) — PLANNED
+
+Make the public batch-key authority for `PostgresBatchOrchestrator.prepare_batches()` exact and fail closed before PostgreSQL work. Preserve deliberate selection by exact UUID string or existing `llm_batches.input_file_path`, but reject arbitrary caller-object stringification or driver adaptation as identity selection; invalid types must produce bounded diagnostics before database I/O. Implementation waits for ACTIVE-PR #87 because that branch currently owns `orchestrator.py` validation/resource semantics.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
