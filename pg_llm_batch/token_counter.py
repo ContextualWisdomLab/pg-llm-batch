@@ -168,8 +168,8 @@ class TokenCounter:
             except UndefinedFunction:
                 self._pg_available = False
                 logger.warning("pg_tiktoken extension/functions unavailable")
-            except Exception as exc:  # pragma: no cover - runtime DB variance
-                logger.debug("PostgreSQL token counting failed: %s", exc)  # nosemgrep -- python-logger-credential-disclosure FP: logs a generic pg_tiktoken query exception at debug level; no credential or secret value is logged.
+            except Exception:  # pragma: no cover - runtime DB variance
+                logger.debug("PostgreSQL token counting failed")
         raise RuntimeError(
             "Token counting requires pg_tiktoken. Enable the extension and pass a "
             "valid DSN."
