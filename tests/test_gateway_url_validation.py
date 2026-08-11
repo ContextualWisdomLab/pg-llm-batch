@@ -23,6 +23,18 @@ class Config:
         return self.url
 
 
+class PerKeyConfig:
+    """Return key-specific gateway values while recording fallback lookups."""
+
+    def __init__(self, values):
+        self.values = values
+        self.calls = []
+
+    def get(self, _category, key, default):
+        self.calls.append(key)
+        return self.values.get(key, default)
+
+
 class Secrets:
     """Record whether a secret was resolved after URL validation."""
 
@@ -61,6 +73,47 @@ def test_credentials_provider_normalizes_exact_https_and_allows_loopback_http():
     ):
         credentials = config_credentials_provider(Config(url), Secrets())("local")
         assert credentials.url == url.rstrip("/")
+
+
+def test_credentials_provider_falls_back_only_when_alias_value_is_absent():
+    """A missing alias may use base_url, while an explicit alias value keeps authority."""
+    config = PerKeyConfig(
+        {
+            "default": None,
+            "base_url": "https://api.example/v1",
+        }
+    )
+    secrets = Secrets()
+
+    credentials = config_credentials_provider(config, secrets)("default")
+
+    assert credentials == GatewayCredentials(
+        url="https://api.example/v1",
+        api_key="secret",
+    )
+    assert config.calls == ["default", "base_url"]
+    assert secrets.calls == ["gateway_api_key.default"]
+
+
+@pytest.mark.parametrize("alias_value", [False, 0, 0.0, b"", [], {}])
+def test_credentials_provider_rejects_falsey_nonstring_alias_before_fallback(
+    alias_value,
+):
+    """False-y non-string alias configuration must not inherit another authority."""
+    config = PerKeyConfig(
+        {
+            "default": alias_value,
+            "base_url": "https://api.example/v1",
+        }
+    )
+    secrets = Secrets()
+    provider = config_credentials_provider(config, secrets)
+
+    with pytest.raises(GatewayError, match="Gateway base_url"):
+        provider("default")
+
+    assert config.calls == ["default"]
+    assert secrets.calls == []
 
 
 @pytest.mark.parametrize(
