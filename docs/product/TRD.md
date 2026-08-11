@@ -221,6 +221,12 @@ Durable lifecycle errors shall retain enough bounded phase/operation/order/valid
 
 Issue #102 is the PLANNED **automatic provider reconciliation** replacement for the unsafe retired SQL polling behavior. It must operate on validated durable endpoint + provider remote identities, call the existing Python provider/credential boundary, impose a finite per-run work budget, and define single-flight or equivalent concurrency plus crash/restart reconciliation semantics. External scheduling authority must remain separate from provider credentials. The worker must not imply **distributed exactly-once** delivery; cross-system side effects still require explicit host idempotency/outbox/reconciliation where the package contract does not own them.
 
+### TRD-REL6 — Package-owned PostgreSQL wait budgets (Issue #122) — PLANNED
+
+Package-created database work must gain finite, explicit **PostgreSQL connection timeout** and operation-class-specific statement/lock wait budgets. Protected main currently creates core connections with ordinary `psycopg.connect(dsn)` and has no general package-owned statement timeout outside the separately hardened readiness target. The planned implementation shall compose a finite libpq `connect_timeout` without rewriting the caller-selected DSN authority; use transaction/session-local `statement_timeout` and a bounded lock-wait policy where the package owns the transaction; distinguish ordinary reads/writes from longer migration operations; and avoid silently changing caller-owned/injected transaction settings.
+
+A timeout must abort or roll back the affected package-owned transaction before completion is reported. Exported diagnostics shall identify only a bounded operation/phase category and must not copy DSNs, SQL text, bind values, credentials, prompts, provider payloads, or arbitrary database exception text. Realistic PostgreSQL integration tests must cover lock contention, statement cancellation/rollback, recovery/retry, and normal fast paths. This remains PLANNED until #87/#89 and the #53 durable transaction stack integrate or are superseded; #70's readiness-specific database timeout remains an independent contract.
+
 ## 10. CI, evidence, and review requirements
 
 ### TRD-E1 — Deterministic quality gate
@@ -292,5 +298,9 @@ Fielding, R. T., Nottingham, M., & Reschke, J. (2022). *HTTP semantics* (RFC 911
 GitHub. (2026). *Events that trigger workflows*. GitHub Docs. https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
 
 National Institute of Standards and Technology. (2022). *Secure software development framework (SSDF) version 1.1: Recommendations for mitigating the risk of software vulnerabilities* (NIST SP 800-218). https://doi.org/10.6028/NIST.SP.800-218
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Database connection control functions*. https://www.postgresql.org/docs/18/libpq-connect.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Client connection defaults*. https://www.postgresql.org/docs/18/runtime-config-client.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Row security policies*. https://www.postgresql.org/docs/18/ddl-rowsecurity.html
