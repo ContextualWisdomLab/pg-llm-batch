@@ -60,6 +60,8 @@ Issue #107 is the planned first-class OpenTelemetry optional dependency and live
 
 Issue #121 is the planned explicit provider-secret encryption deployment policy. Its canonical decision is [`provider-secret-encryption-policy.md`](provider-secret-encryption-policy.md). Protected main still permits deliberate local/development Base64 obfuscation when no Fernet key is configured; Issue #121 must add an explicit encryption-required mode, safe existing-row migration and bounded key rotation without presenting Base64 as encryption or racing #85/#87/#89.
 
+Issue #123 is the planned explicit PostgreSQL transport-encryption and server-identity policy. Its canonical decision is [`postgresql-transport-security.md`](postgresql-transport-security.md). Protected main currently delegates the selected DSN to Psycopg/libpq without a package-owned `sslmode` policy; Issue #123 must provide an explicit secure remote mode, prefer certificate-validated `verify-full` for security-sensitive deployments, preserve deliberately governed local/host-owned connection authority, and compose only after #87/#89 and overlapping #53 connection/transaction ownership settle.
+
 ## ADR content contract
 
 A material ADR should contain:
