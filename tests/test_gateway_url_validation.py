@@ -6,6 +6,7 @@ from __future__ import annotations
 import pytest
 
 from pg_llm_batch.batch_api_client import (
+    BatchAPIClient,
     GatewayCredentials,
     config_credentials_provider,
 )
@@ -31,6 +32,17 @@ class Secrets:
     def require_secret(self, key):
         self.calls.append(key)
         return "secret"
+
+
+class NeverRequestSession:
+    """Fail if a rejected credential destination reaches HTTP acquisition."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def get(self, *_args, **_kwargs):
+        self.calls += 1
+        raise AssertionError("unsafe credential destination reached HTTP")
 
 
 def test_credentials_provider_normalizes_exact_https_and_allows_loopback_http():
@@ -75,3 +87,22 @@ def test_credentials_provider_rejects_untrusted_destinations_before_secret_read(
         provider("default")
 
     assert secrets.calls == []
+
+
+@pytest.mark.asyncio
+async def test_client_revalidates_custom_credentials_destination_before_http():
+    """Caller-supplied credential providers cannot bypass destination validation."""
+    client = BatchAPIClient(
+        "postgresql://unused",
+        lambda _alias: GatewayCredentials(
+            url="http://api.example/v1",
+            api_key="secret-sentinel",
+        ),
+    )
+    session = NeverRequestSession()
+    client._session = session
+
+    with pytest.raises(GatewayError, match="Gateway base_url"):
+        await client.get_batch_status("batch-1", "default")
+
+    assert session.calls == 0
