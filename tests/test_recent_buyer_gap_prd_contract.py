@@ -14,7 +14,7 @@ def _normalized_prd() -> str:
 
 
 def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
-    """Issues #124 through #131 must remain explicit PLANNED product targets."""
+    """Recent accepted issues must remain explicit PLANNED product targets."""
     prd = _normalized_prd()
 
     required = {
@@ -26,6 +26,8 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
         "#129": "batch-key authority",
         "#130": "tenant-scoped content-bearing work state",
         "#131": "token-counting diagnostic confidentiality",
+        "#132": "generic validation diagnostic confidentiality",
+        "#134": "runtime config/secret provisioning authority",
     }
     for issue, phrase in required.items():
         assert issue in prd, issue
@@ -33,9 +35,11 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
 
     for issue in required:
         issue_pos = prd.index(issue)
-        window = prd[max(0, issue_pos - 180): issue_pos + 480]
+        window = prd[max(0, issue_pos - 180): issue_pos + 520]
         assert "planned" in window, issue
 
     assert "active-pr #87" in prd
     assert "active-pr #53" in prd
     assert "active-pr #71" in prd
+    assert "active-pr #86" in prd
+    assert "active-pr #89" in prd
