@@ -41,5 +41,9 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
     assert "active-pr #87" in prd
     assert "active-pr #53" in prd
     assert "active-pr #71" in prd
-    assert "active-pr #86" in prd
-    assert "active-pr #89" in prd
+
+    provisioning_pos = prd.index("#134")
+    provisioning = prd[max(0, provisioning_pos - 180): provisioning_pos + 1_500]
+    assert "active-pr #86" in provisioning
+    assert "#87" in provisioning
+    assert "#89" in provisioning
