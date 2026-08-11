@@ -59,7 +59,9 @@ The snapshot must remain bounded and compatibility-preserving: **nested mutable 
 
 ### TRD-D8 — Endpoint-qualified tokenizer metadata
 
-Issue #108 is a PLANNED data-integrity follow-up for model metadata authority. When multiple provider endpoints advertise the same `model_id`, tokenizer selection must be **endpoint-qualified tokenizer** metadata rather than an ambiguous model-only lookup. The implementation must bind tokenizer resolution to the validated endpoint/model identity, fail closed on missing or conflicting metadata, preserve backwards compatibility only where one unambiguous mapping exists, and prove cross-endpoint isolation with realistic PostgreSQL tests before release.
+Issue #108 is a PLANNED data-integrity follow-up for model metadata authority. When multiple provider endpoints advertise the same `model_id`, tokenizer selection must be **endpoint-qualified tokenizer** metadata rather than an ambiguous model-only lookup. The implementation must bind tokenizer resolution to the validated endpoint/model identity, fail closed on conflicting metadata, and prove cross-endpoint isolation with realistic PostgreSQL tests before release.
+
+A successful authoritative query with **no matching metadata** is a different state from a database/schema/permission/connection/query **lookup failure**. A lookup failure **must not silently** return the same absence result or activate tokenizer fallback. Lookup failures must use fixed **bounded diagnostics** that do not copy DSNs, SQL text, credentials, provider content, arbitrary lower-layer exception text or dynamic exception class names, or unvalidated model/endpoint strings. The existing `pg_tiktoken` model-name fallback may remain only after authoritative absence under a documented deterministic compatibility policy, never after lookup failure or ambiguity.
 
 ## 4. Provider HTTP requirements
 
@@ -226,6 +228,12 @@ Issue #102 is the PLANNED **automatic provider reconciliation** replacement for 
 Package-created database work must gain finite, explicit **PostgreSQL connection timeout** and operation-class-specific statement/lock wait budgets. Protected main currently creates core connections with ordinary `psycopg.connect(dsn)` and has no general package-owned statement timeout outside the separately hardened readiness target. The planned implementation shall compose a finite libpq `connect_timeout` without rewriting the caller-selected DSN authority; use transaction/session-local `statement_timeout` and a bounded lock-wait policy where the package owns the transaction; distinguish ordinary reads/writes from longer migration operations; and avoid silently changing caller-owned/injected transaction settings.
 
 A timeout must abort or roll back the affected package-owned transaction before completion is reported. Exported diagnostics shall identify only a bounded operation/phase category and must not copy DSNs, SQL text, bind values, credentials, prompts, provider payloads, or arbitrary database exception text. Realistic PostgreSQL integration tests must cover lock contention, statement cancellation/rollback, recovery/retry, and normal fast paths. This remains PLANNED until #87/#89 and the #53 durable transaction stack integrate or are superseded; #70's readiness-specific database timeout remains an independent contract.
+
+### TRD-REL7 — Durable lifecycle failure diagnostic confidentiality (Issue #125) — PLANNED
+
+Durable lifecycle **reservation** and **persistence** failures must use a **finite** documented failure-category vocabulary rather than a **dynamic exception** class name. A reservation failure before provider I/O and a persistence failure after a successful provider effect are distinct recovery states and must remain distinguishable.
+
+Exported `GatewayError` evidence must not retain arbitrary caller/injected-recorder/database exception objects or text through `__cause__` or `__context__`. It may preserve only bounded trusted reconciliation fields: operation, phase, validated endpoint alias and batch identifier when available, observation order when reserved, and trusted **tenant scope** on tenant-qualified clients. Issue #125 remains PLANNED behind #53 so this documentation does not race the active durable lifecycle owner or weaken ordering/RLS behavior.
 
 ## 10. CI, evidence, and review requirements
 
