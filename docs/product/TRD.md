@@ -63,6 +63,12 @@ Issue #108 is a PLANNED data-integrity follow-up for model metadata authority. W
 
 A successful authoritative query with **no matching metadata** is a different state from a database/schema/permission/connection/query **lookup failure**. A lookup failure **must not silently** return the same absence result or activate tokenizer fallback. Lookup failures must use fixed **bounded diagnostics** that do not copy DSNs, SQL text, credentials, provider content, arbitrary lower-layer exception text or dynamic exception class names, or unvalidated model/endpoint strings. The existing `pg_tiktoken` model-name fallback may remain only after authoritative absence under a documented deterministic compatibility policy, never after lookup failure or ambiguity.
 
+### TRD-D9 — Runtime tokenizer provisioning authority (Issue #126) — PLANNED
+
+Protected main currently lets ordinary `TokenCounter` runtime initialization attempt `CREATE EXTENSION IF NOT EXISTS pg_tiktoken`, mixing extension installation/provision authority with request-time token counting. Issue #126 is PLANNED to separate those authorities: reviewed image/schema/migration/bootstrap provisioning installs `pg_tiktoken`, while normal runtime counting performs a **read-only** capability/readiness check and operates under **least privilege** without database or extension `CREATE` authority.
+
+The runtime contract must distinguish missing extension/functions, database connectivity or permission failure, and tokenization execution failure through fixed bounded diagnostics that do not copy prompt text, DSNs, SQL, credentials, provider content, arbitrary lower-layer exception text, or dynamic exception-class names. PostgreSQL remains the tokenizer authority; a Python **tokenizer fallback** must not be introduced as a workaround for provisioning failure. Fresh-install, existing-install, upgrade, rollback, and embedded-host behavior require realistic PostgreSQL tests. Implementation waits for #87 to integrate or be superseded and must compose with #108 endpoint-qualified tokenizer metadata rather than race those active owners.
+
 ## 4. Provider HTTP requirements
 
 ### TRD-H1 — Credential-bearing destination validation
@@ -235,6 +241,12 @@ Durable lifecycle **reservation** and **persistence** failures must use a **fini
 
 Exported `GatewayError` evidence must not retain arbitrary caller/injected-recorder/database exception objects or text through `__cause__` or `__context__`. It may preserve only bounded trusted reconciliation fields: operation, phase, validated endpoint alias and batch identifier when available, observation order when reserved, and trusted **tenant scope** on tenant-qualified clients. Issue #125 remains PLANNED behind #53 so this documentation does not race the active durable lifecycle owner or weaken ordering/RLS behavior.
 
+### TRD-REL8 — Durable lifecycle status and endpoint fields (Issue #127) — PLANNED
+
+Protected main persists provider-controlled `batch_status` and `batch_endpoint` in durable lifecycle evidence with only basic nonempty/NUL filtering. Issue #127 is PLANNED to replace arbitrary text acceptance with a **finite** reviewed status vocabulary or explicitly bounded extension policy and an exact bounded relative-endpoint grammar. Accepted cancellation transitions must distinguish `cancelling` from the **terminal** `cancelled` state, and every accepted terminal status must be reflected consistently in lifecycle non-regression/reconciliation semantics.
+
+Malformed or unsupported `batch_status`/`batch_endpoint` values must fail before the **durable** write and use fixed bounded package diagnostics without provider text, DSNs, credentials, request content, or dynamic lower-layer exception detail. Provider response endpoint data remains evidence only; it cannot select the credential-bearing gateway destination or credential scope. The implementation must preserve remote identifier validation, monotonic observation order, request-count monotonicity, bounded metadata, tenant/RLS semantics, and documented provider compatibility. It waits for #53 to integrate or be superseded and may compose with #98 where protected control-response validation establishes part of the same provider field contract; no check/review evidence transfers between those workstreams.
+
 ## 10. CI, evidence, and review requirements
 
 ### TRD-E1 — Deterministic quality gate
@@ -310,5 +322,7 @@ National Institute of Standards and Technology. (2022). *Secure software develop
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Database connection control functions*. https://www.postgresql.org/docs/18/libpq-connect.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Client connection defaults*. https://www.postgresql.org/docs/18/runtime-config-client.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: CREATE EXTENSION*. https://www.postgresql.org/docs/18/sql-createextension.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Row security policies*. https://www.postgresql.org/docs/18/ddl-rowsecurity.html
