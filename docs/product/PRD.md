@@ -279,6 +279,10 @@ Keep provider API keys out of ordinary `GatewayCredentials` `repr()`/`str()` whi
 
 Make the public batch-key authority for `PostgresBatchOrchestrator.prepare_batches()` exact and fail closed before PostgreSQL work. Preserve deliberate selection by exact UUID string or existing `llm_batches.input_file_path`, but reject arbitrary caller-object stringification or driver adaptation as identity selection; invalid types must produce bounded diagnostics before database I/O. Implementation waits for ACTIVE-PR #87 because that branch currently owns `orchestrator.py` validation/resource semantics.
 
+### PRD-T40 — Tenant-scoped content-bearing work state (Issue #130) — PLANNED
+
+Extend trusted host-selected tenant authority beyond ACTIVE-PR #53's durable remote-lifecycle projection to the core content-bearing queue, batch, file, payload, request, and JSONL state used in shared-database deployments. The protected-main `llm_queues`, `llm_batches`, `llm_batch_files`, `llm_batch_file_payloads`, `llm_requests`, and `llm_jsonl_lines` tables are not currently tenant-qualified and must not be represented as end-to-end tenant isolated. The eventual bounded slice must propagate tenant integrity through explicit keys/constraints and default-deny forced PostgreSQL RLS, preserve standalone compatibility, refuse ambiguous historical ownership rather than guessing during migration, and keep host authentication-to-tenant mapping host-owned. Implementation waits for ACTIVE-PR #53 and ACTIVE-PR #87 or reviewed successors so it composes with the protected tenant-lifecycle and orchestrator/resource boundaries instead of racing the root stack. Purpose-bound prompts/results remain usable for authorized work; least privilege, isolation, encryption, bounded retention/export, and auditable privileged access are the controls rather than blanket masking.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
