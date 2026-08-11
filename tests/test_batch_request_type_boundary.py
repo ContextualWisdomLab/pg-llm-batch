@@ -51,6 +51,22 @@ def test_batch_request_validation_does_not_export_rejected_values():
         assert secret not in repr(error.details)
 
 
+def test_batch_request_representation_excludes_content_and_identifier_values():
+    """Generic object rendering must not disclose prompt or caller identifier content."""
+    request = BatchRequest(
+        user_prompt="user-secret-sentinel",
+        model="gpt-4o",
+        system_prompt="system-secret-sentinel",
+        id="identifier-secret-sentinel",
+    )
+
+    for rendered in (repr(request), str(request)):
+        assert "user-secret-sentinel" not in rendered
+        assert "system-secret-sentinel" not in rendered
+        assert "identifier-secret-sentinel" not in rendered
+        assert "gpt-4o" in rendered
+
+
 def test_batch_request_preserves_string_compatibility():
     request = BatchRequest(user_prompt="", model="", system_prompt="", id="")
     assert (request.user_prompt, request.model, request.system_prompt, request.id) == (
