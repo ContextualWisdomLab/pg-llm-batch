@@ -260,10 +260,11 @@ def test_database_timeout_gap_has_canonical_owner() -> None:
 
 
 def test_postgres_transport_security_gap_has_canonical_owner() -> None:
-    """Bind the transport-security gap to one decision plus product discovery."""
+    """Bind the transport-security gap to product, ADR, and traceability authority."""
     prd = _read("docs/product/PRD.md")
     adr_index = _read("docs/adr/README.md")
     decision = _read("docs/adr/postgresql-transport-security.md")
+    traceability = _read("docs/TRACEABILITY.md")
 
     active_targets = prd.split("## 6. Active product targets", 1)[1].split(
         "## 7. Non-goals", 1
@@ -292,3 +293,12 @@ def test_postgres_transport_security_gap_has_canonical_owner() -> None:
         "PostgreSQL 18 documentation: SSL support",
     ):
         assert phrase in decision, phrase
+
+    for phrase in (
+        "#123",
+        "PostgreSQL transport",
+        "sslmode",
+        "verify-full",
+        "postgresql-transport-security.md",
+    ):
+        assert phrase in traceability, phrase
