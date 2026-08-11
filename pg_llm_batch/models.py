@@ -34,6 +34,11 @@ class BatchRequest:
     accepted for compatibility; content-policy validation belongs to the host
     or provider contract rather than this lightweight request record.
 
+    Generic data-class representations deliberately omit prompt content and the
+    caller-selected request identifier. This keeps routine object rendering from
+    becoming a package-owned disclosure channel; direct attribute access and
+    caller-defined serialization remain explicit caller responsibilities.
+
     Attributes:
         user_prompt: the user message / embedding input (required).
         model: model id understood by the target gateway.
@@ -41,10 +46,10 @@ class BatchRequest:
         id: stable request identifier used as the JSONL ``custom_id``.
     """
 
-    user_prompt: str
+    user_prompt: str = field(repr=False)
     model: str
-    system_prompt: Optional[str] = None
-    id: str = field(default_factory=lambda: uuid4().hex)
+    system_prompt: Optional[str] = field(default=None, repr=False)
+    id: str = field(default_factory=lambda: uuid4().hex, repr=False)
 
     def __post_init__(self) -> None:
         """Reject non-string values before they reach counting or gateway seams."""
