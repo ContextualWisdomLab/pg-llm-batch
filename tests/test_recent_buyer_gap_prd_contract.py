@@ -14,7 +14,7 @@ def _normalized_prd() -> str:
 
 
 def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
-    """Issues #124 through #130 must remain explicit PLANNED product targets."""
+    """Issues #124 through #131 must remain explicit PLANNED product targets."""
     prd = _normalized_prd()
 
     required = {
@@ -25,6 +25,7 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
         "#128": "provider credential representation confidentiality",
         "#129": "batch-key authority",
         "#130": "tenant-scoped content-bearing work state",
+        "#131": "token-counting diagnostic confidentiality",
     }
     for issue, phrase in required.items():
         assert issue in prd, issue
