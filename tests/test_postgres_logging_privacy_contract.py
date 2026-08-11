@@ -157,12 +157,22 @@ def test_optional_query_statistics_do_not_retain_query_text_without_opt_in() -> 
 def test_query_statistics_preload_is_opt_in_for_bounded_shared_memory() -> None:
     """Disabled query statistics must not still reserve preload/query-id resources."""
     settings = _settings()
+    doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
     preloaded = {
         item.strip() for item in settings["shared_preload_libraries"].split(",")
     }
 
     assert "pg_stat_statements" not in preloaded
     assert settings["compute_query_id"].lower() == "auto"
+    for phrase in (
+        "shared_preload_libraries",
+        "shared memory",
+        "even if `pg_stat_statements.track = none`",
+        "compute_query_id = auto",
+        "restart postgresql",
+        "opt-in",
+    ):
+        assert phrase in doctoring, phrase
 
 
 def test_activity_tracking_query_text_residual_is_explicit() -> None:
