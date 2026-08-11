@@ -25,7 +25,7 @@ The generic database-failure branch now emits a **finite package-owned diagnosti
 - credentials; or
 - chained exception objects.
 
-The existing `UndefinedFunction` branch remains a separate fixed warning, `pg_tiktoken extension/functions unavailable`, because extension/function availability is a package-owned operational distinction. This repair does not broaden retry behavior or introduce a Python tokenizer fallback.
+The existing `UndefinedFunction` branch remains a separate fixed warning, `pg_tiktoken extension/functions unavailable`, because extension/function availability is a package-owned operational distinction. The authority remains **no Python tokenizer fallback**: this repair neither broadens retry behavior nor introduces a Python-side tokenizer path.
 
 ## Security and privacy boundary
 
@@ -39,7 +39,7 @@ The permanent regression must prove all of the following:
 
 1. a generic lower-layer failure whose text contains a unique sensitive sentinel does not place that sentinel in `pg_llm_batch.token_counter` logs;
 2. the fixed generic token-counting failure category remains observable;
-3. the public result still fails closed through the existing bounded `RuntimeError` rather than falling back to a Python tokenizer;
+3. the public result still fails closed through the existing bounded `RuntimeError` under the **no Python tokenizer fallback** contract;
 4. the separate `UndefinedFunction` availability behavior remains unchanged; and
 5. Python 3.10, 3.12, and 3.14 plus owned production statement/branch coverage, public docstrings, security, SAST, package, and container gates remain green on the final source relation.
 
