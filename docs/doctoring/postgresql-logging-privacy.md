@@ -20,11 +20,13 @@ The same statistics review found `track_functions = all`. PostgreSQL's cumulativ
 
 A further transaction-metadata review found `track_commit_timestamp = on`. PostgreSQL documents this as a server-start option whose **default is off**, and its transaction-processing documentation states that enabling it records additional information in the `pg_commit_ts` directory for committed transactions. Commit-time metadata can be useful for specific replication/conflict or forensic questions, but collecting an additional persistent transaction record for every deployment without a defined consumer is not a neutral monitoring default.
 
-A final log-volume review found two unconditional event streams that contradicted the same purpose-bound/storage-bounded design. PostgreSQL documents that `log_temp_files = 0` logs **every temporary file name and size** when each file is deleted, and that `log_autovacuum_min_duration = 0` **logs all autovacuum actions**. Those events can be frequent on sort/hash-heavy or maintenance-active workloads. Rotation limits individual file growth, not aggregate retention or event generation, so logging every event by default is not a bounded storage policy.
+A log-volume review found two unconditional event streams that contradicted the same purpose-bound/storage-bounded design. PostgreSQL documents that `log_temp_files = 0` logs **every temporary file name and size** when each file is deleted, and that `log_autovacuum_min_duration = 0` **logs all autovacuum actions**. Those events can be frequent on sort/hash-heavy or maintenance-active workloads. Rotation limits individual file growth, not aggregate retention or event generation, so logging every event by default is not a bounded storage policy.
+
+A final query-statistics resource review found that setting `pg_stat_statements.track = none` did not make the feature a true opt-in. The optional profile still placed `pg_stat_statements` in `shared_preload_libraries` and forced `compute_query_id = on`. PostgreSQL 16 documents that the module consumes shared memory whenever it is loaded **even when tracking is `none`**, and that the module requires query identifiers when active. Reserving module memory and forcing query-ID calculation in a profile whose stated default is “query statistics disabled” is avoidable package-default work. The root-cause remedy is to remove the module from the default preload list and restore `compute_query_id = auto`; a deployment that needs query statistics must explicitly preload the module, restart, create the extension in the intended database, and enable a reviewed tracking mode.
 
 ## Decision
 
-The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs, makes query-text statistics collection opt-in, avoids connection-event logging unless a deployment has an explicit need, and keeps optional high-volume or material-cost monitoring bounded:
+The reviewed baseline keeps ordinary SQL statement text and bind values out of server logs, makes query-text statistics collection and its preload cost opt-in, avoids connection-event logging unless a deployment has an explicit need, and keeps optional high-volume or material-cost monitoring bounded:
 
 - `log_statement = none`;
 - `log_min_duration_statement = -1` and `log_min_duration_sample = -1`;
@@ -36,14 +38,23 @@ The reviewed baseline keeps ordinary SQL statement text and bind values out of s
 - `log_connections = off` and `log_disconnections = off` so connection lifecycle events are **opt-in** rather than an unconditional source of client-network records;
 - `log_temp_files = -1` so temporary-file name/size events are **opt-in** rather than emitted for every temporary file;
 - `log_autovacuum_min_duration = 10min`, PostgreSQL 16's documented default, so the generic profile does not log every autovacuum action while retaining a conservative long-running-maintenance signal;
-- `pg_stat_statements.track = none`, planning/utility tracking off, and `save = off` so preloading the module does not silently start representative-query retention if the extension is present;
+- `pg_stat_statements` is **not** in `shared_preload_libraries`; its tracking/planning/utility/save settings remain fail-safe placeholders at disabled values for a later deliberate preload;
+- `compute_query_id = auto` instead of forcing query-ID calculation for deployments that do not enable a module requiring it;
 - `track_io_timing = off` and `track_wal_io_timing = off` so platform-dependent timing overhead is not imposed until an operator has measured and accepted it;
 - `track_functions = none` so function-call timing/count collection remains an **opt-in** diagnostic instead of package-default work; and
 - `track_commit_timestamp = off` so additional per-transaction commit metadata is not written without a concrete purpose.
 
-Checkpoint and lock-wait events, conservative long-running autovacuum evidence, query IDs, table/index counters, and activity-state telemetry remain available. Temporary-file logging and lower autovacuum thresholds remain explicit opt-ins. This is not a claim that every remaining monitoring surface is content-free or cost-free: CSV client metadata, live activity tracking, and cumulative statistics have explicit residual boundaries.
+Checkpoint and lock-wait events, conservative long-running autovacuum evidence, table/index counters, and activity-state telemetry remain available. Query IDs and query-level statement statistics remain available as explicit opt-ins rather than unconditional work. Temporary-file logging and lower autovacuum thresholds remain explicit opt-ins. This is not a claim that every remaining monitoring surface is content-free or cost-free: CSV client metadata, live activity tracking, and cumulative statistics have explicit residual boundaries.
 
 This is **selective disclosure**, not blanket masking. The source data remains available to the authorized application/database path. If an embedding organization has a genuine requirement for content-bearing database audit logs, connection audit events, query-level `pg_stat_statements`, temporary-file diagnostics, more aggressive autovacuum logging, high-resolution I/O timing, function-call statistics, or commit timestamps, it must enable only the necessary surface under a purpose-specific authorization, least-privilege access model, retention/deletion schedule where data is persisted, encryption/storage boundary, access audit, legal basis where applicable, performance/storage budget, and incident procedure.
+
+## Query-statistics preload and shared-memory boundary
+
+PostgreSQL 16 requires `pg_stat_statements` to be loaded through `shared_preload_libraries` because it allocates shared memory. The same primary documentation explicitly states that this memory is consumed whenever the module is loaded, **even if `pg_stat_statements.track = none`**. Keeping the module preloaded while calling query statistics “disabled” therefore avoided query-text collection but still imposed a server-start resource decision on every deployment that applied the optional profile.
+
+The generic profile now leaves `pg_stat_statements` out of `shared_preload_libraries` and uses PostgreSQL's `compute_query_id = auto` mode rather than forcing query-ID computation. The `pg_stat_statements.*` settings remain at fail-safe disabled values so a later operator preload does not silently enable collection merely because the configuration file is present.
+
+A deployment that deliberately needs query-level statistics must treat the capability as a coordinated opt-in: add `pg_stat_statements` to `shared_preload_libraries`, restart PostgreSQL, create the extension only in the intended database, select a reviewed `track` mode, define privileged access to representative query text, and accept the module's shared-memory/query-ID cost under a measured capacity budget. Disabling the feature again requires removing the preload entry and restarting; changing only `track` to `none` stops statement collection but does **not** reclaim the module's preload memory.
 
 ## Temporary-file and autovacuum log-volume boundary
 
@@ -67,7 +78,7 @@ PostgreSQL documents `track_io_timing` and `track_wal_io_timing` as disabled by 
 
 A deployment that needs block/WAL timing must treat the feature as an **opt-in** performance decision. Measure the target host with PostgreSQL's `pg_test_timing`, evaluate the result under representative workload and concurrency, and enable only the timing classes whose diagnostic value justifies the measured runtime cost. The package does not assume that cloud, VM, bare-metal, or container clock-read costs are interchangeable, and a green functional test is not evidence that the timing overhead is acceptable for a production workload.
 
-Disabling these two timing collectors does not disable ordinary database activity counters, query identifiers, activity-state visibility, checkpoint/lock/autovacuum events, or application-level telemetry. It only avoids imposing optional high-frequency clock reads before a deployment has established a performance budget.
+Disabling these two timing collectors does not disable ordinary database activity counters, activity-state visibility, checkpoint/lock/autovacuum events, application-level telemetry, or the deployment's ability to opt into query identifiers later. It only avoids imposing optional high-frequency clock reads before a deployment has established a performance budget.
 
 ## Function-statistics overhead boundary
 
@@ -75,7 +86,7 @@ PostgreSQL documents that cumulative **statistics collection** adds some executi
 
 The generic profile therefore keeps `track_functions = none`. A deployment may **opt-in** to `pl` or `all` only when function-level attribution answers a concrete operational question. Before enabling it, measure representative workload and concurrency with the deployment's normal observability stack active, compare throughput/latency/CPU effects against the same workload with function tracking disabled, and record the accepted performance budget. Functional correctness alone is not evidence that instrumentation overhead is commercially acceptable.
 
-This change does not disable `track_counts`, `track_activities`, query identifiers, checkpoint/lock/autovacuum logging, or application-level OpenTelemetry. If function statistics prove too expensive or are no longer needed, rollback is simply to restore `track_functions = none`; no business data migration is required.
+This change does not disable `track_counts`, `track_activities`, checkpoint/lock/autovacuum logging, application-level OpenTelemetry, or deliberate query-statistics enablement. If function statistics prove too expensive or are no longer needed, rollback is simply to restore `track_functions = none`; no business data migration is required.
 
 ## Commit-timestamp metadata boundary
 
@@ -103,7 +114,7 @@ This residual is why the configuration and doctoring say **persistent SQL/bind-v
 
 ## `pg_stat_statements` residual boundary
 
-The optional file still preloads `pg_stat_statements`, but the protected-main initialization script does not create the extension and this baseline sets collection to `none`. A deployment can deliberately override that. PostgreSQL documents that the extension retains representative query text; literal constants are commonly normalized but can still appear in some circumstances, and cross-user text is restricted to privileged roles. Those controls reduce exposure but do not remove the need for data classification, purpose, and retention governance.
+The optional file no longer preloads `pg_stat_statements`; its fail-safe GUC placeholders keep collection disabled if an operator later chooses to preload the module. PostgreSQL documents that an enabled extension retains representative query text; literal constants are commonly normalized but can still appear in some circumstances, and cross-user text is restricted to privileged roles. Those controls reduce exposure but do not remove the need for data classification, purpose, access, retention, and shared-memory/performance governance. `pg_stat_statements.track = none` is a collection switch, not a way to reclaim preload memory after the module has been loaded.
 
 ## Compliance / certification boundary
 
@@ -129,13 +140,15 @@ RED source `755487e1830fb7defc64626b3f5d6b301c1aa2f1` adds the commit-timestamp 
 
 RED source `5b14c0bb7e0256c8c33b9f2fc176e390fcc873c7` added the high-volume event regression. CI `31448131801` failed exactly on `log_temp_files = 0` (`1 failed, 359 passed, 3 deselected` on Python 3.12), proving the optional profile still emitted every temporary-file event. Production source `798ce22de75da91b792b54996b6f75bfbc5da7df` disables temporary-file logging by default and restores PostgreSQL's 10-minute autovacuum threshold. This document binds both settings to purpose, event-volume, storage, retention, and rollback decisions.
 
+RED source `e831063b422c51c80bd58cdc737b664e48647e03` added the query-statistics preload regression before the configuration repair. Its superseded PR workflows were cancelled after the production commit, so they are **not** passing or failing CI evidence. The test is nevertheless deterministic against that source: `shared_preload_libraries` still contained `pg_stat_statements` and `compute_query_id` was still `on`. Production source `bee5ba0ccaea0859fb54cfdc9067b672f585b712` removes the module from the default preload list and restores `compute_query_id = auto`. Final GREEN evidence must come from the later unchanged head; cancelled predecessor runs do not transfer.
+
 No predecessor or synthetic-merge result transfers to later heads; final acceptance requires fresh validation of the unchanged final source under current repository governance.
 
 ## Rollback and recovery
 
 If the safer baseline prevents an operator from satisfying a documented, purpose-specific audit requirement, do **not** restore blanket logging in the package default. Instead, maintain a deployment-owned overlay that enables only the necessary event/content classes for the authorized scope, defines access/retention/deletion, and can be disabled independently. If accidental content or unnecessary client-network logging is discovered, stop the relevant logging path, preserve only evidence required by the incident/legal process, rotate or revoke exposed credentials where relevant, and follow the deployment's deletion/backup-expiry procedure for unnecessary copies.
 
-If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. If temporary-file or autovacuum logging produces excessive volume, restore `log_temp_files = -1` and `log_autovacuum_min_duration = 10min` (or a deployment-approved higher/off threshold) before re-establishing a measurement baseline. If timing telemetry imposes unacceptable overhead, disable `track_io_timing` and `track_wal_io_timing` and re-establish a measurement baseline before any narrower re-enable. If function statistics impose unacceptable overhead or no longer have a reviewed diagnostic purpose, restore `track_functions = none`. If commit timestamps are no longer needed, restore `track_commit_timestamp = off` and restart under the deployment's change procedure. Rollback must not silently restore broad SQL/bind logging, unconditional connection event logging, all-event temp/autovacuum logging, fixed retention claims, or unmeasured/unneeded instrumentation.
+If query statistics are no longer needed, set tracking to `none`, remove `pg_stat_statements` from `shared_preload_libraries`, restore `compute_query_id = auto` unless another reviewed consumer requires query IDs, and restart PostgreSQL to release the module's shared-memory allocation. If PostgreSQL-managed CSV collection is operationally unsuitable, use a deployment-owned overlay to select the intended logging destination and disable/adjust `logging_collector` coherently. If temporary-file or autovacuum logging produces excessive volume, restore `log_temp_files = -1` and `log_autovacuum_min_duration = 10min` (or a deployment-approved higher/off threshold) before re-establishing a measurement baseline. If timing telemetry imposes unacceptable overhead, disable `track_io_timing` and `track_wal_io_timing` and re-establish a measurement baseline before any narrower re-enable. If function statistics impose unacceptable overhead or no longer have a reviewed diagnostic purpose, restore `track_functions = none`. If commit timestamps are no longer needed, restore `track_commit_timestamp = off` and restart under the deployment's change procedure. Rollback must not silently restore broad SQL/bind logging, unconditional connection event logging, all-event temp/autovacuum logging, fixed retention claims, or unmeasured/unneeded instrumentation.
 
 ## APA 7 references
 
