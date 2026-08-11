@@ -260,30 +260,35 @@ def test_database_timeout_gap_has_canonical_owner() -> None:
 
 
 def test_postgres_transport_security_gap_has_canonical_owner() -> None:
-    """Track remote PostgreSQL TLS and server identity as PLANNED security work."""
+    """Bind the transport-security gap to one decision plus product discovery."""
     prd = _read("docs/product/PRD.md")
-    trd = _read("docs/product/TRD.md")
-    threat_model = _read("docs/THREAT_MODEL.md")
-    operability = _read("docs/OPERABILITY.md")
-    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
-    traceability = _read("docs/TRACEABILITY.md")
+    adr_index = _read("docs/adr/README.md")
+    decision = _read("docs/adr/postgresql-transport-security.md")
 
     active_targets = prd.split("## 6. Active product targets", 1)[1].split(
         "## 7. Non-goals", 1
     )[0]
-    for document in (active_targets, trd, threat_model, operability, fitness):
-        for phrase in (
-            "Issue #123",
-            "PostgreSQL",
-            "sslmode",
-            "verify-full",
-        ):
-            assert phrase in document, phrase
-
     for phrase in (
-        "#123",
+        "Issue #123",
         "PostgreSQL transport",
         "sslmode",
         "verify-full",
+        "postgresql-transport-security.md",
     ):
-        assert phrase in traceability, phrase
+        assert phrase in active_targets, phrase
+
+    assert "](postgresql-transport-security.md)" in adr_index
+    assert "Issue #123" in adr_index
+
+    for phrase in (
+        "Status:** PLANNED",
+        "Issue #123",
+        "sslmode",
+        "verify-full",
+        "verify-ca",
+        "channel_binding=require",
+        "No ad-hoc DSN rewriting",
+        "Rollback and recovery",
+        "PostgreSQL 18 documentation: SSL support",
+    ):
+        assert phrase in decision, phrase
