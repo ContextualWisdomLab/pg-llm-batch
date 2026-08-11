@@ -167,9 +167,9 @@ Bind CI evidence to the exact source head, harden scheduled maintenance authorit
 
 Expose the existing validated provider cancellation primitive through a first-class `cancel --endpoint <alias> --batch-id <id>` operator command without adding automatic retry to the side-effecting cancellation request. This slice remains PLANNED while overlapping CLI secret-input/resource-ownership work in #85 and #87 is active and requires final exact-source acceptance after #88; it must not be represented as a protected-main CLI capability before those dependencies are resolved and the implementation is integrated.
 
-### PRD-T12 — Strict provider progress/control JSON (Issue #98) — PLANNED
+### PRD-T12 — Strict provider progress/control JSON (#71 / Issue #98) — ACTIVE-PR
 
-Reject malformed provider `request_counts` shapes, booleans/negative/string counters, and non-finite control JSON such as `NaN` or `Infinity` through one bounded package error rather than raw Python exceptions or non-standard structured output. Preserve the response-size, UTF-8, retry/replay, and provider-error confidentiality contracts owned by #71; implementation waits until that overlapping provider-control surface integrates or is superseded.
+ACTIVE-PR #71 now owns the bounded provider batch-status/progress repair originally tracked by Issue #98. Successful batch-status responses require a non-empty status string; `request_counts`, when present, must be an object; and `total`, `completed`, and `failed` must be exact non-negative integers with `completed + failed <= total`. Malformed shapes, booleans, strings, negative values, and non-finite values fail through fixed body-free `InvalidBatchStatusPayload` diagnostics rather than raw Python exceptions or unsafe normalization. The implementation preserves response-size, strict UTF-8/JSON, retry/no-POST-replay, response-handoff, and provider-error confidentiality contracts. Issue #98 remains open until this behavior reaches protected `main` and receives integrated exact-source acceptance; no staged #71 evidence is a protected-main guarantee.
 
 ### PRD-T13 — Deployment-specific PostgreSQL authentication (Issue #99) — PLANNED
 
