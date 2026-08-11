@@ -66,13 +66,29 @@ class ValidationError(PgLlmBatchError):
         value: Any = None,
         reason: str = "",
         message: Optional[str] = None,
+        *,
+        expose_value: bool = False,
     ) -> None:
-        """Describe an invalid field value and its reason."""
-        rendered = message or f"Invalid value for '{field}': {value!r} ({reason})"
+        """Describe invalid input without retaining its rejected value by default.
+
+        ``expose_value=True`` is an explicit diagnostic-authority opt-in for a
+        reviewed non-sensitive value. The default neither renders nor retains
+        the caller object, so confidential content and hostile ``__repr__``
+        implementations cannot become package-owned exception evidence.
+        """
+        if not isinstance(expose_value, bool):
+            raise TypeError("expose_value must be a bool")
+        evidence_value = value if expose_value else "<redacted>"
+        if message is not None:
+            rendered = message
+        elif expose_value:
+            rendered = f"Invalid value for '{field}': {value!r} ({reason})"
+        else:
+            rendered = f"Invalid value for '{field}' ({reason})"
         super().__init__(
             message=rendered,
             error_code="VALIDATION_ERROR",
-            details={"field": field, "value": value, "reason": reason},
+            details={"field": field, "value": evidence_value, "reason": reason},
         )
 
 
