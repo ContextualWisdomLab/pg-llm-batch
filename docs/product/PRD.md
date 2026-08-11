@@ -247,6 +247,10 @@ After ACTIVE-PR #119 settles the privacy-safe PostgreSQL logging content boundar
 
 Make **provider-secret encryption** an explicit deployment policy instead of allowing a missing Fernet key to silently select the protected-main Base64-only development path. Base64 remains obfuscation, **not encryption**. A deployment selecting **encryption-required** operation must fail before provider-secret persistence when usable Fernet authority is missing or invalid, detect and safely migrate existing unencrypted rows, and define bounded **key rotation** and recovery without weakening the host-provided credential seam. This remains PLANNED while #85, #87, and #89 own overlapping secret-input, storage/resource, and bootstrap-authority surfaces; its detailed decision is `docs/adr/provider-secret-encryption-policy.md`.
 
+### PRD-T32 — Bounded package-owned PostgreSQL waits (Issue #122) — PLANNED
+
+Define finite **PostgreSQL connection timeout** and package-owned statement/lock wait budgets instead of allowing core database operations to inherit potentially unbounded client/server waits. The final design must distinguish ordinary lookup/persistence operations from longer migration work, preserve #89's exact DSN-source authority and #87's deterministic connection ownership, avoid silently reconfiguring caller-owned transactions, and keep timeout diagnostics free of DSNs, SQL text, bind values, credentials, prompts, and provider payloads. Implementation waits for #87/#89 and the #53 durable transaction stack to integrate or be superseded; #70's readiness-specific statement bound remains a separate contract.
+
 ## 7. Non-goals and explicit exclusions
 
 - **OUT-OF-SCOPE:** training or serving language models.
