@@ -30,6 +30,7 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
         "#131": "token-counting diagnostic confidentiality",
         "#132": "generic validation diagnostic confidentiality",
         "#134": "runtime config/secret provisioning authority",
+        "#136": "provider-side batch file lifecycle",
     }
     for issue, phrase in required.items():
         assert issue in prd, issue
@@ -52,7 +53,7 @@ def test_recent_buyer_gaps_are_visible_in_product_targets() -> None:
 
 
 def test_latest_buyer_gaps_are_traceable_and_fitness_classified() -> None:
-    """Issues #132 and #134 must not live only in the PRD or issue tracker."""
+    """Issues #132, #134, and #136 must not live only in PRD or issue tracker."""
     traceability = _normalized(TRACEABILITY)
     fitness = _normalized(FITNESS)
 
@@ -61,6 +62,8 @@ def test_latest_buyer_gaps_are_traceable_and_fitness_classified() -> None:
         assert "generic validation diagnostic confidentiality" in document
         assert "#134" in document
         assert "runtime config/secret provisioning authority" in document
+        assert "#136" in document
+        assert "provider-side batch file lifecycle" in document
 
     provisioning_pos = traceability.index("#134")
     provisioning = traceability[max(0, provisioning_pos - 240): provisioning_pos + 1_500]
@@ -71,3 +74,11 @@ def test_latest_buyer_gaps_are_traceable_and_fitness_classified() -> None:
     assert "#86" in provisioning
     assert "#87" in provisioning
     assert "#89" in provisioning
+
+    lifecycle_pos = traceability.index("#136")
+    lifecycle = traceability[max(0, lifecycle_pos - 240): lifecycle_pos + 1_600]
+    assert "planned" in lifecycle
+    assert "active-pr #71" in lifecycle
+    assert "expires_after" in lifecycle
+    assert "output_expires_after" in lifecycle
+    assert "delete" in lifecycle
