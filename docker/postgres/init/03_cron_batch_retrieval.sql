@@ -36,10 +36,16 @@ $$;
 -- Function names/signatures are not sufficient deletion authority. An operator may
 -- have replaced one of these generic public helpers after the legacy installer ran.
 -- Unscheduling above is committed independently by psql in its normal autocommit
--- mode; this block removes a helper only when pg_proc retains the exact retired
--- PL/pgSQL source body plus the reviewed language/volatility/invoker-security shape.
--- Characteristic substring markers are deliberately insufficient because modified
--- operator code can preserve those markers while changing behavior.
+-- mode. Helper identity proof and deletion then run in one bounded transaction.
+-- PostgreSQL function creation/replacement writes pg_catalog.pg_proc under a
+-- RowExclusiveLock, so a SHARE lock on that catalog prevents a concurrent function
+-- replacement from landing between the exact pg_proc identity read and DROP. If
+-- conflicting DDL cannot quiesce within five seconds, cleanup fails closed instead
+-- of waiting without bound or deleting against stale identity evidence.
+BEGIN;
+SET LOCAL lock_timeout = '5s';
+LOCK TABLE pg_catalog.pg_proc IN SHARE MODE;
+
 DO $$
 DECLARE
     helper_oid OID;
@@ -229,3 +235,4 @@ $legacy$ THEN
     END IF;
 END
 $$;
+COMMIT;
