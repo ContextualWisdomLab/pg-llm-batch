@@ -335,7 +335,7 @@ async def test_get_stops_after_maximum_attempts(monkeypatch) -> None:
     with pytest.raises(GatewayError, match="Batch status failed") as exc_info:
         await client.get_batch_status("batch-1", "default")
 
-    assert exc_info.value.response_data == {"error": "busy-3"}
+    assert exc_info.value.response_data == {"error_type": "ProviderHTTPError"}
     assert sleeps == [0.5, 1.0]
     assert len(session.calls) == 3
 
@@ -356,7 +356,11 @@ async def test_post_status_is_not_retried(monkeypatch) -> None:
 
     result = await client.cancel_batch("batch-1", "default")
 
-    assert result == {"success": False, "reason": "busy"}
+    assert result == {
+        "success": False,
+        "reason": "Batch cancellation rejected by provider",
+        "status_code": 503,
+    }
     assert sleeps == []
     assert len(session.calls) == 1
 
