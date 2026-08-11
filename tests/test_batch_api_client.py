@@ -389,7 +389,7 @@ async def test_payload_missing_and_upload_error(monkeypatch):
     with pytest.raises(GatewayError) as exc_info:
         await client.upload_jsonl("memory://bad", "default")
     assert exc_info.value.status_code == 400
-    assert exc_info.value.response_data == {"error": "bad payload"}
+    assert exc_info.value.response_data == {"error_type": "ProviderHTTPError"}
 
 
 async def test_create_status_download_and_cancel_error_paths():
@@ -400,6 +400,7 @@ async def test_create_status_download_and_cancel_error_paths():
     with pytest.raises(GatewayError) as exc_info:
         await client.create_batch_job("file", "default", metadata={"tenant": "a"})
     assert exc_info.value.status_code == 503
+    assert exc_info.value.response_data == {"error_type": "ProviderHTTPError"}
 
     client._session = FakeSession(
         {
@@ -427,21 +428,25 @@ async def test_create_status_download_and_cancel_error_paths():
         }
     )
 
-    with pytest.raises(GatewayError, match="Batch status failed"):
+    with pytest.raises(GatewayError, match="Batch status failed") as exc_info:
         await client.get_batch_status("bad-status", "default")
+    assert exc_info.value.response_data == {"error_type": "ProviderHTTPError"}
     no_output = await client.download_results("no-output", "default")
     assert no_output == {"success": False, "reason": "No output_file_id on batch"}
     with pytest.raises(GatewayError) as exc_info:
         await client.download_results("download-error", "default")
-    assert exc_info.value.response_data == {"body": "storage down"}
+    assert exc_info.value.response_data == {"error_type": "ProviderHTTPError"}
 
     assert await client.cancel_batch("cancel-fail", "default") == {
         "success": False,
-        "reason": "already complete",
+        "reason": "Batch cancellation rejected by provider",
+        "status_code": 409,
     }
-    assert (await client.cancel_batch("cancel-unknown", "default"))["reason"] == (
-        "Unknown error"
-    )
+    assert await client.cancel_batch("cancel-unknown", "default") == {
+        "success": False,
+        "reason": "Batch cancellation rejected by provider",
+        "status_code": 500,
+    }
     assert await client.cancel_batch("cancel-ok", "default") == {
         "success": True,
         "batch_id": "cancel-ok",
