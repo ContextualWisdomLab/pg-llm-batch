@@ -19,14 +19,14 @@ jobs:
     permissions:
       contents: read
       id-token: write
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@17bd5e4a98a718012dcb82d5028aa697a4ca8077 # prerequisite .github#782
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@60de3e6b6e8363c0aa3de8276f42a67597b2599c # prerequisite .github#782
     with:
       target_repository: ContextualWisdomLab/pg-llm-batch
       base_branch: main
       max_prs: "100"
       max_dispatches: "1"
       retry_hours: "1"
-      canonical_ref: 17bd5e4a98a718012dcb82d5028aa697a4ca8077
+      canonical_ref: 60de3e6b6e8363c0aa3de8276f42a67597b2599c
     secrets:
       PR_REVIEW_MERGE_TOKEN: ${{ secrets.PR_REVIEW_MERGE_TOKEN }}
       OPENCODE_APPROVE_TOKEN: ${{ secrets.OPENCODE_APPROVE_TOKEN }}
