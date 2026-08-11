@@ -228,3 +228,32 @@ def test_sql_retirement_and_reconciliation_reach_architecture_and_operations() -
     )[0]
     for phrase in ("#101", "direct-SQL", "Issue #102", "reconciliation"):
         assert phrase in feature_decisions, phrase
+
+
+def test_database_timeout_gap_has_canonical_owner() -> None:
+    """Track package-owned PostgreSQL wait budgets as PLANNED reliability work."""
+    prd = _read("docs/product/PRD.md")
+    trd = _read("docs/product/TRD.md")
+    operability = _read("docs/OPERABILITY.md")
+    fitness = _read("docs/DOCUMENTATION_FITNESS.md")
+    traceability = _read("docs/TRACEABILITY.md")
+
+    active_targets = prd.split("## 6. Active product targets", 1)[1].split(
+        "## 7. Non-goals", 1
+    )[0]
+    for document in (active_targets, trd, operability, fitness):
+        for phrase in (
+            "Issue #122",
+            "PostgreSQL",
+            "connection",
+            "timeout",
+        ):
+            assert phrase in document, phrase
+
+    for phrase in (
+        "#122",
+        "package-owned PostgreSQL",
+        "connect_timeout",
+        "statement_timeout",
+    ):
+        assert phrase in traceability, phrase
