@@ -252,7 +252,7 @@ def test_database_timeout_gap_has_canonical_owner() -> None:
 
     for phrase in (
         "#122",
-        "package-owned PostgreSQL",
+        "Package-owned PostgreSQL",
         "connect_timeout",
         "statement_timeout",
     ):
