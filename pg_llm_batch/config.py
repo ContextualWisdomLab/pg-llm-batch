@@ -170,11 +170,15 @@ class PostgresConfigStore:
             )
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
-        self._conn.autocommit = True
-        self.cache: Dict[str, Dict[str, Any]] = {}
-        self._ensure_table()
-        self._ensure_defaults()
-        self._load_cache()
+        try:
+            self._conn.autocommit = True
+            self.cache: Dict[str, Dict[str, Any]] = {}
+            self._ensure_table()
+            self._ensure_defaults()
+            self._load_cache()
+        except BaseException:
+            self.close()
+            raise
 
     def _ensure_table(self) -> None:
         """Create the ``com_config`` table if it does not already exist."""
@@ -298,16 +302,20 @@ class SecretStore:
             raise ConfigError("A Postgres DSN must be provided explicitly")
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
-        self._conn.autocommit = True
-        self._fernet = None
-        if fernet_key and Fernet is not None:
-            self._fernet = Fernet(fernet_key.encode("utf-8"))
-        elif fernet_key and Fernet is None:  # pragma: no cover
-            logger.warning(
-                "Fernet key supplied but 'cryptography' is not installed; "
-                "storing secrets base64-obfuscated instead."
-            )
-        self._ensure_table()
+        try:
+            self._conn.autocommit = True
+            self._fernet = None
+            if fernet_key and Fernet is not None:
+                self._fernet = Fernet(fernet_key.encode("utf-8"))
+            elif fernet_key and Fernet is None:  # pragma: no cover
+                logger.warning(
+                    "Fernet key supplied but 'cryptography' is not installed; "
+                    "storing secrets base64-obfuscated instead."
+                )
+            self._ensure_table()
+        except BaseException:
+            self.close()
+            raise
 
     def _ensure_table(self) -> None:
         """Create the ``com_secrets`` table if it does not already exist."""

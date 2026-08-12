@@ -125,14 +125,20 @@ class PostgresBatchOrchestrator:
                 rows: List[Tuple] = cur.fetchall()
 
         config = PostgresConfigStore(self.dsn)
-        counter = TokenCounter(self.dsn, config=config)
-        if validated_token_limit is not None:
-            counter.effective_limit = min(
-                counter.effective_limit, validated_token_limit
-            )
+        try:
+            counter = TokenCounter(self.dsn, config=config)
+            try:
+                if validated_token_limit is not None:
+                    counter.effective_limit = min(
+                        counter.effective_limit, validated_token_limit
+                    )
 
-        payloads = self._assemble_payloads(counter, rows)
-        return self._persist_payloads(payloads, resolved_uuid, counter)
+                payloads = self._assemble_payloads(counter, rows)
+                return self._persist_payloads(payloads, resolved_uuid, counter)
+            finally:
+                counter.close()
+        finally:
+            config.close()
 
     def _assemble_payloads(
         self, counter: TokenCounter, rows: List[Tuple]
