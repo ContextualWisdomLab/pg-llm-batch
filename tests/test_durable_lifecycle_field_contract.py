@@ -34,7 +34,7 @@ def _provider_batch(*, status: object, endpoint: object) -> dict[str, object]:
 
 @pytest.mark.parametrize(
     "status",
-    [None, "future_state", "COMPLETED", "x" * 65, "completed\x00secret"],
+    ["future_state", "COMPLETED", "x" * 65, "completed\x00secret", 7],
 )
 def test_persistence_rejects_unsupported_status_before_database_io(
     monkeypatch: pytest.MonkeyPatch,
@@ -44,7 +44,10 @@ def test_persistence_rejects_unsupported_status_before_database_io(
     driver = _NoDatabaseIO()
     monkeypatch.setattr(db, "psycopg", driver)
 
-    with pytest.raises(ValueError, match="batch_status is not a supported provider status") as exc:
+    with pytest.raises(
+        ValueError,
+        match="batch_status is not a supported provider status",
+    ) as exc:
         db.persist_remote_batch_state(
             "postgresql://should-not-connect",
             "default",
@@ -60,11 +63,11 @@ def test_persistence_rejects_unsupported_status_before_database_io(
 @pytest.mark.parametrize(
     "endpoint",
     [
-        None,
         "/v1/future-endpoint",
         "/v1/chat/completions?debug=1",
         "/v1/../chat/completions",
         "/v1/responses\x00secret",
+        7,
     ],
 )
 def test_persistence_rejects_unsupported_endpoint_before_database_io(
@@ -89,6 +92,21 @@ def test_persistence_rejects_unsupported_endpoint_before_database_io(
 
     assert str(endpoint) not in str(exc.value)
     assert driver.connections == []
+
+
+def test_sparse_status_and_endpoint_preserve_legacy_safe_defaults() -> None:
+    """Absent lifecycle fields retain the historical sparse-response contract."""
+    observed = datetime(2026, 8, 13, tzinfo=timezone.utc)
+    snapshot, _ = db._normalize_remote_batch_snapshot(
+        "standalone",
+        "default",
+        _provider_batch(status=None, endpoint=None),
+        1,
+        observed,
+    )
+    assert snapshot["batch_status"] == "unknown"
+    assert snapshot["batch_endpoint"] is None
+    assert snapshot["terminal_at"] is None
 
 
 def test_official_openai_statuses_and_endpoints_normalize_deterministically() -> None:
