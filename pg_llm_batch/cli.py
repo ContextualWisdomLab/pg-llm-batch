@@ -12,6 +12,7 @@ Subcommands:
     poll           poll a batch job's status once
     wait           poll until a batch reaches a terminal state
     retrieve       download completed batch results
+    cancel         cancel a provider batch job
     health         print the readiness report (exit 0 ready / 1 not)
     serve-healthz  serve GET /healthz
 
@@ -29,6 +30,7 @@ import json
 import re
 import sys
 import warnings
+from contextlib import ExitStack
 from typing import List, Optional
 
 from . import db
@@ -63,6 +65,13 @@ def _add_common(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Postgres DSN (else PG_LLM_BATCH_DSN bootstrap env var)",
     )
+
+
+def _close_if_supported(resource: object) -> None:
+    """Close one owned collaborator when it exposes a synchronous close hook."""
+    close = getattr(resource, "close", None)
+    if callable(close):
+        close()
 
 
 def _validate_secret_input(value: str) -> str:
@@ -165,6 +174,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_retrieve.add_argument("--endpoint", required=True)
     p_retrieve.add_argument("--batch-id", required=True)
 
+    p_cancel = sub.add_parser("cancel", help="Cancel a provider batch job")
+    _add_common(p_cancel)
+    p_cancel.add_argument("--endpoint", required=True)
+    p_cancel.add_argument("--batch-id", required=True)
+
     p_health = sub.add_parser("health", help="Print readiness report")
     _add_common(p_health)
 
@@ -177,11 +191,26 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _make_client(dsn: str) -> BatchAPIClient:
-    """Assemble a BatchAPIClient wired to the KV config and secret stores."""
-    config = PostgresConfigStore(dsn)
-    secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
-    provider = config_credentials_provider(config, secrets)
-    return BatchAPIClient(dsn, provider)
+    """Assemble a client and retain its CLI-owned credential-store resources."""
+    with ExitStack() as cleanup:
+        config = PostgresConfigStore(dsn)
+        cleanup.callback(_close_if_supported, config)
+        secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
+        cleanup.callback(_close_if_supported, secrets)
+        provider = config_credentials_provider(config, secrets)
+        client = BatchAPIClient(dsn, provider)
+        setattr(client, "_pg_llm_batch_cli_config_store", config)
+        setattr(client, "_pg_llm_batch_cli_secret_store", secrets)
+        cleanup.pop_all()
+    return client
+
+
+def _close_client_resources(client: object) -> None:
+    """Release CLI-owned credential stores after the HTTP client closes."""
+    secret_store = getattr(client, "_pg_llm_batch_cli_secret_store", None)
+    config_store = getattr(client, "_pg_llm_batch_cli_config_store", None)
+    _close_if_supported(secret_store)
+    _close_if_supported(config_store)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -206,25 +235,41 @@ def _dispatch(argv: Optional[List[str]]) -> int:
     if args.command == "config":
         if args.config_command == "set":
             store = PostgresConfigStore(dsn)
-            store.set(args.category, args.key, args.value)
-            print(f"Set {args.category}.{args.key}")
-            return 0
+            try:
+                store.set(args.category, args.key, args.value)
+                print(f"Set {args.category}.{args.key}")
+                return 0
+            finally:
+                _close_if_supported(store)
         if args.config_command == "get":
             store = PostgresConfigStore(dsn)
-            print(store.get(args.category, args.key))
-            return 0
+            try:
+                print(store.get(args.category, args.key))
+                return 0
+            finally:
+                _close_if_supported(store)
         if args.config_command == "set-secret":  # pragma: no branch - exhaustive parser
             secret_value = _read_secret_input()
             secrets = SecretStore(dsn, fernet_key=resolve_secret_key())
-            secrets.set_secret(args.secret_key, secret_value)
-            print("Secret stored.")
-            return 0
+            try:
+                secrets.set_secret(args.secret_key, secret_value)
+                print("Secret stored.")
+                return 0
+            finally:
+                _close_if_supported(secrets)
 
     if args.command == "count-tokens":
-        counter = TokenCounter(dsn, config=PostgresConfigStore(dsn))
-        tokens = counter.count_tokens(args.text, args.model)
-        print(json.dumps({"model": args.model, "tokens": tokens}))
-        return 0
+        config = PostgresConfigStore(dsn)
+        try:
+            counter = TokenCounter(dsn, config=config)
+            try:
+                tokens = counter.count_tokens(args.text, args.model)
+                print(json.dumps({"model": args.model, "tokens": tokens}))
+                return 0
+            finally:
+                _close_if_supported(counter)
+        finally:
+            _close_if_supported(config)
 
     if args.command == "submit":
         return _run_submit(dsn, args)
@@ -250,6 +295,11 @@ def _dispatch(argv: Optional[List[str]]) -> int:
             dsn, lambda c: c.download_results(args.batch_id, args.endpoint)
         )
 
+    if args.command == "cancel":
+        return _run_async_report(
+            dsn, lambda c: c.cancel_batch(args.batch_id, args.endpoint)
+        )
+
     if args.command == "health":
         report = check_health(dsn)
         print(json.dumps(report, indent=2))
@@ -267,13 +317,19 @@ def _run_submit(dsn: str, args: argparse.Namespace) -> int:
 
     async def _go() -> int:
         """Run the upload-and-create coroutine within a client context."""
-        async with _make_client(dsn) as client:
-            uploaded = await client.upload_jsonl(args.file_path, args.endpoint)
-            job = await client.create_batch_job(
-                uploaded["id"], args.endpoint, endpoint=args.batch_endpoint
-            )
-            print(json.dumps({"file": uploaded, "batch": job}, indent=2))
-        return 0
+        client = _make_client(dsn)
+        try:
+            async with client as active_client:
+                uploaded = await active_client.upload_jsonl(
+                    args.file_path, args.endpoint
+                )
+                job = await active_client.create_batch_job(
+                    uploaded["id"], args.endpoint, endpoint=args.batch_endpoint
+                )
+                print(json.dumps({"file": uploaded, "batch": job}, indent=2))
+            return 0
+        finally:
+            _close_client_resources(client)
 
     return asyncio.run(_go())
 
@@ -283,10 +339,14 @@ def _run_async_report(dsn: str, coro_factory) -> int:
 
     async def _go() -> int:
         """Execute the coroutine within a client context and print its result."""
-        async with _make_client(dsn) as client:
-            result = await coro_factory(client)
-            print(json.dumps(result, indent=2, default=str))
-        return 0
+        client = _make_client(dsn)
+        try:
+            async with client as active_client:
+                result = await coro_factory(active_client)
+                print(json.dumps(result, indent=2, default=str))
+            return 0
+        finally:
+            _close_client_resources(client)
 
     return asyncio.run(_go())
 

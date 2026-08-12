@@ -241,8 +241,11 @@ def test_async_helpers_print_results(monkeypatch, capsys):
 
 
 def test_make_client_uses_database_backed_credentials(monkeypatch):
-    """Client construction wires config and secrets without environment URLs."""
+    """Client construction retains its database-backed credential-store owners."""
     events = []
+    client = SimpleNamespace()
+    config = ("config", "postgresql://x")
+    secrets = ("secrets", "postgresql://x", "key")
     monkeypatch.setattr(cli, "PostgresConfigStore", lambda dsn: ("config", dsn))
     monkeypatch.setattr(
         cli,
@@ -253,15 +256,21 @@ def test_make_client_uses_database_backed_credentials(monkeypatch):
     monkeypatch.setattr(
         cli,
         "config_credentials_provider",
-        lambda config, secrets: ("provider", config, secrets),
+        lambda config_store, secret_store: (
+            "provider",
+            config_store,
+            secret_store,
+        ),
     )
     monkeypatch.setattr(
         cli,
         "BatchAPIClient",
-        lambda dsn, provider: events.append((dsn, provider)) or "client",
+        lambda dsn, provider: events.append((dsn, provider)) or client,
     )
-    assert cli._make_client("postgresql://x") == "client"
-    assert events[0][0] == "postgresql://x"
+    assert cli._make_client("postgresql://x") is client
+    assert events == [("postgresql://x", ("provider", config, secrets))]
+    assert client._pg_llm_batch_cli_config_store == config
+    assert client._pg_llm_batch_cli_secret_store == secrets
 
 
 def test_unknown_dispatch_branch_returns_two(monkeypatch):
