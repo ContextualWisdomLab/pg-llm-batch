@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -59,6 +60,20 @@ class _Session:
         self.close_calls += 1
 
 
+class _SuspendingSession(_Session):
+    """Suspend close so concurrent cleanup can cross the ownership boundary."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_started = asyncio.Event()
+        self.release_close = asyncio.Event()
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self.close_started.set()
+        await self.release_close.wait()
+
+
 def _credentials(_endpoint_alias: str) -> GatewayCredentials:
     return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
 
@@ -75,6 +90,24 @@ async def test_public_aclose_releases_lazily_created_session(monkeypatch) -> Non
 
     await client.aclose()
     await client.aclose()
+
+    assert session.close_calls == 1
+    assert client._session is None
+
+
+@pytest.mark.asyncio
+async def test_concurrent_aclose_claims_owned_session_once() -> None:
+    """Concurrent cleanup must never invoke close twice on one owned session."""
+    session = _SuspendingSession()
+    client = BatchAPIClient("postgresql://database", _credentials)
+    client._session = session
+
+    first_cleanup = asyncio.create_task(client.aclose())
+    await session.close_started.wait()
+    second_cleanup = asyncio.create_task(client.aclose())
+    await asyncio.sleep(0)
+    session.release_close.set()
+    await asyncio.gather(first_cleanup, second_cleanup)
 
     assert session.close_calls == 1
     assert client._session is None
