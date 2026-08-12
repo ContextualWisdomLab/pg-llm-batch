@@ -2,17 +2,17 @@
 
 - **Status:** Approved by the standing autonomous development directive
 - **Date:** 2026-08-06
-- **Dependency:** PR #55 exact head `3660bb9edd6351a9c02d9507f08ed647ddbf0d3a`
+- **Current replacement:** PR #145, created from protected commit `00ed6aabb82c1754f8b14fa85929cac56f68402b`; protected `main` remains the live integration authority.
 
 ## Problem
 
-PR #55 makes reproducible-release evidence bounded, canonical, atomic, and
-symlink-aware. Its manifest writer still checks parent paths before opening the
-temporary file by pathname. A same-UID concurrent process can rename a checked
-parent directory and replace its lexical path with a symlink between the check
-and `os.open()`. The temporary file and atomic replacement can then operate
-through the replacement path. This is a time-of-check/time-of-use boundary
-rather than a missing static symlink check.
+The predecessor release-evidence stack made reproducible-release evidence bounded,
+canonical, atomic, and symlink-aware, but its manifest writer still checked
+parent paths before opening the temporary file by pathname. A same-UID concurrent
+process could rename a checked parent directory and replace its lexical path with
+a symlink between the check and `os.open()`. The temporary file and atomic
+replacement could then operate through the replacement path. This is a
+time-of-check/time-of-use boundary rather than a missing static symlink check.
 
 The release acceptance job is read-only and does not expose publication or
 attestation authority, but buyer-facing evidence must not be writable outside
@@ -32,8 +32,8 @@ platforms that provide the required POSIX primitives.
    missing directory with mode `0700`, then open it with `O_DIRECTORY` and
    `O_NOFOLLOW` before closing the previous descriptor.
 5. Inspect the destination relative to the final parent descriptor without
-   following links. Permit replacement only of an existing regular destination;
-   reject every non-regular destination.
+   following links. Permit an absent destination or replacement of an existing
+   regular destination; reject every existing non-regular destination.
 6. Create the temporary file relative to the held descriptor with
    `O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW`, mode `0600`, and close-on-exec
    where available. Exclusive creation rejects every pre-existing temporary
@@ -54,10 +54,10 @@ the predecessor check-then-use implementation.
 
 This slice secures manifest output path selection and atomic replacement. It
 does not redesign artifact discovery or hashing, publish a release, grant OIDC
-or package permissions, create a new workflow, or claim protection against a
+or package permissions, create release authority, or claim protection against a
 malicious same-UID process that changes a path after the function returns. The
-existing read-only workflow, bounded evidence payload, exact-head checkout, and
-stacked-base rules remain unchanged.
+read-only workflow, bounded evidence payload, exact-head checkout, and live-base
+rules remain separate authorities.
 
 ## Alternatives considered
 
@@ -97,7 +97,7 @@ bytes in the originally opened directory and leave the symlink target untouched.
 Additional tests cover:
 
 - absolute and relative destination success;
-- replacement of an existing regular manifest;
+- an absent destination and replacement of an existing regular manifest;
 - direct and nested parent symlink rejection;
 - `..`, empty, and non-regular destination rejection;
 - pre-existing regular, symlink, and directory temporary entries;
@@ -115,7 +115,9 @@ Additional tests cover:
 The manifest writer no longer relies on mutable workspace pathname identity
 between validation, creation, and replacement. The evidence remains review-only,
 bounded, and unauthoritative for publication, while its write target is anchored
-to a directory object rather than a previously checked string path.
+to a directory object rather than a previously checked string path. Current
+replacement evidence must be regenerated on PR #145 exact head and the then-live
+protected base; predecessor #55/#56 checks and reviews never transfer.
 
 ## References (APA 7th edition)
 
