@@ -104,7 +104,7 @@ def test_streaming_client_rejects_invalid_physical_line_limit(value: Any):
             max_jsonl_physical_lines=value,
         )
 
-    assert exc_info.value.field == "max_jsonl_physical_lines"
+    assert exc_info.value.details["field"] == "max_jsonl_physical_lines"
 
 
 async def test_blank_lines_consume_the_physical_line_budget_before_record_parsing():
