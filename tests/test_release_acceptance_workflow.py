@@ -2,7 +2,11 @@
 """Regression contract for the reproducible release acceptance workflow."""
 
 from pathlib import Path
-import tomllib
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility.
+    import tomli as tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Read-only exact-head release acceptance that builds wheel and source distribution artifacts twice from clean Git archives, proves byte-identical SHA-256 identity, records bounded canonical evidence, and keeps publication and attestation authority separate.
 - Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
 - Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.
 - Independent 1 MiB bounded-stream decoding for Files and Batches control-plane JSON before strict UTF-8 and object parsing.
@@ -37,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound release-artifact traversal, hashing, identity validation, and manifest publication to descriptor-relative no-follow operations with bounded enumeration, atomic replacement, and file plus parent-directory synchronization so symlink or same-name replacement cannot convert a verified artifact set into different release evidence.
 - Rejected non-callable standalone and tenant lifecycle recorders or observation reservers during client construction, before any provider operation can succeed without a usable persistence path.
 - Made the tenant lifecycle migration atomic across owner-enforcement relaxation, legacy-row backfill, constraint replacement, and forced-RLS restoration so psql autocommit cannot commit an intermediate owner-bypass state.
 - Bootstrap DSN and Fernet-key source selection now consults process environment
