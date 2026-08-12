@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "docker/postgres/postgresql.conf.custom"
+DOCTORING = ROOT / "docs/doctoring/postgresql-logging-privacy.md"
 
 
 def _settings() -> dict[str, str]:
@@ -39,3 +40,12 @@ def test_container_native_routing_preserves_content_safe_logging_boundary() -> N
     assert settings["log_connections"].lower() == "off"
     assert settings["log_disconnections"].lower() == "off"
     assert settings["pg_stat_statements.track"].lower() == "none"
+
+
+def test_container_logging_doctoring_preserves_restart_and_autovacuum_truth() -> None:
+    """Operator guidance must distinguish restart and active autovacuum logging semantics."""
+    doctoring = DOCTORING.read_text(encoding="utf-8")
+
+    assert "changing `logging_collector` requires a **PostgreSQL restart**" in doctoring
+    assert "`log_autovacuum_min_duration = 10min` remains active" in doctoring
+    assert "Both event classes remain an **opt-in**" not in doctoring
