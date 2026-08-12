@@ -129,7 +129,13 @@ def test_count_tokens_stdin_fails_closed_above_byte_limit(monkeypatch) -> None:
 
 def test_count_tokens_stdin_rejects_invalid_utf8_without_content(monkeypatch) -> None:
     """Invalid UTF-8 fails with a fixed content-free diagnostic before DB I/O."""
-    monkeypatch.setattr(cli.sys, "stdin", _binary_stdin(b"valid\xffsecret"))
+    sentinel_prefix = b"PROMPT-SENTINEL-7c90"
+    sentinel_suffix = b"SECRET-SENTINEL-f113"
+    monkeypatch.setattr(
+        cli.sys,
+        "stdin",
+        _binary_stdin(sentinel_prefix + b"\xff" + sentinel_suffix),
+    )
 
     with pytest.raises(ConfigError, match="Token input must be valid UTF-8") as exc_info:
         cli._dispatch(
@@ -143,5 +149,6 @@ def test_count_tokens_stdin_rejects_invalid_utf8_without_content(monkeypatch) ->
             ]
         )
 
-    assert "valid" not in str(exc_info.value)
-    assert "secret" not in str(exc_info.value)
+    error_text = str(exc_info.value)
+    assert sentinel_prefix.decode("ascii") not in error_text
+    assert sentinel_suffix.decode("ascii") not in error_text
