@@ -7,6 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "docker/postgres/postgresql.conf.custom"
 DOCTORING = ROOT / "docs/doctoring/postgresql-logging-privacy.md"
+CI_WORKFLOW = ROOT / ".github/workflows/ci.yml"
 
 
 def _settings() -> dict[str, str]:
@@ -49,3 +50,10 @@ def test_container_logging_doctoring_preserves_restart_and_autovacuum_truth() ->
     assert "changing `logging_collector` requires a **PostgreSQL restart**" in doctoring
     assert "`log_autovacuum_min_duration = 10min` remains active" in doctoring
     assert "Both event classes remain an **opt-in**" not in doctoring
+
+
+def test_container_logging_runtime_smoke_is_a_ci_gate() -> None:
+    """CI must prove the optional profile reaches the running container log stream."""
+    workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "bash tests/smoke_postgres_container_logging.sh" in workflow
