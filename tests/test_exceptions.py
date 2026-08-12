@@ -20,25 +20,41 @@ def test_base_error_rendering_and_default_details():
 
 
 def test_error_detail_mappings_snapshot_constructor_inputs():
-    """Structured error evidence must not drift with caller-owned mappings."""
-    details = {"phase": "prepare"}
+    """Structured error evidence snapshots only caller-owned outer mappings."""
+    nested_details = {"attempts": []}
+    details = {"phase": "prepare", "nested": nested_details}
     error = PgLlmBatchError("failed", details=details)
     details["phase"] = "mutated"
     details["new"] = "late"
+    nested_details["attempts"].append("late")
 
-    assert error.details == {"phase": "prepare"}
+    assert error.details == {
+        "phase": "prepare",
+        "nested": {"attempts": ["late"]},
+    }
+    error.details["phase"] = "package-owned"
+    assert error.details["phase"] == "package-owned"
 
-    response_data = {"retry": True, "provider": "bounded"}
+    nested_response = {"attempts": []}
+    response_data = {
+        "retry": True,
+        "provider": "bounded",
+        "nested": nested_response,
+    }
     gateway = GatewayError("unavailable", 503, response_data)
     response_data["retry"] = False
     response_data["late"] = "mutation"
+    nested_response["attempts"].append("late")
 
-    assert gateway.response_data == {"retry": True, "provider": "bounded"}
-    assert gateway.details["response_data"] == {
+    assert gateway.response_data == {
         "retry": True,
         "provider": "bounded",
+        "nested": {"attempts": ["late"]},
     }
+    assert gateway.details["response_data"] == gateway.response_data
     assert gateway.response_data is gateway.details["response_data"]
+    gateway.response_data["retry"] = False
+    assert gateway.details["response_data"]["retry"] is False
 
 
 def test_gateway_error_preserves_absent_response_data():
