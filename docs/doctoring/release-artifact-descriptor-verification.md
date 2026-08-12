@@ -48,7 +48,9 @@ For each clean build directory:
 9. Compare device, inode, file type, size, modification time, and change time
    before and after the stream; reject any change.
 10. Re-enumerate the same directory descriptor and require the exact initial
-    bounded name tuple.
+    bounded name-and-identity snapshots, including device, inode, file type,
+    size, modification time, and change time, so same-name replacement is
+    rejected.
 11. Compare the two clean-build records by filename, size, and digest.
 
 The verifier closes every artifact and directory descriptor on both success and
