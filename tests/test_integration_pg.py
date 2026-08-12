@@ -172,7 +172,7 @@ def test_live_progress_upsert_distinguishes_unknown_total_and_guards_conflicts(
         )
         assert _read_remote_progress(dsn, known_batch_id) == (10, True, 9, 0, 1)
 
-        db.persist_remote_batch_state(
+        rejected_known = db.persist_remote_batch_state(
             dsn,
             "primary",
             {
@@ -183,6 +183,10 @@ def test_live_progress_upsert_distinguishes_unknown_total_and_guards_conflicts(
             2,
         )
         assert _read_remote_progress(dsn, known_batch_id) == (10, True, 9, 0, 1)
+        assert rejected_known["total_requests"] == 10
+        assert rejected_known["completed_requests"] == 9
+        assert rejected_known["failed_requests"] == 0
+        assert rejected_known["observation_order"] == 1
 
         db.persist_remote_batch_state(
             dsn,
@@ -220,7 +224,7 @@ def test_live_progress_upsert_distinguishes_unknown_total_and_guards_conflicts(
         )
         assert _read_remote_progress(dsn, sparse_batch_id) == (0, False, 5, 2, 2)
 
-        db.persist_remote_batch_state(
+        rejected_sparse = db.persist_remote_batch_state(
             dsn,
             "primary",
             {
@@ -231,6 +235,10 @@ def test_live_progress_upsert_distinguishes_unknown_total_and_guards_conflicts(
             3,
         )
         assert _read_remote_progress(dsn, sparse_batch_id) == (0, False, 5, 2, 2)
+        assert rejected_sparse["total_requests"] == 0
+        assert rejected_sparse["completed_requests"] == 5
+        assert rejected_sparse["failed_requests"] == 2
+        assert rejected_sparse["observation_order"] == 2
 
         db.persist_remote_batch_state(
             dsn,
