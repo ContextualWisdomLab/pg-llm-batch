@@ -23,21 +23,45 @@ DSN_ENV_VAR = "PG_LLM_BATCH_DSN"
 SECRET_KEY_ENV_VAR = "PG_LLM_BATCH_SECRET_KEY"
 
 
-def resolve_dsn(explicit: Optional[str] = None) -> str:
-    """Resolve the Postgres DSN.
+def _require_exact_string(value: object, *, label: str) -> str:
+    """Return an exact string or fail before lower-layer authority is selected."""
+    if type(value) is not str:
+        raise ConfigError(f"{label} must be a string.")
+    return value
 
-    Precedence: an explicit argument (e.g. ``--dsn``) wins; otherwise the
-    bootstrap env var is consulted. Raises if neither is available.
+
+def resolve_dsn(explicit: Optional[str] = None) -> str:
+    """Resolve one explicit or environment-backed nonblank Postgres DSN.
+
+    Environment fallback occurs only when ``explicit`` is omitted. Explicit
+    values are never replaced merely because they are false-valued or malformed.
+    Accepted DSNs are returned byte-for-byte unchanged after validation.
     """
-    dsn = explicit or os.environ.get(DSN_ENV_VAR)
-    if not dsn:
-        raise ConfigError(
-            f"No Postgres DSN available. Pass --dsn or set {DSN_ENV_VAR} "
-            "(bootstrap transport only)."
-        )
+    if explicit is None:
+        candidate: object = os.environ.get(DSN_ENV_VAR)
+        if candidate is None:
+            raise ConfigError(
+                f"No Postgres DSN available. Pass --dsn or set {DSN_ENV_VAR} "
+                "(bootstrap transport only)."
+            )
+        label = DSN_ENV_VAR
+    else:
+        candidate = explicit
+        label = "Explicit Postgres DSN"
+
+    dsn = _require_exact_string(candidate, label=label)
+    if not dsn.strip():
+        raise ConfigError(f"{label} must not be empty or whitespace-only.")
     return dsn
 
 
 def resolve_secret_key(explicit: Optional[str] = None) -> Optional[str]:
-    """Resolve the optional Fernet key used to decrypt secrets at rest."""
-    return explicit or os.environ.get(SECRET_KEY_ENV_VAR)
+    """Resolve the optional Fernet key without replacing explicit empty input.
+
+    An explicit value wins even when it is the empty string, which deliberately
+    prevents ambient environment state from silently acquiring decryption
+    authority. Non-string explicit values fail before environment fallback.
+    """
+    if explicit is not None:
+        return _require_exact_string(explicit, label="Explicit Fernet key")
+    return os.environ.get(SECRET_KEY_ENV_VAR)
