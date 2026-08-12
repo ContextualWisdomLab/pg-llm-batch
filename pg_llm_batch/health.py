@@ -44,7 +44,7 @@ def check_health(dsn: str) -> Dict[str, Any]:
                     components.append(
                         {
                             "component": component,
-                            "is_ready": bool(is_ready),
+                            "is_ready": is_ready if type(is_ready) is bool else False,
                             "detail": detail,
                         }
                     )
@@ -56,8 +56,18 @@ def check_health(dsn: str) -> Dict[str, Any]:
             ],
         }
 
-    observed = {c["component"] for c in components}
-    missing = sorted(REQUIRED_COMPONENTS - observed)
+    observed_counts = {component: 0 for component in REQUIRED_COMPONENTS}
+    for component in components:
+        component_name = component["component"]
+        if component_name in observed_counts:
+            observed_counts[component_name] += 1
+
+    missing = sorted(
+        component for component, count in observed_counts.items() if count == 0
+    )
+    duplicates = sorted(
+        component for component, count in observed_counts.items() if count > 1
+    )
     for component in missing:
         components.append(
             {
@@ -68,13 +78,46 @@ def check_health(dsn: str) -> Dict[str, Any]:
         )
     if missing:
         logger.warning("Health check omitted required components: %s", ", ".join(missing))
+    if duplicates:
+        logger.warning(
+            "Health check duplicated required components: %s", ", ".join(duplicates)
+        )
 
-    ready = not missing and all(
+    ready = not missing and not duplicates and all(
         c["is_ready"]
         for c in components
         if c["component"] in REQUIRED_COMPONENTS
     )
     return {"ready": ready, "components": components}
+
+
+def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Return readiness using only fixed component names and boolean states."""
+    public_components: List[Dict[str, Any]] = []
+    observed_components = set()
+    for component in report.get("components", []):
+        component_name = component.get("component")
+        if component_name not in REQUIRED_COMPONENTS:
+            continue
+        if component_name in observed_components:
+            return {"ready": False, "components": []}
+        observed_components.add(component_name)
+        public_components.append(
+            {
+                "component": component_name,
+                "is_ready": component.get("is_ready") is True,
+            }
+        )
+    required_states = {
+        component["component"]: component["is_ready"] for component in public_components
+    }
+    required_ready = set(required_states) == REQUIRED_COMPONENTS and all(
+        required_states.values()
+    )
+    return {
+        "ready": report.get("ready") is True and required_ready,
+        "components": public_components,
+    }
 
 
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
