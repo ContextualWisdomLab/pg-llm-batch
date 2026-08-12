@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NoReturn, Optional
 
 from .batch_api_client import BatchAPIClient, CredentialsProvider
 from .db import (
@@ -54,6 +54,19 @@ def _bounded_lifecycle_error_type(error: Exception) -> str:
     if isinstance(error, OSError):
         return "OSError"
     return "RuntimeError"
+
+
+def _raise_lifecycle_gateway_error(
+    message: str,
+    response_data: Mapping[str, Any],
+) -> NoReturn:
+    """Raise one package error after removing any implicit exception context."""
+    error = GatewayError(message, response_data=dict(response_data))
+    try:
+        raise error from None
+    except GatewayError:
+        error.__context__ = None
+        raise
 
 
 class DurableBatchAPIClient(BatchAPIClient):
@@ -135,9 +148,9 @@ class DurableBatchAPIClient(BatchAPIClient):
             "error_type": failure_type,
         }
         response_data.update(self._lifecycle_recovery_context())
-        raise GatewayError(
+        _raise_lifecycle_gateway_error(
             f"{operation} lifecycle reservation failed",
-            response_data=response_data,
+            response_data,
         )
 
     async def _persist_snapshot(
@@ -225,9 +238,9 @@ class DurableBatchAPIClient(BatchAPIClient):
             "error_type": failure_type,
         }
         response_data.update(self._lifecycle_recovery_context())
-        raise GatewayError(
+        _raise_lifecycle_gateway_error(
             f"{operation} succeeded but lifecycle persistence failed",
-            response_data=response_data,
+            response_data,
         )
 
     async def create_batch_job(
