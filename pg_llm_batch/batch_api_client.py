@@ -114,7 +114,6 @@ class GatewayCredentials:
     api_key: str = field(repr=False)
 
 
-# A credentials provider returns GatewayCredentials for a given endpoint alias.
 CredentialsProvider = Callable[[str], GatewayCredentials]
 
 
@@ -651,6 +650,35 @@ class BatchAPIClient:
                 )
             result = await self._read_json_object(response, "Files API upload")
             logger.info("Uploaded JSONL file: %s", result.get("id"))
+            return result
+
+    async def delete_file(
+        self,
+        file_id: str,
+        endpoint_alias: str,
+    ) -> Dict[str, Any]:
+        """Delete one validated provider file and require exact deletion evidence."""
+        validated_file_id = _validate_resource_id(file_id, "file_id")
+        creds = self._credentials(endpoint_alias)
+        async with self._request(
+            "delete",
+            f"{creds.url}/files/{validated_file_id}",
+            operation="File deletion",
+            headers=self._headers(creds.api_key),
+        ) as response:
+            if response.status != 200:
+                raise GatewayError(
+                    f"File deletion failed: {response.status}",
+                    status_code=response.status,
+                    response_data={"error_type": "ProviderHTTPError"},
+                )
+            result = await self._read_json_object(response, "File deletion")
+            if result.get("id") != validated_file_id or result.get("deleted") is not True:
+                raise GatewayError(
+                    "File deletion returned invalid evidence",
+                    status_code=response.status,
+                    response_data={"error_type": "InvalidFileDeletionEvidence"},
+                )
             return result
 
     async def create_batch_job(
