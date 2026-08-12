@@ -105,6 +105,148 @@ def test_end_to_end_batch_assembly(dsn):
     assert jsonl and jsonl.count("\n") == 2
 
 
+def _read_remote_progress(dsn: str, remote_batch_id: str):
+    """Read one standalone lifecycle row under its forced-RLS tenant scope."""
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+                ("standalone",),
+            )
+            cursor.execute(
+                """
+                SELECT total_requests,
+                       total_requests_known,
+                       completed_requests,
+                       failed_requests,
+                       observation_order
+                FROM llm_remote_batch_jobs
+                WHERE tenant_scope = %s
+                  AND endpoint_alias = %s
+                  AND remote_batch_id = %s
+                """,
+                ("standalone", "primary", remote_batch_id),
+            )
+            return cursor.fetchone()
+
+
+def _delete_remote_progress(dsn: str, *remote_batch_ids: str) -> None:
+    """Remove integration-only standalone lifecycle rows under forced RLS."""
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+                ("standalone",),
+            )
+            cursor.execute(
+                "DELETE FROM llm_remote_batch_jobs "
+                "WHERE tenant_scope = %s AND remote_batch_id = ANY(%s)",
+                ("standalone", list(remote_batch_ids)),
+            )
+        connection.commit()
+
+
+@skip_no_db
+def test_live_progress_upsert_distinguishes_unknown_total_and_guards_conflicts(
+    dsn: str,
+) -> None:
+    """PostgreSQL must preserve sparse progress without manufacturing a known total."""
+    suffix = uuid.uuid4().hex[:12]
+    known_batch_id = f"known-progress-{suffix}"
+    sparse_batch_id = f"sparse-progress-{suffix}"
+
+    try:
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": known_batch_id,
+                "status": "in_progress",
+                "request_counts": {"total": 10, "completed": 9, "failed": 0},
+            },
+            1,
+        )
+        assert _read_remote_progress(dsn, known_batch_id) == (10, True, 9, 0, 1)
+
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": known_batch_id,
+                "status": "in_progress",
+                "request_counts": {"total": 10, "completed": 0, "failed": 2},
+            },
+            2,
+        )
+        assert _read_remote_progress(dsn, known_batch_id) == (10, True, 9, 0, 1)
+
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": known_batch_id,
+                "status": "in_progress",
+                "request_counts": {"total": 11, "completed": 0, "failed": 2},
+            },
+            3,
+        )
+        assert _read_remote_progress(dsn, known_batch_id) == (11, True, 9, 2, 3)
+
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": sparse_batch_id,
+                "status": "in_progress",
+                "request_counts": {"completed": 5},
+            },
+            1,
+        )
+        assert _read_remote_progress(dsn, sparse_batch_id) == (0, False, 5, 0, 1)
+
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": sparse_batch_id,
+                "status": "in_progress",
+                "request_counts": {"total": "invalid", "failed": 2},
+            },
+            2,
+        )
+        assert _read_remote_progress(dsn, sparse_batch_id) == (0, False, 5, 2, 2)
+
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": sparse_batch_id,
+                "status": "in_progress",
+                "request_counts": {"total": 6},
+            },
+            3,
+        )
+        assert _read_remote_progress(dsn, sparse_batch_id) == (0, False, 5, 2, 2)
+
+        db.persist_remote_batch_state(
+            dsn,
+            "primary",
+            {
+                "id": sparse_batch_id,
+                "status": "in_progress",
+                "request_counts": {"total": 7},
+            },
+            4,
+        )
+        assert _read_remote_progress(dsn, sparse_batch_id) == (7, True, 5, 2, 4)
+    finally:
+        _delete_remote_progress(dsn, known_batch_id, sparse_batch_id)
+
+
 @skip_no_db
 def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
     """A non-bypass role cannot observe another tenant's lifecycle row."""
