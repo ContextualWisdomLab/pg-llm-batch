@@ -47,7 +47,7 @@ A deployment that deliberately requires `csvlog`, `jsonlog`, syslog, or PostgreS
 
 ## High-volume log event boundary
 
-`log_temp_files = -1` keeps temporary-file logging disabled by default. PostgreSQL documents that zero logs every temporary file name and size when the file is deleted; deployments may opt in with a reviewed positive threshold or, for short-lived diagnosis, zero.
+`log_temp_files = -1` keeps temporary-file logging disabled by default. PostgreSQL documents that zero logs all **temporary file names and sizes** when each file is deleted; deployments may opt in with a reviewed positive threshold or, for short-lived diagnosis, zero.
 
 `log_autovacuum_min_duration = 10min` remains active at PostgreSQL 16's documented default threshold. It can emit records for autovacuum actions that meet or exceed that duration and for documented skipped-autovacuum conditions; it is therefore not a disabled or wholly opt-in event class. Lowering the threshold, or using zero to log all autovacuum actions, is an additional opt-in diagnostic that requires an explicit expected-volume, storage, retention, and response budget. A deployment that must disable autovacuum action logging entirely can use `-1` under its own reviewed operability policy.
 
@@ -81,7 +81,7 @@ Issue #120 is implemented from a deterministic RED regression: the protected pro
 
 The documentation semantics were also locked test-first after review: exact-head CI at RED commit `64ddd4a9ba66d3c13481192e9398ffd92f00efa4` failed because the operator guide did not yet state the restart-only collector boundary or distinguish active 10-minute autovacuum logging from disabled temporary-file logging. This revision corrects those semantics against PostgreSQL 16 primary documentation.
 
-The repository suite verifies the configuration semantics on Python 3.10, 3.12, and 3.14, while container/Compose, security, SAST, package, coverage, and exact-source governance remain independent final gates. A deployment-facing runtime test should additionally prove that a PostgreSQL server started with this profile emits an operational record that is retrievable through its container logging path before issue #120 is considered fully closed.
+The repository suite verifies the configuration semantics on Python 3.10, 3.12, and 3.14, while container/Compose, security, SAST, package, coverage, and exact-source governance remain independent final gates. The container-build job also starts the built PostgreSQL image with this operator profile explicitly, proves `config_file`, `logging_collector`, and `log_destination` at runtime, verifies no PostgreSQL-managed current log file exists, emits a fixed non-sensitive server warning, and requires that warning to appear through `docker logs`.
 
 ## Rollback and recovery
 
