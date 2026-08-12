@@ -178,6 +178,31 @@ def test_skipped_progress_upsert_returns_the_persisted_snapshot(monkeypatch: Any
     )
 
 
+def test_skipped_progress_upsert_without_stored_row_fails_closed(
+    monkeypatch: Any,
+) -> None:
+    """A rejected update without a rereadable durable row is an integrity error."""
+    driver = _Psycopg(upsert_rowcount=0, stored_row=None)
+    monkeypatch.setattr(db, "psycopg", driver)
+
+    with pytest.raises(
+        RuntimeError,
+        match="remote batch progress update was rejected without persisted state",
+    ):
+        db.persist_remote_batch_state(
+            "postgresql://example",
+            "primary",
+            {
+                "id": "batch-missing",
+                "status": "in_progress",
+                "request_counts": {"total": 1, "completed": 1, "failed": 0},
+            },
+            observation_order=2,
+        )
+
+    assert driver.commits == 0
+
+
 def test_schema_migration_fails_closed_on_known_historical_corruption() -> None:
     """Schema reapplication must report inconsistent known progress before validation."""
     packaged_schema = db.SCHEMA_PATH.read_text(encoding="utf-8")
