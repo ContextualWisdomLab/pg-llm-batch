@@ -50,6 +50,7 @@ _REMOTE_BATCH_STATE_FIELDS = (
     "output_file_id",
     "error_file_id",
     "total_requests",
+    "total_requests_known",
     "completed_requests",
     "failed_requests",
     "provider_metadata",
@@ -384,11 +385,15 @@ def _normalize_remote_batch_snapshot(
     )
     counts_value = provider_batch.get("request_counts")
     request_counts = counts_value if isinstance(counts_value, Mapping) else {}
-    total_requests = _provider_count(request_counts.get("total"))
+    raw_total_requests = request_counts.get("total")
+    total_requests_known = (
+        type(raw_total_requests) is int and raw_total_requests >= 0
+    )
+    total_requests = _provider_count(raw_total_requests)
     completed_requests = _provider_count(request_counts.get("completed"))
     failed_requests = _provider_count(request_counts.get("failed"))
     if (
-        "total" in request_counts
+        total_requests_known
         and completed_requests + failed_requests > total_requests
     ):
         raise ValueError("request_counts progress is inconsistent")
@@ -409,6 +414,7 @@ def _normalize_remote_batch_snapshot(
         "output_file_id": output_file_id,
         "error_file_id": error_file_id,
         "total_requests": total_requests,
+        "total_requests_known": total_requests_known,
         "completed_requests": completed_requests,
         "failed_requests": failed_requests,
         "provider_metadata": provider_metadata,
@@ -449,6 +455,7 @@ def _persist_remote_batch_state(
             output_file_id,
             error_file_id,
             total_requests,
+            total_requests_known,
             completed_requests,
             failed_requests,
             provider_metadata,
@@ -458,7 +465,7 @@ def _persist_remote_batch_state(
             updated_at
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s::jsonb, %s, %s, %s, %s
         )
         ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE
@@ -484,6 +491,10 @@ def _persist_remote_batch_state(
                 llm_remote_batch_jobs.total_requests,
                 EXCLUDED.total_requests
             ),
+            total_requests_known = (
+                llm_remote_batch_jobs.total_requests_known
+                OR EXCLUDED.total_requests_known
+            ),
             completed_requests = GREATEST(
                 llm_remote_batch_jobs.completed_requests,
                 EXCLUDED.completed_requests
@@ -504,15 +515,21 @@ def _persist_remote_batch_state(
             ),
             updated_at = EXCLUDED.updated_at
         WHERE EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order
-          AND GREATEST(
-              llm_remote_batch_jobs.completed_requests,
-              EXCLUDED.completed_requests
-          ) + GREATEST(
-              llm_remote_batch_jobs.failed_requests,
-              EXCLUDED.failed_requests
-          ) <= GREATEST(
-              llm_remote_batch_jobs.total_requests,
-              EXCLUDED.total_requests
+          AND (
+              NOT (
+                  llm_remote_batch_jobs.total_requests_known
+                  OR EXCLUDED.total_requests_known
+              )
+              OR GREATEST(
+                  llm_remote_batch_jobs.completed_requests,
+                  EXCLUDED.completed_requests
+              ) + GREATEST(
+                  llm_remote_batch_jobs.failed_requests,
+                  EXCLUDED.failed_requests
+              ) <= GREATEST(
+                  llm_remote_batch_jobs.total_requests,
+                  EXCLUDED.total_requests
+              )
           )
           AND (
               llm_remote_batch_jobs.batch_status NOT IN (
@@ -532,6 +549,7 @@ def _persist_remote_batch_state(
         snapshot["output_file_id"],
         snapshot["error_file_id"],
         snapshot["total_requests"],
+        snapshot["total_requests_known"],
         snapshot["completed_requests"],
         snapshot["failed_requests"],
         metadata_json,
@@ -557,7 +575,7 @@ def persist_remote_batch_state(
     *,
     observed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Persist one standalone projection without changing its return shape."""
+    """Persist one standalone projection without changing tenant visibility."""
     snapshot = _persist_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
@@ -614,6 +632,7 @@ def get_tenant_remote_batch_state(
                output_file_id,
                error_file_id,
                total_requests,
+               total_requests_known,
                completed_requests,
                failed_requests,
                provider_metadata,
@@ -658,42 +677,3 @@ def get_remote_batch_state(
         endpoint_alias,
         remote_batch_id,
     )
-
-
-def get_model_metadata(dsn: Optional[str], model_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch model mode and tokenizer metadata for a model identifier.
-
-    Args:
-        dsn: Optional PostgreSQL connection string.
-        model_id: Provider model identifier to resolve.
-
-    Returns:
-        A dictionary containing normalized ``mode`` and ``tokenizer_model`` when
-        found, otherwise ``None``.
-    """
-    if not dsn or psycopg is None or not model_id:
-        return None
-    try:
-        with psycopg.connect(dsn) as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT model_mode, tokenizer_model
-                    FROM llm_endpoint_models
-                    WHERE model_id = %s
-                    ORDER BY last_verified_at DESC NULLS LAST
-                    LIMIT 1
-                    """,
-                    (model_id,),
-                )
-                row = cur.fetchone()
-                if not row:
-                    return None
-                mode, tokenizer_model = row
-                return {
-                    "mode": (mode or "").strip().lower() if mode else None,
-                    "tokenizer_model": tokenizer_model,
-                }
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.debug("model metadata lookup failed for %s: %s", model_id, exc)
-        return None
