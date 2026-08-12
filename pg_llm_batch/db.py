@@ -38,6 +38,27 @@ REMOTE_RESOURCE_ID_PATTERN = re.compile(
 TENANT_SCOPE_PATTERN = re.compile(
     rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_TENANT_SCOPE_CHARACTERS - 1}}}\Z"
 )
+SUPPORTED_REMOTE_BATCH_STATUSES = frozenset(
+    {
+        "validating",
+        "failed",
+        "in_progress",
+        "finalizing",
+        "completed",
+        "expired",
+        "cancelling",
+        "cancelled",
+    }
+)
+SUPPORTED_REMOTE_BATCH_ENDPOINTS = frozenset(
+    {
+        "/v1/responses",
+        "/v1/chat/completions",
+        "/v1/embeddings",
+        "/v1/completions",
+        "/v1/moderations",
+    }
+)
 REMOTE_TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 _REMOTE_BATCH_STATE_FIELDS = (
     "tenant_scope",
@@ -111,6 +132,26 @@ def normalize_optional_provider_text(value: Any) -> Optional[str]:
         if isinstance(value, str) and value and "\x00" not in value
         else None
     )
+
+
+def _provider_batch_status(value: Any) -> str:
+    """Return one verified durable lifecycle status or the sparse safe default."""
+    if value is None or value == "":
+        return "unknown"
+    if type(value) is not str or value not in SUPPORTED_REMOTE_BATCH_STATUSES:
+        raise ValueError("batch_status is not a supported provider status")
+    return value
+
+
+def _provider_batch_endpoint(value: Any) -> Optional[str]:
+    """Return one verified durable batch endpoint or preserve sparse absence."""
+    if value is None or value == "":
+        return None
+    if type(value) is not str or value not in SUPPORTED_REMOTE_BATCH_ENDPOINTS:
+        raise ValueError(
+            "batch_endpoint is not a supported provider batch endpoint"
+        )
+    return value
 
 
 def _provider_count(value: Any) -> int:
@@ -377,10 +418,8 @@ def _normalize_remote_batch_snapshot(
         provider_batch.get("error_file_id"),
         "error_file_id",
     )
-    batch_status = (
-        normalize_optional_provider_text(provider_batch.get("status"))
-        or "unknown"
-    )
+    batch_status = _provider_batch_status(provider_batch.get("status"))
+    batch_endpoint = _provider_batch_endpoint(provider_batch.get("endpoint"))
     counts_value = provider_batch.get("request_counts")
     request_counts = counts_value if isinstance(counts_value, Mapping) else {}
     raw_total_requests = request_counts.get("total")
@@ -405,9 +444,7 @@ def _normalize_remote_batch_snapshot(
         "remote_batch_id": remote_batch_id,
         "observation_order": observation_order,
         "input_file_id": input_file_id,
-        "batch_endpoint": normalize_optional_provider_text(
-            provider_batch.get("endpoint")
-        ),
+        "batch_endpoint": batch_endpoint,
         "batch_status": batch_status,
         "output_file_id": output_file_id,
         "error_file_id": error_file_id,
