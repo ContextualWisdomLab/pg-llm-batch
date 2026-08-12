@@ -152,3 +152,22 @@ def test_count_tokens_stdin_rejects_invalid_utf8_without_content(monkeypatch) ->
     error_text = str(exc_info.value)
     assert sentinel_prefix.decode("ascii") not in error_text
     assert sentinel_suffix.decode("ascii") not in error_text
+
+
+def test_count_tokens_text_only_stdin_rejects_unencodable_unicode(monkeypatch) -> None:
+    """Text-only stdin adapters fail closed when their content is not UTF-8 encodable."""
+
+    class TextOnlyStdin:
+        """Expose text input without a binary ``buffer`` compatibility surface."""
+
+        def read(self, _limit: int) -> str:
+            return "prompt-prefix-71bd\udcffprompt-suffix-b18a"
+
+    monkeypatch.setattr(cli.sys, "stdin", TextOnlyStdin())
+
+    with pytest.raises(ConfigError, match="Token input must be valid UTF-8") as exc_info:
+        cli._read_token_input()
+
+    error_text = str(exc_info.value)
+    assert "prompt-prefix-71bd" not in error_text
+    assert "prompt-suffix-b18a" not in error_text
