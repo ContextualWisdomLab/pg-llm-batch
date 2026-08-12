@@ -15,11 +15,18 @@ docker run --detach \
   --env POSTGRES_HOST_AUTH_METHOD=trust \
   "${image}" >/dev/null
 
+# The official PostgreSQL image runs a temporary Unix-socket-only server while
+# executing init scripts, then shuts it down before starting the final server.
+# Waiting only for a table over the Unix socket can therefore race that planned
+# shutdown. Require TCP readiness first; the temporary init server explicitly
+# has listen_addresses='' and cannot satisfy this boundary.
 ready=0
 for _ in $(seq 1 60); do
-  if docker exec "${container}" psql -U postgres -d postgres -Atqc \
-    "SELECT (to_regclass('public.llm_batches') IS NOT NULL)::int" 2>/dev/null \
-    | grep -qx '1'; then
+  if docker exec "${container}" pg_isready -h 127.0.0.1 -U postgres -d postgres \
+      >/dev/null 2>&1 && \
+     docker exec "${container}" psql -h 127.0.0.1 -U postgres -d postgres -Atqc \
+      "SELECT (to_regclass('public.llm_batches') IS NOT NULL)::int" 2>/dev/null \
+      | grep -qx '1'; then
     ready=1
     break
   fi
@@ -27,7 +34,7 @@ for _ in $(seq 1 60); do
 done
 if [[ "${ready}" != "1" ]]; then
   docker logs "${container}" >&2 || true
-  echo "fresh PostgreSQL image did not finish initialization" >&2
+  echo "fresh PostgreSQL image did not finish final-server initialization" >&2
   exit 1
 fi
 

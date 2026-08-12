@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -12,8 +14,6 @@ from pg_llm_batch import db
 from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError, ValidationError
-
-from tests.bounded_response_double import bind_bounded_json_response
 
 
 class _Cursor:
@@ -68,14 +68,27 @@ class _Psycopg:
         return _Connection(self)
 
 
+class _ProviderByteStream:
+    """Expose deterministic provider JSON through bounded byte streaming."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        """Yield response bytes in chunks no larger than the requested size."""
+        for offset in range(0, len(self.body), size):
+            yield self.body[offset : offset + size]
+
+
 class _ProviderResponse:
     """Return one successful provider batch creation response."""
 
     status = 201
+    headers: dict[str, str] = {}
 
     def __init__(self, payload: dict[str, Any]) -> None:
-        self.payload = payload
-        bind_bounded_json_response(self, payload)
+        self.content = _ProviderByteStream(payload)
+        self.content_length = len(self.content.body)
 
     async def __aenter__(self) -> "_ProviderResponse":
         return self
@@ -84,8 +97,8 @@ class _ProviderResponse:
         return None
 
     async def json(self) -> dict[str, Any]:
-        """Return the configured provider JSON object."""
-        return self.payload
+        """Reject whole-body reads that bypass bounded streaming."""
+        raise AssertionError("response.json() must not bypass bounded streaming")
 
 
 class _ProviderSession:
@@ -120,7 +133,11 @@ def test_sparse_observations_cannot_reduce_persisted_request_counts(
         observation_order=2,
     )
 
-    sql = _compact_sql(driver.executions[0][0])
+    assert driver.executions[0] == (
+        "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+        ("standalone",),
+    )
+    sql = _compact_sql(driver.executions[1][0])
     assert (
         "total_requests = GREATEST( llm_remote_batch_jobs.total_requests, "
         "EXCLUDED.total_requests )"
@@ -194,7 +211,7 @@ def test_persistence_rejects_nul_alias_before_database_access(
     with pytest.raises(ValueError, match="endpoint_alias"):
         db.persist_remote_batch_state(
             "postgresql://example",
-            "primary\x00shadow",
+            f"primary{chr(0)}shadow",
             {"id": "batch-1", "status": "validating"},
             observation_order=4,
         )
@@ -286,25 +303,26 @@ async def test_provider_generated_oversized_id_never_reaches_recorder() -> None:
 
 
 def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> None:
-    """Lifecycle documentation must not overstate audit or tenant isolation."""
-    documentation = (
-        Path(__file__).parents[1] / "docs" / "remote-batch-lifecycle.md"
-    ).read_text(encoding="utf-8")
+    """Lifecycle documentation must bound audit and tenant assurances."""
+    documentation = " ".join(
+        (
+  Path(__file__).parents[1] / "docs" / "remote-batch-lifecycle.md"
+        ).read_text(encoding="utf-8").split()
+    )
 
     assert "current-state projection" in documentation
-    assert "not an authorization or tenant-isolation boundary" in documentation
     assert "append-only audit history" in documentation
-    assert "at most 128 characters" in documentation
-    assert "at most 256 ASCII characters" in documentation
-    assert (
-        "All caller-provided remote resource identifiers" in documentation
-    )
+    assert "arbitrary tenant scope" in documentation
+    assert "not a substitute" in documentation
+    assert "longer than 128 characters" in documentation
+    assert "limited to 256 ASCII characters" in documentation
+    assert "Caller-provided identifiers are validated before" in documentation
 
 
 @pytest.mark.parametrize(
     ("field", "value"),
     [
-        ("input_file_id", "file\x00shadow"),
+        ("input_file_id", f"file{chr(0)}shadow"),
         ("output_file_id", "o" * 257),
         ("error_file_id", "é"),
     ],
@@ -378,8 +396,8 @@ async def test_remote_field_contract_sanitizes_nul_text_before_custom_recorder()
         _ProviderResponse(
             {
                 "id": "batch-1",
-                "endpoint": "/v1/responses\x00shadow",
-                "status": "completed\x00shadow",
+                "endpoint": f"/v1/responses{chr(0)}shadow",
+                "status": f"completed{chr(0)}shadow",
             }
         )
     )
@@ -407,7 +425,7 @@ async def test_remote_field_contract_sanitizes_nul_text_before_custom_recorder()
 
     assert recorded[0]["endpoint"] is None
     assert recorded[0]["status"] == "unknown"
-    assert "\x00" not in repr(recorded)
+    assert chr(0) not in repr(recorded)
 
 
 def test_remote_field_contract_normalizes_nul_optional_text(
@@ -422,15 +440,15 @@ def test_remote_field_contract_normalizes_nul_optional_text(
         "primary",
         {
             "id": "batch-1",
-            "endpoint": "/v1/responses\x00shadow",
-            "status": "completed\x00shadow",
+            "endpoint": f"/v1/responses{chr(0)}shadow",
+            "status": f"completed{chr(0)}shadow",
         },
         observation_order=6,
     )
 
     assert snapshot["batch_endpoint"] is None
     assert snapshot["batch_status"] == "unknown"
-    assert "\x00" not in repr(driver.executions[0][1])
+    assert chr(0) not in repr(driver.executions[1][1])
 
 
 def test_remote_field_contract_adds_database_checks() -> None:
