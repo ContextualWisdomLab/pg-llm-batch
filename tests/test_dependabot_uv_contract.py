@@ -15,4 +15,5 @@ def test_dependabot_uses_uv_ecosystem_for_python_lock_updates() -> None:
 
     assert 'package-ecosystem: "uv"' in config
     assert 'package-ecosystem: "pip"' not in config
+    assert (ROOT / "pyproject.toml").is_file()
     assert (ROOT / "uv.lock").is_file()
