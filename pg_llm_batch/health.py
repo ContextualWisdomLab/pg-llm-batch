@@ -77,9 +77,29 @@ def check_health(dsn: str) -> Dict[str, Any]:
     return {"ready": ready, "components": components}
 
 
-def public_health_report(report: Dict[str, Any]) -> Dict[str, bool]:
-    """Return the bounded public readiness decision without diagnostic details."""
-    return {"ready": report.get("ready") is True}
+def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Return readiness using only fixed component names and boolean states."""
+    public_components: List[Dict[str, Any]] = []
+    for component in report.get("components", []):
+        component_name = component.get("component")
+        if component_name not in REQUIRED_COMPONENTS:
+            continue
+        public_components.append(
+            {
+                "component": component_name,
+                "is_ready": component.get("is_ready") is True,
+            }
+        )
+    required_states = {
+        component["component"]: component["is_ready"] for component in public_components
+    }
+    required_ready = set(required_states) == REQUIRED_COMPONENTS and all(
+        required_states.values()
+    )
+    return {
+        "ready": report.get("ready") is True and required_ready,
+        "components": public_components,
+    }
 
 
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
