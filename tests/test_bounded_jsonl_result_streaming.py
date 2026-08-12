@@ -130,7 +130,7 @@ def test_streaming_client_rejects_non_positive_integer_bounds(field: str, value:
             _credentials,
             **{field: value},
         )
-    assert exc_info.value.field == field
+    assert exc_info.value.details["field"] == field
 
 
 async def test_iter_batch_records_streams_result_and_error_files_across_chunks():
