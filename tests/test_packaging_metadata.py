@@ -5,17 +5,22 @@ from __future__ import annotations
 
 from importlib.metadata import metadata
 from pathlib import Path
+import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_pyproject_uses_pep639_license_metadata() -> None:
-    """Source metadata pins the build backend and includes PEP 639 legal files."""
+    """Source metadata exactly pins uv_build and includes PEP 639 legal files."""
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'requires = ["uv_build==0.12.1"]' in project
-    assert 'requires = ["uv_build>=0.12.1,<0.13"]' not in project
-    assert 'requires = ["uv_build>=0.12.0,<0.13"]' not in project
+    exact_uv_build_pin = re.search(
+        r'^requires = \["uv_build==\d+\.\d+\.\d+"\]$',
+        project,
+        flags=re.MULTILINE,
+    )
+    assert exact_uv_build_pin is not None
+    assert 'requires = ["uv_build>=' not in project
     assert 'build-backend = "uv_build"' in project
     assert 'module-root = ""' in project
     assert 'license = "Apache-2.0"' in project
