@@ -428,27 +428,27 @@ async def test_remote_field_contract_sanitizes_nul_text_before_custom_recorder()
     assert chr(0) not in repr(recorded)
 
 
-def test_remote_field_contract_normalizes_nul_optional_text(
+def test_remote_field_contract_rejects_nul_lifecycle_text_before_database_access(
     monkeypatch: Any,
 ) -> None:
-    """NUL-bearing descriptive provider text cannot reach PostgreSQL columns."""
+    """NUL-bearing lifecycle status fails before PostgreSQL persistence."""
     driver = _Psycopg()
     monkeypatch.setattr(db, "psycopg", driver)
 
-    snapshot = db.persist_remote_batch_state(
-        "postgresql://example",
-        "primary",
-        {
-            "id": "batch-1",
-            "endpoint": f"/v1/responses{chr(0)}shadow",
-            "status": f"completed{chr(0)}shadow",
-        },
-        observation_order=6,
-    )
+    with pytest.raises(ValueError, match="batch_status"):
+        db.persist_remote_batch_state(
+            "postgresql://example",
+            "primary",
+            {
+                "id": "batch-1",
+                "endpoint": f"/v1/responses{chr(0)}shadow",
+                "status": f"completed{chr(0)}shadow",
+            },
+            observation_order=6,
+        )
 
-    assert snapshot["batch_endpoint"] is None
-    assert snapshot["batch_status"] == "unknown"
-    assert chr(0) not in repr(driver.executions[1][1])
+    assert driver.connections == []
+    assert driver.executions == []
 
 
 def test_remote_field_contract_adds_database_checks() -> None:
