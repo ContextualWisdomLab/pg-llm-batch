@@ -130,6 +130,7 @@ def test_count_tokens_closes_owned_resources_after_success(
 ) -> None:
     """Successful one-shot counting must close the counter before its config."""
     _install_sync_stores(monkeypatch)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("one two"))
 
     assert cli._dispatch(
         [
@@ -138,8 +139,7 @@ def test_count_tokens_closes_owned_resources_after_success(
             "postgresql://x",
             "--model",
             "gpt-4o",
-            "--text",
-            "one two",
+            "--stdin",
         ]
     ) == 0
 
@@ -157,6 +157,7 @@ def test_count_tokens_closes_owned_resources_after_failure(
     """A primary token failure must propagate after deterministic cleanup."""
     _install_sync_stores(monkeypatch)
     _TokenCounter.should_fail = True
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("one two"))
 
     with pytest.raises(RuntimeError, match="token count failed"):
         cli._dispatch(
@@ -166,8 +167,7 @@ def test_count_tokens_closes_owned_resources_after_failure(
                 "postgresql://x",
                 "--model",
                 "gpt-4o",
-                "--text",
-                "one two",
+                "--stdin",
             ]
         )
 
