@@ -105,10 +105,15 @@ async def test_requests_are_bounded_and_redirects_are_disabled():
 
 
 @pytest.mark.parametrize(
-    "error",
-    [aiohttp.ClientConnectionError("offline"), asyncio.TimeoutError()],
+    ("error", "expected_error_type"),
+    [
+        (aiohttp.ClientConnectionError("offline"), "ClientError"),
+        (asyncio.TimeoutError(), "TimeoutError"),
+    ],
 )
-async def test_transport_errors_are_converted_to_structured_gateway_errors(error):
+async def test_transport_errors_are_converted_to_structured_gateway_errors(
+    error, expected_error_type
+):
     """Network and request timeout failures never leak aiohttp exceptions."""
 
     class FailingSession:
@@ -127,7 +132,7 @@ async def test_transport_errors_are_converted_to_structured_gateway_errors(error
         await client.get_batch_status("batch-1", "default")
 
     assert exc_info.value.response_data == {
-        "error_type": type(error).__name__,
+        "error_type": expected_error_type,
         "timeout_seconds": 7.0,
     }
 
