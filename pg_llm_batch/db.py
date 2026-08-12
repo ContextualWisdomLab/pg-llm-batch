@@ -384,6 +384,14 @@ def _normalize_remote_batch_snapshot(
     )
     counts_value = provider_batch.get("request_counts")
     request_counts = counts_value if isinstance(counts_value, Mapping) else {}
+    total_requests = _provider_count(request_counts.get("total"))
+    completed_requests = _provider_count(request_counts.get("completed"))
+    failed_requests = _provider_count(request_counts.get("failed"))
+    if (
+        "total" in request_counts
+        and completed_requests + failed_requests > total_requests
+    ):
+        raise ValueError("request_counts progress is inconsistent")
     provider_metadata, metadata_json = _provider_metadata(
         provider_batch.get("metadata")
     )
@@ -400,9 +408,9 @@ def _normalize_remote_batch_snapshot(
         "batch_status": batch_status,
         "output_file_id": output_file_id,
         "error_file_id": error_file_id,
-        "total_requests": _provider_count(request_counts.get("total")),
-        "completed_requests": _provider_count(request_counts.get("completed")),
-        "failed_requests": _provider_count(request_counts.get("failed")),
+        "total_requests": total_requests,
+        "completed_requests": completed_requests,
+        "failed_requests": failed_requests,
         "provider_metadata": provider_metadata,
         "observed_at": observed,
         "terminal_at": terminal_at,
@@ -496,6 +504,16 @@ def _persist_remote_batch_state(
             ),
             updated_at = EXCLUDED.updated_at
         WHERE EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order
+          AND GREATEST(
+              llm_remote_batch_jobs.completed_requests,
+              EXCLUDED.completed_requests
+          ) + GREATEST(
+              llm_remote_batch_jobs.failed_requests,
+              EXCLUDED.failed_requests
+          ) <= GREATEST(
+              llm_remote_batch_jobs.total_requests,
+              EXCLUDED.total_requests
+          )
           AND (
               llm_remote_batch_jobs.batch_status NOT IN (
                   'completed', 'failed', 'expired', 'cancelled'
