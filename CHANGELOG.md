@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restricted the bundled standalone Compose PostgreSQL and component-health
+  published ports to IPv4 loopback so the default developer profile no longer
+  listens on every host interface when operators have not made an explicit
+  ingress decision.
 - Removed plaintext secret values from `config set-secret` process arguments;
   interactive entry now uses a no-echo prompt and fails closed if terminal echo
   suppression is unavailable. Automation accepts one bounded logical line over
