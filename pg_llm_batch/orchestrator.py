@@ -67,10 +67,16 @@ class PostgresBatchOrchestrator:
         self.dsn = dsn
 
     def _resolve_batch_uuid(self, batch_key: str) -> Optional[str]:
-        """Resolve a batch UUID directly or via its input_file_path key."""
+        """Resolve an exact string batch UUID or input-file-path selector."""
+        if type(batch_key) is not str:
+            raise ValidationError(
+                field="batch_uuid",
+                value="<redacted>",
+                reason="must be an exact string UUID or existing input_file_path",
+            )
         try:
-            uuid.UUID(str(batch_key))
-            return str(batch_key)
+            uuid.UUID(batch_key)
+            return batch_key
         except ValueError:
             pass
         with psycopg.connect(self.dsn) as conn:
