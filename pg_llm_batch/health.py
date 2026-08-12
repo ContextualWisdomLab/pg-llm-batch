@@ -80,10 +80,14 @@ def check_health(dsn: str) -> Dict[str, Any]:
 def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     """Return readiness using only fixed component names and boolean states."""
     public_components: List[Dict[str, Any]] = []
+    observed_components = set()
     for component in report.get("components", []):
         component_name = component.get("component")
         if component_name not in REQUIRED_COMPONENTS:
             continue
+        if component_name in observed_components:
+            return {"ready": False, "components": []}
+        observed_components.add(component_name)
         public_components.append(
             {
                 "component": component_name,
