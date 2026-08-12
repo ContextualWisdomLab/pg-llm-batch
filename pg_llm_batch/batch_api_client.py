@@ -19,7 +19,7 @@ import logging
 import random
 import re
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from ipaddress import ip_address
@@ -111,7 +111,7 @@ class GatewayCredentials:
     """Resolved endpoint credentials for a single batch backend."""
 
     url: str
-    api_key: str
+    api_key: str = field(repr=False)
 
 
 # A credentials provider returns GatewayCredentials for a given endpoint alias.
