@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from typing import Any, Dict, Optional
+from typing import Any, Dict, NoReturn, Optional
 
 from .batch_api_client import BatchAPIClient, CredentialsProvider
 from .db import (
@@ -43,6 +43,30 @@ def _validate_callable_seam(field: str, value: Any) -> None:
             value=value,
             reason="must be callable",
         )
+
+
+def _bounded_lifecycle_error_type(error: Exception) -> str:
+    """Map arbitrary implementation failures into a finite compatibility vocabulary."""
+    if isinstance(error, ValidationError):
+        return "ValidationError"
+    if isinstance(error, ValueError):
+        return "ValueError"
+    if isinstance(error, OSError):
+        return "OSError"
+    return "RuntimeError"
+
+
+def _raise_lifecycle_gateway_error(
+    message: str,
+    response_data: Mapping[str, Any],
+) -> NoReturn:
+    """Raise one package error after removing any implicit exception context."""
+    error = GatewayError(message, response_data=dict(response_data))
+    try:
+        raise error from None
+    except GatewayError:
+        error.__context__ = None
+        raise
 
 
 class DurableBatchAPIClient(BatchAPIClient):
@@ -111,20 +135,23 @@ class DurableBatchAPIClient(BatchAPIClient):
                 raise ValueError(
                     "observation reserver must return a positive integer"
                 )
-            return observation_order
         except Exception as exc:
-            response_data: Dict[str, Any] = {
-                "operation": operation,
-                "phase": "reservation",
-                "endpoint_alias": endpoint_alias,
-                "batch_id": batch_id,
-                "error_type": type(exc).__name__,
-            }
-            response_data.update(self._lifecycle_recovery_context())
-            raise GatewayError(
-                f"{operation} lifecycle reservation failed",
-                response_data=response_data,
-            ) from exc
+            failure_type = _bounded_lifecycle_error_type(exc)
+        else:
+            return observation_order
+
+        response_data: Dict[str, Any] = {
+            "operation": operation,
+            "phase": "reservation",
+            "endpoint_alias": endpoint_alias,
+            "batch_id": batch_id,
+            "error_type": failure_type,
+        }
+        response_data.update(self._lifecycle_recovery_context())
+        _raise_lifecycle_gateway_error(
+            f"{operation} lifecycle reservation failed",
+            response_data,
+        )
 
     async def _persist_snapshot(
         self,
@@ -197,34 +224,24 @@ class DurableBatchAPIClient(BatchAPIClient):
                 normalized_snapshot,
                 observation_order,
             )
-        except ValidationError as exc:
-            response_data: Dict[str, Any] = {
-                "operation": operation,
-                "phase": "persistence",
-                "endpoint_alias": endpoint_alias,
-                "batch_id": recovery_batch_id,
-                "observation_order": observation_order,
-                "error_type": type(exc).__name__,
-            }
-            response_data.update(self._lifecycle_recovery_context())
-            raise GatewayError(
-                f"{operation} succeeded but lifecycle persistence failed",
-                response_data=response_data,
-            ) from None
         except Exception as exc:
-            response_data = {
-                "operation": operation,
-                "phase": "persistence",
-                "endpoint_alias": endpoint_alias,
-                "batch_id": recovery_batch_id,
-                "observation_order": observation_order,
-                "error_type": type(exc).__name__,
-            }
-            response_data.update(self._lifecycle_recovery_context())
-            raise GatewayError(
-                f"{operation} succeeded but lifecycle persistence failed",
-                response_data=response_data,
-            ) from exc
+            failure_type = _bounded_lifecycle_error_type(exc)
+        else:
+            return
+
+        response_data: Dict[str, Any] = {
+            "operation": operation,
+            "phase": "persistence",
+            "endpoint_alias": endpoint_alias,
+            "batch_id": recovery_batch_id,
+            "observation_order": observation_order,
+            "error_type": failure_type,
+        }
+        response_data.update(self._lifecycle_recovery_context())
+        _raise_lifecycle_gateway_error(
+            f"{operation} succeeded but lifecycle persistence failed",
+            response_data,
+        )
 
     async def create_batch_job(
         self,
