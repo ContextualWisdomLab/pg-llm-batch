@@ -120,7 +120,8 @@ async def test_output_file_lifetime_rejects_invalid_values_before_credentials(
             output_expires_after_seconds=invalid_lifetime,  # type: ignore[arg-type]
         )
 
-    assert caught.value.field == "output_expires_after_seconds"
+    assert caught.value.details["field"] == "output_expires_after_seconds"
+    assert caught.value.details["value"] == "<redacted>"
     assert credential_calls == []
 
 
