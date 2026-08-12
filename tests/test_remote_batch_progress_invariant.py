@@ -62,15 +62,10 @@ class _Psycopg:
         return _Connection(self)
 
 
-def _compact_sql(sql: str) -> str:
-    """Normalize SQL whitespace for semantic contract assertions."""
-    return " ".join(sql.split())
-
-
 def test_persistence_rejects_impossible_same_observation_before_database(
     monkeypatch: Any,
 ) -> None:
-    """Completed plus failed requests cannot exceed the observed total."""
+    """Completed plus failed requests cannot exceed one explicitly known total."""
     driver = _Psycopg()
     monkeypatch.setattr(db, "psycopg", driver)
 
@@ -91,28 +86,35 @@ def test_persistence_rejects_impossible_same_observation_before_database(
     assert driver.commits == 0
 
 
-def test_upsert_guards_combined_monotonic_progress_invariant(monkeypatch: Any) -> None:
-    """Independent monotonic counter updates cannot create impossible progress."""
+@pytest.mark.parametrize(
+    ("request_counts", "expected_total_known"),
+    [
+        ({"completed": 2, "failed": 1}, False),
+        ({"total": "invalid", "completed": 2, "failed": 1}, False),
+        ({"total": 0, "completed": 0, "failed": 0}, True),
+    ],
+)
+def test_persistence_distinguishes_unknown_total_from_explicit_zero(
+    monkeypatch: Any,
+    request_counts: dict[str, object],
+    expected_total_known: bool,
+) -> None:
+    """Sparse/invalid totals remain unknown while an exact zero is authoritative."""
     driver = _Psycopg()
     monkeypatch.setattr(db, "psycopg", driver)
 
-    db.persist_remote_batch_state(
+    snapshot = db.persist_remote_batch_state(
         "postgresql://example",
         "primary",
         {
-            "id": "batch-1",
+            "id": "batch-knownness",
             "status": "in_progress",
-            "request_counts": {"total": 10, "completed": 9, "failed": 0},
+            "request_counts": request_counts,
         },
         observation_order=1,
     )
 
-    sql = _compact_sql(driver.executions[1][0])
-    expected_guard = (
-        "GREATEST( llm_remote_batch_jobs.completed_requests, "
-        "EXCLUDED.completed_requests ) + GREATEST( "
-        "llm_remote_batch_jobs.failed_requests, EXCLUDED.failed_requests ) "
-        "<= GREATEST( llm_remote_batch_jobs.total_requests, "
-        "EXCLUDED.total_requests )"
-    )
-    assert expected_guard in sql
+    assert snapshot["total_requests"] == 0
+    assert snapshot["total_requests_known"] is expected_total_known
+    assert snapshot["completed_requests"] == request_counts.get("completed", 0)
+    assert snapshot["failed_requests"] == request_counts.get("failed", 0)
