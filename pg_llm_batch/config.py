@@ -300,6 +300,10 @@ class SecretStore:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
+        if fernet_key and Fernet is None:
+            raise ConfigError(
+                "Fernet encryption requires the optional cryptography dependency"
+            )
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
         try:
@@ -307,11 +311,6 @@ class SecretStore:
             self._fernet = None
             if fernet_key and Fernet is not None:
                 self._fernet = Fernet(fernet_key.encode("utf-8"))
-            elif fernet_key and Fernet is None:  # pragma: no cover
-                logger.warning(
-                    "Fernet key supplied but 'cryptography' is not installed; "
-                    "storing secrets base64-obfuscated instead."
-                )
             self._ensure_table()
         except BaseException:
             self.close()
