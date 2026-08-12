@@ -15,6 +15,7 @@ class _Cursor:
 
     def __init__(self, driver: "_Psycopg") -> None:
         self.driver = driver
+        self.rowcount = 1
 
     def __enter__(self) -> "_Cursor":
         return self
@@ -23,8 +24,14 @@ class _Cursor:
         return None
 
     def execute(self, sql: str, params: Any = None) -> None:
-        """Record one SQL statement and its bound parameters."""
+        """Record one SQL statement and expose configured upsert application."""
         self.driver.executions.append((sql, params))
+        if "INSERT INTO llm_remote_batch_jobs" in sql:
+            self.rowcount = self.driver.upsert_rowcount
+
+    def fetchone(self) -> Any:
+        """Return the configured persisted lifecycle row for a reread."""
+        return self.driver.stored_row
 
 
 class _Connection:
@@ -51,10 +58,12 @@ class _Connection:
 class _Psycopg:
     """Minimal deterministic psycopg replacement for boundary tests."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, upsert_rowcount: int = 1, stored_row: Any = None) -> None:
         self.executions: list[tuple[str, Any]] = []
         self.connections: list[str] = []
         self.commits = 0
+        self.upsert_rowcount = upsert_rowcount
+        self.stored_row = stored_row
 
     def connect(self, dsn: str) -> _Connection:
         """Record the selected target before returning a fake connection."""
@@ -122,3 +131,62 @@ def test_persistence_distinguishes_unknown_total_from_explicit_zero(
     persistence_params = driver.executions[-1][1]
     assert persistence_params is not None
     assert persistence_params[13] is expected_total_known
+
+
+def test_skipped_progress_upsert_returns_the_persisted_snapshot(monkeypatch: Any) -> None:
+    """A rejected monotonic merge must not be reported as successfully persisted."""
+    stored_row = (
+        "standalone",
+        "primary",
+        "batch-stored",
+        1,
+        None,
+        "/v1/chat/completions",
+        "in_progress",
+        None,
+        None,
+        10,
+        9,
+        0,
+        {},
+        None,
+        None,
+        None,
+        None,
+    )
+    driver = _Psycopg(upsert_rowcount=0, stored_row=stored_row)
+    monkeypatch.setattr(db, "psycopg", driver)
+
+    result = db.persist_remote_batch_state(
+        "postgresql://example",
+        "primary",
+        {
+            "id": "batch-stored",
+            "status": "in_progress",
+            "request_counts": {"total": 10, "completed": 0, "failed": 2},
+        },
+        observation_order=2,
+    )
+
+    assert result["observation_order"] == 1
+    assert result["total_requests"] == 10
+    assert result["completed_requests"] == 9
+    assert result["failed_requests"] == 0
+    assert any(
+        "SELECT tenant_scope" in sql and "FROM llm_remote_batch_jobs" in sql
+        for sql, _params in driver.executions
+    )
+
+
+def test_schema_migration_fails_closed_on_known_historical_corruption() -> None:
+    """Schema reapplication must report inconsistent known progress before validation."""
+    packaged_schema = db.SCHEMA_PATH.read_text(encoding="utf-8")
+    docker_schema = (
+        db.SCHEMA_PATH.parents[1] / "docker/postgres/init/02_schema.sql"
+    ).read_text(encoding="utf-8")
+
+    assert packaged_schema == docker_schema
+    assert "inconsistent known remote batch progress requires operator remediation" in packaged_schema
+    assert "RAISE EXCEPTION USING" in packaged_schema
+    assert "total_requests_known IS TRUE OR total_requests > 0" in packaged_schema
+    assert "AND NOT convalidated" in packaged_schema
