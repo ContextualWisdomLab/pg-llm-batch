@@ -35,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Restricted the bundled standalone Compose PostgreSQL and component-health
+  published ports to IPv4 loopback so the default developer profile no longer
+  listens on every host interface when operators have not made an explicit
+  ingress decision.
 - `BatchAPIClient.wait_for_batch()` now requires `poll_interval_seconds` and
   `timeout_seconds` to be finite positive numeric durations before credential
   resolution or provider I/O, rejecting booleans, strings, `None`, NaN,
