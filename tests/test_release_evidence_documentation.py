@@ -3,10 +3,16 @@
 
 from pathlib import Path
 
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
+    import tomli as tomllib
+
 
 ROOT = Path(__file__).resolve().parents[1]
 ADR = ROOT / "docs" / "adr" / "0003-reproducible-release-evidence.md"
 DOCTORING = ROOT / "docs" / "doctoring" / "reproducible-release-evidence.md"
+UV_CONFIG = ROOT / "uv.toml"
 
 
 def test_release_evidence_adr_separates_acceptance_from_publication() -> None:
@@ -20,9 +26,15 @@ def test_release_evidence_adr_separates_acceptance_from_publication() -> None:
 
 
 def test_release_evidence_documents_exact_build_toolchain() -> None:
+    required_version = tomllib.loads(UV_CONFIG.read_text(encoding="utf-8"))[
+        "required-version"
+    ]
+    assert required_version.startswith("==")
+    uv_version = required_version.removeprefix("==")
+
     for path in (ADR, DOCTORING):
         text = path.read_text(encoding="utf-8")
-        assert "`uv` 0.12.1" in text
+        assert f"`uv` {uv_version}" in text
         assert "`uv_build==0.12.1`" in text
         assert "build-system requirements are not pinned by `uv.lock`" in text
 
