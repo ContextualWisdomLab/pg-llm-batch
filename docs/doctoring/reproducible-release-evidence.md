@@ -14,7 +14,7 @@ fixed hash seed, timezone, and locale, and creates two clean source trees with
 
 PEP 517 build-system requirements are resolved separately from ordinary project
 dependencies: build-system requirements are not pinned by `uv.lock`. The
-governed acceptance path therefore uses the exact `uv` 0.12.1 frontend and
+governed acceptance path therefore uses the exact `uv` 0.12.3 frontend and
 requires `uv_build==0.12.1`. The exact uv frontend can use its compatible bundled
 backend, and external PEP 517 frontends must resolve the same backend version.
 Any frontend or backend patch upgrade requires an explicit reviewed source
@@ -98,7 +98,7 @@ final main-branch merge evidence.
 1. Open the exact-head **Release Acceptance / Reproducible wheel and sdist**
    check.
 2. Confirm the checkout assertion names the current pull-request head.
-3. Confirm the workflow uses `uv` 0.12.1 and `uv_build==0.12.1` from the exact
+3. Confirm the workflow uses `uv` 0.12.3 and `uv_build==0.12.1` from the exact
    reviewed source.
 4. Confirm both clean builds complete under the same `SOURCE_DATE_EPOCH`.
 5. Confirm the verifier reports no missing, extra, symlinked, identity-mismatched,
@@ -151,7 +151,7 @@ and source-distribution filenames. Do not rename artifacts after build.
 
 ### Build-toolchain failure
 
-Confirm the workflow frontend remains exactly `uv` 0.12.1 and the project
+Confirm the workflow frontend remains exactly `uv` 0.12.3 and the project
 backend requirement remains exactly `uv_build==0.12.1`. Do not treat
 `uv.lock` as evidence for PEP 517 build-system requirements. A deliberate
 upgrade must change both governed pins, rerun the packaging and release tests,
