@@ -57,12 +57,15 @@ class _Psycopg:
         return _Connection(self)
 
 
-def test_apply_schema_executes_exact_file(monkeypatch, tmp_path):
+def test_apply_schema_executes_packaged_file(monkeypatch, tmp_path):
     driver = _Psycopg()
     monkeypatch.setattr(db, "psycopg", driver)
     schema = tmp_path / "schema.sql"
     schema.write_text("CREATE TABLE snake_case_name (id int);", encoding="utf-8")
-    db.apply_schema("postgresql://x", str(schema))
+    monkeypatch.setattr(db, "SCHEMA_PATH", schema)
+
+    db.apply_schema("postgresql://x")
+
     assert driver.executions == [("CREATE TABLE snake_case_name (id int);", None)]
     assert driver.commits == 1
 
