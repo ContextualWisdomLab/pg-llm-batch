@@ -14,7 +14,7 @@ from pg_llm_batch import token_counter as token_counter_module
 from pg_llm_batch.config import PostgresConfigStore, SecretStore
 from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.orchestrator import PostgresBatchOrchestrator
-from pg_llm_batch.token_counter import TokenCounter
+from pg_llm_batch.token_counter import BatchAccumulator, TokenCounter
 
 
 class _QueryCursor:
@@ -260,3 +260,39 @@ def test_invalid_configuration_is_rejected_before_token_connection(
         TokenCounter("postgresql://example", config=_InvalidConfig())
 
     assert extension_checks == []
+
+
+def test_invalid_configured_batch_limit_is_rejected_before_token_connection(
+    monkeypatch: Any,
+) -> None:
+    """A non-positive configured batch ceiling must fail before DB acquisition."""
+    extension_checks: list[str] = []
+
+    class _InvalidConfig:
+        def get(self, category: str, key: str, default: Any) -> Any:
+            if (category, key) == ("token_limits", "per_batch"):
+                return 0
+            return default
+
+    monkeypatch.setattr(
+        token_counter_module.TokenCounter,
+        "_ensure_pg_tiktoken",
+        lambda _self: extension_checks.append("checked") or True,
+    )
+
+    with pytest.raises(ValidationError, match="must be a positive integer"):
+        TokenCounter("postgresql://example", config=_InvalidConfig())
+
+    assert extension_checks == []
+
+
+def test_invalid_explicit_accumulator_limit_is_rejected() -> None:
+    """A caller-provided non-positive accumulator ceiling must fail closed."""
+    counter = SimpleNamespace(
+        effective_limit=100,
+        azure_max_records_per_file=10,
+        azure_max_bytes_per_file=1024,
+    )
+
+    with pytest.raises(ValidationError, match="must be a positive integer"):
+        BatchAccumulator(counter, "gpt-4o", max_records=0)
