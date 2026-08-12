@@ -71,7 +71,11 @@ async def test_delete_file_uses_validated_provider_file_authority() -> None:
         (
             "DELETE",
             "https://gateway.example.test/v1/files/file-input",
-            {"headers": client._headers("secret")},
+            {
+                "headers": client._headers("secret"),
+                "timeout": client._request_timeout,
+                "allow_redirects": False,
+            },
         )
     ]
 
