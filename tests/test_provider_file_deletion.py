@@ -8,7 +8,7 @@ import json
 import pytest
 
 from pg_llm_batch.batch_api_client import BatchAPIClient, GatewayCredentials
-from pg_llm_batch.exceptions import ValidationError
+from pg_llm_batch.exceptions import GatewayError, ValidationError
 
 
 class _Content:
@@ -104,5 +104,5 @@ async def test_delete_file_requires_provider_confirmed_identity_and_state() -> N
     client = BatchAPIClient("postgresql://test", _credentials)
     client._session = session
 
-    with pytest.raises(Exception, match="file deletion"):
+    with pytest.raises(GatewayError, match="File deletion returned invalid evidence"):
         await client.delete_file("file-input", "default")
