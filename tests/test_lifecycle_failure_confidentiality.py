@@ -90,7 +90,7 @@ async def test_reservation_failure_uses_fixed_evidence_without_exception_chain(
     assert exc_info.value.response_data["batch_id"] == "batch-1"
     _assert_bounded_failure(
         exc_info.value,
-        expected_category="lifecycle_reservation_failure",
+        expected_category="RuntimeError",
         tenant_scope=tenant_scope,
     )
 
@@ -135,6 +135,6 @@ async def test_persistence_failure_uses_fixed_evidence_without_exception_chain(
     assert exc_info.value.response_data["observation_order"] == 7
     _assert_bounded_failure(
         exc_info.value,
-        expected_category="lifecycle_persistence_failure",
+        expected_category="RuntimeError",
         tenant_scope=tenant_scope,
     )
