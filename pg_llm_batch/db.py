@@ -50,7 +50,6 @@ _REMOTE_BATCH_STATE_FIELDS = (
     "output_file_id",
     "error_file_id",
     "total_requests",
-    "total_requests_known",
     "completed_requests",
     "failed_requests",
     "provider_metadata",
@@ -455,18 +454,18 @@ def _persist_remote_batch_state(
             output_file_id,
             error_file_id,
             total_requests,
-            total_requests_known,
             completed_requests,
             failed_requests,
             provider_metadata,
+            total_requests_known,
             first_seen_at,
             last_observed_at,
             terminal_at,
             updated_at
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s::jsonb, %s, %s, %s, %s
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s::jsonb, %s, %s, %s, %s, %s
         )
         ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE
         SET observation_order = EXCLUDED.observation_order,
@@ -549,10 +548,10 @@ def _persist_remote_batch_state(
         snapshot["output_file_id"],
         snapshot["error_file_id"],
         snapshot["total_requests"],
-        snapshot["total_requests_known"],
         snapshot["completed_requests"],
         snapshot["failed_requests"],
         metadata_json,
+        snapshot["total_requests_known"],
         observed,
         observed,
         terminal_at,
@@ -575,7 +574,7 @@ def persist_remote_batch_state(
     *,
     observed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
-    """Persist one standalone projection without changing tenant visibility."""
+    """Persist one standalone projection without changing its return shape."""
     snapshot = _persist_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
@@ -585,6 +584,7 @@ def persist_remote_batch_state(
         observed_at=observed_at,
     )
     snapshot.pop("tenant_scope", None)
+    snapshot.pop("total_requests_known", None)
     return snapshot
 
 
@@ -598,7 +598,7 @@ def persist_tenant_remote_batch_state(
     observed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Persist one lifecycle projection for an explicit trusted tenant scope."""
-    return _persist_remote_batch_state(
+    snapshot = _persist_remote_batch_state(
         dsn,
         tenant_scope,
         endpoint_alias,
@@ -606,6 +606,8 @@ def persist_tenant_remote_batch_state(
         observation_order,
         observed_at=observed_at,
     )
+    snapshot.pop("total_requests_known", None)
+    return snapshot
 
 
 def get_tenant_remote_batch_state(
@@ -632,7 +634,6 @@ def get_tenant_remote_batch_state(
                output_file_id,
                error_file_id,
                total_requests,
-               total_requests_known,
                completed_requests,
                failed_requests,
                provider_metadata,
