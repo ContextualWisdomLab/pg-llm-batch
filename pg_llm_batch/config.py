@@ -109,7 +109,7 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
             return True
         if lowered in {"false", "0", "no", "off"}:
             return False
-        return bool(raw)
+        return item["value"] if item else False
     if target_type is int:
         try:
             return int(raw)
