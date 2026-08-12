@@ -562,6 +562,46 @@ def _persist_remote_batch_state(
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
+            if cur.rowcount == 0:
+                cur.execute(
+                    """
+                    SELECT tenant_scope,
+                           endpoint_alias,
+                           remote_batch_id,
+                           observation_order,
+                           input_file_id,
+                           batch_endpoint,
+                           batch_status,
+                           output_file_id,
+                           error_file_id,
+                           total_requests,
+                           completed_requests,
+                           failed_requests,
+                           provider_metadata,
+                           first_seen_at,
+                           last_observed_at,
+                           terminal_at,
+                           updated_at
+                    FROM llm_remote_batch_jobs
+                    WHERE tenant_scope = %s
+                      AND endpoint_alias = %s
+                      AND remote_batch_id = %s
+                    """,
+                    (
+                        snapshot["tenant_scope"],
+                        snapshot["endpoint_alias"],
+                        snapshot["remote_batch_id"],
+                    ),
+                )
+                persisted_row = cur.fetchone()
+                if (
+                    not persisted_row
+                    or len(persisted_row) != len(_REMOTE_BATCH_STATE_FIELDS)
+                ):
+                    raise RuntimeError(
+                        "remote batch progress update was rejected without persisted state"
+                    )
+                snapshot = dict(zip(_REMOTE_BATCH_STATE_FIELDS, persisted_row))
         conn.commit()
     return snapshot
 
