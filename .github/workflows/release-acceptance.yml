@@ -1,0 +1,133 @@
+name: Release Acceptance
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/release-acceptance.yml
+      - pg_llm_batch/**
+      - tests/**
+      - docs/**
+      - docker/**
+      - AGENTS.md
+      - ARCHITECTURE.md
+      - CHANGELOG.md
+      - CLAUDE.md
+      - CODE_OF_CONDUCT.md
+      - CONTRIBUTING.md
+      - README.md
+      - SECURITY.md
+      - pyproject.toml
+      - uv.lock
+      - LICENSE
+      - NOTICE
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-acceptance-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  reproducible-distributions:
+    name: Reproducible wheel and sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2.20.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout exact pull request head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.3"
+          prune-cache: true
+
+      - name: Install locked verification dependencies
+        run: uv sync --locked
+
+      - name: Derive exact-source reproducibility environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
+          source_date_epoch="$(git show -s --format=%ct HEAD)"
+          case "$source_date_epoch" in
+            ''|*[!0-9]*) echo "invalid exact-head commit timestamp" >&2; exit 1 ;;
+          esac
+          {
+            echo "SOURCE_DATE_EPOCH=$source_date_epoch"
+            echo "PYTHONHASHSEED=0"
+            echo "TZ=UTC"
+            echo "LC_ALL=C.UTF-8"
+          } >> "$GITHUB_ENV"
+
+      - name: Materialize two clean exact-head source trees
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir source-first source-second
+          git archive --format=tar HEAD | tar -xf - -C source-first
+          git archive --format=tar HEAD | tar -xf - -C source-second
+
+      - name: Build first distribution set
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build --no-sources --out-dir dist-first --no-create-gitignore source-first
+
+      - name: Build second distribution set
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv build --no-sources --out-dir dist-second --no-create-gitignore source-second
+
+      - name: Verify artifact identity and write bounded evidence
+        shell: bash
+        env:
+          SOURCE_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          import os
+          import tomllib
+          from pathlib import Path
+
+          from pg_llm_batch.release_evidence import (
+              verify_reproducible_release,
+              write_release_manifest,
+          )
+
+          project = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          manifest = verify_reproducible_release(
+              "dist-first",
+              "dist-second",
+              distribution_name=project["name"],
+              version=project["version"],
+              source_commit=os.environ["SOURCE_COMMIT"],
+              source_date_epoch=int(os.environ["SOURCE_DATE_EPOCH"]),
+          )
+          write_release_manifest(manifest, "release-evidence/release-manifest.json")
+          PY
+
+      - name: Preserve bounded release evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-evidence-${{ github.event.pull_request.head.sha }}
+          path: release-evidence/release-manifest.json
+          if-no-files-found: error
+          retention-days: 14
