@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import AsyncIterator
 from typing import Any
 
 import pytest
@@ -12,7 +14,17 @@ from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.durable_client import DurableBatchAPIClient
 from pg_llm_batch.exceptions import GatewayError
 
-from tests.bounded_response_double import bind_bounded_json_response
+
+class _ByteStream:
+    """Expose deterministic JSON bytes through aiohttp's bounded stream seam."""
+
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+
+    async def iter_chunked(self, size: int) -> AsyncIterator[bytes]:
+        """Yield the encoded body in chunks no larger than the requested size."""
+        for offset in range(0, len(self.body), size):
+            yield self.body[offset : offset + size]
 
 
 class _Response:
@@ -25,21 +37,14 @@ class _Response:
         payload = {
             "id": "batch-other",
             "status": "in_progress",
-            "request_counts": {
-                "total": 2,
-                "completed": 1,
-                "failed": 0,
-            },
-        }
-        bind_bounded_json_response(self, payload)
-
-    async def json(self) -> dict[str, Any]:
-        """Return a syntactically valid but identity-mismatched provider payload."""
-        return {
-            "id": "batch-other",
-            "status": "in_progress",
             "request_counts": {"total": 2, "completed": 1, "failed": 0},
         }
+        self.content = _ByteStream(payload)
+        self.content_length = len(self.content.body)
+
+    async def json(self) -> dict[str, Any]:
+        """Reject whole-body convenience reads outside the bounded stream."""
+        raise AssertionError("response.json() must not bypass bounded streaming")
 
     async def __aenter__(self) -> "_Response":
         """Enter the response context."""
