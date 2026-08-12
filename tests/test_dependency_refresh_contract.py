@@ -3,16 +3,27 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
+def _assert_action_uses_immutable_commits(workflow: str, action: str) -> None:
+    """Require every reference to one reviewed action to use a full commit SHA."""
+    references = re.findall(rf"{re.escape(action)}@([^\s]+)", workflow)
+    assert references, f"{action} must remain present in CI"
+    assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in references)
+
+
 def test_ci_uses_reviewed_action_commits_and_explicit_cache_pruning() -> None:
-    """CI pins reviewed actions and preserves the prior cache-cost policy."""
+    """CI uses immutable action revisions and preserves the cache-cost policy."""
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert "step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920" in workflow
-    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in workflow
-    assert "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" in workflow
-    assert "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9" in workflow
+    for action in (
+        "step-security/harden-runner",
+        "actions/checkout",
+        "actions/setup-python",
+        "astral-sh/setup-uv",
+    ):
+        _assert_action_uses_immutable_commits(workflow, action)
     assert workflow.count("prune-cache: true") == 2
 
 
