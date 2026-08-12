@@ -20,7 +20,7 @@ Both properties matter, but they require different permissions and review gates.
 
 PEP 517 build-system requirements are resolved independently from ordinary
 project dependencies: build-system requirements are not pinned by `uv.lock`.
-The acceptance path therefore pins the build frontend to `uv` 0.12.1 and the
+The acceptance path therefore pins the build frontend to `uv` 0.12.3 and the
 backend requirement to `uv_build==0.12.1`. The exact frontend can use its
 compatible bundled backend, while external PEP 517 frontends are constrained to
 the same backend version instead of silently selecting a later patch release.
@@ -44,7 +44,7 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
 1. checks out the exact pull-request head with persisted credentials disabled;
 2. derives `SOURCE_DATE_EPOCH` from that exact commit;
 3. creates two clean source trees from the same Git object;
-4. performs two clean exact-head builds with the exact `uv` 0.12.1 frontend and
+4. performs two clean exact-head builds with the exact `uv` 0.12.3 frontend and
    `uv_build==0.12.1` backend contract;
 5. reads at most three output-directory entries, requires exactly one wheel and
    one source distribution, and uses a fixed filesystem-order-independent
@@ -64,8 +64,9 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
 11. creates the temporary entry relative to the final parent descriptor with
     exclusive creation, `O_NOFOLLOW`, mode `0600`, and close-on-exec where
     available;
-12. writes the payload, synchronizes the file and final parent directory, and
-    performs the atomic replacement with descriptor-relative `os.rename()`;
+12. writes the payload, synchronizes the file, performs the atomic replacement
+    with descriptor-relative `os.rename()`, and then synchronizes the final
+    parent directory;
 13. removes only the temporary entry created by the current invocation if a
     later write or replacement step fails; and
 14. retains only the completed manifest for 14 days as review evidence.
