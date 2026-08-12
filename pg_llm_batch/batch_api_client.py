@@ -659,10 +659,21 @@ class BatchAPIClient:
         endpoint_alias: str,
         endpoint: str = "/v1/chat/completions",
         metadata: Optional[Dict[str, Any]] = None,
+        output_expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Create a batch job from an uploaded input file id."""
+        """Create a batch job with an optional bounded provider output lifetime."""
         validated_file_id = _validate_resource_id(input_file_id, "input_file_id")
         validated_endpoint = _validate_batch_endpoint(endpoint)
+        if output_expires_after_seconds is not None and (
+            type(output_expires_after_seconds) is not int
+            or output_expires_after_seconds < 3_600
+            or output_expires_after_seconds > 2_592_000
+        ):
+            raise ValidationError(
+                field="output_expires_after_seconds",
+                value="<redacted>",
+                reason="must be an integer between 3600 and 2592000 seconds",
+            )
         creds = self._credentials(endpoint_alias)
         payload: Dict[str, Any] = {
             "input_file_id": validated_file_id,
@@ -671,6 +682,11 @@ class BatchAPIClient:
         }
         if metadata:
             payload["metadata"] = metadata
+        if output_expires_after_seconds is not None:
+            payload["output_expires_after"] = {
+                "anchor": "created_at",
+                "seconds": output_expires_after_seconds,
+            }
         async with self._request(
             "post",
             f"{creds.url}/batches",
