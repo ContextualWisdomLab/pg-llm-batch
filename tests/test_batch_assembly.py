@@ -353,7 +353,7 @@ def test_persist_payloads_separates_ready_and_overflow(monkeypatch, fake_pg):
     assert connection.commits == 1
     assert len(many) == 2
     assert many[0][1][0][0] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    assert "pg_advisory_xact_lock" in executions[0][0]
+    assert any("pg_advisory_xact_lock" in sql for sql, _params in executions)
     assert sum("UPDATE llm_requests" in sql for sql, _params in executions) == 2
     assert any(params[1][0] == "jsonb" for _sql, params in executions if len(params) == 2)
     batch_updates = [item for item in executions if "UPDATE llm_batches" in item[0]]

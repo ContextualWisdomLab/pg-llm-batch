@@ -78,6 +78,8 @@ class FakeKVStore:
         # --- token counting -------------------------------------------------
         if "create extension if not exists pg_tiktoken" in s:
             return []
+        if "from pg_extension" in s and "to_regprocedure('tiktoken_count(text,text)')" in s:
+            return [(True, True, True)]
         if "tiktoken_count(" in s:
             name, text = params
             return [(self.token_fn(name, text),)]
