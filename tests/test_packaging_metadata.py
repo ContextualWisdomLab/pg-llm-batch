@@ -11,9 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_pyproject_uses_pep639_license_metadata() -> None:
-    """Source metadata uses the PEP 639 expression and legal-file fields."""
+    """Source metadata pins the build backend and includes PEP 639 legal files."""
     project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'requires = ["setuptools>=77.0.3", "wheel"]' in project
+    assert 'requires = ["uv_build==0.12.1"]' in project
+    assert 'requires = ["uv_build>=0.12.1,<0.13"]' not in project
+    assert 'requires = ["uv_build>=0.12.0,<0.13"]' not in project
+    assert 'build-backend = "uv_build"' in project
+    assert 'module-root = ""' in project
     assert 'license = "Apache-2.0"' in project
     assert 'license-files = ["LICENSE", "NOTICE"]' in project
     assert "license = {" not in project
