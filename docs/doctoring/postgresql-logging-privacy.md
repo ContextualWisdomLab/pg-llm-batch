@@ -43,11 +43,13 @@ PostgreSQL supports `stderr` as a server-message destination. With the collector
 
 This does not make logging storage-free. Docker logging drivers and Kubernetes node/cluster logging still require deployment-owned capacity and **bounded retention**. The package does not select a universal retention period, legal hold, residency, export destination, or backup policy.
 
-A deployment that deliberately requires `csvlog`, `jsonlog`, syslog, or PostgreSQL-managed files may provide a reviewed overlay. Such an overlay must enable `logging_collector` coherently when required, define storage capacity and deletion, and preserve the content-safe settings above unless separately authorized. Returning to file collection is a **server start** change where PostgreSQL documents the parameter as start-time only; rollback must not silently restore broad SQL/bind logging.
+A deployment that deliberately requires `csvlog`, `jsonlog`, syslog, or PostgreSQL-managed files may provide a reviewed overlay. Such an overlay must enable `logging_collector` coherently when required, define storage capacity and deletion, and preserve the content-safe settings above unless separately authorized. PostgreSQL documents `logging_collector` as a server-start parameter, so changing `logging_collector` requires a **PostgreSQL restart**, not a configuration reload. Rollback from the stderr profile to collector-backed file logging therefore crosses the same restart boundary and must not silently restore broad SQL/bind logging.
 
 ## High-volume log event boundary
 
-`log_temp_files = -1` keeps temporary-file logging off by default. PostgreSQL documents that zero logs all **temporary file names and sizes**. `log_autovacuum_min_duration = 10min` keeps the documented conservative threshold rather than using zero, which **logs all autovacuum actions**. Both event classes remain an **opt-in** diagnostic with an explicit expected-volume, storage, retention, and response budget.
+`log_temp_files = -1` keeps temporary-file logging disabled by default. PostgreSQL documents that zero logs every temporary file name and size when the file is deleted; deployments may opt in with a reviewed positive threshold or, for short-lived diagnosis, zero.
+
+`log_autovacuum_min_duration = 10min` remains active at PostgreSQL 16's documented default threshold. It can emit records for autovacuum actions that meet or exceed that duration and for documented skipped-autovacuum conditions; it is therefore not a disabled or wholly opt-in event class. Lowering the threshold, or using zero to log all autovacuum actions, is an additional opt-in diagnostic that requires an explicit expected-volume, storage, retention, and response budget. A deployment that must disable autovacuum action logging entirely can use `-1` under its own reviewed operability policy.
 
 ## Timing and function-statistics boundary
 
@@ -76,6 +78,8 @@ No PostgreSQL logging setting proves SOC 2, ISO/IEC 27001, PCI DSS, CSAP, privac
 ## Test-first evidence and acceptance
 
 Issue #120 is implemented from a deterministic RED regression: the protected profile had `logging_collector = on`, while the new contract required `off` plus `stderr`. The production change preserves the already-tested SQL/bind/connection/query-statistics privacy settings while changing only the operational log ownership path.
+
+The documentation semantics were also locked test-first after review: exact-head CI at RED commit `64ddd4a9ba66d3c13481192e9398ffd92f00efa4` failed because the operator guide did not yet state the restart-only collector boundary or distinguish active 10-minute autovacuum logging from disabled temporary-file logging. This revision corrects those semantics against PostgreSQL 16 primary documentation.
 
 The repository suite verifies the configuration semantics on Python 3.10, 3.12, and 3.14, while container/Compose, security, SAST, package, coverage, and exact-source governance remain independent final gates. A deployment-facing runtime test should additionally prove that a PostgreSQL server started with this profile emits an operational record that is retrievable through its container logging path before issue #120 is considered fully closed.
 
