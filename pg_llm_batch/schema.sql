@@ -381,14 +381,13 @@ DROP INDEX IF EXISTS idx_llm_jsonl_lines_payload;
 -- Endpoint, model, and tokenizer mapping
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS llm_endpoints (
-    endpoint_uuid UUID NOT NULL DEFAULT uuid_generate_v4(),
+    endpoint_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     endpoint_alias TEXT UNIQUE NOT NULL,
     base_url TEXT NOT NULL,
     provider TEXT,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (endpoint_uuid)
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE IF NOT EXISTS llm_endpoint_models (
