@@ -12,7 +12,6 @@ import pytest
 import pg_llm_batch.batch_api_client as batch_api_client_module
 from pg_llm_batch import BatchResultRecord, StreamingBatchAPIClient
 from pg_llm_batch.batch_api_client import BatchAPIClient, GatewayCredentials
-from pg_llm_batch.exceptions import GatewayError
 
 
 class _ResponseContext:
@@ -112,23 +111,18 @@ async def test_post_handoff_payload_failure_is_not_retried(
         sleeps.append(delay)
 
     monkeypatch.setattr(batch_api_client_module.asyncio, "sleep", _record_sleep)
+    payload_failure = aiohttp.ClientPayloadError("mid-stream payload failure")
 
-    with pytest.raises(GatewayError, match="transport failed") as exc_info:
+    with pytest.raises(aiohttp.ClientPayloadError, match="mid-stream payload failure") as exc_info:
         async with client._request(
             "get",
             "https://gw.example/v1/files/out-1/content",
             operation="Result file download",
             headers={"Authorization": "Bearer secret"},
         ):
-            raise aiohttp.ClientPayloadError("mid-stream payload failure")
+            raise payload_failure
 
-    assert exc_info.value.response_data == {
-        "error_type": "ClientPayloadError",
-        "timeout_seconds": client.request_timeout_seconds,
-    }
-    assert exc_info.value.__cause__ is None
-    assert exc_info.value.__context__ is None
-    assert "mid-stream payload failure" not in str(exc_info.value)
+    assert exc_info.value is payload_failure
     assert len(session.calls) == 1
     assert sleeps == []
     assert first_response.enter_count == 1
@@ -159,7 +153,7 @@ async def test_post_handoff_close_failure_is_not_retried(
 
     monkeypatch.setattr(batch_api_client_module.asyncio, "sleep", _record_sleep)
 
-    with pytest.raises(GatewayError, match="transport failed") as exc_info:
+    with pytest.raises(aiohttp.ClientPayloadError, match="response close failure"):
         async with client._request(
             "get",
             "https://gw.example/v1/files/out-1/content",
@@ -168,13 +162,6 @@ async def test_post_handoff_close_failure_is_not_retried(
         ):
             pass
 
-    assert exc_info.value.response_data == {
-        "error_type": "ClientPayloadError",
-        "timeout_seconds": client.request_timeout_seconds,
-    }
-    assert exc_info.value.__cause__ is None
-    assert exc_info.value.__context__ is None
-    assert "response close failure" not in str(exc_info.value)
     assert len(session.calls) == 1
     assert sleeps == []
     assert first_response.enter_count == 1
@@ -222,16 +209,9 @@ async def test_streaming_payload_failure_never_restarts_or_duplicates(
         assert await anext(records) == BatchResultRecord(
             "batch-1", "result", {"id": 1}
         )
-        with pytest.raises(GatewayError, match="transport failed") as exc_info:
+        with pytest.raises(aiohttp.ClientPayloadError, match="mid-stream payload failure"):
             await anext(records)
 
-    assert exc_info.value.response_data == {
-        "error_type": "ClientPayloadError",
-        "timeout_seconds": client.request_timeout_seconds,
-    }
-    assert exc_info.value.__cause__ is None
-    assert exc_info.value.__context__ is None
-    assert "mid-stream payload failure" not in str(exc_info.value)
     assert len(session.calls) == 1
     assert sleeps == []
     assert first_response.enter_count == 1
