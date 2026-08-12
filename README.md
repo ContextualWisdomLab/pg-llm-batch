@@ -17,7 +17,8 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 - **No secrets in the environment.** All configuration and credentials live in
   Postgres KV tables (`com_config`, `com_secrets`). The environment is only a
   *bootstrap transport* for the DSN and an optional Fernet key. This replaces
-  the ~75 `os.getenv` reads in the upstream app.
+  the ~75 `os.getenv` reads in the upstream app. CLI secret values are entered
+  through a no-echo prompt or bounded standard input, never as process arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 
@@ -71,8 +72,13 @@ curl -fsS localhost:8080/healthz
 export PG_LLM_BATCH_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm
 python -m pg_llm_batch init-db                                   # idempotent
 python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
-python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
+python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo prompt
 ```
+
+`config set-secret` never accepts the secret plaintext in process arguments.
+On an interactive terminal it prompts without echo. Automation may pipe exactly
+one bounded logical line on standard input from an existing credential source;
+the command does not require or define a particular external secret manager.
 
 Production gateway destinations must use HTTPS. Plain HTTP is accepted only for
 explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`).
@@ -83,7 +89,7 @@ Encrypt secrets at rest by exporting a Fernet key as bootstrap transport:
 
 ```bash
 export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
-python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
+python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo prompt
 ```
 
 ### 3. Count, submit, wait, retrieve
@@ -181,11 +187,15 @@ a reviewed deployment requires a larger bounded payload; oversized or invalid
 UTF-8 responses fail with structured errors that do not echo provider content.
 
 Idempotent provider `GET` operations use up to three total attempts by default
-for transient `408`, `429`, `502`, `503`, and `504` responses and for aiohttp
-transport failures. A bounded RFC `Retry-After` delta or HTTP-date is honored.
-Delta-seconds accept RFC ASCII digits only. Syntactically valid values above the
-configured maximum are refused; malformed values use equal-jitter exponential
-fallback from 0.5 seconds up to 30 seconds. Upload, batch creation, and cancellation `POST`
+for transient `408`, `425`, `429`, `502`, `503`, and `504` responses and for
+retryable aiohttp transport failures. TLS handshake and certificate failures are
+never retried automatically; they fail after the first attempt because repeating
+a request cannot repair peer identity or TLS policy. Certificate fingerprint
+mismatches are never retried automatically for the same peer-identity reason.
+A bounded RFC `Retry-After` delta or HTTP-date is honored. Delta-seconds accept
+RFC ASCII digits only. Syntactically valid values above the configured maximum
+are refused; malformed values use equal-jitter exponential fallback from 0.5
+seconds up to 30 seconds. Upload, batch creation, and cancellation `POST`
 operations are never retried automatically. Operators can override
 `max_retry_attempts`, `retry_base_delay_seconds`, and
 `retry_max_delay_seconds` in the `BatchAPIClient` constructor.
@@ -223,6 +233,9 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
+- [`docs/doctoring/cli-secret-input.md`](docs/doctoring/cli-secret-input.md)
+  — no-echo interactive secret entry, bounded stdin automation, fail-closed
+  validation, verification, and security references.
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
