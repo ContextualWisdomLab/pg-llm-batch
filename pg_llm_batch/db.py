@@ -677,3 +677,42 @@ def get_remote_batch_state(
         endpoint_alias,
         remote_batch_id,
     )
+
+
+def get_model_metadata(dsn: Optional[str], model_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch model mode and tokenizer metadata for a model identifier.
+
+    Args:
+        dsn: Optional PostgreSQL connection string.
+        model_id: Provider model identifier to resolve.
+
+    Returns:
+        A dictionary containing normalized ``mode`` and ``tokenizer_model`` when
+        found, otherwise ``None``.
+    """
+    if not dsn or psycopg is None or not model_id:
+        return None
+    try:
+        with psycopg.connect(dsn) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT model_mode, tokenizer_model
+                    FROM llm_endpoint_models
+                    WHERE model_id = %s
+                    ORDER BY last_verified_at DESC NULLS LAST
+                    LIMIT 1
+                    """,
+                    (model_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                mode, tokenizer_model = row
+                return {
+                    "mode": (mode or "").strip().lower() if mode else None,
+                    "tokenizer_model": tokenizer_model,
+                }
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("model metadata lookup failed for %s: %s", model_id, exc)
+        return None
