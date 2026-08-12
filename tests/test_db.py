@@ -67,6 +67,21 @@ def test_apply_schema_executes_exact_file(monkeypatch, tmp_path):
     assert driver.commits == 1
 
 
+def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
+    """Caller-controlled local files must not acquire arbitrary SQL authority."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+    untrusted_schema = tmp_path / "untrusted.sql"
+    untrusted_schema.write_text("DROP TABLE llm_requests;", encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        db.apply_schema("postgresql://x", str(untrusted_schema))
+
+    assert driver.connections == []
+    assert driver.executions == []
+    assert driver.commits == 0
+
+
 @pytest.mark.parametrize(
     ("stored", "expected"),
     [
