@@ -247,7 +247,7 @@ def test_verifier_refuses_in_place_mutation_during_streaming_hash(
         chunk = original_read(file_descriptor, count)
         if chunk and not mutated:
             mutated = True
-            (first / SDIST).write_bytes(b"other")
+            (first / SDIST).write_bytes(b"other-and-longer-content")
         return chunk
 
     monkeypatch.setattr(os, "read", racing_read)
