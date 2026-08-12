@@ -111,3 +111,27 @@ async def test_concurrent_aclose_claims_owned_session_once() -> None:
 
     assert session.close_calls == 1
     assert client._session is None
+
+
+@pytest.mark.asyncio
+async def test_context_entry_reuses_lazily_created_owned_session(monkeypatch) -> None:
+    """Entering a context must not orphan a session already owned by the client."""
+    session = _Session()
+    client = BatchAPIClient("postgresql://database", _credentials)
+    client._session = session
+
+    def unexpected_session_creation():
+        raise AssertionError("context entry replaced an already-owned session")
+
+    monkeypatch.setattr(
+        client_mod.aiohttp,
+        "ClientSession",
+        unexpected_session_creation,
+    )
+
+    async with client as entered:
+        assert entered is client
+        assert client._session is session
+
+    assert session.close_calls == 1
+    assert client._session is None
