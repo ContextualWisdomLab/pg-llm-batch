@@ -69,6 +69,20 @@ def test_malformed_json_collection_uses_isolated_declared_default(
     assert fallback is not declared_mapping
 
 
+def test_mutable_cached_configuration_is_isolated_from_callers() -> None:
+    """Returned mutable cache values must not let callers mutate package state."""
+    store = object.__new__(config_module.PostgresConfigStore)
+    cached_mapping = {"enabled": True}
+    store.cache = {"custom": {"mapping_value": cached_mapping}}
+
+    returned_mapping = store.get("custom", "mapping_value")
+    returned_mapping["enabled"] = False
+
+    assert returned_mapping is not cached_mapping
+    assert cached_mapping == {"enabled": True}
+    assert store.cache["custom"]["mapping_value"] == {"enabled": True}
+
+
 def test_mutable_declared_defaults_are_isolated_from_callers(monkeypatch: Any) -> None:
     """Fallback consumers must not receive the process-wide mutable default object."""
     declared_mapping, declared_sequence = _register_collection_defaults(monkeypatch)
