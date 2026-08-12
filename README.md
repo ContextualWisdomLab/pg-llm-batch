@@ -276,7 +276,7 @@ produce body-free structured diagnostics.
 
 ### Idempotent GET retries
 
-Provider `GET` operations use up to three total attempts for `408`, `425`, `429`,
+Provider `GET` operations use up to three total attempts for transient `408`, `425`, `429`,
 `502`, `503`, and `504` and for retryable aiohttp transport failures. TLS
 handshake and certificate failures are never retried automatically; they fail
 after the first attempt because repeating a request cannot repair peer identity
