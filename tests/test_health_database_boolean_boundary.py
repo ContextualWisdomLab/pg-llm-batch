@@ -74,6 +74,26 @@ def test_database_readiness_boolean_is_not_truth_coerced(monkeypatch):
     assert health.public_health_report(report)["ready"] is False
 
 
+def test_local_health_rejects_duplicate_required_components(monkeypatch):
+    """Duplicate required database rows cannot make local readiness healthy."""
+    rows = [
+        ("database", True, "connected"),
+        ("database", True, "duplicate observation"),
+        ("pg_tiktoken", True, "installed"),
+        ("com_config", True, "ready"),
+    ]
+    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
+
+    report = health.check_health("postgresql://example")
+
+    assert report["ready"] is False
+    assert [
+        component["detail"]
+        for component in report["components"]
+        if component["component"] == "database"
+    ] == ["connected", "duplicate observation"]
+
+
 def test_public_health_report_redacts_details_and_unknown_components():
     """HTTP readiness exposes only fixed component names and boolean states."""
     report = {
