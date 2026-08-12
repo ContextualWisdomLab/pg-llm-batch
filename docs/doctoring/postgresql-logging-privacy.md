@@ -49,7 +49,7 @@ A deployment that deliberately requires `csvlog`, `jsonlog`, syslog, or PostgreS
 
 `log_temp_files = -1` keeps temporary-file logging disabled by default. PostgreSQL documents that zero logs all **temporary file names and sizes** when each file is deleted; deployments may opt in with a reviewed positive threshold or, for short-lived diagnosis, zero.
 
-`log_autovacuum_min_duration = 10min` remains active at PostgreSQL 16's documented default threshold. It can emit records for autovacuum actions that meet or exceed that duration and for documented skipped-autovacuum conditions; it is therefore not a disabled or wholly opt-in event class. Lowering the threshold, or using zero to log all autovacuum actions, is an additional opt-in diagnostic that requires an explicit expected-volume, storage, retention, and response budget. A deployment that must disable autovacuum action logging entirely can use `-1` under its own reviewed operability policy.
+`log_autovacuum_min_duration = 10min` remains active at PostgreSQL 16's documented default threshold. It can emit records for autovacuum actions that meet or exceed that duration and for documented skipped-autovacuum conditions; it is therefore not a disabled or wholly opt-in event class. PostgreSQL documents that `log_autovacuum_min_duration = 0` logs all autovacuum actions; lowering the threshold or choosing zero is an additional opt-in diagnostic that requires an explicit expected-volume, storage, retention, and response budget. A deployment that must disable autovacuum action logging entirely can use `-1` under its own reviewed operability policy.
 
 ## Timing and function-statistics boundary
 
