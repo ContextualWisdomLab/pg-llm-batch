@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Fail-closed database readiness type contracts."""
+"""Fail-closed database and public readiness contracts."""
 
 from __future__ import annotations
 
@@ -72,3 +72,33 @@ def test_database_readiness_boolean_is_not_truth_coerced(monkeypatch):
     assert database["is_ready"] is False
     assert database["detail"] == "malformed database boolean"
     assert health.public_health_report(report)["ready"] is False
+
+
+def test_public_health_report_redacts_details_and_unknown_components():
+    """HTTP readiness exposes only fixed component names and boolean states."""
+    report = {
+        "ready": True,
+        "components": [
+            {
+                "component": "database",
+                "is_ready": True,
+                "detail": "password=secret host=db.internal.example",
+            },
+            {"component": "pg_tiktoken", "is_ready": True, "detail": "installed"},
+            {"component": "com_config", "is_ready": True, "detail": "ready"},
+            {
+                "component": "internal_cluster_primary_host",
+                "is_ready": False,
+                "detail": "db-07.internal.example",
+            },
+        ],
+    }
+
+    assert health.public_health_report(report) == {
+        "ready": True,
+        "components": [
+            {"component": "database", "is_ready": True},
+            {"component": "pg_tiktoken", "is_ready": True},
+            {"component": "com_config", "is_ready": True},
+        ],
+    }
