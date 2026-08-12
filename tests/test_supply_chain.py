@@ -3,6 +3,8 @@
 
 from pathlib import Path
 
+from tests.dockerfile_contract import dockerfile_uses_apt_get_upgrade
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -16,7 +18,7 @@ def test_component_image_uses_locked_uv_and_digest_pinned_bases() -> None:
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert "pip install" not in dockerfile
     assert "site-packages/pip*" in dockerfile
-    assert "apt-get upgrade" not in dockerfile
+    assert not dockerfile_uses_apt_get_upgrade(dockerfile)
 
 
 def test_postgres_image_pins_and_verifies_every_executable_input() -> None:
