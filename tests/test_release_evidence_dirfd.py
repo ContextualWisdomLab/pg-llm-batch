@@ -248,20 +248,26 @@ def test_write_release_manifest_closes_temporary_descriptor_after_fdopen_failure
     destination = tmp_path / "evidence" / _MANIFEST_NAME
     temporary = destination.parent / f".{_MANIFEST_NAME}.tmp"
     captured_descriptors: list[int] = []
+    closed_descriptors: list[int] = []
+    original_close = release_evidence.os.close
 
     def failing_fdopen(descriptor: int, *args: Any, **kwargs: Any) -> Any:
         del args, kwargs
         captured_descriptors.append(descriptor)
         raise OSError("untrusted fdopen error")
 
+    def recording_close(descriptor: int) -> None:
+        closed_descriptors.append(descriptor)
+        original_close(descriptor)
+
     monkeypatch.setattr(release_evidence.os, "fdopen", failing_fdopen)
+    monkeypatch.setattr(release_evidence.os, "close", recording_close)
 
     with pytest.raises(ReleaseEvidenceError, match="manifest write failed"):
         write_release_manifest({"schema_version": 1}, destination)
 
     assert not temporary.exists()
-    with pytest.raises(OSError):
-        os.fstat(captured_descriptors[0])
+    assert captured_descriptors[0] in closed_descriptors
 
 
 def test_write_release_manifest_cleans_temporary_after_file_sync_failure(
