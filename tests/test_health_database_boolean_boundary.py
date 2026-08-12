@@ -102,3 +102,21 @@ def test_public_health_report_redacts_details_and_unknown_components():
             {"component": "com_config", "is_ready": True},
         ],
     }
+
+
+def test_public_health_report_rejects_duplicate_required_components():
+    """Duplicate required observations cannot yield a healthy public decision."""
+    report = {
+        "ready": True,
+        "components": [
+            {"component": "database", "is_ready": True},
+            {"component": "database", "is_ready": True},
+            {"component": "pg_tiktoken", "is_ready": True},
+            {"component": "com_config", "is_ready": True},
+        ],
+    }
+
+    assert health.public_health_report(report) == {
+        "ready": False,
+        "components": [],
+    }
