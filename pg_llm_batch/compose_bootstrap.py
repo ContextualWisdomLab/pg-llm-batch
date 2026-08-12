@@ -3,7 +3,7 @@
 """Start the standalone health service with a mounted PostgreSQL password secret.
 
 The Compose profile keeps the database password out of committed configuration,
-process arguments, and the credential-free bootstrap DSN.  This module reads the
+process arguments, and the credential-free bootstrap DSN. This module reads the
 single explicitly mounted secret, combines it with the bootstrap target only in
 process memory using psycopg's conninfo quoting, and hands the result directly to
 the existing health server.
@@ -41,7 +41,9 @@ def _load_database_password(password_file: Path) -> str:
     try:
         password = raw_password.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
-        raise ConfigError("The mounted PostgreSQL password secret is not valid UTF-8.") from None
+        raise ConfigError(
+            "The mounted PostgreSQL password secret is not valid UTF-8."
+        ) from None
 
     if "\x00" in password or "\r" in password or "\n" in password:
         raise ConfigError("The mounted PostgreSQL password secret has invalid framing.")
@@ -83,5 +85,5 @@ def main(argv: Sequence[str] | None = None) -> None:
     run_compose_health(_password_file_from_args(argv))
 
 
-if __name__ == "__main__":  # pragma: no cover - exercised by container command
+if __name__ == "__main__":
     main()
