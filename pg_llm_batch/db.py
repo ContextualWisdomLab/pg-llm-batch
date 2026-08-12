@@ -66,11 +66,10 @@ def _require_psycopg() -> None:
         raise RuntimeError("psycopg is required for database access")
 
 
-def apply_schema(dsn: str, schema_path: Optional[str] = None) -> None:
-    """Apply the packaged idempotent schema to one PostgreSQL database."""
+def apply_schema(dsn: str) -> None:
+    """Apply the package-owned idempotent schema to one PostgreSQL database."""
     _require_psycopg()
-    path = Path(schema_path) if schema_path else SCHEMA_PATH
-    sql = path.read_text(encoding="utf-8")
+    sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
