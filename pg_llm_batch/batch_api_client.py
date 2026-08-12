@@ -621,14 +621,28 @@ class BatchAPIClient:
         file_path: str,
         endpoint_alias: str,
         purpose: str = "batch",
+        expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Upload a memory-backed JSONL payload to the Files API."""
+        """Upload a memory-backed JSONL payload with optional provider retention."""
+        if expires_after_seconds is not None and (
+            type(expires_after_seconds) is not int
+            or expires_after_seconds < 3_600
+            or expires_after_seconds > 2_592_000
+        ):
+            raise ValidationError(
+                field="expires_after_seconds",
+                value="<redacted>",
+                reason="must be an integer between 3600 and 2592000 seconds",
+            )
         file_id = self._resolve_memory_identifier(file_path)
         creds = self._credentials(endpoint_alias)
         payload_bytes = await self._load_payload_bytes(file_id)
 
         data = aiohttp.FormData()
         data.add_field("purpose", purpose)
+        if expires_after_seconds is not None:
+            data.add_field("expires_after[anchor]", "created_at")
+            data.add_field("expires_after[seconds]", str(expires_after_seconds))
         data.add_field(
             "file",
             payload_bytes,
