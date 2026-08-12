@@ -99,7 +99,7 @@ def test_persistence_distinguishes_unknown_total_from_explicit_zero(
     request_counts: dict[str, object],
     expected_total_known: bool,
 ) -> None:
-    """Sparse/invalid totals remain unknown while an exact zero is authoritative."""
+    """Persist knownness internally without widening the public snapshot shape."""
     driver = _Psycopg()
     monkeypatch.setattr(db, "psycopg", driver)
 
@@ -115,6 +115,10 @@ def test_persistence_distinguishes_unknown_total_from_explicit_zero(
     )
 
     assert snapshot["total_requests"] == 0
-    assert snapshot["total_requests_known"] is expected_total_known
+    assert "total_requests_known" not in snapshot
     assert snapshot["completed_requests"] == request_counts.get("completed", 0)
     assert snapshot["failed_requests"] == request_counts.get("failed", 0)
+
+    persistence_params = driver.executions[-1][1]
+    assert persistence_params is not None
+    assert persistence_params[13] is expected_total_known
