@@ -109,6 +109,7 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
         ),
     total_requests INTEGER NOT NULL DEFAULT 0
         CHECK (total_requests >= 0),
+    total_requests_known BOOLEAN NOT NULL DEFAULT FALSE,
     completed_requests INTEGER NOT NULL DEFAULT 0
         CHECK (completed_requests >= 0),
     failed_requests INTEGER NOT NULL DEFAULT 0
@@ -120,6 +121,12 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
     updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope
         CHECK (tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT ck_llm_remote_batch_jobs_known_progress
+        CHECK (
+            NOT total_requests_known OR
+            completed_requests::BIGINT + failed_requests::BIGINT
+                <= total_requests::BIGINT
+        ),
     CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id
         UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)
 );
@@ -141,6 +148,27 @@ BEGIN
         ALTER COLUMN tenant_scope SET DEFAULT 'standalone';
     ALTER TABLE llm_remote_batch_jobs
         ALTER COLUMN tenant_scope SET NOT NULL;
+
+    ALTER TABLE llm_remote_batch_jobs
+        ADD COLUMN IF NOT EXISTS total_requests_known BOOLEAN;
+    IF EXISTS (
+        SELECT 1
+        FROM llm_remote_batch_jobs
+        WHERE (total_requests_known IS TRUE OR total_requests > 0)
+          AND completed_requests::BIGINT + failed_requests::BIGINT
+              > total_requests::BIGINT
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'inconsistent known remote batch progress requires operator remediation';
+    END IF;
+    UPDATE llm_remote_batch_jobs
+    SET total_requests_known = (total_requests > 0)
+    WHERE total_requests_known IS NULL;
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN total_requests_known SET DEFAULT FALSE;
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN total_requests_known SET NOT NULL;
 
     IF EXISTS (
         SELECT 1
@@ -170,6 +198,31 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
+        WHERE conname = 'ck_llm_remote_batch_jobs_known_progress'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            ADD CONSTRAINT ck_llm_remote_batch_jobs_known_progress
+            CHECK (
+                NOT total_requests_known OR
+                completed_requests::BIGINT + failed_requests::BIGINT
+                    <= total_requests::BIGINT
+            ) NOT VALID;
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'ck_llm_remote_batch_jobs_known_progress'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+          AND NOT convalidated
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_known_progress;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
         WHERE conname = 'uq_llm_remote_batch_jobs_tenant_endpoint_id'
           AND conrelid = 'llm_remote_batch_jobs'::regclass
     ) THEN
@@ -177,7 +230,6 @@ BEGIN
             ADD CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id
             UNIQUE (tenant_scope, endpoint_alias, remote_batch_id);
     END IF;
-
     ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
     ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
 END $$;
