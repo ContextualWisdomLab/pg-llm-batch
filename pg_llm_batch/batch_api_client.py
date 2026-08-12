@@ -339,15 +339,11 @@ class BatchAPIClient:
         self._session = aiohttp.ClientSession()
         return self
 
-    async def aclose(self) -> None:
-        """Close the package-owned HTTP session if one has been created."""
-        if self._session is not None:
-            await self._session.close()
-            self._session = None
-
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Close the HTTP session when leaving the asynchronous context."""
-        await self.aclose()
+        if self._session:
+            await self._session.close()
+            self._session = None
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Return the current HTTP session, creating one on first use."""
@@ -645,7 +641,8 @@ class BatchAPIClient:
         data = aiohttp.FormData()
         data.add_field("purpose", purpose)
         if expires_after_seconds is not None:
-            data.add_field("expires_after[anchor]", "created_at")n            data.add_field("expires_after[seconds]", str(expires_after_seconds))
+            data.add_field("expires_after[anchor]", "created_at")
+            data.add_field("expires_after[seconds]", str(expires_after_seconds))
         data.add_field(
             "file",
             payload_bytes,
