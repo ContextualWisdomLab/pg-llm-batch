@@ -36,6 +36,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bootstrap DSN and Fernet-key source selection now consults process environment
+  only when the corresponding explicit argument is omitted. Explicit Postgres
+  DSNs must be exact nonblank strings, explicit Fernet keys must be exact
+  strings, and an explicit empty Fernet key remains empty instead of silently
+  inheriting ambient decryption authority.
 - Restricted the bundled standalone Compose PostgreSQL and component-health
   published ports to IPv4 loopback so the default developer profile no longer
   listens on every host interface when operators have not made an explicit
