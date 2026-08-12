@@ -16,7 +16,7 @@ def test_component_image_uses_locked_uv_and_digest_pinned_bases() -> None:
     assert "uv sync --frozen --no-dev --no-editable" in dockerfile
     assert "pip install" not in dockerfile
     assert "site-packages/pip*" in dockerfile
-    assert "apt-get upgrade -y" in dockerfile
+    assert "apt-get upgrade" not in dockerfile
 
 
 def test_postgres_image_pins_and_verifies_every_executable_input() -> None:
