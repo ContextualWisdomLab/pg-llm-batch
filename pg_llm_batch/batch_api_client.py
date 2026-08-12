@@ -336,24 +336,24 @@ class BatchAPIClient:
 
     async def __aenter__(self) -> "BatchAPIClient":
         """Open and return the asynchronous HTTP client context."""
-        self._session = aiohttp.ClientSession()
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
         return self
 
     async def aclose(self) -> None:
         """Close the package-owned HTTP session if one has been created."""
-        if self._session is not None:
-            await self._session.close()
-            self._session = None
+        session = self._session
+        self._session = None
+        if session is not None:
+            await session.close()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Close the HTTP session when leaving the asynchronous context."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        await self.aclose()
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Return the current HTTP session, creating one on first use."""
-        if not self._session:
+        if self._session is None:
             self._session = aiohttp.ClientSession()
         return self._session
 
