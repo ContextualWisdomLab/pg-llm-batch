@@ -21,6 +21,10 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
   through a no-echo prompt or bounded standard input, never as process arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
+- **Standalone or tenant-scoped lifecycle state.** `DurableBatchAPIClient`
+  preserves the standalone contract, while `TenantDurableBatchAPIClient` binds
+  shared-table lifecycle state to a trusted host-selected `tenant_scope` with
+  forced PostgreSQL row-level security.
 
 ## Architecture
 
@@ -41,6 +45,8 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 | Token counting + accumulation | `pg_llm_batch/token_counter.py` |
 | Batch assembly + persistence | `pg_llm_batch/orchestrator.py` |
 | Submit / poll / wait / retrieve | `pg_llm_batch/batch_api_client.py` |
+| Durable standalone and tenant lifecycle clients | `pg_llm_batch/durable_client.py` |
+| Tenant-qualified lifecycle persistence and reads | `pg_llm_batch/db.py` |
 | Opt-in OpenTelemetry operations | `pg_llm_batch/observability.py` |
 | KV config + encrypted secrets | `pg_llm_batch/config.py` |
 | DDL subset | `pg_llm_batch/schema.sql` |
@@ -52,6 +58,8 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 - PostgreSQL with `pg_tiktoken`, `pg_cron`, and `http` (pgsql-http). The bundled
   image (`docker/postgres/Dockerfile`) builds all three.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
+- Tenant-scoped lifecycle deployments require an application database role with
+  `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
 
 ---
 
@@ -134,6 +142,58 @@ The Docker `HEALTHCHECK` and the compose `postgres` service both gate on the
 same `pg_llm_batch_health_check()` SQL function.
 
 ---
+
+## Durable lifecycle modes
+
+Apply the canonical schema before using package-owned durable lifecycle state:
+
+```python
+from pg_llm_batch import db
+
+db.apply_schema(dsn)
+```
+
+`DurableBatchAPIClient` keeps the original single-tenant facade and records under
+the exact `standalone` scope. Shared-table hosts use
+`TenantDurableBatchAPIClient` with a trusted tenant identity selected by the
+host's authenticated authorization context:
+
+```python
+from pg_llm_batch import TenantDurableBatchAPIClient, get_tenant_remote_batch_state
+
+async with TenantDurableBatchAPIClient(
+    dsn,
+    credentials_provider,
+    tenant_scope="customer-42",
+) as client:
+    created = await client.create_batch_job(
+        input_file_id="file-provider-id",
+        endpoint_alias="default",
+        endpoint="/v1/responses",
+    )
+
+state = get_tenant_remote_batch_state(
+    dsn,
+    "customer-42",
+    "default",
+    created["id"],
+)
+```
+
+The durable identity is `(tenant_scope, endpoint_alias, remote_batch_id)`.
+Package helpers bind tenant scope with parameterized transaction-local PostgreSQL
+context and the schema enables and forces default-deny RLS. Provider metadata,
+resource identifiers, payloads, and headers never select `tenant_scope`.
+
+The custom PostgreSQL setting is **not** a tenant credential. A database role
+that can execute arbitrary SQL can set arbitrary session state, so production
+application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
+a generic SQL surface, and still require normal authentication, authorization,
+and SQL-injection controls. Direct SQL consumers that do not establish an
+authorized tenant scope see no lifecycle rows after RLS is enabled.
+
+See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
+migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
 
 ## Embed as a git submodule
 
@@ -233,6 +293,11 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
+- [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md)
+  — standalone and tenant-scoped durable lifecycle operation, RLS trust boundary,
+  migration, rollback, pooling, and recovery.
+- [`docs/doctoring/tenant-scoped-lifecycle.md`](docs/doctoring/tenant-scoped-lifecycle.md)
+  — tenant identity, RLS authority, compatibility, and APA 7 references.
 - [`docs/doctoring/cli-secret-input.md`](docs/doctoring/cli-secret-input.md)
   — no-echo interactive secret entry, bounded stdin automation, fail-closed
   validation, verification, and security references.

@@ -103,3 +103,151 @@ def test_end_to_end_batch_assembly(dsn):
     file_id = payload.file_path.split("memory://", 1)[1]
     jsonl = db.load_virtual_payload(dsn, file_id)
     assert jsonl and jsonl.count("\n") == 2
+
+
+@skip_no_db
+def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
+    """A non-bypass role cannot observe another tenant's lifecycle row."""
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
+    db.apply_schema(dsn)
+    suffix = uuid.uuid4().hex[:12]
+    role_name = f"tenant_scope_test_{suffix}"
+    password = uuid.uuid4().hex
+    batch_id = f"batch-{suffix}"
+    role_dsn = make_conninfo(dsn, user=role_name, password=password)
+
+    with psycopg.connect(dsn) as admin:
+        with admin.cursor() as cursor:
+            cursor.execute(
+                sql.SQL(
+                    "CREATE ROLE {} LOGIN PASSWORD %s "
+                    "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
+                    "NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(role_name)),
+                (password,),
+            )
+            cursor.execute(
+                sql.SQL(
+                    "GRANT SELECT, INSERT, UPDATE ON "
+                    "llm_remote_batch_jobs TO {}"
+                ).format(sql.Identifier(role_name))
+            )
+        admin.commit()
+
+    try:
+        db.persist_tenant_remote_batch_state(
+            role_dsn,
+            "tenant-a",
+            "primary",
+            {"id": batch_id, "status": "in_progress"},
+            1,
+        )
+        db.persist_tenant_remote_batch_state(
+            role_dsn,
+            "tenant-b",
+            "primary",
+            {"id": batch_id, "status": "completed"},
+            2,
+        )
+
+        tenant_a = db.get_tenant_remote_batch_state(
+            role_dsn,
+            "tenant-a",
+            "primary",
+            batch_id,
+        )
+        tenant_b = db.get_tenant_remote_batch_state(
+            role_dsn,
+            "tenant-b",
+            "primary",
+            batch_id,
+        )
+        assert tenant_a is not None
+        assert tenant_b is not None
+        assert tenant_a["tenant_scope"] == "tenant-a"
+        assert tenant_b["tenant_scope"] == "tenant-b"
+        assert tenant_a["batch_status"] == "in_progress"
+        assert tenant_b["batch_status"] == "completed"
+
+        with psycopg.connect(role_dsn) as unscoped_connection:
+            with unscoped_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                assert cursor.fetchone()[0] == 0
+
+        pooled_connection = psycopg.connect(role_dsn)
+        try:
+            with pooled_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT set_config("
+                    "'pg_llm_batch.tenant_scope', %s, true)",
+                    ("tenant-a",),
+                )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                assert cursor.fetchone()[0] == 1
+            pooled_connection.rollback()
+
+            with pooled_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                assert cursor.fetchone()[0] == 0
+                cursor.execute(
+                    "SELECT set_config("
+                    "'pg_llm_batch.tenant_scope', %s, true)",
+                    ("tenant-b",),
+                )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                    ("tenant-a", batch_id),
+                )
+                assert cursor.fetchone()[0] == 0
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                    ("tenant-b", batch_id),
+                )
+                assert cursor.fetchone()[0] == 1
+        finally:
+            pooled_connection.close()
+
+        with psycopg.connect(role_dsn) as tenant_connection:
+            with tenant_connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT set_config("
+                    "'pg_llm_batch.tenant_scope', %s, true)",
+                    ("tenant-a",),
+                )
+                cursor.execute(
+                    "SELECT COUNT(*) FROM llm_remote_batch_jobs "
+                    "WHERE tenant_scope = %s AND remote_batch_id = %s",
+                    ("tenant-b", batch_id),
+                )
+                assert cursor.fetchone()[0] == 0
+    finally:
+        with psycopg.connect(dsn) as admin:
+            with admin.cursor() as cursor:
+                cursor.execute(
+                    "DELETE FROM llm_remote_batch_jobs WHERE remote_batch_id = %s",
+                    (batch_id,),
+                )
+                cursor.execute(
+                    sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role_name))
+                )
+                cursor.execute(
+                    sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name))
+                )
+            admin.commit()
