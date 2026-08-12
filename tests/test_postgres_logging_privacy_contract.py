@@ -104,25 +104,25 @@ def test_high_volume_temp_and_autovacuum_logging_is_not_unconditionally_enabled(
         assert phrase in doctoring, phrase
 
 
-def test_csv_logging_enables_the_required_logging_collector() -> None:
-    """A configured CSV destination must enable PostgreSQL's logging collector."""
+def test_container_logging_uses_stderr_without_postgres_file_collection() -> None:
+    """The package profile must delegate persisted log lifecycle to the host."""
     settings = _settings()
-    destinations = {item.strip() for item in settings["log_destination"].split(",")}
 
-    assert "csvlog" in destinations
-    assert settings["logging_collector"].lower() == "on"
+    assert settings["log_destination"].lower() == "stderr"
+    assert settings["logging_collector"].lower() == "off"
 
 
-def test_csv_logging_collector_contract_is_documented() -> None:
-    """Doctoring must explain routing, restart, and retention semantics."""
+def test_container_logging_routing_and_retention_boundary_is_documented() -> None:
+    """Doctoring must explain container routing, ownership, and rollback semantics."""
     doctoring = " ".join(DOCTORING.read_text(encoding="utf-8").lower().split())
 
     for phrase in (
         "logging_collector",
-        "csvlog",
-        "server start",
-        "log routing",
-        "does not define retention",
+        "stderr",
+        "container runtime",
+        "logging driver",
+        "bounded retention",
+        "rotation is not retention",
     ):
         assert phrase in doctoring, phrase
 
