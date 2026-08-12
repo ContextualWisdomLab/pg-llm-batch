@@ -44,7 +44,7 @@ def check_health(dsn: str) -> Dict[str, Any]:
                     components.append(
                         {
                             "component": component,
-                            "is_ready": bool(is_ready),
+                            "is_ready": is_ready if type(is_ready) is bool else False,
                             "detail": detail,
                         }
                     )
@@ -75,6 +75,11 @@ def check_health(dsn: str) -> Dict[str, Any]:
         if c["component"] in REQUIRED_COMPONENTS
     )
     return {"ready": ready, "components": components}
+
+
+def public_health_report(report: Dict[str, Any]) -> Dict[str, bool]:
+    """Return the bounded public readiness decision without diagnostic details."""
+    return {"ready": report.get("ready") is True}
 
 
 def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
