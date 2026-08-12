@@ -21,9 +21,11 @@ and stale-temporary contract.
 
 ## Global constraints
 
-- Base the branch on PR #55 exact head
-  `3660bb9edd6351a9c02d9507f08ed647ddbf0d3a`; never write to PR #53 or #55
-  branches.
+- The current replacement is PR #145, created from protected commit
+  `00ed6aabb82c1754f8b14fa85929cac56f68402b`; protected `main` remains the
+  integration authority and must be independently resolved again before merge.
+- Do not write to superseded predecessor PR #55/#56 branches or transfer their
+  checks, reviews, or generated-merge evidence to PR #145.
 - Require `os.open`, `os.mkdir`, `os.stat`, `os.unlink`, and `os.rename`
   descriptor-relative support, no-follow `os.stat`, `O_DIRECTORY`, and
   `O_NOFOLLOW`; fail closed otherwise.
@@ -36,8 +38,8 @@ and stale-temporary contract.
 - Synchronize manifest bytes before descriptor-relative atomic rename and the
   final parent directory afterward.
 - Maintain 100% production statement, branch, and public-docstring coverage.
-- Do not add a workflow, credential, OIDC permission, package permission,
-  attestation permission, version bump, tag, or release.
+- Do not add a workflow credential, OIDC permission, package permission,
+  attestation permission, version bump, tag, or release authority.
 
 ---
 
@@ -54,10 +56,10 @@ and stale-temporary contract.
 - [x] Add RED contracts for unavailable descriptor/no-follow capabilities,
   parent traversal, cleanup after atomic-rename failure, and file plus
   parent-directory synchronization.
-- [x] Record exact RED head
+- [x] Record historical RED head
   `7507b19ea218588d1428a0b8d190991f7a7a15cb`, CI run `31068060494`, and failing
-  job `92509956104`. The run produced five expected security-contract failures
-  and did not count as successful evidence.
+  job `92509956104`. This is development provenance only and does not transfer
+  to the replacement PR.
 
 ### Task 2: Implement descriptor-relative manifest creation
 
@@ -80,11 +82,10 @@ and stale-temporary contract.
 - [x] Clean only the owned temporary on later failure and close every descriptor.
 - [x] Add bounded deterministic tests for all success, cleanup, capability, and
   operating-system failure branches.
-- [x] Record implementation GREEN head
+- [x] Record historical implementation GREEN head
   `4784df03bea6a4f400c8d5cea1da28ac92dee9b5`, CI run `31068618852`, and Release
-  Acceptance run `31068618818`. Python 3.10/3.12/3.14, lint, packaging,
-  containers, 100% production statement/branch coverage, and 100% public
-  docstrings passed at that exact head.
+  Acceptance run `31068618818`. Those predecessor results are provenance only;
+  the current replacement must regenerate exact-head evidence.
 
 ### Task 3: Make the operator and acquisition contract authoritative
 
@@ -100,33 +101,39 @@ and stale-temporary contract.
   `O_DIRECTORY`, `O_NOFOLLOW`, descriptor-relative `os.rename()`, both `fsync()`
   boundaries, owned-temporary cleanup, unsupported-platform refusal, rollback,
   post-return limits, and primary APA 7 references.
-- [x] Record exact documentation RED head
+- [x] Record historical documentation RED head
   `260730404b0c8d34725feb2bcbaa57ba3ef980a8`, CI run `31068700294`, and failing
-  job `92511916337`. Four documentation contracts failed as intended.
+  job `92511916337`; it remains provenance, not replacement acceptance.
 - [x] Update ADR, doctoring, changelog, design, and plan with the implemented
   contract, CWE-367, Python 3.14 `os`, and POSIX.1-2024 `openat()`/`renameat()`
   evidence.
-- [ ] Run exact-head documentation, release-evidence, full CI, and Release
-  Acceptance gates after the final documentation commit.
+- [ ] Run exact-head documentation, release-evidence, full CI, security, central
+  required workflows, and Release Acceptance after the final replacement commit.
 - [ ] Apply every valid exact-head review finding test-first and rerun all gates.
 
-### Task 4: Verify the exact stacked head and finish the draft PR
+### Task 4: Verify the current replacement and finish PR #145
 
 **Files:**
-- Verify all tracked files on `agent/release-evidence-dirfd-hardening`.
+- Verify all tracked files on `feat/release-evidence-current-main`.
 
-- [ ] Confirm the final exact head and exact stacked base SHA.
-- [ ] Confirm current GitHub-generated test-merge commit identity.
-- [ ] Confirm complete CI and Release Acceptance success on the final exact head;
-  do not reuse predecessor-head results.
-- [ ] Confirm zero unresolved review threads and classify all automated feedback
+- [ ] Confirm the final exact head and independently resolved protected-main SHA.
+- [ ] Confirm the current GitHub-generated test-merge commit identity.
+- [ ] Confirm complete CI, security, central required workflows, and Release
+  Acceptance success on the final exact head; do not reuse predecessor results.
+- [ ] Confirm zero unresolved valid review threads and classify automated feedback
   as valid, stale, duplicate, incorrect, rate-limited, infrastructure-only, or
   superseded.
-- [ ] Update draft PR #56 with exact RED/GREEN evidence and dependency order
-  `.github#790 -> #53 -> #55 -> #56`.
-- [ ] Request exactly one CodeRabbit review for the final exact head/base.
-- [ ] Keep the PR draft and unmerged while any prerequisite, default-branch gate,
-  or qualifying independent non-author approval is absent.
+- [ ] Keep PR #145 metadata aligned with exact replacement evidence and current
+  protected-main integration state.
+- [ ] Request or consume current exact-head automated review through the existing
+  governed paths without creating a competing reviewer workflow.
+- [ ] Keep the PR draft and unmerged while any current exact-head gate or review
+  thread is unresolved. When all live gates are satisfied, mark Ready and merge
+  only the unchanged exact head under repository policy.
+
+The current dependency order for this slice is protected `main` -> PR #145.
+Old `.github#790 -> #53 -> #55 -> #56` ordering is historical and must not be
+used as current merge authority.
 
 ## Final verification commands
 
@@ -138,6 +145,7 @@ uv run coverage report --fail-under=100
 uv build
 ```
 
-The GitHub exact-head CI and Release Acceptance workflows are authoritative for
-this branch. Generated coverage databases, build products, caches, and local
-evidence artifacts must remain ignored and untracked.
+GitHub exact-head CI, central required workflows, security scans, and Release
+Acceptance are authoritative for the replacement branch. Generated coverage
+databases, build products, caches, and local evidence artifacts must remain
+ignored and untracked.
