@@ -102,6 +102,21 @@ async def test_delete_file_rejects_invalid_identifiers_before_credentials(
     assert credential_calls == []
 
 
+async def test_delete_file_rejects_provider_http_failure_with_bounded_evidence() -> None:
+    """Provider rejection must not export response bodies or retry a DELETE."""
+    session = _Session(_Response(500, {"error": "provider-secret-body"}))
+    client = BatchAPIClient("postgresql://test", _credentials)
+    client._session = session
+
+    with pytest.raises(GatewayError, match="File deletion failed: 500") as caught:
+        await client.delete_file("file-input", "default")
+
+    assert caught.value.status_code == 500
+    assert caught.value.response_data == {"error_type": "ProviderHTTPError"}
+    assert "provider-secret-body" not in str(caught.value)
+    assert len(session.calls) == 1
+
+
 async def test_delete_file_requires_provider_confirmed_identity_and_state() -> None:
     """A successful HTTP status is not deletion proof without exact bounded evidence."""
     session = _Session(_Response(200, {"id": "other-file", "deleted": True}))
