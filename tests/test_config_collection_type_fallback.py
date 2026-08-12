@@ -57,6 +57,18 @@ def test_json_collection_shape_must_match_the_declared_type(
     ) == ["configured"]
 
 
+def test_malformed_json_collection_uses_isolated_declared_default(
+    monkeypatch: Any,
+) -> None:
+    """Malformed JSON must fail closed to a caller-isolated declared default."""
+    declared_mapping, _ = _register_collection_defaults(monkeypatch)
+
+    fallback = config_module._deserialize_value("custom.mapping_value", "{not-json")
+
+    assert fallback == declared_mapping
+    assert fallback is not declared_mapping
+
+
 def test_mutable_declared_defaults_are_isolated_from_callers(monkeypatch: Any) -> None:
     """Fallback consumers must not receive the process-wide mutable default object."""
     declared_mapping, declared_sequence = _register_collection_defaults(monkeypatch)
