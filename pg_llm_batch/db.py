@@ -66,11 +66,10 @@ def _require_psycopg() -> None:
         raise RuntimeError("psycopg is required for database access")
 
 
-def apply_schema(dsn: str, schema_path: Optional[str] = None) -> None:
-    """Apply the packaged idempotent schema to one PostgreSQL database."""
+def apply_schema(dsn: str) -> None:
+    """Apply the package-owned idempotent schema to one PostgreSQL database."""
     _require_psycopg()
-    path = Path(schema_path) if schema_path else SCHEMA_PATH
-    sql = path.read_text(encoding="utf-8")
+    sql = SCHEMA_PATH.read_text(encoding="utf-8")
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
@@ -384,6 +383,18 @@ def _normalize_remote_batch_snapshot(
     )
     counts_value = provider_batch.get("request_counts")
     request_counts = counts_value if isinstance(counts_value, Mapping) else {}
+    raw_total_requests = request_counts.get("total")
+    total_requests_known = (
+        type(raw_total_requests) is int and raw_total_requests >= 0
+    )
+    total_requests = _provider_count(raw_total_requests)
+    completed_requests = _provider_count(request_counts.get("completed"))
+    failed_requests = _provider_count(request_counts.get("failed"))
+    if (
+        total_requests_known
+        and completed_requests + failed_requests > total_requests
+    ):
+        raise ValueError("request_counts progress is inconsistent")
     provider_metadata, metadata_json = _provider_metadata(
         provider_batch.get("metadata")
     )
@@ -400,9 +411,10 @@ def _normalize_remote_batch_snapshot(
         "batch_status": batch_status,
         "output_file_id": output_file_id,
         "error_file_id": error_file_id,
-        "total_requests": _provider_count(request_counts.get("total")),
-        "completed_requests": _provider_count(request_counts.get("completed")),
-        "failed_requests": _provider_count(request_counts.get("failed")),
+        "total_requests": total_requests,
+        "total_requests_known": total_requests_known,
+        "completed_requests": completed_requests,
+        "failed_requests": failed_requests,
         "provider_metadata": provider_metadata,
         "observed_at": observed,
         "terminal_at": terminal_at,
@@ -444,6 +456,7 @@ def _persist_remote_batch_state(
             completed_requests,
             failed_requests,
             provider_metadata,
+            total_requests_known,
             first_seen_at,
             last_observed_at,
             terminal_at,
@@ -451,7 +464,7 @@ def _persist_remote_batch_state(
         )
         VALUES (
             %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-            %s::jsonb, %s, %s, %s, %s
+            %s::jsonb, %s, %s, %s, %s, %s
         )
         ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE
         SET observation_order = EXCLUDED.observation_order,
@@ -476,6 +489,10 @@ def _persist_remote_batch_state(
                 llm_remote_batch_jobs.total_requests,
                 EXCLUDED.total_requests
             ),
+            total_requests_known = (
+                llm_remote_batch_jobs.total_requests_known
+                OR EXCLUDED.total_requests_known
+            ),
             completed_requests = GREATEST(
                 llm_remote_batch_jobs.completed_requests,
                 EXCLUDED.completed_requests
@@ -497,6 +514,22 @@ def _persist_remote_batch_state(
             updated_at = EXCLUDED.updated_at
         WHERE EXCLUDED.observation_order > llm_remote_batch_jobs.observation_order
           AND (
+              NOT (
+                  llm_remote_batch_jobs.total_requests_known
+                  OR EXCLUDED.total_requests_known
+              )
+              OR GREATEST(
+                  llm_remote_batch_jobs.completed_requests,
+                  EXCLUDED.completed_requests
+              ) + GREATEST(
+                  llm_remote_batch_jobs.failed_requests,
+                  EXCLUDED.failed_requests
+              ) <= GREATEST(
+                  llm_remote_batch_jobs.total_requests,
+                  EXCLUDED.total_requests
+              )
+          )
+          AND (
               llm_remote_batch_jobs.batch_status NOT IN (
                   'completed', 'failed', 'expired', 'cancelled'
               )
@@ -517,6 +550,7 @@ def _persist_remote_batch_state(
         snapshot["completed_requests"],
         snapshot["failed_requests"],
         metadata_json,
+        snapshot["total_requests_known"],
         observed,
         observed,
         terminal_at,
@@ -527,6 +561,46 @@ def _persist_remote_batch_state(
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
+            if getattr(cur, "rowcount", None) == 0:
+                cur.execute(
+                    """
+                    SELECT tenant_scope,
+                           endpoint_alias,
+                           remote_batch_id,
+                           observation_order,
+                           input_file_id,
+                           batch_endpoint,
+                           batch_status,
+                           output_file_id,
+                           error_file_id,
+                           total_requests,
+                           completed_requests,
+                           failed_requests,
+                           provider_metadata,
+                           first_seen_at,
+                           last_observed_at,
+                           terminal_at,
+                           updated_at
+                    FROM llm_remote_batch_jobs
+                    WHERE tenant_scope = %s
+                      AND endpoint_alias = %s
+                      AND remote_batch_id = %s
+                    """,
+                    (
+                        snapshot["tenant_scope"],
+                        snapshot["endpoint_alias"],
+                        snapshot["remote_batch_id"],
+                    ),
+                )
+                persisted_row = cur.fetchone()
+                if (
+                    not persisted_row
+                    or len(persisted_row) != len(_REMOTE_BATCH_STATE_FIELDS)
+                ):
+                    raise RuntimeError(
+                        "remote batch progress update was rejected without persisted state"
+                    )
+                snapshot = dict(zip(_REMOTE_BATCH_STATE_FIELDS, persisted_row))
         conn.commit()
     return snapshot
 
@@ -549,6 +623,7 @@ def persist_remote_batch_state(
         observed_at=observed_at,
     )
     snapshot.pop("tenant_scope", None)
+    snapshot.pop("total_requests_known", None)
     return snapshot
 
 
@@ -562,7 +637,7 @@ def persist_tenant_remote_batch_state(
     observed_at: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     """Persist one lifecycle projection for an explicit trusted tenant scope."""
-    return _persist_remote_batch_state(
+    snapshot = _persist_remote_batch_state(
         dsn,
         tenant_scope,
         endpoint_alias,
@@ -570,6 +645,8 @@ def persist_tenant_remote_batch_state(
         observation_order,
         observed_at=observed_at,
     )
+    snapshot.pop("total_requests_known", None)
+    return snapshot
 
 
 def get_tenant_remote_batch_state(
