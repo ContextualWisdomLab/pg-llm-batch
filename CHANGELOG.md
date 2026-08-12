@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
 - Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.
 - Independent 1 MiB bounded-stream decoding for Files and Batches control-plane JSON before strict UTF-8 and object parsing.
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
