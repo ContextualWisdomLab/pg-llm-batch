@@ -2,8 +2,9 @@
 # Copyright (c) ContextualWisdomLab.
 """Low-level Postgres helpers shared by the batch core.
 
-These wrap the handful of SQL calls the orchestrator, token counter and API
-client need, so no other module has to embed connection boilerplate.
+These helpers wrap the SQL calls needed by the orchestrator, token counter, and
+Batch API clients. Durable provider lifecycle state supports both standalone
+operation and trusted tenant-scoped shared-table deployments.
 """
 
 from __future__ import annotations
@@ -29,10 +30,34 @@ SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 MAX_PROVIDER_METADATA_BYTES = 64 * 1024
 MAX_ENDPOINT_ALIAS_CHARACTERS = 128
 MAX_REMOTE_RESOURCE_ID_CHARACTERS = 256
+MAX_TENANT_SCOPE_CHARACTERS = 128
+DEFAULT_TENANT_SCOPE = "standalone"
 REMOTE_RESOURCE_ID_PATTERN = re.compile(
     rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_REMOTE_RESOURCE_ID_CHARACTERS - 1}}}\Z"
 )
+TENANT_SCOPE_PATTERN = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_TENANT_SCOPE_CHARACTERS - 1}}}\Z"
+)
 REMOTE_TERMINAL_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
+_REMOTE_BATCH_STATE_FIELDS = (
+    "tenant_scope",
+    "endpoint_alias",
+    "remote_batch_id",
+    "observation_order",
+    "input_file_id",
+    "batch_endpoint",
+    "batch_status",
+    "output_file_id",
+    "error_file_id",
+    "total_requests",
+    "completed_requests",
+    "failed_requests",
+    "provider_metadata",
+    "first_seen_at",
+    "last_observed_at",
+    "terminal_at",
+    "updated_at",
+)
 
 
 def _require_psycopg() -> None:
@@ -42,7 +67,7 @@ def _require_psycopg() -> None:
 
 
 def apply_schema(dsn: str, schema_path: Optional[str] = None) -> None:
-    """Apply the batch DDL subset (idempotent)."""
+    """Apply the packaged idempotent schema to one PostgreSQL database."""
     _require_psycopg()
     path = Path(schema_path) if schema_path else SCHEMA_PATH
     sql = path.read_text(encoding="utf-8")
@@ -68,7 +93,7 @@ def load_virtual_payload(dsn: str, file_id: str) -> Optional[str]:
 
 
 def _normalize_payload_content(content: Any) -> str:
-    """Coerce the stored JSONB payload back into raw JSONL text."""
+    """Coerce stored JSONB payload content back into raw JSONL text."""
     if isinstance(content, dict):
         text = content.get("text", "")
     elif isinstance(content, str):
@@ -98,8 +123,8 @@ def validate_endpoint_alias(value: Any) -> str:
     """Normalize one endpoint alias within the persisted schema contract.
 
     Endpoint aliases identify configured gateway credentials and participate in
-    the durable lifecycle table's compound key. Whitespace surrounding an alias
-    is ignored, while empty, NUL-containing, non-string, or overlong values fail
+    the durable lifecycle table's compound key. Surrounding whitespace is
+    ignored, while empty, NUL-containing, non-string, or overlong values fail
     before database reservation, secret resolution, or provider network activity.
 
     Args:
@@ -138,13 +163,37 @@ def validate_endpoint_alias(value: Any) -> str:
     return normalized
 
 
+def validate_tenant_scope(value: Any) -> str:
+    """Validate one trusted local tenant scope without trimming or coercion.
+
+    Tenant scope must be selected by the embedding host after authentication and
+    authorization. Provider metadata, remote identifiers, request payloads, and
+    transport headers are not tenant authorities.
+
+    Args:
+        value: Host-authorized tenant identity for lifecycle isolation.
+
+    Returns:
+        The exact validated ASCII tenant scope.
+
+    Raises:
+        ValidationError: If the value is not a supported 1-128 character scope.
+    """
+    if not isinstance(value, str) or TENANT_SCOPE_PATTERN.fullmatch(value) is None:
+        raise ValidationError(
+            field="tenant_scope",
+            value=value,
+            reason=(
+                "must be 1-128 ASCII characters beginning with an alphanumeric "
+                "character and containing only letters, digits, dot, underscore, "
+                "colon, or hyphen"
+            ),
+        )
+    return value
+
+
 def validate_remote_resource_id(value: Any, field: str) -> str:
     """Validate one provider identifier against the durable gateway contract.
-
-    The supported identifier syntax is safe for URL path segments and mirrors
-    the lifecycle schema's 256-character maximum. Keeping the same contract for
-    caller IDs and provider-returned IDs prevents a successful remote operation
-    from failing only when its durable state reaches PostgreSQL.
 
     Args:
         value: Candidate provider file or batch identifier.
@@ -177,13 +226,7 @@ def validate_optional_remote_resource_id(
     value: Any,
     field: str,
 ) -> Optional[str]:
-    """Normalize non-string absence and validate every present string identifier.
-
-    Non-string values and the empty string retain the existing deterministic
-    safe-default behavior for optional provider fields. Every non-empty string
-    must satisfy the bounded ASCII path-segment contract used by required
-    remote batch identifiers.
-    """
+    """Normalize absence and validate every present string identifier."""
     if not isinstance(value, str) or not value:
         return None
     return validate_remote_resource_id(value, field)
@@ -200,12 +243,7 @@ def _persisted_remote_resource_id(value: Any, field: str) -> Optional[str]:
 
 
 def _metadata_contains_nul(value: Any) -> bool:
-    """Return whether decoded JSON contains PostgreSQL-incompatible NUL text.
-
-    The traversal is iterative so deeply nested untrusted metadata cannot spend
-    Python recursion depth after the canonical JSON representation has already
-    passed the 64-KiB size boundary.
-    """
+    """Return whether decoded JSON contains PostgreSQL-incompatible NUL text."""
     pending_values = [value]
     while pending_values:
         current_value = pending_values.pop()
@@ -250,18 +288,11 @@ def _provider_metadata(value: Any) -> tuple[Dict[str, Any], str]:
 def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
     """Return canonical provider metadata safe for PostgreSQL ``jsonb``.
 
-    A provider metadata value is retained only when it is an object whose sorted
-    compact JSON encoding is finite, serializable, no larger than 64 KiB, and
-    free of U+0000 in every key and nested string. Invalid metadata becomes the
-    deterministic empty object so both the default PostgreSQL recorder and
-    injected host recorders observe the same fail-closed representation.
-
     Args:
         value: Untrusted provider metadata from a remote Batch API response.
 
     Returns:
-        A JSON-decoded dictionary that exactly matches the canonical persisted
-        representation, or an empty dictionary when validation fails.
+        A bounded, finite, NUL-free JSON object or an empty dictionary.
     """
     return _provider_metadata(value)[0]
 
@@ -285,42 +316,23 @@ def reserve_remote_batch_observation_order(dsn: str) -> int:
     return row[0]
 
 
-def persist_remote_batch_state(
-    dsn: str,
+def _set_transaction_tenant_scope(cursor: Any, tenant_scope: str) -> None:
+    """Bind one validated tenant scope to only the current transaction."""
+    cursor.execute(
+        "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+        (tenant_scope,),
+    )
+
+
+def _normalize_remote_batch_snapshot(
+    tenant_scope: str,
     endpoint_alias: str,
     provider_batch: Mapping[str, Any],
     observation_order: int,
-    *,
-    observed_at: Optional[datetime] = None,
-) -> Dict[str, Any]:
-    """Submit one curated provider batch observation to an atomic upsert.
-
-    The unique ``(endpoint_alias, remote_batch_id)`` identity makes repeated
-    polling idempotent. The upsert accepts only a strictly newer database-owned
-    ``observation_order``. Once a terminal status is stored, a later observation
-    may enrich it only when the terminal status itself is unchanged. Request
-    counters never decrease, so a sparse provider response cannot erase known
-    progress. Arbitrary provider fields are discarded, and metadata is
-    canonicalized within a bounded JSON trust boundary.
-
-    Args:
-        dsn: PostgreSQL connection string for the lifecycle store.
-        endpoint_alias: Stable local alias for the remote Batch API endpoint.
-        provider_batch: Provider batch object containing at minimum an ``id``.
-        observation_order: Positive order reserved before the provider request.
-        observed_at: Optional timezone-aware observation timestamp. Current UTC
-            is used when omitted.
-
-    Returns:
-        The normalized lifecycle snapshot submitted to PostgreSQL. PostgreSQL
-        may ignore the update when a newer order or incompatible terminal state
-        is already stored.
-
-    Raises:
-        ValueError: If the observation order, endpoint alias, provider object,
-            remote identifier, or observation timestamp is invalid.
-        RuntimeError: If psycopg is unavailable.
-    """
+    observed_at: Optional[datetime],
+) -> tuple[Dict[str, Any], str]:
+    """Validate and normalize one tenant-qualified provider observation."""
+    normalized_tenant_scope = validate_tenant_scope(tenant_scope)
     if (
         isinstance(observation_order, bool)
         or not isinstance(observation_order, int)
@@ -336,7 +348,6 @@ def persist_remote_batch_state(
         ) from exc
     if not isinstance(provider_batch, Mapping):
         raise ValueError("provider_batch must be a mapping object")
-
     try:
         remote_batch_id = validate_remote_resource_id(
             provider_batch.get("id"),
@@ -347,7 +358,6 @@ def persist_remote_batch_state(
             "remote_batch_id (provider batch id) must be a supported non-empty "
             f"string of at most {MAX_REMOTE_RESOURCE_ID_CHARACTERS} characters"
         ) from exc
-
     observed = observed_at or datetime.now(timezone.utc)
     if (
         not isinstance(observed, datetime)
@@ -378,8 +388,8 @@ def persist_remote_batch_state(
         provider_batch.get("metadata")
     )
     terminal_at = observed if batch_status in REMOTE_TERMINAL_STATUSES else None
-
     snapshot: Dict[str, Any] = {
+        "tenant_scope": normalized_tenant_scope,
         "endpoint_alias": normalized_alias,
         "remote_batch_id": remote_batch_id,
         "observation_order": observation_order,
@@ -397,9 +407,31 @@ def persist_remote_batch_state(
         "observed_at": observed,
         "terminal_at": terminal_at,
     }
+    return snapshot, metadata_json
 
+
+def _persist_remote_batch_state(
+    dsn: str,
+    tenant_scope: str,
+    endpoint_alias: str,
+    provider_batch: Mapping[str, Any],
+    observation_order: int,
+    *,
+    observed_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Persist one validated tenant-qualified lifecycle projection."""
+    snapshot, metadata_json = _normalize_remote_batch_snapshot(
+        tenant_scope,
+        endpoint_alias,
+        provider_batch,
+        observation_order,
+        observed_at,
+    )
+    observed = snapshot["observed_at"]
+    terminal_at = snapshot["terminal_at"]
     sql = """
         INSERT INTO llm_remote_batch_jobs (
+            tenant_scope,
             endpoint_alias,
             remote_batch_id,
             observation_order,
@@ -418,10 +450,10 @@ def persist_remote_batch_state(
             updated_at
         )
         VALUES (
-            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+            %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
             %s::jsonb, %s, %s, %s, %s
         )
-        ON CONFLICT (endpoint_alias, remote_batch_id) DO UPDATE
+        ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO UPDATE
         SET observation_order = EXCLUDED.observation_order,
             input_file_id = COALESCE(
                 EXCLUDED.input_file_id,
@@ -472,6 +504,7 @@ def persist_remote_batch_state(
           )
     """
     params = (
+        snapshot["tenant_scope"],
         snapshot["endpoint_alias"],
         snapshot["remote_batch_id"],
         snapshot["observation_order"],
@@ -492,16 +525,133 @@ def persist_remote_batch_state(
     _require_psycopg()
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
+            _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
         conn.commit()
     return snapshot
 
 
-def get_model_metadata(dsn: Optional[str], model_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch model mode/tokenizer metadata for a model id, if recorded.
+def persist_remote_batch_state(
+    dsn: str,
+    endpoint_alias: str,
+    provider_batch: Mapping[str, Any],
+    observation_order: int,
+    *,
+    observed_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Persist one standalone projection without changing its return shape."""
+    snapshot = _persist_remote_batch_state(
+        dsn,
+        DEFAULT_TENANT_SCOPE,
+        endpoint_alias,
+        provider_batch,
+        observation_order,
+        observed_at=observed_at,
+    )
+    snapshot.pop("tenant_scope", None)
+    return snapshot
 
-    Looks up the per-endpoint mapping populated by the pg_cron model-sync job.
-    Returns ``{'mode': ..., 'tokenizer_model': ...}`` or None.
+
+def persist_tenant_remote_batch_state(
+    dsn: str,
+    tenant_scope: str,
+    endpoint_alias: str,
+    provider_batch: Mapping[str, Any],
+    observation_order: int,
+    *,
+    observed_at: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Persist one lifecycle projection for an explicit trusted tenant scope."""
+    return _persist_remote_batch_state(
+        dsn,
+        tenant_scope,
+        endpoint_alias,
+        provider_batch,
+        observation_order,
+        observed_at=observed_at,
+    )
+
+
+def get_tenant_remote_batch_state(
+    dsn: str,
+    tenant_scope: str,
+    endpoint_alias: str,
+    remote_batch_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Return one lifecycle projection visible to a validated tenant scope."""
+    normalized_tenant_scope = validate_tenant_scope(tenant_scope)
+    normalized_alias = validate_endpoint_alias(endpoint_alias)
+    normalized_remote_batch_id = validate_remote_resource_id(
+        remote_batch_id,
+        "remote_batch_id",
+    )
+    sql = """
+        SELECT tenant_scope,
+               endpoint_alias,
+               remote_batch_id,
+               observation_order,
+               input_file_id,
+               batch_endpoint,
+               batch_status,
+               output_file_id,
+               error_file_id,
+               total_requests,
+               completed_requests,
+               failed_requests,
+               provider_metadata,
+               first_seen_at,
+               last_observed_at,
+               terminal_at,
+               updated_at
+        FROM llm_remote_batch_jobs
+        WHERE tenant_scope = %s
+          AND endpoint_alias = %s
+          AND remote_batch_id = %s
+    """
+    _require_psycopg()
+    with psycopg.connect(dsn) as conn:
+        with conn.cursor() as cur:
+            _set_transaction_tenant_scope(cur, normalized_tenant_scope)
+            cur.execute(
+                sql,
+                (
+                    normalized_tenant_scope,
+                    normalized_alias,
+                    normalized_remote_batch_id,
+                ),
+            )
+            row = cur.fetchone()
+    if not row:
+        return None
+    if len(row) != len(_REMOTE_BATCH_STATE_FIELDS):
+        raise RuntimeError("remote batch state query returned an invalid row")
+    return dict(zip(_REMOTE_BATCH_STATE_FIELDS, row))
+
+
+def get_remote_batch_state(
+    dsn: str,
+    endpoint_alias: str,
+    remote_batch_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Return one lifecycle projection from the standalone tenant scope."""
+    return get_tenant_remote_batch_state(
+        dsn,
+        DEFAULT_TENANT_SCOPE,
+        endpoint_alias,
+        remote_batch_id,
+    )
+
+
+def get_model_metadata(dsn: Optional[str], model_id: str) -> Optional[Dict[str, Any]]:
+    """Fetch model mode and tokenizer metadata for a model identifier.
+
+    Args:
+        dsn: Optional PostgreSQL connection string.
+        model_id: Provider model identifier to resolve.
+
+    Returns:
+        A dictionary containing normalized ``mode`` and ``tokenizer_model`` when
+        found, otherwise ``None``.
     """
     if not dsn or psycopg is None or not model_id:
         return None
