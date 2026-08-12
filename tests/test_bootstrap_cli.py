@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 import runpy
 from types import SimpleNamespace
@@ -74,6 +75,7 @@ def test_init_and_config_commands(monkeypatch, capsys):
     assert cli._dispatch(
         ["config", "get", "--dsn", "postgresql://x", "gateway", "url"]
     ) == 0
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("secret"))
     assert cli._dispatch(
         [
             "config",
@@ -81,7 +83,6 @@ def test_init_and_config_commands(monkeypatch, capsys):
             "--dsn",
             "postgresql://x",
             "gateway_api_key.default",
-            "secret",
         ]
     ) == 0
 
