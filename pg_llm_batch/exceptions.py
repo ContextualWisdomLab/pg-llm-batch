@@ -19,11 +19,11 @@ class PgLlmBatchError(Exception):
         error_code: Optional[str] = None,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Initialize a structured domain error."""
+        """Initialize a structured domain error with a caller-independent detail map."""
         super().__init__(message)
         self.message = message
         self.error_code = error_code
-        self.details = details or {}
+        self.details = dict(details) if details is not None else {}
 
     def __str__(self) -> str:
         """Render the message with its stable error code when present."""
@@ -85,14 +85,15 @@ class GatewayError(PgLlmBatchError):
         status_code: Optional[int] = None,
         response_data: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Describe a failed OpenAI-compatible gateway operation."""
+        """Describe a failed gateway operation using a response-map snapshot."""
+        response_snapshot = dict(response_data) if response_data is not None else None
         super().__init__(
             message=f"Gateway error: {message}",
             error_code="GATEWAY_ERROR",
-            details={"status_code": status_code, "response_data": response_data},
+            details={"status_code": status_code, "response_data": response_snapshot},
         )
         self.status_code = status_code
-        self.response_data = response_data
+        self.response_data = response_snapshot
 
 
 class ConfigError(PgLlmBatchError):
