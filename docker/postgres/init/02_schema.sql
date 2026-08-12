@@ -151,12 +151,19 @@ BEGIN
 
     ALTER TABLE llm_remote_batch_jobs
         ADD COLUMN IF NOT EXISTS total_requests_known BOOLEAN;
+    IF EXISTS (
+        SELECT 1
+        FROM llm_remote_batch_jobs
+        WHERE (total_requests_known IS TRUE OR total_requests > 0)
+          AND completed_requests::BIGINT + failed_requests::BIGINT
+              > total_requests::BIGINT
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'inconsistent known remote batch progress requires operator remediation';
+    END IF;
     UPDATE llm_remote_batch_jobs
-    SET total_requests_known = (
-        total_requests > 0 AND
-        completed_requests::BIGINT + failed_requests::BIGINT
-            <= total_requests::BIGINT
-    )
+    SET total_requests_known = (total_requests > 0)
     WHERE total_requests_known IS NULL;
     ALTER TABLE llm_remote_batch_jobs
         ALTER COLUMN total_requests_known SET DEFAULT FALSE;
@@ -202,8 +209,16 @@ BEGIN
                     <= total_requests::BIGINT
             ) NOT VALID;
     END IF;
-    ALTER TABLE llm_remote_batch_jobs
-        VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_known_progress;
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'ck_llm_remote_batch_jobs_known_progress'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+          AND NOT convalidated
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_known_progress;
+    END IF;
 
     IF NOT EXISTS (
         SELECT 1
