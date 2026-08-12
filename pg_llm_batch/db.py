@@ -562,7 +562,7 @@ def _persist_remote_batch_state(
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
-            if cur.rowcount == 0:
+            if getattr(cur, "rowcount", None) == 0:
                 cur.execute(
                     """
                     SELECT tenant_scope,
