@@ -283,15 +283,26 @@ class TokenCounter:
         return default
 
     def _ensure_pg_tiktoken(self) -> bool:
-        """Create the pg_tiktoken extension if possible, returning whether it is available."""
+        """Verify the pre-provisioned pg_tiktoken extension and functions read-only."""
         if psycopg is None:
             return False
         try:
             conn = self._get_pg_conn()
             with conn.cursor() as cur:
-                cur.execute("CREATE EXTENSION IF NOT EXISTS pg_tiktoken;")
-            conn.commit()
-            return True
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                               SELECT 1
+                               FROM pg_extension
+                               WHERE extname = %s
+                           ),
+                           to_regprocedure('tiktoken_count(text,text)') IS NOT NULL,
+                           to_regprocedure('tiktoken_encode(text,text)') IS NOT NULL
+                    """,
+                    ("pg_tiktoken",),
+                )
+                row = cur.fetchone()
+            return bool(row and row == (True, True, True))
         except Exception:
             self.close()
             return False
