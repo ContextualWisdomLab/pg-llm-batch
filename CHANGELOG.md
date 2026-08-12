@@ -23,8 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoded-byte default, strict UTF-8 validation, body-free oversize errors,
   and fail-closed handling when a bounded byte stream is unavailable.
 - Bounded retries for transient idempotent provider GET failures, including
-  RFC Retry-After support and equal-jitter exponential fallback; side-effecting
-  POST operations remain single-attempt.
+  HTTP 425 `Too Early`, RFC `Retry-After` support, and equal-jitter exponential
+  fallback. TLS handshake and certificate failures are never retried
+  automatically. Certificate fingerprint mismatches are never retried
+  automatically. Side-effecting POST operations and HTTP 500 remain
+  single-attempt by default.
 - Durable remote batch lifecycle persistence through `DurableBatchAPIClient`
   and `llm_remote_batch_jobs`, with database-owned pre-request observation
   ordering, immutable terminal status identity, bounded curated metadata, and
@@ -67,6 +70,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Added a 5-second request-read timeout to each admitted `/healthz` connection
   so a slow or partial request cannot occupy one finite readiness worker slot
   indefinitely while the handler waits for the request line or headers.
+- Removed plaintext secret values from `config set-secret` process arguments;
+  interactive entry now uses a no-echo prompt and fails closed if terminal echo
+  suppression is unavailable. Automation accepts one bounded logical line over
+  standard input, removes only one terminal LF/CRLF framing sequence, and rejects
+  vertical tab, form feed, ASCII file/group/record separators, Unicode Next Line,
+  U+2028, and U+2029 before `SecretStore` construction. Rejected legacy argv
+  values remain redacted from parser diagnostics instead of being reflected into
+  logs or captured stderr.
+- `BatchAPIClient.wait_for_batch()` now requires `poll_interval_seconds` and
+  `timeout_seconds` to be finite positive numeric durations before credential
+  resolution or provider I/O, rejecting booleans, strings, `None`, NaN,
+  infinities, zero, and negative values before they can create invalid deadlines,
+  sleeps, or unrelated transport/type failures.
+- Batch status responses now fail closed with `InvalidBatchStatusPayload` when
+  the provider does not return a **non-empty status string**, when
+  `request_counts` is not an object, when `total`, `completed`, or `failed` is
+  not a **non-negative integer**, or when `completed + failed` exceeds `total`;
+  malformed provider values are not copied into exported diagnostics.
+- Provider HTTP error responses no longer export provider-controlled JSON,
+  free-text bodies, debug fields, or cancellation messages through package
+  diagnostics. Files upload, batch creation/status, and file download expose
+  only the status plus fixed `ProviderHTTPError`; cancellation rejection exposes
+  only the status plus the fixed package reason.
+- Malformed successful provider responses now fail with fixed bounded package
+  diagnostics without retaining provider bytes, decoded text, or parser/decoder
+  exceptions; malformed provider response exception links are removed from the
+  exported `GatewayError` cause/context chain.
+- Dependency-defined transport exception class names never enter exported
+  diagnostics or retry warning logs; acquisition failures use the closed
+  `ServerFingerprintMismatch`, `ClientConnectorCertificateError`,
+  `ClientSSLError`, `TimeoutError`, or `ClientError` vocabulary.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
@@ -104,6 +138,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Bound repository CI checkouts to the exact pull-request source head and verify
+  the checked-out commit before tests, coverage, packaging, or container gates.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.

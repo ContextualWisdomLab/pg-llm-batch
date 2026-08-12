@@ -22,3 +22,15 @@ settings or add CODEOWNERS-based merge gates before then.
 - `serve_healthz()` may process requests concurrently but must cap the listener at **32 admitted readiness requests**. Treat **excess connections** as fail-closed availability pressure: close them **before worker or database work** instead of allocating another readiness thread or PostgreSQL check.
 - Always **release every admission slot** after request completion and when worker-thread startup fails; never turn `ThreadingMixIn` into an unbounded resource-allocation path. Do not raise or remove the ceiling without deterministic resource-pressure tests and an explicit ADR/operator-contract review.
 - `Cache-Control: no-store` is a caching control, not authentication; network exposure, ingress, and authorization remain deployment concerns.
+
+## Provider retry invariant
+
+Automatic provider retries are restricted to idempotent GET operations. The reviewed default
+HTTP status set is exactly `{408, 425, 429, 502, 503, 504}`; HTTP 425 `Too Early` uses the same
+bounded `Retry-After` or equal-jitter delay path as the other statuses. TLS handshake and
+certificate failures are never retried automatically; a repeated request cannot repair peer
+identity or TLS policy. Certificate fingerprint mismatches are never retried automatically for
+the same peer-identity reason. Provider POST operations remain single-attempt, and HTTP 500 is
+not retryable by default without a separately reviewed provider-specific contract. Do not widen
+this replay boundary without deterministic regression tests and authoritative protocol/security
+documentation.
