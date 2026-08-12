@@ -339,6 +339,12 @@ class BatchAPIClient:
         self._session = aiohttp.ClientSession()
         return self
 
+    async def aclose(self) -> None:
+        """Close the package-owned HTTP session if one has been created."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Close the HTTP session when leaving the asynchronous context."""
         if self._session:
