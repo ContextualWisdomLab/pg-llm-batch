@@ -74,6 +74,7 @@ async def test_public_aclose_releases_lazily_created_session(monkeypatch) -> Non
     assert result["status"] == "completed"
 
     await client.aclose()
+    await client.aclose()
 
     assert session.close_calls == 1
     assert client._session is None
