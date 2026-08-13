@@ -2,7 +2,7 @@
 
 ## Status
 
-**ACTIVE-PR.** This document describes the bounded component-image supply-chain change under review. It must not be read as protected-main behavior until the corresponding pull request is integrated and revalidated.
+**IMPLEMENTED-ON-PROTECTED-MAIN.** PR #176 was integrated as protected commit `95be02a2ef3b6c484b8ec4f4efa09ae9307e7bc3`. The Debian snapshot dependency authority described here is therefore shipped repository behavior; later protected-main commits must preserve or explicitly supersede this contract.
 
 ## Problem boundary
 
