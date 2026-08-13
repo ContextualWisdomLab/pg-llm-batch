@@ -95,7 +95,7 @@ async def test_requested_endpoint_alias_must_be_pre_normalized_before_network():
     with pytest.raises(ValidationError) as exc_info:
         await anext(iterator)
 
-    assert exc_info.value.field == "endpoint_alias"
+    assert exc_info.value.details["field"] == "endpoint_alias"
     assert session.calls == []
 
 
@@ -122,7 +122,7 @@ async def test_resume_endpoint_identity_mismatch_fails_before_network():
     with pytest.raises(ValidationError) as exc_info:
         await anext(iterator)
 
-    assert exc_info.value.field == "resume_after.endpoint_alias"
+    assert exc_info.value.details["field"] == "resume_after.endpoint_alias"
     assert session.calls == []
 
 
