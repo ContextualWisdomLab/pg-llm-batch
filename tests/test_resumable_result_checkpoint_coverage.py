@@ -87,6 +87,18 @@ def client_with_session() -> tuple[StreamingBatchAPIClient, Session]:
     return client, session
 
 
+def test_invalid_streaming_limit_fails_through_structured_validation() -> None:
+    """Non-positive stream ceilings fail before any provider work is possible."""
+    with pytest.raises(ValidationError) as exc_info:
+        StreamingBatchAPIClient(
+            "postgresql://unit",
+            credentials,
+            max_jsonl_line_bytes=0,
+        )
+
+    assert exc_info.value.details["field"] == "max_jsonl_line_bytes"
+
+
 async def test_requested_endpoint_alias_must_be_pre_normalized_before_network():
     """Whitespace-normalized aliases fail locally instead of changing identity."""
     client, session = client_with_session()
