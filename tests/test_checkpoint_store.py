@@ -486,7 +486,7 @@ def test_save_rejects_checkpoint_counts_above_postgres_bigint_before_sql(
 
     with pytest.raises(ValidationError) as raised:
         store.save_in_transaction(RefusingCursor(), "worker-a", candidate)
-    assert raised.value.field == expected_field
+    assert raised.value.details["field"] == expected_field
 
 
 def test_save_rejects_oversized_expected_previous_before_sql() -> None:
@@ -519,7 +519,7 @@ def test_save_rejects_oversized_expected_previous_before_sql() -> None:
             candidate,
             expected_previous=previous,
         )
-    assert raised.value.field == "expected_previous.file_line_number"
+    assert raised.value.details["field"] == "expected_previous.file_line_number"
 
 
 def test_save_accepts_postgres_bigint_maximum_before_sql() -> None:
