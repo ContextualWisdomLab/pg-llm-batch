@@ -64,3 +64,27 @@ def test_cli_retains_credential_free_explicit_database_selectors(selector: str) 
     args = cli.build_parser().parse_args(["health", "--dsn", selector])
 
     assert args.dsn == selector
+
+
+def test_serve_healthz_cli_defaults_to_loopback() -> None:
+    """Direct CLI readiness serving must not bind every host interface by default."""
+    args = cli.build_parser().parse_args(
+        ["serve-healthz", "--dsn", "postgresql://db.example/batch"]
+    )
+
+    assert args.host == "127.0.0.1"
+
+
+def test_serve_healthz_cli_allows_explicit_container_binding() -> None:
+    """Container callers may deliberately request an all-interface listener."""
+    args = cli.build_parser().parse_args(
+        [
+            "serve-healthz",
+            "--dsn",
+            "postgresql://db.example/batch",
+            "--host",
+            "0.0.0.0",
+        ]
+    )
+
+    assert args.host == "0.0.0.0"
