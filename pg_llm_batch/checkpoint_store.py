@@ -98,7 +98,7 @@ def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
         if count > POSTGRES_BIGINT_MAX:
             raise ValidationError(
                 field=f"{field}.{checkpoint_field}",
-                value=count,
+                value="<redacted>",
                 reason=(
                     "must be no greater than PostgreSQL BIGINT maximum "
                     f"{POSTGRES_BIGINT_MAX}"
