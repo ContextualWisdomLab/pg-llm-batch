@@ -7,6 +7,7 @@ Public API:
     PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
     BatchAPIClient                      -- submit, poll, and retrieve
     StreamingBatchAPIClient             -- bounded incremental result records
+    BatchResultRecord                   -- immutable streamed result/error record
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
     PostgresConfigStore, SecretStore    -- database configuration and secrets
