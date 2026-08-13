@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 from contextlib import aclosing, asynccontextmanager
 from dataclasses import dataclass
+from math import isfinite
 from typing import Any, AsyncIterator, Dict, Optional
 
 from .batch_api_client import (
@@ -60,12 +61,20 @@ class _PhysicalLineBudget:
 
 def _validate_positive_integer(field: str, value: Any) -> int:
     """Require one strict positive integer resource limit."""
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+    if type(value) is not int or value <= 0:
         raise ValidationError(
             field=field,
             value=value,
             reason="must be a positive integer",
         )
+    return value
+
+
+def _parse_finite_json_number(token: str) -> float:
+    """Parse one JSON floating-point token and reject non-finite results."""
+    value = float(token)
+    if not isfinite(value):
+        raise ValueError("non-finite JSON number is not permitted")
     return value
 
 
@@ -396,6 +405,7 @@ class StreamingBatchAPIClient(BatchAPIClient):
             parsed = json.loads(
                 text,
                 parse_constant=_reject_non_finite_json_constant,
+                parse_float=_parse_finite_json_number,
                 object_pairs_hook=_object_without_duplicate_names,
             )
         except (ValueError, RecursionError):
