@@ -7,7 +7,7 @@ Subcommands:
     config set     set a KV config value
     config get     read a KV config value
     config set-secret   store a secret from no-echo TTY input or stdin
-    count-tokens   count tokens for text via pg_tiktoken
+    count-tokens   count bounded UTF-8 text from stdin via pg_tiktoken
     submit         upload a prepared batch payload and create a batch job
     poll           poll a batch job's status once
     wait           poll until a batch reaches a terminal state
@@ -17,8 +17,8 @@ Subcommands:
     serve-healthz  serve GET /healthz
 
 The DSN is resolved from --dsn or the PG_LLM_BATCH_DSN bootstrap env var only.
-All other config/secrets come from the database KV stores. Secret plaintext is
-never accepted as a command-line argument.
+All other config/secrets come from the database KV stores. Secret plaintext and
+count-tokens prompt content are never accepted as command-line arguments.
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from .health import check_health, serve_healthz
 from .token_counter import TokenCounter
 
 MAX_SECRET_INPUT_CHARACTERS = 65_536
+MAX_TOKEN_INPUT_BYTES = 1_048_576
 SECRET_LINE_SEPARATORS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
 
 
@@ -117,6 +118,40 @@ def _read_secret_input() -> str:
     return _validate_secret_input(raw)
 
 
+def _read_token_input() -> str:
+    """Read bounded UTF-8 token-counting content from standard input.
+
+    The byte ceiling is enforced before configuration-store construction or
+    PostgreSQL tokenization. Unlike secret-line input, token content preserves
+    every decoded character including trailing newline characters because those
+    characters can affect the authoritative pg_tiktoken count.
+
+    Returns:
+        The exact UTF-8 text supplied through standard input.
+
+    Raises:
+        ConfigError: If the input exceeds :data:`MAX_TOKEN_INPUT_BYTES` or is
+            not valid UTF-8.
+    """
+    binary_stream = getattr(sys.stdin, "buffer", None)
+    if binary_stream is not None:
+        raw = binary_stream.read(MAX_TOKEN_INPUT_BYTES + 1)
+    else:
+        text = sys.stdin.read(MAX_TOKEN_INPUT_BYTES + 1)
+        try:
+            raw = text.encode("utf-8")
+        except UnicodeEncodeError:
+            raise ConfigError("Token input must be valid UTF-8") from None
+    if len(raw) > MAX_TOKEN_INPUT_BYTES:
+        raise ConfigError(
+            f"Token input exceeds byte limit ({MAX_TOKEN_INPUT_BYTES} bytes)"
+        )
+    try:
+        return bytes(raw).decode("utf-8")
+    except UnicodeDecodeError:
+        raise ConfigError("Token input must be valid UTF-8") from None
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line parser and all supported subcommands."""
     parser = _RedactingArgumentParser(
@@ -146,10 +181,18 @@ def build_parser() -> argparse.ArgumentParser:
     _add_common(p_secret)
     p_secret.add_argument("secret_key")
 
-    p_count = sub.add_parser("count-tokens", help="Count tokens for text")
+    p_count = sub.add_parser(
+        "count-tokens",
+        help="Count bounded UTF-8 stdin content without exposing it in argv",
+    )
     _add_common(p_count)
     p_count.add_argument("--model", required=True)
-    p_count.add_argument("--text", required=True)
+    p_count.add_argument(
+        "--stdin",
+        action="store_true",
+        required=True,
+        help="Read exact UTF-8 prompt content from standard input",
+    )
 
     p_submit = sub.add_parser("submit", help="Upload payload + create batch job")
     _add_common(p_submit)
@@ -259,11 +302,12 @@ def _dispatch(argv: Optional[List[str]]) -> int:
                 _close_if_supported(secrets)
 
     if args.command == "count-tokens":
+        token_input = _read_token_input()
         config = PostgresConfigStore(dsn)
         try:
             counter = TokenCounter(dsn, config=config)
             try:
-                tokens = counter.count_tokens(args.text, args.model)
+                tokens = counter.count_tokens(token_input, args.model)
                 print(json.dumps({"model": args.model, "tokens": tokens}))
                 return 0
             finally:
