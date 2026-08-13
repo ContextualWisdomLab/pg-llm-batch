@@ -8,6 +8,7 @@ Public API:
     BatchAPIClient                      -- submit, poll, and retrieve
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultRecord                   -- immutable streamed result/error record
+    BatchResultCheckpoint               -- host-persistable resume evidence
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
     PostgresConfigStore, SecretStore    -- database configuration and secrets
@@ -28,10 +29,7 @@ from .db import (
     persist_tenant_remote_batch_state,
     validate_tenant_scope,
 )
-from .durable_client import (
-    DurableBatchAPIClient,
-    TenantDurableBatchAPIClient,
-)
+from .durable_client import DurableBatchAPIClient, TenantDurableBatchAPIClient
 from .exceptions import (
     ConfigError,
     GatewayError,
@@ -41,7 +39,12 @@ from .exceptions import (
 )
 from .models import BatchRequest, ModelMode
 from .orchestrator import BatchPayload, PostgresBatchOrchestrator
-from .result_streaming import BatchResultRecord, StreamingBatchAPIClient
+from .result_streaming import (
+    BatchResultCheckpoint,
+    BatchResultRecord,
+    CheckpointedBatchResultRecord,
+    StreamingBatchAPIClient,
+)
 from .token_counter import BatchAccumulator, TokenCounter
 
 __version__ = "0.1.0"
@@ -50,6 +53,8 @@ __all__ = [
     "BatchAPIClient",
     "StreamingBatchAPIClient",
     "BatchResultRecord",
+    "BatchResultCheckpoint",
+    "CheckpointedBatchResultRecord",
     "DurableBatchAPIClient",
     "TenantDurableBatchAPIClient",
     "DEFAULT_TENANT_SCOPE",
