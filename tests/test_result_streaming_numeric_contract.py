@@ -40,6 +40,17 @@ def test_streaming_parser_rejects_exponent_overflow_float() -> None:
     }
 
 
+def test_streaming_parser_preserves_finite_float() -> None:
+    """Finite JSON floating-point values must survive strict parsing unchanged."""
+    client = StreamingBatchAPIClient("postgresql://unit", _credentials)
+
+    assert client._parse_jsonl_line(
+        b'{"value":1.25}',
+        file_kind="result",
+        line_number=1,
+    ) == {"value": 1.25}
+
+
 def test_streaming_limits_reject_integer_subclasses() -> None:
     """Resource ceilings require exact ``int`` values, not integer subclasses."""
     with pytest.raises(ValidationError) as exc_info:
