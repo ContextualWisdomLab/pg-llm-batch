@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+import pg_llm_batch.result_streaming_checkpoint_impl as checkpoint_impl
 from pg_llm_batch import BatchResultCheckpoint, StreamingBatchAPIClient
 from pg_llm_batch.batch_api_client import GatewayCredentials
 from pg_llm_batch.exceptions import ValidationError
@@ -97,6 +98,18 @@ def test_invalid_streaming_limit_fails_through_structured_validation(
             "postgresql://unit",
             credentials,
             max_jsonl_line_bytes=invalid_limit,
+        )
+
+    assert exc_info.value.details["field"] == "max_jsonl_line_bytes"
+
+
+def test_internal_streaming_guard_rejects_invalid_limit() -> None:
+    """The checkpoint implementation keeps its own invalid-limit guard covered."""
+    with pytest.raises(ValidationError) as exc_info:
+        checkpoint_impl.StreamingBatchAPIClient(
+            "postgresql://unit",
+            credentials,
+            max_jsonl_line_bytes=0,
         )
 
     assert exc_info.value.details["field"] == "max_jsonl_line_bytes"
