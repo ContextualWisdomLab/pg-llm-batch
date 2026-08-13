@@ -6,6 +6,8 @@ Public API:
     TokenCounter, BatchAccumulator      -- pg_tiktoken token counting
     PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
     BatchAPIClient                      -- submit, poll, and retrieve
+    StreamingBatchAPIClient             -- bounded incremental result records
+    BatchResultRecord                   -- immutable streamed result/error record
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
     PostgresConfigStore, SecretStore    -- database configuration and secrets
@@ -39,12 +41,15 @@ from .exceptions import (
 )
 from .models import BatchRequest, ModelMode
 from .orchestrator import BatchPayload, PostgresBatchOrchestrator
+from .result_streaming import BatchResultRecord, StreamingBatchAPIClient
 from .token_counter import BatchAccumulator, TokenCounter
 
 __version__ = "0.1.0"
 
 __all__ = [
     "BatchAPIClient",
+    "StreamingBatchAPIClient",
+    "BatchResultRecord",
     "DurableBatchAPIClient",
     "TenantDurableBatchAPIClient",
     "DEFAULT_TENANT_SCOPE",
