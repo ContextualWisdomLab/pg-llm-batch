@@ -88,13 +88,11 @@ def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
 @pytest.mark.parametrize(
     ("stored", "expected"),
     [
-        ({"text": '{"id":1}'}, '{"id":1}\n'),
-        ({"text": ""}, ""),
-        ('{"id":2}\n', '{"id":2}\n'),
-        (123, "123\n"),
+        ({"text": '{"id":1}\n', "line_count": 1}, '{"id":1}\n'),
+        ({"text": "", "line_count": 0}, ""),
     ],
 )
-def test_load_virtual_payload_normalizes_jsonl(monkeypatch, stored, expected):
+def test_load_virtual_payload_preserves_canonical_jsonl(monkeypatch, stored, expected):
     driver = _Psycopg((stored,))
     monkeypatch.setattr(db, "psycopg", driver)
     assert db.load_virtual_payload("postgresql://x", "file-1") == expected

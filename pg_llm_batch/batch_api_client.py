@@ -641,8 +641,8 @@ class BatchAPIClient:
                 reason="must be an integer between 3600 and 2592000 seconds",
             )
         file_id = self._resolve_memory_identifier(file_path)
-        creds = self._credentials(endpoint_alias)
         payload_bytes = await self._load_payload_bytes(file_id)
+        creds = self._credentials(endpoint_alias)
 
         data = aiohttp.FormData()
         data.add_field("purpose", purpose)
