@@ -72,6 +72,7 @@ class _Psycopg:
         {"text": 7, "line_count": 1},
         {"text": "{\"custom_id\":\"r1\"}\n", "line_count": True},
         {"text": "{\"custom_id\":\"r1\"}\n", "line_count": -1},
+        {"text": "nonempty", "line_count": 0},
         {"text": "{\"custom_id\":\"r1\"}\n", "line_count": 2},
         {
             "text": "{\"custom_id\":\"r1\"}\n",
@@ -82,6 +83,7 @@ class _Psycopg:
         {"text": "\n", "line_count": 1},
         {"text": "[1, 2, 3]\n", "line_count": 1},
         {"text": "{\"value\":NaN}\n", "line_count": 1},
+        {"text": "{\"value\":1e999}\n", "line_count": 1},
         {"text": "{\"a\":1,\"a\":2}\n", "line_count": 1},
     ],
 )
@@ -104,7 +106,7 @@ def test_load_virtual_payload_preserves_valid_multiline_jsonl(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Valid canonical payloads retain exact persisted UTF-8 text and framing."""
-    payload = '{"custom_id":"r1","body":{"input":"one"}}\n' \
+    payload = '{"custom_id":"r1","score":1.5,"body":{"input":"one"}}\n' \
         '{"custom_id":"r2","body":{"input":"two"}}\n'
     monkeypatch.setattr(
         db,
