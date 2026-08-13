@@ -15,7 +15,18 @@ FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea5
 
 WORKDIR /app
 
-RUN apt-get update && \
+# Resolve runtime OS packages from one reviewed Debian snapshot. snapshot.debian.org
+# maps an arbitrary timestamp to the latest import at or before that instant, so
+# this fixed timestamp is a reproducible package-index identity. Valid-Until is
+# disabled only for these intentionally frozen snapshot entries; security refresh
+# is performed by reviewing and advancing the timestamp, not by floating builds.
+RUN rm -f /etc/apt/sources.list.d/debian.sources && \
+    printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260812T000000Z/ trixie main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260812T000000Z/ trixie-updates main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260812T000000Z/ trixie-security main' \
+      > /etc/apt/sources.list.d/debian-snapshot.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends libpq5 curl && \
     rm -rf /var/lib/apt/lists/* \
       /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
