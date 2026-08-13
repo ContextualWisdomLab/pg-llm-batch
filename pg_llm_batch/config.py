@@ -289,17 +289,28 @@ class SecretStore:
 
     Values are Fernet-encrypted at rest when a key is supplied (mirrors the
     naruon Fernet-DB pattern). Without a key, values are base64-obfuscated and
-    a warning is logged — acceptable only for local/dev containers.
+    a warning is logged — acceptable only for local/dev containers unless the
+    caller explicitly requires encryption.
     """
 
     TABLE_NAME = "com_secrets"
 
-    def __init__(self, dsn: str, fernet_key: Optional[str] = None) -> None:
-        """Connect to PostgreSQL and configure optional Fernet encryption."""
+    def __init__(
+        self,
+        dsn: str,
+        fernet_key: Optional[str] = None,
+        *,
+        require_encryption: bool = False,
+    ) -> None:
+        """Connect using optional Fernet encryption or fail when it is required."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
+        if require_encryption and not fernet_key:
+            raise ConfigError(
+                "Secret encryption is required but no Fernet key is configured"
+            )
         if fernet_key and Fernet is None:
             raise ConfigError(
                 "Fernet encryption requires the optional cryptography dependency"
