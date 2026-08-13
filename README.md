@@ -19,6 +19,8 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
   *bootstrap transport* for the DSN and an optional Fernet key. This replaces
   the ~75 `os.getenv` reads in the upstream app. CLI secret values are entered
   through a no-echo prompt or bounded standard input, never as process arguments.
+  Content-bearing `count-tokens` input is likewise accepted only through bounded
+  UTF-8 standard input, so prompt text is not placed in process arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 - **Standalone or tenant-scoped lifecycle state.** `DurableBatchAPIClient`
@@ -36,9 +38,12 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
                      │
                      ▼
         BatchAPIClient.upload_jsonl → create_batch_job → wait_for_batch → download_results
-                     │
-   (or) pg_cron job  cron_fetch_batch_results()  polls + imports results via pgsql-http
 ```
+
+Provider-facing polling and retrieval stay behind the validated Python client
+boundary. The former bundled `pg_cron` + `pgsql-http` provider retriever is
+retired; automatic reconciliation remains a separate product capability rather
+than a second database-side network authority.
 
 | Piece | Module |
 | --- | --- |
@@ -55,8 +60,9 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 
 ## Requirements
 
-- PostgreSQL with `pg_tiktoken`, `pg_cron`, and `http` (pgsql-http). The bundled
-  image (`docker/postgres/Dockerfile`) builds all three.
+- PostgreSQL with `pg_tiktoken`. Fresh bundled database initialization does not
+  create `pg_cron` or `http`; their image packages are retained temporarily only
+  for existing-volume cleanup and rollback compatibility.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
 - Tenant-scoped lifecycle deployments require an application database role with
   `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
@@ -103,7 +109,7 @@ python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo promp
 ### 3. Count, submit, wait, retrieve
 
 ```bash
-python -m pg_llm_batch count-tokens --model gpt-4o --text "hello world"
+printf '%s' 'hello world' | python -m pg_llm_batch count-tokens --model gpt-4o --stdin
 # {"model": "gpt-4o", "tokens": 2}
 
 # after prepare_batches() has produced a memory://<file_id> payload:
@@ -113,6 +119,13 @@ python -m pg_llm_batch wait     --endpoint default --batch-id <batch_id> \
     --poll-interval 5 --timeout 3600
 python -m pg_llm_batch retrieve --endpoint default --batch-id <batch_id>
 ```
+
+`count-tokens` requires the explicit `--stdin` source and accepts at most 1 MiB
+of strict UTF-8 before configuration-store or PostgreSQL acquisition. The
+command preserves the decoded text exactly, including trailing newlines because
+they can affect the authoritative token count. Use `printf '%s'` when a shell
+example should not append a newline. Prompt content is not accepted through an
+argv option and rejected content is not copied into parser/runtime diagnostics.
 
 `wait` returns when the remote status is `completed`, `failed`, `expired`, or
 `cancelled`. It raises a structured gateway error when the configured timeout
@@ -288,7 +301,7 @@ pytest                       # unit tests (fakes, no DB needed)
 
 docker compose up -d --build postgres
 PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
-    pytest -m integration    # against the real pg_tiktoken + pg_cron container
+    pytest -m integration    # against the real pg_tiktoken PostgreSQL container
 ```
 
 ## Docs
@@ -301,6 +314,12 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 - [`docs/doctoring/cli-secret-input.md`](docs/doctoring/cli-secret-input.md)
   — no-echo interactive secret entry, bounded stdin automation, fail-closed
   validation, verification, and security references.
+- [`docs/doctoring/count-tokens-stdin-privacy.md`](docs/doctoring/count-tokens-stdin-privacy.md)
+  — bounded UTF-8 prompt ingestion without argv exposure, exact text semantics,
+  failure ordering, verification, and APA 7 references.
+- [`docs/doctoring/legacy-pgsql-http-retrieval.md`](docs/doctoring/legacy-pgsql-http-retrieval.md)
+  — retirement of direct SQL provider networking, existing-volume remediation,
+  rollback, and the validated Python provider boundary.
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
