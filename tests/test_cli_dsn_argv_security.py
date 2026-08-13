@@ -32,6 +32,22 @@ def test_cli_rejects_credential_bearing_dsn_arguments_without_reflection(
     assert "secret-sentinel" not in captured.out
 
 
+def test_cli_rejects_malformed_dsn_without_reflection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Malformed conninfo fails with a fixed parser diagnostic."""
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["health", "--dsn", "host=db.example password=secret-sentinel broken"]
+        )
+
+    captured = capsys.readouterr()
+    assert "secret-sentinel" not in captured.err
+    assert "secret-sentinel" not in captured.out
+
+
 @pytest.mark.parametrize(
     "selector",
     [
