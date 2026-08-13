@@ -87,13 +87,16 @@ def client_with_session() -> tuple[StreamingBatchAPIClient, Session]:
     return client, session
 
 
-def test_invalid_streaming_limit_fails_through_structured_validation() -> None:
-    """Non-positive stream ceilings fail before any provider work is possible."""
+@pytest.mark.parametrize("invalid_limit", [0, True, 1.5])
+def test_invalid_streaming_limit_fails_through_structured_validation(
+    invalid_limit: Any,
+) -> None:
+    """Malformed stream ceilings fail before any provider work is possible."""
     with pytest.raises(ValidationError) as exc_info:
         StreamingBatchAPIClient(
             "postgresql://unit",
             credentials,
-            max_jsonl_line_bytes=0,
+            max_jsonl_line_bytes=invalid_limit,
         )
 
     assert exc_info.value.details["field"] == "max_jsonl_line_bytes"
