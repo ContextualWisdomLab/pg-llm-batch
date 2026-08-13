@@ -356,7 +356,7 @@ async def test_checkpoint_identity_mismatch_fails_before_credentials_or_network(
     with pytest.raises(ValidationError) as exc_info:
         await _collect(client, resume_after=checkpoint)
 
-    assert exc_info.value.field == "resume_after.batch_id"
+    assert exc_info.value.details["field"] == "resume_after.batch_id"
     assert credential_calls == []
     assert session.calls == []
 
@@ -400,7 +400,7 @@ def test_checkpoint_fields_are_strict_and_non_coercive(
     with pytest.raises(ValidationError) as exc_info:
         BatchResultCheckpoint(**values)
 
-    assert exc_info.value.field == field
+    assert exc_info.value.details["field"] == field
 
 
 async def test_resume_after_requires_checkpoint_instance_before_network():
@@ -413,7 +413,7 @@ async def test_resume_after_requires_checkpoint_instance_before_network():
     with pytest.raises(ValidationError) as exc_info:
         await _collect(client, resume_after={"record_count": 1})  # type: ignore[arg-type]
 
-    assert exc_info.value.field == "resume_after"
+    assert exc_info.value.details["field"] == "resume_after"
     assert session.calls == []
 
 
