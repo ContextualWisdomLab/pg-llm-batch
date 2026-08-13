@@ -17,7 +17,9 @@ Subcommands:
     serve-healthz  serve GET /healthz
 
 The DSN is resolved from --dsn or the PG_LLM_BATCH_DSN bootstrap env var only.
-All other config/secrets come from the database KV stores. Secret plaintext and
+Command-line DSNs may select a database but may not carry password/private-key
+credentials; use standard libpq secret mechanisms outside process argv. All
+other config/secrets come from the database KV stores. Secret plaintext and
 count-tokens prompt content are never accepted as command-line arguments.
 """
 
@@ -33,6 +35,9 @@ import warnings
 from contextlib import ExitStack
 from typing import List, Optional
 
+from psycopg import ProgrammingError
+from psycopg.conninfo import conninfo_to_dict
+
 from . import db
 from .batch_api_client import BatchAPIClient, config_credentials_provider
 from .bootstrap import resolve_dsn, resolve_secret_key
@@ -44,6 +49,15 @@ from .token_counter import TokenCounter
 MAX_SECRET_INPUT_CHARACTERS = 65_536
 MAX_TOKEN_INPUT_BYTES = 1_048_576
 SECRET_LINE_SEPARATORS = frozenset("\n\r\v\f\x1c\x1d\x1e\x85\u2028\u2029")
+CLI_DSN_SENSITIVE_PARAMETERS = frozenset(
+    {
+        "password",
+        "passfile",
+        "sslkey",
+        "sslpassword",
+        "oauth_client_secret",
+    }
+)
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -59,12 +73,32 @@ class _RedactingArgumentParser(argparse.ArgumentParser):
         super().error(redacted_message)
 
 
+def _validate_cli_dsn(value: str) -> str:
+    """Accept valid libpq selectors while refusing credential-bearing argv data."""
+    try:
+        parameters = conninfo_to_dict(value)
+    except ProgrammingError:
+        raise argparse.ArgumentTypeError(
+            "Postgres DSN must be valid libpq connection information"
+        ) from None
+    if CLI_DSN_SENSITIVE_PARAMETERS.intersection(parameters):
+        raise argparse.ArgumentTypeError(
+            "Credential-bearing Postgres DSNs are not accepted in --dsn; "
+            "use libpq secret mechanisms outside process argv"
+        )
+    return value
+
+
 def _add_common(parser: argparse.ArgumentParser) -> None:
-    """Add the shared ``--dsn`` option to a subcommand parser."""
+    """Add the shared credential-free ``--dsn`` selector to a subcommand parser."""
     parser.add_argument(
         "--dsn",
         default=None,
-        help="Postgres DSN (else PG_LLM_BATCH_DSN bootstrap env var)",
+        type=_validate_cli_dsn,
+        help=(
+            "Credential-free Postgres selector "
+            "(else PG_LLM_BATCH_DSN bootstrap env var)"
+        ),
     )
 
 
