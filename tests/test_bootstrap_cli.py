@@ -111,6 +111,7 @@ def test_count_health_and_server_commands(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "PostgresConfigStore", lambda _dsn: "config")
     monkeypatch.setattr(cli, "TokenCounter", Counter)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("one two"))
     assert cli._dispatch(
         [
             "count-tokens",
@@ -118,8 +119,7 @@ def test_count_health_and_server_commands(monkeypatch, capsys):
             "postgresql://x",
             "--model",
             "gpt-4o",
-            "--text",
-            "one two",
+            "--stdin",
         ]
     ) == 0
     assert json.loads(capsys.readouterr().out) == {"model": "gpt-4o", "tokens": 2}
