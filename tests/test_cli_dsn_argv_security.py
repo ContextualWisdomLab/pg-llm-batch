@@ -15,6 +15,9 @@ from pg_llm_batch import cli
         "postgres://app:secret-sentinel@db.example/batch",
         "host=db.example dbname=batch user=app password=secret-sentinel",
         "host=db.example dbname=batch user=app passfile=/tmp/secret-sentinel.pgpass",
+        "host=db.example dbname=batch user=app sslkey=/tmp/secret-sentinel.key",
+        "host=db.example dbname=batch user=app sslpassword=secret-sentinel",
+        "host=db.example dbname=batch user=app oauth_client_secret=secret-sentinel",
     ],
 )
 def test_cli_rejects_credential_bearing_dsn_arguments_without_reflection(
