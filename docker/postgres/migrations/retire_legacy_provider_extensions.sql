@@ -1,9 +1,10 @@
 -- SPDX-License-Identifier: Apache-2.0
 -- Existing-volume preflight for retiring the legacy provider-network extensions.
 -- Run 03_cron_batch_retrieval.sql first. This migration refuses extension
--- removal while the retired job, any independent cron job, or any retired helper
--- still exists. Extension dependency checks remain PostgreSQL-owned through
--- DROP EXTENSION ... RESTRICT.
+-- removal while the retired job, any independent cron job, any retired helper,
+-- an unexpected table-like extension member, or an explicit DEPENDS ON EXTENSION
+-- dependency still exists. DROP EXTENSION ... RESTRICT remains the final
+-- PostgreSQL-owned dependency boundary after these stricter preservation checks.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -48,6 +49,51 @@ BEGIN
         RAISE EXCEPTION 'Refusing to retire provider extensions while retired helper functions remain'
             USING ERRCODE = '55000',
                   HINT = 'Run 03_cron_batch_retrieval.sql successfully and review any substituted helper before retrying.';
+    END IF;
+
+    -- RESTRICT still removes objects that are extension members. Fail closed for
+    -- unexpected table-like members before DROP EXTENSION can erase application
+    -- state. pg_cron owns its expected relations inside the cron schema; http is
+    -- not allowed to own an application table-like relation at this boundary.
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_depend AS dep
+        JOIN pg_catalog.pg_extension AS ext
+          ON dep.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass
+         AND dep.refobjid = ext.oid
+        JOIN pg_catalog.pg_class AS relation
+          ON dep.classid = 'pg_catalog.pg_class'::pg_catalog.regclass
+         AND dep.objid = relation.oid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON namespace.oid = relation.relnamespace
+        WHERE ext.extname IN ('http', 'pg_cron')
+          AND dep.deptype = 'e'
+          AND dep.objsubid = 0
+          AND dep.refobjsubid = 0
+          AND relation.relkind IN ('r', 'p', 'f', 'm', 'v', 'S')
+          AND (ext.extname = 'http' OR namespace.nspname <> 'cron')
+    ) THEN
+        RAISE EXCEPTION 'Refusing to retire provider extensions while unexpected relation members remain'
+            USING ERRCODE = '55000',
+                  HINT = 'Detach or migrate application-owned extension members before retrying.';
+    END IF;
+
+    -- Objects marked DEPENDS ON EXTENSION use an auto-extension dependency and
+    -- are dropped with the referenced extension even under RESTRICT. Preserve
+    -- them for explicit operator disposition instead of treating them as safe.
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_depend AS dep
+        JOIN pg_catalog.pg_extension AS ext
+          ON dep.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass
+         AND dep.refobjid = ext.oid
+        WHERE ext.extname IN ('http', 'pg_cron')
+          AND dep.deptype = 'x'
+          AND dep.refobjsubid = 0
+    ) THEN
+        RAISE EXCEPTION 'Refusing to retire provider extensions while explicit extension dependencies remain'
+            USING ERRCODE = '55000',
+                  HINT = 'Remove the DEPENDS ON EXTENSION relationship or migrate the dependent object before retrying.';
     END IF;
 END
 $$;
