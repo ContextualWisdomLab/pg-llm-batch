@@ -322,6 +322,67 @@ def test_runtime_store_rejects_insufficient_runtime_read_privileges(
     assert caught.value.__context__ is None
 
 
+class _MissingUniqueCursor(_SchemaShapeCursor):
+    """Expose a type-correct base table whose configured key is not unique."""
+
+    def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
+        super().execute(sql, params)
+        if "pg_catalog.pg_index" in " ".join(sql.lower().split()):
+            self._result = [(*row, False) for row in self._result]
+
+
+class _MissingUniqueConnection(_SchemaShapeConnection):
+    """Return catalog evidence that deliberately lacks key conflict authority."""
+
+    def cursor(self) -> _MissingUniqueCursor:
+        return _MissingUniqueCursor(
+            self._relation_kind,
+            self._column_types,
+            schema_usage=self._schema_usage,
+            table_select=self._table_select,
+        )
+
+
+class _MissingUniquePsycopg:
+    """Return a type-correct relation that cannot support ON CONFLICT(key)."""
+
+    def __init__(self, column_types: dict[str, str]) -> None:
+        self.connection = _MissingUniqueConnection("r", column_types)
+
+    def connect(self, _dsn: str) -> _MissingUniqueConnection:
+        return self.connection
+
+
+@pytest.mark.parametrize("store_kind", ["config", "secret"])
+def test_runtime_store_rejects_table_without_unique_storage_key(
+    monkeypatch: pytest.MonkeyPatch,
+    store_kind: str,
+) -> None:
+    """A readable lookalike table must fail before writes can hit raw ON CONFLICT errors."""
+    column_types = _CONFIG_TYPES if store_kind == "config" else _SECRET_TYPES
+    fake = _MissingUniquePsycopg(column_types)
+    monkeypatch.setattr(config_mod, "psycopg", fake)
+
+    expected_message = (
+        "Configuration schema is unavailable or incompatible"
+        if store_kind == "config"
+        else "Secret schema is unavailable or incompatible"
+    )
+    with pytest.raises(ConfigError) as caught:
+        if store_kind == "config":
+            config_mod.PostgresConfigStore("postgresql://runtime")
+        else:
+            config_mod.SecretStore(
+                "postgresql://runtime", require_encryption=False
+            )
+
+    assert caught.value.message == expected_message
+    assert caught.value.error_code == "CONFIG_ERROR"
+    assert fake.connection.closed is True
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_provisioned_schema_owns_default_seeding_and_docker_mirror() -> None:
     """Fresh provisioning must seed built-ins outside runtime constructors."""
     package_schema = Path("pg_llm_batch/schema.sql").read_text(encoding="utf-8")
