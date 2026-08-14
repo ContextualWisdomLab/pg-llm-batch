@@ -304,9 +304,9 @@ class SecretStore:
     """PostgreSQL-backed secret store (``com_secrets`` table).
 
     Values are Fernet-encrypted at rest when a key is supplied (mirrors the
-    naruon Fernet-DB pattern). Without a key, values are base64-obfuscated and
-    a warning is logged — acceptable only for local/dev containers unless the
-    caller explicitly requires encryption.
+    naruon Fernet-DB pattern). Encryption is required by default. Local/dev
+    callers may explicitly pass ``require_encryption=False`` to use Base64
+    obfuscation, which is never suitable as an at-rest protection control.
     """
 
     TABLE_NAME = "com_secrets"
@@ -316,9 +316,9 @@ class SecretStore:
         dsn: str,
         fernet_key: Optional[str] = None,
         *,
-        require_encryption: bool = False,
+        require_encryption: bool = True,
     ) -> None:
-        """Connect using optional Fernet encryption or fail when it is required."""
+        """Connect with encrypted storage by default; local/dev may explicitly opt out."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
