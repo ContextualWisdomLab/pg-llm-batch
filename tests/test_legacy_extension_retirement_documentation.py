@@ -26,6 +26,11 @@ def test_operator_guide_documents_safe_execution_and_recovery() -> None:
 
     for required in (
         "03_cron_batch_retrieval.sql",
+        "to_regclass('cron.job')",
+        "\\gset",
+        "\\if :cron_job_available",
+        "pg_catalog.pg_depend",
+        "dep.deptype = 'x'",
         "lock_timeout = '5s'",
         "DROP EXTENSION IF EXISTS http RESTRICT",
         "DROP EXTENSION IF EXISTS pg_cron RESTRICT",
@@ -36,6 +41,8 @@ def test_operator_guide_documents_safe_execution_and_recovery() -> None:
     ):
         assert required in text
     assert "Do not replace `RESTRICT` with `CASCADE`" in text
+    assert "Unexpected extension member remains" in text
+    assert "Explicit `DEPENDS ON EXTENSION` object remains" in text
 
 
 def test_architecture_and_adr_preserve_the_authority_boundary() -> None:
@@ -46,9 +53,12 @@ def test_architecture_and_adr_preserve_the_authority_boundary() -> None:
     assert "Legacy provider-extension retirement" in architecture
     assert "database-side provider networking" in architecture
     assert "shared_preload_libraries" in architecture
+    assert "pg_depend" in architecture
     assert "Status:** Proposed" in adr
+    assert "deptype = 'x'" in adr
+    assert "deptype = 'e'" in adr
     assert "Never use `CASCADE`" in adr
-    assert "operator-owned functions" in adr
+    assert "operator-owned functions or dependencies" in adr
 
 
 def test_readme_changelog_and_doctoring_expose_the_next_operator_action() -> None:
@@ -60,6 +70,10 @@ def test_readme_changelog_and_doctoring_expose_the_next_operator_action() -> Non
     assert "Existing-volume extension retirement" in readme
     assert "docs/OPERABILITY.md" in readme
     assert "gateway_retrieval_logs" in readme
+    assert "DEPENDS ON EXTENSION" in readme
     assert "fail-closed legacy PostgreSQL extension retirement" in changelog
+    assert "DEPENDS ON EXTENSION" in changelog
+    assert "pg_depend" in doctoring
+    assert "DEPENDS ON EXTENSION" in doctoring
     assert "PostgreSQL Global Development Group. (2026)." in doctoring
     assert "Unsupported claims" in doctoring
