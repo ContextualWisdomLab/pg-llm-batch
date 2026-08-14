@@ -19,14 +19,10 @@ CONFIG_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
         try:
             self._conn.autocommit = True
             self.cache: Dict[str, Dict[str, Any]] = {}
-            schema_ready = True
+            self._ensure_table()
             try:
-                self._verify_schema()
                 self._load_cache()
             except Exception:
-                schema_ready = False
-            if not schema_ready:
-                self.close()
                 raise ConfigError(
                     "Configuration schema is unavailable or incompatible"
                 ) from None
@@ -34,14 +30,19 @@ CONFIG_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
             self.close()
             raise
 
-    def _verify_schema(self) -> None:
+    def _ensure_table(self) -> None:
         """Verify the provisioned config table without acquiring DDL authority."""
-        with self._conn.cursor() as cur:
-            cur.execute(
-                f"SELECT config_key, config_value, config_description, updated_at "
-                f"FROM {self.TABLE_NAME} WHERE config_key = %s",
-                ("__pg_llm_batch_schema_probe__",),
-            )
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT config_key, config_value, config_description, updated_at "
+                    f"FROM {self.TABLE_NAME} WHERE config_key = %s",
+                    ("__pg_llm_batch_schema_probe__",),
+                )
+        except Exception:
+            raise ConfigError(
+                "Configuration schema is unavailable or incompatible"
+            ) from None
 
 '''
 
@@ -51,28 +52,24 @@ SECRET_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
             self._fernet = None
             if fernet_key and Fernet is not None:
                 self._fernet = Fernet(fernet_key.encode("utf-8"))
-            schema_ready = True
-            try:
-                self._verify_schema()
-            except Exception:
-                schema_ready = False
-            if not schema_ready:
-                self.close()
-                raise ConfigError(
-                    "Secret schema is unavailable or incompatible"
-                ) from None
+            self._ensure_table()
         except BaseException:
             self.close()
             raise
 
-    def _verify_schema(self) -> None:
+    def _ensure_table(self) -> None:
         """Verify the provisioned secret table without acquiring DDL authority."""
-        with self._conn.cursor() as cur:
-            cur.execute(
-                f"SELECT secret_key, secret_value, is_encrypted, updated_at "
-                f"FROM {self.TABLE_NAME} WHERE secret_key = %s",
-                ("__pg_llm_batch_schema_probe__",),
-            )
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT secret_key, secret_value, is_encrypted, updated_at "
+                    f"FROM {self.TABLE_NAME} WHERE secret_key = %s",
+                    ("__pg_llm_batch_schema_probe__",),
+                )
+        except Exception:
+            raise ConfigError(
+                "Secret schema is unavailable or incompatible"
+            ) from None
 
 '''
 
@@ -135,6 +132,8 @@ def main() -> int:
     repaired_source = _replace_runtime_blocks(source)
     if "def _ensure_defaults" in repaired_source or "CREATE TABLE IF NOT EXISTS" in repaired_source:
         raise RuntimeError("runtime provisioning authority remained in config.py")
+    if repaired_source.count("def _ensure_table") < 2:
+        raise RuntimeError("runtime read-only setup seams were not preserved")
     CONFIG_PATH.write_text(repaired_source, encoding="utf-8")
 
     schema = _seed_schema(PACKAGE_SCHEMA_PATH.read_text(encoding="utf-8"))
