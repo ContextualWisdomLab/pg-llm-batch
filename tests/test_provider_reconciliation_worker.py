@@ -147,3 +147,44 @@ async def test_reconciliation_rejects_invalid_work_budget_before_provider_io(max
 
     assert client.status_calls == []
     assert client.download_calls == []
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_allows_candidate_source_to_exhaust_before_work_budget() -> None:
+    """A short finite candidate source returns a consistent partial-work report."""
+    client = FakeClient({"batch-a": {"status": "in_progress", "is_complete": False}})
+
+    report = await reconcile_batch_candidates(
+        client,
+        [ReconciliationCandidate("default", "batch-a")],
+        max_jobs=2,
+    )
+
+    assert client.status_calls == [("batch-a", "default")]
+    assert client.download_calls == []
+    assert report.processed_count == 1
+    assert report.retrieved_count == 0
+    assert report.failed_count == 0
+    assert [outcome.outcome for outcome in report.outcomes] == ["polled"]
+
+
+@pytest.mark.asyncio
+async def test_reconciliation_fails_closed_when_candidate_scan_truncates_unique_work() -> None:
+    """Candidate scan saturation cannot silently hide later unique provider work."""
+    client = FakeClient(
+        {
+            "batch-a": {"status": "in_progress", "is_complete": False},
+            "batch-b": {"status": "in_progress", "is_complete": False},
+        }
+    )
+    candidates = [ReconciliationCandidate("default", "batch-a")] * 400 + [
+        ReconciliationCandidate("backup", "batch-b")
+    ]
+
+    with pytest.raises(Exception) as exc_info:
+        await reconcile_batch_candidates(client, candidates, max_jobs=2)
+
+    assert client.status_calls == []
+    assert client.download_calls == []
+    assert "batch-a" not in str(exc_info.value)
+    assert "batch-b" not in str(exc_info.value)
