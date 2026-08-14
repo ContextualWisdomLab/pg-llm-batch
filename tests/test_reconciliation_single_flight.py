@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import traceback
 from typing import Any
 
 import pytest
@@ -218,6 +219,31 @@ def test_single_flight_unconfirmed_release_fails_closed(release_result: Any) -> 
         "phase": "release",
         "reason": "lock_release_not_confirmed",
     }
+
+
+def test_unconfirmed_release_suppresses_sensitive_caller_traceback() -> None:
+    """A failed unlock must not expose a sensitive caller exception in evidence."""
+    sentinel = "caller payload secret"
+    cursor = RecordingCursor([(True,), (False,)])
+
+    with pytest.raises(ReconciliationSingleFlightError) as caught:
+        with reconciliation_single_flight(
+            cursor,
+            "tenant-a",
+            ReconciliationCandidate("gateway-a", "batch-1"),
+        ) as acquired:
+            assert acquired is True
+            raise RuntimeError(sentinel)
+
+    rendered = "".join(
+        traceback.format_exception(
+            type(caught.value),
+            caught.value,
+            caught.value.__traceback__,
+        )
+    )
+    assert caught.value.__suppress_context__ is True
+    assert sentinel not in rendered
 
 
 def test_single_flight_redacts_database_release_failure() -> None:
