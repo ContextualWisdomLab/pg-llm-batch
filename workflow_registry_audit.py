@@ -14,16 +14,16 @@ import json
 import os
 import re
 from datetime import datetime, timezone
+from http.client import HTTPException, HTTPSConnection
 from typing import Protocol
-from urllib.error import HTTPError, URLError
 from urllib.parse import quote
-from urllib.request import Request, urlopen
 
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
+_API_PATH_RE = re.compile(r"^/(?!/)[^\r\n]*$")
 _WORKFLOW_PREFIX = ".github/workflows/"
-_GITHUB_API_URL = "https://api.github.com"
+_GITHUB_API_HOST = "api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
 
@@ -55,25 +55,28 @@ class GitHubReadClient:
         self._timeout_seconds = timeout_seconds
 
     def get_json(self, path: str) -> dict[str, object]:
-        """Read one JSON object and replace transport/parser failures with fixed evidence."""
-        request = Request(
-            f"{_GITHUB_API_URL}{path}",
-            headers=self._headers(),
-            method="GET",
-        )
+        """Read one path-only GitHub API object over a fixed HTTPS origin."""
+        if not _API_PATH_RE.fullmatch(path):
+            raise WorkflowRegistryAuditError("GitHub API path is invalid")
+
+        connection = HTTPSConnection(_GITHUB_API_HOST, timeout=self._timeout_seconds)
         try:
-            with urlopen(request, timeout=self._timeout_seconds) as response:
-                raw = response.read()
+            connection.request("GET", path, headers=self._headers())
+            response = connection.getresponse()
+            if response.status // 100 != 2:
+                raise HTTPException("unexpected GitHub API response")
+            raw = response.read()
             payload = json.loads(raw.decode("utf-8"))
         except (
-            HTTPError,
-            URLError,
+            HTTPException,
             TimeoutError,
             OSError,
             UnicodeDecodeError,
             json.JSONDecodeError,
         ):
             raise WorkflowRegistryAuditError("GitHub workflow audit read failed") from None
+        finally:
+            connection.close()
         if not isinstance(payload, dict):
             raise WorkflowRegistryAuditError("GitHub workflow audit response is invalid")
         return payload
