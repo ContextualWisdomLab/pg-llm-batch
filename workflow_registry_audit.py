@@ -82,6 +82,15 @@ class GitHubReadClient:
             ) as session:
                 async with session.get(path, allow_redirects=False) as response:
                     if response.status // 100 != 2:
+                        remaining = response.headers.get("X-RateLimit-Remaining")
+                        retry_after = response.headers.get("Retry-After")
+                        if response.status == 429 or (
+                            response.status == 403
+                            and (remaining == "0" or retry_after is not None)
+                        ):
+                            raise WorkflowRegistryAuditError(
+                                "GitHub workflow audit rate limited"
+                            )
                         raise WorkflowRegistryAuditError(
                             "GitHub workflow audit read failed"
                         )
