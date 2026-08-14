@@ -10,6 +10,7 @@ from workflow_registry_audit import WorkflowRegistryAuditError, audit_repository
 
 
 PROTECTED_SHA = "d0a4b30be1f46536e352443309f3a35533156767"
+TREE_SHA = "61e02626f1184dede4990f06704574e878012336"
 REPOSITORY = "ContextualWisdomLab/pg-llm-batch"
 CAPTURED_AT = "2026-08-15T00:00:00Z"
 
@@ -61,9 +62,13 @@ def test_same_count_page_shift_is_not_accepted_as_stable_registry() -> None:
     client = _FakeClient(
         [
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/commits/{PROTECTED_SHA}",
+                {"sha": PROTECTED_SHA, "tree": {"sha": TREE_SHA}},
+            ),
+            _JsonRoute(
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 {
-                    "sha": PROTECTED_SHA,
+                    "sha": TREE_SHA,
                     "truncated": False,
                     "tree": [],
                 },
