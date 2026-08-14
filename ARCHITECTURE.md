@@ -57,11 +57,11 @@ mirrors and must be reapplied successfully more than once.
 
 ## Legacy provider-extension retirement
 
-Fresh installations do not create `http`, `pg_cron`, database-side provider
-networking, or an independent provider polling schedule. Existing volumes may
-still contain those extension surfaces. Their retirement is an explicit
-operator migration after the Python provider boundary and historical cleanup
-script are authoritative.
+Fresh installations do not create `http`, `pg_cron`, or database-side provider networking,
+or an independent provider polling schedule. Existing volumes may still contain
+those extension surfaces. Their retirement is an explicit operator migration
+after the Python provider boundary and historical cleanup script are
+authoritative.
 
 `docker/postgres/migrations/retire_legacy_provider_extensions.sql` owns only the
 database extension-removal step. It checks for every cron schedule and each
