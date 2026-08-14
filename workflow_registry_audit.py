@@ -237,7 +237,7 @@ def _read_protected_ref_sha(
     client: _JsonClient,
 ) -> str:
     """Resolve an exact protected branch head SHA from bounded GitHub metadata."""
-    encoded_ref = quote(protected_ref, safe="")
+    encoded_ref = quote(protected_ref, safe="/")
     payload = client.get_json(
         f"/repos/{repository_full_name}/git/ref/heads/{encoded_ref}"
     )
