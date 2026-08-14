@@ -284,3 +284,50 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT to_regprocedure('public.get_config_value(text)') IS NOT NULL")" = "t"
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT public.get_config_value('operator-marker')")" = "operator-preserved"
+
+# The preceding cases prove that cleanup preserves operator-modified helpers.
+# Remove only the fixture-owned substitute before exercising extension retirement.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "DROP FUNCTION public.get_config_value(text);"
+
+# A live operator cron schedule is independent authority. Retirement must refuse
+# it, preserve both extensions, and leave application evidence untouched.
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+SELECT cron.schedule(
+    'operator-maintenance',
+    '0 0 1 1 *',
+    $$SELECT 1;$$
+);
+SQL
+
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    < docker/postgres/migrations/retire_legacy_provider_extensions.sql; then
+  echo "retirement unexpectedly accepted an unrelated cron job" >&2
+  exit 1
+fi
+
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM cron.job WHERE jobname = 'operator-maintenance'")" = "1"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_cron', 'http')")" = "2"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT (to_regclass('public.gateway_retrieval_logs') IS NOT NULL)::int")" = "1"
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = 'operator-maintenance';"
+
+# Once every legacy helper and cron schedule is absent, retirement may remove
+# only the two extension-owned surfaces. Repeating the migration is idempotent.
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  < docker/postgres/migrations/retire_legacy_provider_extensions.sql
+
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_cron', 'http')")" = "0"
+if [[ "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT (to_regclass('public.gateway_retrieval_logs') IS NOT NULL)::int")" != "1" ]]; then
+  echo "retirement unexpectedly removed gateway_retrieval_logs" >&2
+  exit 1
+fi
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  < docker/postgres/migrations/retire_legacy_provider_extensions.sql
