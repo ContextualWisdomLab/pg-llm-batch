@@ -110,7 +110,7 @@ class FakeKVStore:
             }
             column_types = schema_types.get(table_name, {})
             return [
-                ("r", column_name, column_types[column_name])
+                ("r", column_name, column_types[column_name], True, True)
                 for column_name in sorted(requested_columns)
                 if column_name in column_types
             ]
