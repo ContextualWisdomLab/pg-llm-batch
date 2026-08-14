@@ -316,8 +316,56 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   "SELECT cron.unschedule(jobid) FROM cron.job WHERE jobname = 'operator-maintenance';"
 
-# Once every legacy helper and cron schedule is absent, retirement may remove
-# only the two extension-owned surfaces. Repeating the migration is idempotent.
+# RESTRICT still drops objects explicitly enrolled as extension members. Model
+# an accidental application-table enrollment and prove the migration rejects it
+# before the table or either extension can be removed.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "ALTER EXTENSION http ADD TABLE gateway_retrieval_logs;"
+
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    < docker/postgres/migrations/retire_legacy_provider_extensions.sql; then
+  echo "retirement unexpectedly accepted an application extension member" >&2
+  exit 1
+fi
+
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT (to_regclass('public.gateway_retrieval_logs') IS NOT NULL)::int")" = "1"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_cron', 'http')")" = "2"
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "ALTER EXTENSION http DROP TABLE gateway_retrieval_logs;"
+
+# DEPENDS ON EXTENSION creates an auto-extension dependency that is also dropped
+# under RESTRICT. Preserve such operator-owned routines for explicit disposition.
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE FUNCTION public.operator_retirement_dependency()
+RETURNS integer
+LANGUAGE sql
+IMMUTABLE
+AS $$SELECT 1$$;
+ALTER FUNCTION public.operator_retirement_dependency() DEPENDS ON EXTENSION http;
+SQL
+
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    < docker/postgres/migrations/retire_legacy_provider_extensions.sql; then
+  echo "retirement unexpectedly accepted an explicit extension dependency" >&2
+  exit 1
+fi
+
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT to_regprocedure('public.operator_retirement_dependency()') IS NOT NULL")" = "t"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_cron', 'http')")" = "2"
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+ALTER FUNCTION public.operator_retirement_dependency() NO DEPENDS ON EXTENSION http;
+DROP FUNCTION public.operator_retirement_dependency();
+SQL
+
+# Once every legacy helper, cron schedule, unexpected member, and explicit
+# extension dependency is absent, retirement may remove only the two intended
+# extension-owned surfaces. Repeating the migration is idempotent.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   < docker/postgres/migrations/retire_legacy_provider_extensions.sql
 
