@@ -11,7 +11,7 @@ PACKAGE_SCHEMA_PATH = Path("pg_llm_batch/schema.sql")
 DOCKER_SCHEMA_PATH = Path("docker/postgres/init/02_schema.sql")
 
 CONFIG_CONNECTION = "        self._conn = psycopg.connect(self.dsn)\n"
-CONFIG_LOAD_METHOD = "    def _load_cache(self) -> None:\n"
+CONFIG_GET_METHOD = "    def get(self, category: str, key: str, default: Any = None) -> Any:\n"
 SECRET_CLASS = "class SecretStore:\n"
 SECRET_ENCODE_METHOD = "    def _encode(self, raw: str) -> Tuple[str, bool]:\n"
 
@@ -20,18 +20,13 @@ CONFIG_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
             self._conn.autocommit = True
             self.cache: Dict[str, Dict[str, Any]] = {}
             self._ensure_table()
-            try:
-                self._load_cache()
-            except Exception:
-                raise ConfigError(
-                    "Configuration schema is unavailable or incompatible"
-                ) from None
         except BaseException:
             self.close()
             raise
 
     def _ensure_table(self) -> None:
         """Verify the provisioned config table without acquiring DDL authority."""
+        schema_ready = True
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -40,6 +35,8 @@ CONFIG_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
                     ("__pg_llm_batch_schema_probe__",),
                 )
         except Exception:
+            schema_ready = False
+        if not schema_ready:
             raise ConfigError(
                 "Configuration schema is unavailable or incompatible"
             ) from None
@@ -59,6 +56,7 @@ SECRET_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
 
     def _ensure_table(self) -> None:
         """Verify the provisioned secret table without acquiring DDL authority."""
+        schema_ready = True
         try:
             with self._conn.cursor() as cur:
                 cur.execute(
@@ -67,6 +65,8 @@ SECRET_RUNTIME_BLOCK = '''        self._conn = psycopg.connect(self.dsn)
                     ("__pg_llm_batch_schema_probe__",),
                 )
         except Exception:
+            schema_ready = False
+        if not schema_ready:
             raise ConfigError(
                 "Secret schema is unavailable or incompatible"
             ) from None
@@ -106,7 +106,7 @@ def _replace_runtime_blocks(source: str) -> str:
     """Replace constructor provisioning with read-only schema capability probes."""
     config_class = source.index("class PostgresConfigStore:")
     config_start = source.index(CONFIG_CONNECTION, config_class)
-    config_end = source.index(CONFIG_LOAD_METHOD, config_start)
+    config_end = source.index(CONFIG_GET_METHOD, config_start)
     source = source[:config_start] + CONFIG_RUNTIME_BLOCK + source[config_end:]
 
     secret_class = source.index(SECRET_CLASS)
@@ -132,6 +132,8 @@ def main() -> int:
     repaired_source = _replace_runtime_blocks(source)
     if "def _ensure_defaults" in repaired_source or "CREATE TABLE IF NOT EXISTS" in repaired_source:
         raise RuntimeError("runtime provisioning authority remained in config.py")
+    if "def _load_cache" in repaired_source:
+        raise RuntimeError("eager runtime cache loading remained after provisioning separation")
     if repaired_source.count("def _ensure_table") < 2:
         raise RuntimeError("runtime read-only setup seams were not preserved")
     CONFIG_PATH.write_text(repaired_source, encoding="utf-8")
