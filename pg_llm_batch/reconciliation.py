@@ -180,9 +180,7 @@ async def reconcile_batch_candidates(
                     candidate.endpoint_alias,
                 )
                 retrieval_succeeded = retrieval.get("success") is True
-                outcome = {True: "retrieved", False: "deferred"}[
-                    retrieval_succeeded
-                ]
+                outcome = "retrieved" if retrieval_succeeded else "deferred"
                 retrieved_count += int(retrieval_succeeded)
             else:
                 outcome = "polled"
