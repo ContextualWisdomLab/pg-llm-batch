@@ -16,7 +16,7 @@ The reference protected-main tree is `d0a4b30be1f46536e352443309f3a35533156767`.
 | FR-4 scheduler-independent bounded reconciliation | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/reconciliation.py` | reconciliation tests and protected-main release gates | Discovery #190 and single-flight #191 remain ACTIVE-PR; autonomous worker semantics remain PARTIAL. |
 | FR-4 durable reconciliation candidate discovery | ACTIVE-PR | none on protected main beyond existing lifecycle/read primitives | PR #190 exact-head evidence only | Not shipped; current review/infrastructure gates must not be transferred. |
 | FR-4 tenant-qualified cross-process single-flight | ACTIVE-PR | none on protected main beyond existing DB primitives | PR #191 exact-head evidence only | Not shipped; qualifying independent approval remains a live-governance concern. |
-| FR-4 durable result application + checkpoint coupling | PARTIAL | `pg_llm_batch/result_streaming.py`, `pg_llm_batch/checkpoint_store.py` provide streaming/checkpoint primitives | ADR 0006; ADR 0007; checkpoint/result-streaming tests; `docs/result-streaming.md` | Draft #194 is test-first ACTIVE-PR work; protected main does not claim end-to-end exactly-once application. |
+| FR-4 durable result application + checkpoint coupling | PARTIAL | `pg_llm_batch/result_streaming.py`, `pg_llm_batch/checkpoint_store.py` provide streaming/checkpoint primitives | ADR 0006; ADR 0007; checkpoint/result-streaming tests; `docs/result-streaming.md` | PR #194 is ACTIVE-PR test-first work that adds a same-transaction local result-effect/checkpoint seam; protected main still does not claim end-to-end or distributed exactly-once application. |
 | FR-5 package persistence integrity | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/db.py`, `pg_llm_batch/schema.sql`, Docker schema mirror | schema-integrity, payload, lifecycle, checkpoint migration tests | Existing-volume legacy-extension retirement is separately ACTIVE-PR #184. |
 | FR-5 legacy `http` / `pg_cron` authority retirement on existing volumes | ACTIVE-PR | protected main does not yet contain the retirement migration contract | PR #184 migration/smoke/operator evidence only | Must remain active until unchanged exact head satisfies migration/security/release/review gates and merges. |
 | FR-6 PostgreSQL-backed configuration/secrets | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/config.py`, schema | config/secret tests and bootstrap docs | Least-privilege separation of runtime store construction from schema provisioning is ACTIVE-PR #193 and currently writer-blocked. |
@@ -62,7 +62,7 @@ The following open pull requests are intentionally represented only as overlays 
 - **#191** — tenant-qualified reconciliation single-flight; not protected-main truth until live approval/gates and merge.
 - **#192** — this canonical PRD/TRD/fitness/traceability reconstruction itself.
 - **#193** — runtime-store/schema-provisioning separation; RED-only and writer-blocked in the current inventory.
-- **#194** — atomic local result-effect/checkpoint application; RED-only at its initial test head and not shipped.
+- **#194** — atomic local result-effect/checkpoint application; a current-main-compatible implementation is under review but remains an active overlay and is not shipped.
 
 This register is descriptive, not a substitute for refetching GitHub. Before changing a status, verify the PR still exists, its exact contributor head, live protected-main base, ancestry, current reviews/threads, exact-head gates, and resulting protected-main integration.
 
