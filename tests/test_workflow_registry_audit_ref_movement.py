@@ -13,6 +13,7 @@ from workflow_registry_audit import (
 
 
 PROTECTED_SHA = "d0a4b30be1f46536e352443309f3a35533156767"
+TREE_SHA = "61e02626f1184dede4990f06704574e878012336"
 MOVED_SHA = "f" * 40
 REPOSITORY = "ContextualWisdomLab/pg-llm-batch"
 
@@ -44,8 +45,14 @@ def _ref_payload(sha: str) -> dict[str, object]:
     return {"ref": "refs/heads/main", "object": {"sha": sha, "type": "commit"}}
 
 
+def _commit_payload() -> dict[str, object]:
+    """Return the protected commit with a distinct recursive-tree identity."""
+    return {"sha": PROTECTED_SHA, "tree": {"sha": TREE_SHA}}
+
+
 def _tree_payload() -> dict[str, object]:
-    return {"sha": PROTECTED_SHA, "truncated": False, "tree": []}
+    """Return the tree object referenced by the protected commit."""
+    return {"sha": TREE_SHA, "truncated": False, "tree": []}
 
 
 def test_initial_protected_ref_mismatch_fails_before_tree_or_registry_reads() -> None:
@@ -66,7 +73,8 @@ def test_protected_ref_movement_during_registry_scan_fails_closed() -> None:
     client = _FakeClient(
         [
             _Route("/git/ref/heads/main", _ref_payload(PROTECTED_SHA)),
-            _Route(f"/git/trees/{PROTECTED_SHA}?recursive=1", _tree_payload()),
+            _Route(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
+            _Route(f"/git/trees/{TREE_SHA}?recursive=1", _tree_payload()),
             _Route(
                 "/actions/workflows?per_page=100&page=1",
                 {"total_count": 0, "workflows": []},
