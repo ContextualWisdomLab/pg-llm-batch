@@ -258,12 +258,14 @@ def test_runtime_store_rejects_selectable_view_or_wrong_column_type(
         if store_kind == "config"
         else "Secret schema is unavailable or incompatible"
     )
-    with pytest.raises(ConfigError, match=f"^{expected_message}$") as caught:
+    with pytest.raises(ConfigError) as caught:
         if store_kind == "config":
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore("postgresql://runtime")
 
+    assert caught.value.message == expected_message
+    assert caught.value.error_code == "CONFIG_ERROR"
     assert fake.connection.closed is True
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
@@ -299,12 +301,14 @@ def test_runtime_store_rejects_insufficient_runtime_read_privileges(
         if store_kind == "config"
         else "Secret schema is unavailable or incompatible"
     )
-    with pytest.raises(ConfigError, match=f"^{expected_message}$") as caught:
+    with pytest.raises(ConfigError) as caught:
         if store_kind == "config":
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore("postgresql://runtime")
 
+    assert caught.value.message == expected_message
+    assert caught.value.error_code == "CONFIG_ERROR"
     assert fake.connection.closed is True
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
