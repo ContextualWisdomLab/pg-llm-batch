@@ -118,7 +118,7 @@ def test_exact_path_presence_drives_classification_not_workflow_name() -> None:
 
 
 def test_registry_pagination_is_complete_and_receipted() -> None:
-    """The detector reads every page required by the first stable total count."""
+    """The detector verifies a complete multi-page registry twice before receipt."""
     first_page = [
         _workflow(index, f".github/workflows/old-{index}.yml", state="disabled_manually")
         for index in range(1, 101)
@@ -129,6 +129,14 @@ def test_registry_pagination_is_complete_and_receipted() -> None:
             _JsonRoute(
                 f"/git/trees/{PROTECTED_SHA}?recursive=1",
                 _tree_payload(".github/workflows/ci.yml"),
+            ),
+            _JsonRoute(
+                "/actions/workflows?per_page=100&page=1",
+                {"total_count": 101, "workflows": first_page},
+            ),
+            _JsonRoute(
+                "/actions/workflows?per_page=100&page=2",
+                {"total_count": 101, "workflows": second_page},
             ),
             _JsonRoute(
                 "/actions/workflows?per_page=100&page=1",
