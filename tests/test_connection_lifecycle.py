@@ -206,7 +206,7 @@ def test_secret_store_constructor_closes_connection_after_setup_failure(
     monkeypatch.setattr(SecretStore, "_ensure_table", fail_table_setup)
 
     with pytest.raises(RuntimeError, match="secret setup failed"):
-        SecretStore("postgresql://example")
+        SecretStore("postgresql://example", require_encryption=False)
 
     assert connection.closed is True
 
