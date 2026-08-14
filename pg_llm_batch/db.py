@@ -14,6 +14,7 @@ import logging
 import re
 from collections.abc import Mapping
 from datetime import datetime, timezone
+from math import isfinite
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -81,6 +82,14 @@ _REMOTE_BATCH_STATE_FIELDS = (
 )
 
 
+class VirtualPayloadIntegrityError(RuntimeError):
+    """Signal that package-owned persisted virtual JSONL failed validation."""
+
+    def __init__(self) -> None:
+        """Create the fixed content-free durable-payload integrity error."""
+        super().__init__("Stored virtual payload failed integrity validation")
+
+
 def _require_psycopg() -> None:
     """Raise a clear error when the optional psycopg dependency is unavailable."""
     if psycopg is None:  # pragma: no cover
@@ -98,7 +107,7 @@ def apply_schema(dsn: str) -> None:
 
 
 def load_virtual_payload(dsn: str, file_id: str) -> Optional[str]:
-    """Load a stored JSONL payload as a newline-terminated string."""
+    """Load one canonical package-owned JSONL payload or fail closed."""
     _require_psycopg()
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
@@ -112,16 +121,65 @@ def load_virtual_payload(dsn: str, file_id: str) -> Optional[str]:
             return _normalize_payload_content(row[0])
 
 
+def _json_object_without_duplicate_members(pairs: list[tuple[str, Any]]) -> Dict[str, Any]:
+    """Build one JSON object while rejecting duplicate member names."""
+    result: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON member")
+        result[key] = value
+    return result
+
+
+def _finite_json_float(token: str) -> float:
+    """Parse one JSON float while rejecting exponent overflow to infinity."""
+    value = float(token)
+    if not isfinite(value):
+        raise ValueError("non-finite JSON float")
+    return value
+
+
+def _reject_json_constant(_token: str) -> None:
+    """Reject JSON decoder extensions such as NaN and Infinity."""
+    raise ValueError("non-finite JSON constant")
+
+
+def _is_canonical_json_object_line(line: str) -> bool:
+    """Return whether one persisted JSONL line is a strict finite JSON object."""
+    try:
+        parsed = json.loads(
+            line,
+            object_pairs_hook=_json_object_without_duplicate_members,
+            parse_float=_finite_json_float,
+            parse_constant=_reject_json_constant,
+        )
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        return False
+    return type(parsed) is dict
+
+
 def _normalize_payload_content(content: Any) -> str:
-    """Coerce stored JSONB payload content back into raw JSONL text."""
-    if isinstance(content, dict):
-        text = content.get("text", "")
-    elif isinstance(content, str):
-        text = content
-    else:  # pragma: no cover - defensive
-        text = str(content)
-    if text and not text.endswith("\n"):
-        text += "\n"
+    """Validate canonical persisted JSONL and return its exact stored text."""
+    valid_shape = type(content) is dict and set(content) == {"text", "line_count"}
+    if not valid_shape:
+        raise VirtualPayloadIntegrityError()
+    text = content["text"]
+    line_count = content["line_count"]
+    if type(text) is not str or type(line_count) is not int or line_count < 0:
+        raise VirtualPayloadIntegrityError()
+    if line_count == 0:
+        if text != "":
+            raise VirtualPayloadIntegrityError()
+        return text
+    if not text.endswith("\n"):
+        raise VirtualPayloadIntegrityError()
+    lines = text[:-1].split("\n")
+    if (
+        len(lines) != line_count
+        or any(not line for line in lines)
+        or any(not _is_canonical_json_object_line(line) for line in lines)
+    ):
+        raise VirtualPayloadIntegrityError()
     return text
 
 
