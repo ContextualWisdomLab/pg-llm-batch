@@ -92,6 +92,8 @@ class FakeKVStore:
             return []  # no DB tokenizer mapping in unit tests
 
         # --- provisioned runtime store catalog ------------------------------
+        if "pg_catalog.pg_index" in s:
+            return [(True,)]
         if "from pg_catalog.pg_class" in s:
             table_name, requested_columns = params
             schema_types = {
