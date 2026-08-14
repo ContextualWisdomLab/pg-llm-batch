@@ -58,7 +58,9 @@ def test_pg_tiktoken_counts_tokens(dsn):
 def test_end_to_end_batch_assembly(dsn):
     config = PostgresConfigStore(dsn)
     config.set("gateway", "base_url", "https://gw.invalid/v1")
-    SecretStore(dsn).set_secret("gateway_api_key.default", "sk-int-test")
+    SecretStore(dsn, require_encryption=False).set_secret(
+        "gateway_api_key.default", "sk-int-test"
+    )
 
     import psycopg
 
