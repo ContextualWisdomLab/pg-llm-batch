@@ -22,225 +22,47 @@ jobs:
       contents: write
     steps:
       - name: Harden runner
-        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40
         with:
           egress-policy: audit
 
       - name: Check out exact repair head
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact source and observe RED
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14"
+
+      - name: Set up repository toolchain
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        with:
+          version: "0.12.3"
+          prune-cache: true
+
+      - name: Verify exact RED source
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          python3 -m compileall -q tests/test_runtime_store_provisioning_boundary.py
-          if PYTHONPATH=. python3 -m pytest -q tests/test_runtime_store_provisioning_boundary.py; then
+          uv sync --locked
+          if uv run pytest -q tests/test_runtime_store_provisioning_boundary.py; then
             echo "runtime provisioning contract unexpectedly passed before implementation" >&2
             exit 1
           fi
 
-      - name: Separate runtime access from provisioning
+      - name: Apply bounded GREEN repair
+        run: uv run python scripts/repair_runtime_store_provisioning.py
+
+      - name: Verify focused and repository contracts
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-
-          config_path = Path("pg_llm_batch/config.py")
-          source = config_path.read_text(encoding="utf-8")
-
-          old_config = '''        self._conn = psycopg.connect(self.dsn)
-          try:
-              self._conn.autocommit = True
-              self.cache: Dict[str, Dict[str, Any]] = {}
-              self._ensure_table()
-              self._ensure_defaults()
-              self._load_cache()
-          except BaseException:
-              self.close()
-              raise
-
-      def _ensure_table(self) -> None:
-          """Create the ``com_config`` table if it does not already exist."""
-          with self._conn.cursor() as cur:
-              cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_config") is interpolated; every value is bound via %s placeholders.
-                  f"""
-                  CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                      config_key TEXT PRIMARY KEY,
-                      config_value TEXT NOT NULL,
-                      config_description TEXT,
-                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                  )
-                  """
-              )
-
-      def _ensure_defaults(self) -> None:
-          """Insert any missing default config rows without overwriting existing ones."""
-          with self._conn.cursor() as cur:
-              for item in DEFAULT_CONFIG_INDEX.values():
-                  cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
-                      f"""
-                      INSERT INTO {self.TABLE_NAME}
-                          (config_key, config_value, config_description)
-                      VALUES (%s, %s, %s)
-                      ON CONFLICT (config_key) DO NOTHING
-                      """,
-                      (
-                          f"{item['category']}.{item['key']}",
-                          _serialize_value(item["value"]),
-                          item["description"],
-                      ),
-                  )
-
-      def _load_cache(self) -> None:
-'''.replace("      ", "    ")
-
-          new_config = '''        self._conn = psycopg.connect(self.dsn)
-          try:
-              self._conn.autocommit = True
-              self.cache: Dict[str, Dict[str, Any]] = {}
-              schema_ready = True
-              try:
-                  self._verify_schema()
-                  self._load_cache()
-              except Exception:
-                  schema_ready = False
-              if not schema_ready:
-                  self.close()
-                  raise ConfigError(
-                      "Configuration schema is unavailable or incompatible"
-                  ) from None
-          except BaseException:
-              self.close()
-              raise
-
-      def _verify_schema(self) -> None:
-          """Verify the provisioned config table without acquiring DDL authority."""
-          with self._conn.cursor() as cur:
-              cur.execute(
-                  f"SELECT config_key, config_value, config_description, updated_at "
-                  f"FROM {self.TABLE_NAME} WHERE config_key = %s",
-                  ("__pg_llm_batch_schema_probe__",),
-              )
-
-      def _load_cache(self) -> None:
-'''.replace("      ", "    ")
-
-          if source.count(old_config) != 1:
-              raise SystemExit("config constructor provisioning anchor changed")
-          source = source.replace(old_config, new_config, 1)
-
-          old_secret = '''            self._fernet = None
-              if fernet_key and Fernet is not None:
-                  self._fernet = Fernet(fernet_key.encode("utf-8"))
-              self._ensure_table()
-          except BaseException:
-              self.close()
-              raise
-
-      def _ensure_table(self) -> None:
-          """Create the ``com_secrets`` table if it does not already exist."""
-          with self._conn.cursor() as cur:
-              cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_secrets") is interpolated; every value is bound via %s placeholders.
-                  f"""
-                  CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                      secret_key TEXT PRIMARY KEY,
-                      secret_value TEXT NOT NULL,
-                      is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
-                      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                  )
-                  """
-              )
-
-      def _encode(self, raw: str) -> Tuple[str, bool]:
-'''.replace("      ", "    ")
-
-          new_secret = '''            self._fernet = None
-              if fernet_key and Fernet is not None:
-                  self._fernet = Fernet(fernet_key.encode("utf-8"))
-              schema_ready = True
-              try:
-                  self._verify_schema()
-              except Exception:
-                  schema_ready = False
-              if not schema_ready:
-                  self.close()
-                  raise ConfigError(
-                      "Secret schema is unavailable or incompatible"
-                  ) from None
-          except BaseException:
-              self.close()
-              raise
-
-      def _verify_schema(self) -> None:
-          """Verify the provisioned secret table without acquiring DDL authority."""
-          with self._conn.cursor() as cur:
-              cur.execute(
-                  f"SELECT secret_key, secret_value, is_encrypted, updated_at "
-                  f"FROM {self.TABLE_NAME} WHERE secret_key = %s",
-                  ("__pg_llm_batch_schema_probe__",),
-              )
-
-      def _encode(self, raw: str) -> Tuple[str, bool]:
-'''.replace("      ", "    ")
-
-          if source.count(old_secret) != 1:
-              raise SystemExit("secret constructor provisioning anchor changed")
-          config_path.write_text(source.replace(old_secret, new_secret, 1), encoding="utf-8")
-
-          schema_path = Path("pg_llm_batch/schema.sql")
-          schema = schema_path.read_text(encoding="utf-8")
-          table_anchor = '''CREATE TABLE IF NOT EXISTS com_secrets (
-              secret_key TEXT PRIMARY KEY,
-              secret_value TEXT NOT NULL,
-              is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
-              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-          );
-'''.replace("          ", "")
-          seed_sql = '''
-
-          -- Provision built-in configuration only at the explicit schema boundary.
-          -- Existing operator values are never overwritten during upgrades or replay.
-          INSERT INTO com_config (config_key, config_value, config_description)
-          VALUES
-              ('batch_size.min', '100', 'Batch request size limit'),
-              ('batch_size.default', '50000', 'Batch request size limit'),
-              ('batch_size.max', '50000', 'Batch request size limit'),
-              ('token_limits.per_batch', '5000000000', 'Token count limits'),
-              ('token_limits.per_request', '128000', 'Token count limits'),
-              ('token_limits.buffer_percentage', '5', 'Token count limits'),
-              ('azure_limits.max_records_per_file', '100000', 'Batch upload constraints'),
-              ('azure_limits.max_bytes_per_file', '209715200', 'Batch upload constraints'),
-              ('azure_limits.max_files_per_job', '500', 'Batch upload constraints'),
-              ('optimization.auto_split', 'true', 'Optimization features'),
-              ('optimization.smart_batching', 'true', 'Optimization features')
-          ON CONFLICT (config_key) DO NOTHING;
-'''.replace("          ", "")
-          if schema.count(table_anchor) != 1:
-              raise SystemExit("schema provisioning anchor changed")
-          schema = schema.replace(table_anchor, table_anchor + seed_sql, 1)
-          schema_path.write_text(schema, encoding="utf-8")
-          Path("docker/postgres/init/02_schema.sql").write_text(schema, encoding="utf-8")
-          PY
-
-      - name: Verify GREEN and repository quality
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 -m compileall -q pg_llm_batch tests/test_runtime_store_provisioning_boundary.py
-          PYTHONPATH=. python3 -m pytest -q tests/test_runtime_store_provisioning_boundary.py
-          python3 - <<'PY'
-          from pathlib import Path
-          assert Path("pg_llm_batch/schema.sql").read_bytes() == Path("docker/postgres/init/02_schema.sql").read_bytes()
-          PY
-
-          python3 -m pip install --disable-pip-version-check uv==0.12.3
-          uv sync --locked
+          uv run pytest -q tests/test_runtime_store_provisioning_boundary.py
           uv run pytest -q -m "not integration"
           uv run ruff check pg_llm_batch tests
           uv run python -m compileall -q pg_llm_batch
@@ -248,9 +70,11 @@ jobs:
             --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
           uv lock --check
           uv build --no-sources
+          test "$(sha256sum pg_llm_batch/schema.sql | cut -d' ' -f1)" = \
+               "$(sha256sum docker/postgres/init/02_schema.sql | cut -d' ' -f1)"
           git diff --check
 
-      - name: Commit verified repair and remove temporary workflow
+      - name: Commit verified repair and remove temporary helpers
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -260,16 +84,17 @@ jobs:
           authenticated_remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           remote_head="$(git ls-remote "$authenticated_remote" "refs/heads/${BRANCH_NAME}" | awk '{print $1}')"
           test "$remote_head" = "$GITHUB_SHA"
-
-          rm -- .github/workflows/repair-runtime-store-provisioning.yml
+          rm -- \
+            .github/workflows/repair-runtime-store-provisioning.yml \
+            scripts/repair_runtime_store_provisioning.py
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add \
             pg_llm_batch/config.py \
             pg_llm_batch/schema.sql \
             docker/postgres/init/02_schema.sql \
-            tests/test_runtime_store_provisioning_boundary.py \
-            .github/workflows/repair-runtime-store-provisioning.yml
+            .github/workflows/repair-runtime-store-provisioning.yml \
+            scripts/repair_runtime_store_provisioning.py
           git commit -m "fix(config): separate runtime stores from provisioning"
           git remote set-url origin "$authenticated_remote"
           git push origin "HEAD:refs/heads/${BRANCH_NAME}"
