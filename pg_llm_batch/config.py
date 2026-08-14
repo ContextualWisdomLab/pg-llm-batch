@@ -174,53 +174,26 @@ class PostgresConfigStore:
             self._conn.autocommit = True
             self.cache: Dict[str, Dict[str, Any]] = {}
             self._ensure_table()
-            self._ensure_defaults()
-            self._load_cache()
         except BaseException:
             self.close()
             raise
 
     def _ensure_table(self) -> None:
-        """Create the ``com_config`` table if it does not already exist."""
-        with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_config") is interpolated; every value is bound via %s placeholders.
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    config_key TEXT PRIMARY KEY,
-                    config_value TEXT NOT NULL,
-                    config_description TEXT,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        """Verify the provisioned config table without acquiring DDL authority."""
+        schema_ready = True
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT config_key, config_value, config_description, updated_at "
+                    f"FROM {self.TABLE_NAME} WHERE config_key = %s",
+                    ("__pg_llm_batch_schema_probe__",),
                 )
-                """
-            )
-
-    def _ensure_defaults(self) -> None:
-        """Insert any missing default config rows without overwriting existing ones."""
-        with self._conn.cursor() as cur:
-            for item in DEFAULT_CONFIG_INDEX.values():
-                cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
-                    f"""
-                    INSERT INTO {self.TABLE_NAME}
-                        (config_key, config_value, config_description)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (config_key) DO NOTHING
-                    """,
-                    (
-                        f"{item['category']}.{item['key']}",
-                        _serialize_value(item["value"]),
-                        item["description"],
-                    ),
-                )
-
-    def _load_cache(self) -> None:
-        """Reload the in-memory cache from every row in the config table."""
-        self.cache.clear()
-        with self._conn.cursor() as cur:
-            cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; no user input reaches the query.
-            for config_key, config_value in cur.fetchall():
-                category, key = _split_full_key(config_key)
-                value = _deserialize_value(config_key, config_value)
-                self.cache.setdefault(category, {})[key] = value
+        except Exception:
+            schema_ready = False
+        if not schema_ready:
+            raise ConfigError(
+                "Configuration schema is unavailable or incompatible"
+            ) from None
 
     def get(self, category: str, key: str, default: Any = None) -> Any:
         """Return a typed value without exposing mutable cache-owned state."""
@@ -328,18 +301,21 @@ class SecretStore:
             raise
 
     def _ensure_table(self) -> None:
-        """Create the ``com_secrets`` table if it does not already exist."""
-        with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_secrets") is interpolated; every value is bound via %s placeholders.
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    secret_key TEXT PRIMARY KEY,
-                    secret_value TEXT NOT NULL,
-                    is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        """Verify the provisioned secret table without acquiring DDL authority."""
+        schema_ready = True
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT secret_key, secret_value, is_encrypted, updated_at "
+                    f"FROM {self.TABLE_NAME} WHERE secret_key = %s",
+                    ("__pg_llm_batch_schema_probe__",),
                 )
-                """
-            )
+        except Exception:
+            schema_ready = False
+        if not schema_ready:
+            raise ConfigError(
+                "Secret schema is unavailable or incompatible"
+            ) from None
 
     def _encode(self, raw: str) -> Tuple[str, bool]:
         """Encode a secret for storage, returning the text and whether it is encrypted."""
