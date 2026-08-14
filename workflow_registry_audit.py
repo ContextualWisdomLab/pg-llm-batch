@@ -14,6 +14,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from typing import Protocol
 from urllib.parse import quote
@@ -249,12 +250,25 @@ def _read_protected_workflow_paths(
     protected_sha: str,
     client: _JsonClient,
 ) -> set[str]:
-    """Read exact protected-tree workflow blob paths or fail closed."""
-    payload = client.get_json(
-        f"/repos/{repository_full_name}/git/trees/{protected_sha}?recursive=1"
+    """Resolve a protected commit to its exact tree and return workflow blob paths."""
+    commit_payload = client.get_json(
+        f"/repos/{repository_full_name}/git/commits/{protected_sha}"
     )
-    if payload.get("sha") != protected_sha:
-        raise WorkflowRegistryAuditError("protected tree SHA does not match requested SHA")
+    if commit_payload.get("sha") != protected_sha:
+        raise WorkflowRegistryAuditError("protected commit response is invalid")
+    commit_tree = commit_payload.get("tree")
+    if not isinstance(commit_tree, dict):
+        raise WorkflowRegistryAuditError("protected commit response is invalid")
+    tree_sha = commit_tree.get("sha")
+    if not isinstance(tree_sha, str) or not _SHA_RE.fullmatch(tree_sha):
+        raise WorkflowRegistryAuditError("protected commit response is invalid")
+    tree_sha = tree_sha.lower()
+
+    payload = client.get_json(
+        f"/repos/{repository_full_name}/git/trees/{tree_sha}?recursive=1"
+    )
+    if payload.get("sha") != tree_sha:
+        raise WorkflowRegistryAuditError("protected tree SHA does not match commit tree SHA")
     if payload.get("truncated") is not False:
         raise WorkflowRegistryAuditError("protected tree is truncated")
     tree = payload.get("tree")
@@ -467,7 +481,7 @@ def main(argv: list[str] | None = None) -> int:
             client=client,
         )
     except WorkflowRegistryAuditError as exc:
-        print(f"workflow_registry_audit: {exc}", file=os.sys.stderr)
+        print(f"workflow_registry_audit: {exc}", file=sys.stderr)
         return 1
 
     print(json.dumps(receipt, sort_keys=True, separators=(",", ":")))
