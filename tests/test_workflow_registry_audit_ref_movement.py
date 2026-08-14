@@ -72,6 +72,22 @@ def test_initial_protected_ref_mismatch_fails_before_tree_or_registry_reads() ->
         )
 
 
+@pytest.mark.parametrize("protected_ref", ["refs/heads/main", "heads/main"])
+def test_namespace_like_protected_ref_is_rejected_before_github_reads(
+    protected_ref: str,
+) -> None:
+    """Git ref namespace prefixes cannot masquerade as ordinary branch names."""
+    client = _FakeClient([])
+
+    with pytest.raises(WorkflowRegistryAuditError, match="safe branch name"):
+        audit_live_protected_ref_workflows(
+            repository_full_name=REPOSITORY,
+            protected_ref=protected_ref,
+            expected_protected_sha=PROTECTED_SHA,
+            client=client,
+        )
+
+
 def test_slash_protected_ref_preserves_github_ref_path_shape() -> None:
     """A valid slash-bearing branch uses GitHub's documented heads/<branch> path."""
     protected_ref = "release/1.0"
