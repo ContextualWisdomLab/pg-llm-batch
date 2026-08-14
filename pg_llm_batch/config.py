@@ -172,8 +172,9 @@ def _schema_is_compatible(
     connection: Any,
     table_name: str,
     expected_columns: Dict[str, str],
+    storage_key: str,
 ) -> bool:
-    """Return whether the runtime role can read the expected provisioned base table."""
+    """Return whether runtime reads and keyed writes match the provisioned base table."""
     column_names = sorted(expected_columns)
     expected_rows = [
         ("r", column_name, expected_columns[column_name], True, True)
@@ -199,7 +200,34 @@ def _schema_is_compatible(
                 """,
                 (table_name, column_names),
             )
-            return cur.fetchall() == expected_rows
+            if cur.fetchall() != expected_rows:
+                return False
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_catalog.pg_class AS cls
+                    JOIN pg_catalog.pg_attribute AS key_attr
+                      ON key_attr.attrelid = cls.oid
+                    JOIN pg_catalog.pg_index AS idx
+                      ON idx.indrelid = cls.oid
+                     AND idx.indisunique
+                     AND idx.indisvalid
+                     AND idx.indisready
+                     AND idx.indpred IS NULL
+                     AND idx.indexprs IS NULL
+                     AND idx.indnkeyatts = 1
+                     AND key_attr.attnum = ANY(idx.indkey::smallint[])
+                    WHERE cls.oid = pg_catalog.to_regclass(%s)
+                      AND key_attr.attname = %s
+                      AND key_attr.attnum > 0
+                      AND NOT key_attr.attisdropped
+                )
+                """,
+                (table_name, storage_key),
+            )
+            unique_row = cur.fetchone()
+            return unique_row == (True,)
     except Exception:
         return False
 
@@ -233,6 +261,7 @@ class PostgresConfigStore:
             self._conn,
             self.TABLE_NAME,
             _CONFIG_SCHEMA_TYPES,
+            "config_key",
         ):
             raise ConfigError(
                 "Configuration schema is unavailable or incompatible"
@@ -357,6 +386,7 @@ class SecretStore:
             self._conn,
             self.TABLE_NAME,
             _SECRET_SCHEMA_TYPES,
+            "secret_key",
         ):
             raise ConfigError(
                 "Secret schema is unavailable or incompatible"
