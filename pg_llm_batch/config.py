@@ -62,6 +62,19 @@ DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
     },
 }
 
+_CONFIG_SCHEMA_TYPES: Dict[str, str] = {
+    "config_description": "text",
+    "config_key": "text",
+    "config_value": "text",
+    "updated_at": "timestamp with time zone",
+}
+_SECRET_SCHEMA_TYPES: Dict[str, str] = {
+    "is_encrypted": "boolean",
+    "secret_key": "text",
+    "secret_value": "text",
+    "updated_at": "timestamp with time zone",
+}
+
 
 def _build_default_index(
     tree: Dict[str, Dict[str, Any]]
@@ -155,6 +168,40 @@ def _split_full_key(full_key: str) -> Tuple[str, str]:
     return "global", full_key
 
 
+def _schema_is_compatible(
+    connection: Any,
+    table_name: str,
+    expected_columns: Dict[str, str],
+) -> bool:
+    """Return whether one search-path-resolved relation is the expected base table."""
+    column_names = sorted(expected_columns)
+    expected_rows = [
+        ("r", column_name, expected_columns[column_name])
+        for column_name in column_names
+    ]
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT cls.relkind,
+                       attr.attname,
+                       pg_catalog.format_type(attr.atttypid, attr.atttypmod)
+                FROM pg_catalog.pg_class AS cls
+                JOIN pg_catalog.pg_attribute AS attr
+                  ON attr.attrelid = cls.oid
+                WHERE cls.oid = pg_catalog.to_regclass(%s)
+                  AND attr.attnum > 0
+                  AND NOT attr.attisdropped
+                  AND attr.attname = ANY(%s::text[])
+                ORDER BY attr.attname
+                """,
+                (table_name, column_names),
+            )
+            return cur.fetchall() == expected_rows
+    except Exception:
+        return False
+
+
 class PostgresConfigStore:
     """PostgreSQL-backed KV configuration store (``com_config`` table)."""
 
@@ -180,17 +227,11 @@ class PostgresConfigStore:
 
     def _ensure_table(self) -> None:
         """Verify the provisioned config table without acquiring DDL authority."""
-        schema_ready = True
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT config_key, config_value, config_description, updated_at "
-                    f"FROM {self.TABLE_NAME} WHERE config_key = %s",
-                    ("__pg_llm_batch_schema_probe__",),
-                )
-        except Exception:
-            schema_ready = False
-        if not schema_ready:
+        if not _schema_is_compatible(
+            self._conn,
+            self.TABLE_NAME,
+            _CONFIG_SCHEMA_TYPES,
+        ):
             raise ConfigError(
                 "Configuration schema is unavailable or incompatible"
             ) from None
@@ -302,17 +343,11 @@ class SecretStore:
 
     def _ensure_table(self) -> None:
         """Verify the provisioned secret table without acquiring DDL authority."""
-        schema_ready = True
-        try:
-            with self._conn.cursor() as cur:
-                cur.execute(
-                    f"SELECT secret_key, secret_value, is_encrypted, updated_at "
-                    f"FROM {self.TABLE_NAME} WHERE secret_key = %s",
-                    ("__pg_llm_batch_schema_probe__",),
-                )
-        except Exception:
-            schema_ready = False
-        if not schema_ready:
+        if not _schema_is_compatible(
+            self._conn,
+            self.TABLE_NAME,
+            _SECRET_SCHEMA_TYPES,
+        ):
             raise ConfigError(
                 "Secret schema is unavailable or incompatible"
             ) from None
