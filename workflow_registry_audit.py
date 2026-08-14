@@ -10,20 +10,22 @@ operator review, not automatic disable decisions.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
 from datetime import datetime, timezone
-from http.client import HTTPException, HTTPSConnection
 from typing import Protocol
 from urllib.parse import quote
+
+import aiohttp
 
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _API_PATH_RE = re.compile(r"^/(?!/)[^\r\n]*$")
 _WORKFLOW_PREFIX = ".github/workflows/"
-_GITHUB_API_HOST = "api.github.com"
+_GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
 
@@ -55,28 +57,44 @@ class GitHubReadClient:
         self._timeout_seconds = timeout_seconds
 
     def get_json(self, path: str) -> dict[str, object]:
-        """Read one path-only GitHub API object over a fixed HTTPS origin."""
+        """Read one path-only GitHub API object over a fixed verified-TLS origin."""
         if not _API_PATH_RE.fullmatch(path):
             raise WorkflowRegistryAuditError("GitHub API path is invalid")
-
-        connection = HTTPSConnection(_GITHUB_API_HOST, timeout=self._timeout_seconds)
         try:
-            connection.request("GET", path, headers=self._headers())
-            response = connection.getresponse()
-            if response.status // 100 != 2:
-                raise HTTPException("unexpected GitHub API response")
-            raw = response.read()
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            raise WorkflowRegistryAuditError(
+                "GitHub workflow audit sync client cannot run inside an active event loop"
+            )
+        return asyncio.run(self._get_json(path))
+
+    async def _get_json(self, path: str) -> dict[str, object]:
+        """Perform one fixed-origin aiohttp GET with redirects disabled."""
+        timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
+        try:
+            async with aiohttp.ClientSession(
+                base_url=_GITHUB_API_URL,
+                headers=self._headers(),
+                timeout=timeout,
+            ) as session:
+                async with session.get(path, allow_redirects=False) as response:
+                    if response.status // 100 != 2:
+                        raise WorkflowRegistryAuditError(
+                            "GitHub workflow audit read failed"
+                        )
+                    raw = await response.read()
             payload = json.loads(raw.decode("utf-8"))
+        except WorkflowRegistryAuditError:
+            raise
         except (
-            HTTPException,
-            TimeoutError,
-            OSError,
+            aiohttp.ClientError,
+            asyncio.TimeoutError,
             UnicodeDecodeError,
             json.JSONDecodeError,
         ):
             raise WorkflowRegistryAuditError("GitHub workflow audit read failed") from None
-        finally:
-            connection.close()
         if not isinstance(payload, dict):
             raise WorkflowRegistryAuditError("GitHub workflow audit response is invalid")
         return payload
