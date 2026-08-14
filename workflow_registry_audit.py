@@ -460,6 +460,8 @@ def _validate_protected_ref(protected_ref: str) -> None:
         or protected_ref.endswith("/")
         or "//" in protected_ref
         or "@{" in protected_ref
+        or protected_ref.startswith("refs/")
+        or protected_ref.startswith("heads/")
         or any(component in {"", ".", ".."} for component in protected_ref.split("/"))
     ):
         raise WorkflowRegistryAuditError("protected_ref must be a safe branch name")
