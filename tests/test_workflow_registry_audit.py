@@ -16,6 +16,7 @@ from workflow_registry_audit import (
 
 
 PROTECTED_SHA = "d0a4b30be1f46536e352443309f3a35533156767"
+TREE_SHA = "61e02626f1184dede4990f06704574e878012336"
 REPOSITORY = "ContextualWisdomLab/pg-llm-batch"
 CAPTURED_AT = "2026-08-15T00:00:00Z"
 
@@ -45,9 +46,15 @@ class _FakeClient:
         return route.payload
 
 
+def _commit_payload() -> dict[str, object]:
+    """Return a commit response whose tree identity differs from the commit SHA."""
+    return {"sha": PROTECTED_SHA, "tree": {"sha": TREE_SHA}}
+
+
 def _tree_payload(*paths: str, truncated: bool = False) -> dict[str, object]:
+    """Return the recursive tree object resolved from the protected commit."""
     return {
-        "sha": PROTECTED_SHA,
+        "sha": TREE_SHA,
         "truncated": truncated,
         "tree": [
             {"path": path, "type": "blob", "sha": f"blob-{index}"}
@@ -69,8 +76,9 @@ def test_exact_path_presence_drives_classification_not_workflow_name() -> None:
     """One-shot-like names stay safe when their exact protected path exists."""
     client = _FakeClient(
         [
+            _JsonRoute(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 _tree_payload(
                     ".github/workflows/ci.yml",
                     ".github/workflows/one-shot-legitimate.yml",
@@ -124,8 +132,9 @@ def test_registry_pagination_is_complete_and_receipted() -> None:
     second_page = [_workflow(101, ".github/workflows/ci.yml")]
     client = _FakeClient(
         [
+            _JsonRoute(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 _tree_payload(".github/workflows/ci.yml"),
             ),
             _JsonRoute(
@@ -164,8 +173,9 @@ def test_incomplete_pagination_fails_closed() -> None:
     """An empty page before the advertised total is not accepted as complete."""
     client = _FakeClient(
         [
+            _JsonRoute(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 _tree_payload(".github/workflows/ci.yml"),
             ),
             _JsonRoute(
@@ -192,8 +202,9 @@ def test_registry_change_during_pagination_fails_closed() -> None:
     """A moving registry cannot be presented as one coherent audit receipt."""
     client = _FakeClient(
         [
+            _JsonRoute(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 _tree_payload(".github/workflows/ci.yml"),
             ),
             _JsonRoute(
@@ -226,8 +237,9 @@ def test_duplicate_workflow_id_fails_closed() -> None:
     """A reused ID with ambiguous path/state cannot be silently normalized."""
     client = _FakeClient(
         [
+            _JsonRoute(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 _tree_payload(".github/workflows/ci.yml"),
             ),
             _JsonRoute(
@@ -256,10 +268,11 @@ def test_truncated_protected_tree_fails_closed() -> None:
     """A partial protected tree is not evidence that a workflow source is absent."""
     client = _FakeClient(
         [
+            _JsonRoute(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
             _JsonRoute(
-                f"/git/trees/{PROTECTED_SHA}?recursive=1",
+                f"/git/trees/{TREE_SHA}?recursive=1",
                 _tree_payload(".github/workflows/ci.yml", truncated=True),
-            )
+            ),
         ]
     )
 
