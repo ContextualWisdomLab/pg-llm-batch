@@ -40,6 +40,16 @@ if psql_exec -d postgres -qc \
   exit 1
 fi
 
+# Run the package store itself against the same live database. Sharing the
+# PostgreSQL container network namespace keeps the database unexposed on the
+# runner while the separately built component image supplies the installed
+# package and locked Psycopg runtime used in production.
+docker run --rm \
+  --network "container:${container}" \
+  --volume "${PWD}/tests:/tests:ro" \
+  pg-llm-batch:ci \
+  python /tests/smoke_checkpoint_store_concurrency.py
+
 # Validate rollback behavior against real PostgreSQL in isolated databases. An
 # empty store is removable; durable acknowledgement evidence makes rollback fail
 # atomically and must leave FORCE RLS enabled after the failed transaction.
