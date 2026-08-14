@@ -16,10 +16,12 @@ import re
 from datetime import datetime, timezone
 from typing import Protocol
 from urllib.error import HTTPError, URLError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+_PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _WORKFLOW_PREFIX = ".github/workflows/"
 _GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
@@ -88,6 +90,53 @@ class GitHubReadClient:
         return headers
 
 
+def audit_live_protected_ref_workflows(
+    *,
+    repository_full_name: str,
+    protected_ref: str,
+    expected_protected_sha: str,
+    client: _JsonClient,
+    captured_at: str | None = None,
+) -> dict[str, object]:
+    """Audit one live protected branch while proving its exact SHA stays unchanged.
+
+    The caller supplies the independently resolved expected protected SHA. The
+    function verifies the live branch immediately before and after the exact-SHA
+    tree/registry audit. Any mismatch or observed movement invalidates the whole
+    receipt instead of silently certifying a stale protected head.
+    """
+    _validate_repository(repository_full_name)
+    _validate_protected_ref(protected_ref)
+    _validate_protected_sha(expected_protected_sha)
+    normalized_sha = expected_protected_sha.lower()
+
+    initial_sha = _read_protected_ref_sha(
+        repository_full_name=repository_full_name,
+        protected_ref=protected_ref,
+        client=client,
+    )
+    if initial_sha != normalized_sha:
+        raise WorkflowRegistryAuditError("protected ref does not match expected SHA")
+
+    receipt = audit_repository_workflows(
+        repository_full_name=repository_full_name,
+        protected_sha=normalized_sha,
+        client=client,
+        captured_at=captured_at,
+    )
+
+    final_sha = _read_protected_ref_sha(
+        repository_full_name=repository_full_name,
+        protected_ref=protected_ref,
+        client=client,
+    )
+    if final_sha != normalized_sha:
+        raise WorkflowRegistryAuditError("protected ref moved during audit")
+
+    receipt["protected_ref"] = protected_ref
+    return receipt
+
+
 def audit_repository_workflows(
     *,
     repository_full_name: str,
@@ -99,7 +148,9 @@ def audit_repository_workflows(
 
     Active identities absent from the exact protected tree are reported as
     candidates only. The caller must separately prove whether a candidate has a
-    legitimate platform role before any future workflow-state mutation.
+    legitimate platform role before any future workflow-state mutation. Use
+    :func:`audit_live_protected_ref_workflows` when live-ref movement must also
+    invalidate the receipt.
     """
     _validate_repository(repository_full_name)
     _validate_protected_sha(protected_sha)
@@ -146,6 +197,29 @@ def audit_repository_workflows(
         "workflow_records": classified_records,
         "active_absent_workflows": active_absent,
     }
+
+
+def _read_protected_ref_sha(
+    *,
+    repository_full_name: str,
+    protected_ref: str,
+    client: _JsonClient,
+) -> str:
+    """Resolve an exact protected branch head SHA from bounded GitHub metadata."""
+    encoded_ref = quote(protected_ref, safe="")
+    payload = client.get_json(
+        f"/repos/{repository_full_name}/git/ref/heads/{encoded_ref}"
+    )
+    if payload.get("ref") != f"refs/heads/{protected_ref}":
+        raise WorkflowRegistryAuditError("protected ref response is invalid")
+    ref_object = payload.get("object")
+    if not isinstance(ref_object, dict):
+        raise WorkflowRegistryAuditError("protected ref response is invalid")
+    sha = ref_object.get("sha")
+    object_type = ref_object.get("type")
+    if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha) or object_type != "commit":
+        raise WorkflowRegistryAuditError("protected ref response is invalid")
+    return sha.lower()
 
 
 def _read_protected_workflow_paths(
@@ -266,6 +340,19 @@ def _validate_protected_sha(protected_sha: str) -> None:
         raise WorkflowRegistryAuditError("protected_sha must be an exact 40-hex protected SHA")
 
 
+def _validate_protected_ref(protected_ref: str) -> None:
+    """Reject ambiguous or path-like branch selectors before any network read."""
+    if (
+        not _PROTECTED_REF_RE.fullmatch(protected_ref)
+        or protected_ref.startswith("/")
+        or protected_ref.endswith("/")
+        or "//" in protected_ref
+        or "@{" in protected_ref
+        or any(component in {"", ".", ".."} for component in protected_ref.split("/"))
+    ):
+        raise WorkflowRegistryAuditError("protected_ref must be a safe branch name")
+
+
 def _utc_timestamp() -> str:
     """Return a UTC RFC 3339 timestamp for the audit receipt."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
@@ -276,14 +363,19 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Read a repository Actions registry and classify active workflow identities "
-            "whose exact path is absent from an exact protected commit."
+            "whose exact path is absent from a stable protected branch head."
         )
     )
     parser.add_argument("--repository", required=True, help="GitHub owner/name repository")
     parser.add_argument(
         "--protected-sha",
         required=True,
-        help="Exact 40-hex protected commit SHA; mutable ref names are rejected",
+        help="Independently resolved exact 40-hex protected commit SHA",
+    )
+    parser.add_argument(
+        "--protected-ref",
+        default="main",
+        help="Protected branch to verify before and after the audit (default: main)",
     )
     parser.add_argument(
         "--timeout-seconds",
@@ -295,16 +387,17 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Run the audit, print a JSON receipt, and signal active-absent candidates."""
+    """Run the live-ref audit, print JSON, and signal active-absent candidates."""
     args = _parser().parse_args(argv)
     try:
         client = GitHubReadClient(
             token=os.environ.get("GITHUB_TOKEN"),
             timeout_seconds=args.timeout_seconds,
         )
-        receipt = audit_repository_workflows(
+        receipt = audit_live_protected_ref_workflows(
             repository_full_name=args.repository,
-            protected_sha=args.protected_sha,
+            protected_ref=args.protected_ref,
+            expected_protected_sha=args.protected_sha,
             client=client,
         )
     except WorkflowRegistryAuditError as exc:
