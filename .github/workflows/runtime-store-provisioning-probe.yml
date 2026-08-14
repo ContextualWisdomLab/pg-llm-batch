@@ -1,4 +1,4 @@
-name: Runtime Store Provisioning Probe
+name: Finalize Runtime Store Provisioning Boundary
 
 on:
   push:
@@ -6,26 +6,27 @@ on:
       - fix/runtime-store-provisioning-d0a4b30
     paths:
       - .github/workflows/runtime-store-provisioning-probe.yml
-      - scripts/runtime_store_provisioning_candidate.py
 
 permissions:
   contents: read
 
 concurrency:
-  group: runtime-store-provisioning-probe
-  cancel-in-progress: true
+  group: finalize-runtime-store-provisioning
+  cancel-in-progress: false
 
 jobs:
-  probe:
+  finalize:
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    permissions:
+      contents: write
     steps:
       - name: Harden runner
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
         with:
           egress-policy: audit
 
-      - name: Check out exact probe head
+      - name: Check out exact branch head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
@@ -40,7 +41,7 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Set up uv
+      - name: Set up repository-pinned uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.12.3"
@@ -53,65 +54,133 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p probe
-          if uv run pytest -q tests/test_runtime_store_provisioning_boundary.py >probe/red.log 2>&1; then
-            cat probe/red.log
+          if uv run pytest -q tests/test_runtime_store_provisioning_boundary.py; then
             echo "runtime provisioning contract unexpectedly passed before implementation" >&2
             exit 1
           fi
-          cat probe/red.log
 
-      - name: Materialize bounded GREEN candidate without repository writes
+      - name: Materialize the previously verified GREEN candidate
         run: uv run python scripts/runtime_store_provisioning_candidate.py
 
-      - name: Verify GREEN candidate and capture exact evidence
-        shell: bash
-        run: |
-          set +e
-          mkdir -p probe
-          : > probe/status.txt
-          run_probe() {
-            name="$1"
-            shift
-            "$@" >"probe/${name}.log" 2>&1
-            status=$?
-            printf '%s=%s\n' "$name" "$status" >> probe/status.txt
-            return 0
-          }
-          run_probe focused uv run pytest -q tests/test_runtime_store_provisioning_boundary.py
-          run_probe unit uv run pytest -q -m "not integration"
-          run_probe ruff uv run ruff check pg_llm_batch tests
-          run_probe compile uv run python -m compileall -q pg_llm_batch
-          run_probe coverage uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
-          run_probe lock uv lock --check
-          run_probe build uv build --no-sources
-          if cmp -s pg_llm_batch/schema.sql docker/postgres/init/02_schema.sql; then
-            echo schema_mirror=0 >> probe/status.txt
-          else
-            echo schema_mirror=1 >> probe/status.txt
-          fi
-          git diff --check >probe/diff-check.log 2>&1
-          echo diff_check=$? >> probe/status.txt
-          cat probe/status.txt
-
-      - name: Preserve generated candidate and probe evidence
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: runtime-store-provisioning-probe-${{ github.sha }}
-          path: |
-            pg_llm_batch/config.py
-            pg_llm_batch/schema.sql
-            docker/postgres/init/02_schema.sql
-            probe/
-          if-no-files-found: error
-          retention-days: 2
-
-      - name: Fail when any candidate gate failed
+      - name: Verify focused and complete quality contracts
         shell: bash
         run: |
           set -euo pipefail
-          if grep -Ev '^[a-z_]+=(0)$' probe/status.txt | grep -q .; then
-            cat probe/status.txt
-            exit 1
-          fi
+          uv run pytest -q tests/test_runtime_store_provisioning_boundary.py
+          uv run pytest -q -m "not integration"
+          uv run ruff check pg_llm_batch tests
+          uv run python -m compileall -q pg_llm_batch
+          uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" \
+            --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          uv lock --check
+          uv build --no-sources
+          cmp -s pg_llm_batch/schema.sql docker/postgres/init/02_schema.sql
+          git diff --check
+
+      - name: Record the least-privilege operator contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > docs/doctoring/runtime-store-provisioning.md <<'DOC'
+          # Runtime store provisioning boundary
+
+          ## Operator action
+
+          Provision or migrate `com_config` and `com_secrets` with the explicit
+          package schema before starting an ordinary application process:
+
+          ```bash
+          python -m pg_llm_batch init-db
+          ```
+
+          After provisioning, the normal application role needs schema `USAGE`
+          plus only the table privileges required by its configured read/write
+          operations. It does not need schema `CREATE` merely to construct
+          `PostgresConfigStore` or `SecretStore`.
+
+          Runtime constructors issue bounded read-only capability probes for the
+          required columns. Missing tables, missing columns, permission failures,
+          or incompatible relations fail closed with fixed package diagnostics;
+          database exception text, DSNs, SQL values, and credentials are not
+          retained in the exported exception context. Connections acquired before
+          a failed probe are closed deterministically.
+
+          Built-in configuration rows are seeded only at the explicit schema
+          boundary with `ON CONFLICT (config_key) DO NOTHING`. Existing operator
+          values therefore survive provisioning replay and upgrades. The packaged
+          schema and deployable PostgreSQL initialization schema remain byte-for-
+          byte mirrors.
+
+          ## Security rationale
+
+          PostgreSQL grants object creation through a schema's `CREATE` privilege;
+          ordinary access requires separate schema `USAGE` and object privileges.
+          Removing implicit runtime DDL permits a least-privilege application role
+          and avoids trusting every role able to create objects in the active
+          `search_path`. PostgreSQL also states that `CREATE TABLE IF NOT EXISTS`
+          does not prove that an existing relation has the expected structure, so
+          an implicit create statement is not a schema-compatibility check.
+
+          ## Rollback and recovery
+
+          Rollback restores the previous package version and its constructor-owned
+          bootstrap behavior; it does not delete provisioned tables or operator
+          values. A failed runtime probe is repaired by applying the reviewed
+          schema with a provisioning identity and then retrying with the ordinary
+          runtime identity. Do not grant broad schema `CREATE` merely to silence a
+          readiness failure.
+
+          ## References
+
+          PostgreSQL Global Development Group. (2026). *PostgreSQL 18
+          documentation: CREATE TABLE*. https://www.postgresql.org/docs/18/sql-createtable.html
+
+          PostgreSQL Global Development Group. (2026). *PostgreSQL 18
+          documentation: Privileges*. https://www.postgresql.org/docs/18/ddl-priv.html
+
+          PostgreSQL Global Development Group. (2026). *PostgreSQL 18
+          documentation: Schemas*. https://www.postgresql.org/docs/18/ddl-schemas.html
+
+          The Psycopg Team. (2026). *Psycopg 3 documentation: Basic module
+          usage*. https://www.psycopg.org/psycopg3/docs/basic/usage.html
+          DOC
+
+      - name: Commit the verified product delta and remove temporary helpers
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH_NAME: fix/runtime-store-provisioning-d0a4b30
+        run: |
+          set -euo pipefail
+          authenticated_remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          remote_head="$(git ls-remote "$authenticated_remote" "refs/heads/${BRANCH_NAME}" | awk '{print $1}')"
+          test "$remote_head" = "$GITHUB_SHA"
+
+          rm -- \
+            .github/workflows/runtime-store-provisioning-probe.yml \
+            scripts/runtime_store_provisioning_candidate.py
+          git diff --check
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A -- \
+            pg_llm_batch/config.py \
+            pg_llm_batch/schema.sql \
+            docker/postgres/init/02_schema.sql \
+            docs/doctoring/runtime-store-provisioning.md \
+            .github/workflows/runtime-store-provisioning-probe.yml \
+            scripts/runtime_store_provisioning_candidate.py
+
+          actual_paths="$(git diff --cached --name-only | LC_ALL=C sort)"
+          expected_paths="$(printf '%s\n' \
+            .github/workflows/runtime-store-provisioning-probe.yml \
+            docker/postgres/init/02_schema.sql \
+            docs/doctoring/runtime-store-provisioning.md \
+            pg_llm_batch/config.py \
+            pg_llm_batch/schema.sql \
+            scripts/runtime_store_provisioning_candidate.py | LC_ALL=C sort)"
+          test "$actual_paths" = "$expected_paths"
+
+          git commit -m "fix(config): separate runtime stores from provisioning"
+          git remote set-url origin "$authenticated_remote"
+          git push origin "HEAD:refs/heads/${BRANCH_NAME}"
