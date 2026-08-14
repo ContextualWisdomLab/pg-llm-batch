@@ -35,7 +35,9 @@ def test_runtime_store_construction_does_not_provision_schema_or_seed_defaults(
     monkeypatch.setattr(config_mod, "psycopg", fake)
 
     config_store = config_mod.PostgresConfigStore("postgresql://runtime")
-    secret_store = config_mod.SecretStore("postgresql://runtime")
+    secret_store = config_mod.SecretStore(
+        "postgresql://runtime", require_encryption=False
+    )
 
     normalized = [statement.lower() for statement in statements]
     assert not any("create table" in statement for statement in normalized)
@@ -101,7 +103,9 @@ def test_missing_or_incompatible_runtime_schema_fails_with_bounded_package_error
         if store_kind == "config":
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
-            config_mod.SecretStore("postgresql://runtime")
+            config_mod.SecretStore(
+                "postgresql://runtime", require_encryption=False
+            )
 
     rendered = str(caught.value)
     assert "SECRET-SENTINEL" not in rendered
@@ -262,7 +266,9 @@ def test_runtime_store_rejects_selectable_view_or_wrong_column_type(
         if store_kind == "config":
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
-            config_mod.SecretStore("postgresql://runtime")
+            config_mod.SecretStore(
+                "postgresql://runtime", require_encryption=False
+            )
 
     assert caught.value.message == expected_message
     assert caught.value.error_code == "CONFIG_ERROR"
@@ -305,7 +311,9 @@ def test_runtime_store_rejects_insufficient_runtime_read_privileges(
         if store_kind == "config":
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
-            config_mod.SecretStore("postgresql://runtime")
+            config_mod.SecretStore(
+                "postgresql://runtime", require_encryption=False
+            )
 
     assert caught.value.message == expected_message
     assert caught.value.error_code == "CONFIG_ERROR"
