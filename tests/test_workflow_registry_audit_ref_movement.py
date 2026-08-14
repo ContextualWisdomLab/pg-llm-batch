@@ -41,8 +41,12 @@ class _FakeClient:
         return route.payload
 
 
-def _ref_payload(sha: str) -> dict[str, object]:
-    return {"ref": "refs/heads/main", "object": {"sha": sha, "type": "commit"}}
+def _ref_payload(sha: str, *, protected_ref: str = "main") -> dict[str, object]:
+    """Return one exact branch-reference response for ``protected_ref``."""
+    return {
+        "ref": f"refs/heads/{protected_ref}",
+        "object": {"sha": sha, "type": "commit"},
+    }
 
 
 def _commit_payload() -> dict[str, object]:
@@ -66,6 +70,33 @@ def test_initial_protected_ref_mismatch_fails_before_tree_or_registry_reads() ->
             expected_protected_sha=PROTECTED_SHA,
             client=client,
         )
+
+
+def test_slash_protected_ref_preserves_github_ref_path_shape() -> None:
+    """A valid slash-bearing branch uses GitHub's documented heads/<branch> path."""
+    protected_ref = "release/1.0"
+    ref_payload = _ref_payload(PROTECTED_SHA, protected_ref=protected_ref)
+    client = _FakeClient(
+        [
+            _Route(f"/git/ref/heads/{protected_ref}", ref_payload),
+            _Route(f"/git/commits/{PROTECTED_SHA}", _commit_payload()),
+            _Route(f"/git/trees/{TREE_SHA}?recursive=1", _tree_payload()),
+            _Route(
+                "/actions/workflows?per_page=100&page=1",
+                {"total_count": 0, "workflows": []},
+            ),
+            _Route(f"/git/ref/heads/{protected_ref}", ref_payload),
+        ]
+    )
+
+    receipt = audit_live_protected_ref_workflows(
+        repository_full_name=REPOSITORY,
+        protected_ref=protected_ref,
+        expected_protected_sha=PROTECTED_SHA,
+        client=client,
+    )
+
+    assert receipt["protected_ref"] == protected_ref
 
 
 def test_protected_ref_movement_during_registry_scan_fails_closed() -> None:
