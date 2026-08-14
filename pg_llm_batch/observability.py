@@ -280,6 +280,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         file_path: str,
         endpoint_alias: str,
         purpose: str = "batch",
+        expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Upload a virtual JSONL payload while observing the public operation."""
         return await self._run_observed(
@@ -288,6 +289,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 file_path,
                 endpoint_alias,
                 purpose,
+                expires_after_seconds=expires_after_seconds,
             ),
         )
 
@@ -297,6 +299,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         endpoint_alias: str,
         endpoint: str = "/v1/chat/completions",
         metadata: Optional[Dict[str, Any]] = None,
+        output_expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a provider batch while observing the public operation."""
         return await self._run_observed(
@@ -306,6 +309,21 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 endpoint_alias,
                 endpoint,
                 metadata,
+                output_expires_after_seconds=output_expires_after_seconds,
+            ),
+        )
+
+    async def delete_file(
+        self,
+        file_id: str,
+        endpoint_alias: str,
+    ) -> Dict[str, Any]:
+        """Delete a provider file while observing the public operation."""
+        return await self._run_observed(
+            "delete_file",
+            lambda: super(OpenTelemetryBatchAPIClient, self).delete_file(
+                file_id,
+                endpoint_alias,
             ),
         )
 
