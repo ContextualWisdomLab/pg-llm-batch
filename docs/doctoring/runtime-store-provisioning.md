@@ -10,7 +10,7 @@ python -m pg_llm_batch init-db
 
 After provisioning, the normal application role needs schema `USAGE` plus only the table privileges required by its configured read/write operations. It does not need schema `CREATE` merely to construct `PostgresConfigStore` or `SecretStore`. Production application roles must be `NOSUPERUSER NOBYPASSRLS` so administrative privilege cannot silently bypass row-security boundaries owned elsewhere in the package schema.
 
-Runtime constructors issue bounded read-only `pg_catalog` capability probes. The search-path-resolved relation must be an ordinary base table, every required column must have the expected PostgreSQL data type, and the current role must have schema `USAGE` plus table `SELECT`. Missing tables, missing columns, selectable views, type mismatches, insufficient read privileges, or other incompatible relations fail closed with fixed package diagnostics; database exception text, DSNs, SQL values, and credentials are not retained in exported exception context. Connections acquired before a failed probe are closed deterministically.
+Runtime constructors issue bounded read-only `pg_catalog` capability probes. The search-path-resolved relation must be an ordinary base table, every required column must have the expected PostgreSQL data type, and the current role must have schema `USAGE` plus table `SELECT`. The configured storage key (`config_key` or `secret_key`) must also be backed by a valid, ready, non-partial, non-expression unique index with exactly one key column so the runtime `ON CONFLICT (key)` write contract has a compatible arbiter before application writes begin. Missing tables, missing columns, selectable views, type mismatches, insufficient read privileges, missing unique-key authority, or other incompatible relations fail closed with fixed package diagnostics; database exception text, DSNs, SQL values, and credentials are not retained in exported exception context. Connections acquired before a failed probe are closed deterministically.
 
 Built-in configuration rows are seeded only at the explicit schema boundary with `ON CONFLICT (config_key) DO NOTHING`. Existing operator values therefore survive provisioning replay and upgrades. The packaged schema and deployable PostgreSQL initialization schema remain byte-identical.
 
@@ -24,6 +24,8 @@ This default-hardening boundary is intentionally narrower than the complete secr
 
 PostgreSQL grants object creation through a schema's `CREATE` privilege; ordinary access requires separate schema `USAGE` and object privileges. Removing implicit runtime DDL permits a least-privilege application role. The runtime probe validates the relation resolved through the active `search_path`; it does not establish that relation's schema ownership. Operators must therefore use a trusted search path and prevent untrusted roles from creating objects in schemas searched ahead of the provisioned package relation. PostgreSQL also states that `CREATE TABLE IF NOT EXISTS` does not prove that an existing relation has the expected structure, so an implicit create statement is not a schema-compatibility check. Runtime compatibility therefore derives from bounded read-only catalog and privilege metadata for the resolved relation rather than from successful execution against an arbitrary selectable relation.
 
+PostgreSQL implements uniqueness through unique indexes and resolves `INSERT ... ON CONFLICT` using unique-index inference. `pg_index.indisunique`, `indisvalid`, and `indisready` distinguish indexes that are unique, valid, and ready for inserts; `indnkeyatts` distinguishes key columns from included attributes, while `indpred` and `indexprs` identify partial and expression indexes. The runtime compatibility probe therefore rejects lookalike tables that are readable but cannot satisfy the package's simple-column `ON CONFLICT (config_key)` or `ON CONFLICT (secret_key)` write contract.
+
 Fernet provides authenticated symmetric encryption for stored secret values when a key is supplied, but the cryptographic primitive does not by itself define deployment authorization, key custody, rotation, recovery, retention, or audit policy. Requiring encryption by default removes the previous silent insecure choice while retaining a deliberate, visibly opt-in local/development compatibility path.
 
 ## Rollback and recovery
@@ -33,6 +35,10 @@ Rollback restores the previous package version and its constructor-owned bootstr
 ## References
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: CREATE TABLE*. https://www.postgresql.org/docs/18/sql-createtable.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: INSERT*. https://www.postgresql.org/docs/18/sql-insert.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: pg_index*. https://www.postgresql.org/docs/18/catalog-pg-index.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: Privileges*. https://www.postgresql.org/docs/18/ddl-priv.html
 
