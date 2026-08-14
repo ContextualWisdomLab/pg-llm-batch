@@ -258,7 +258,38 @@ def _read_registry(
     repository_full_name: str,
     client: _JsonClient,
 ) -> tuple[list[dict[str, object]], int, int]:
-    """Read the complete stable workflow registry with explicit pagination evidence."""
+    """Read one coherent workflow registry or fail closed on pagination drift.
+
+    A single multi-page traversal can combine rows from two different registry
+    states even when ``total_count`` remains unchanged. Therefore multi-page
+    receipts are accepted only when a second complete traversal observes the
+    same validated workflow identities, paths, and states. Single-page reads
+    already arrive as one response and do not need the extra pass.
+    """
+    records, pages_scanned, expected_total = _read_registry_pass(
+        repository_full_name=repository_full_name,
+        client=client,
+    )
+    if pages_scanned > 1:
+        verification_records, verification_pages, verification_total = _read_registry_pass(
+            repository_full_name=repository_full_name,
+            client=client,
+        )
+        if (
+            verification_total != expected_total
+            or verification_pages != pages_scanned
+            or _registry_signature(verification_records) != _registry_signature(records)
+        ):
+            raise WorkflowRegistryAuditError("workflow registry changed during audit")
+    return records, pages_scanned, expected_total
+
+
+def _read_registry_pass(
+    *,
+    repository_full_name: str,
+    client: _JsonClient,
+) -> tuple[list[dict[str, object]], int, int]:
+    """Read one complete pagination pass while enforcing stable cardinality."""
     expected_total: int | None = None
     page = 1
     pages_scanned = 0
@@ -298,6 +329,20 @@ def _read_registry(
     if expected_total is None:
         raise WorkflowRegistryAuditError("workflow registry response is invalid")
     return records, pages_scanned, expected_total
+
+
+def _registry_signature(records: list[dict[str, object]]) -> tuple[tuple[int, str, str], ...]:
+    """Return an order-independent identity/path/state signature for one pass."""
+    return tuple(
+        sorted(
+            (
+                int(record["workflow_id"]),
+                str(record["path"]),
+                str(record["state"]),
+            )
+            for record in records
+        )
+    )
 
 
 def _validate_workflow_record(raw_record: object) -> dict[str, object]:
