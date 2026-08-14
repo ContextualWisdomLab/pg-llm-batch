@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import io
-import json
 import traceback
 from dataclasses import dataclass
-from urllib.error import HTTPError
 
 import pytest
 
@@ -289,51 +286,100 @@ def test_invalid_sha_is_rejected_before_any_github_read() -> None:
     assert client.requested_paths == []
 
 
-def test_authenticated_reads_are_pinned_to_github_api(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A maintenance token can never be redirected to a caller-selected API origin."""
-    observed_urls: list[str] = []
-    observed_authorizations: list[str | None] = []
+def test_authenticated_reads_use_fixed_https_origin_and_path_only(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Credentials stay on a fixed GitHub HTTPS connection with a path-only target."""
+    observed_connections: list[tuple[str, float]] = []
+    observed_requests: list[tuple[str, str, dict[str, str]]] = []
+    closed: list[bool] = []
 
     class _Response:
-        def __enter__(self) -> "_Response":
-            return self
-
-        def __exit__(self, *_args: object) -> None:
-            return None
+        status = 200
 
         def read(self) -> bytes:
             return b"{}"
 
-    def _capture_request(request: object, *, timeout: float) -> _Response:
-        assert timeout == 15.0
-        observed_urls.append(request.full_url)  # type: ignore[attr-defined]
-        observed_authorizations.append(request.get_header("Authorization"))  # type: ignore[attr-defined]
-        return _Response()
+    class _Connection:
+        def __init__(self, host: str, *, timeout: float) -> None:
+            observed_connections.append((host, timeout))
 
-    monkeypatch.setattr("workflow_registry_audit.urlopen", _capture_request)
+        def request(
+            self,
+            method: str,
+            path: str,
+            *,
+            headers: dict[str, str],
+        ) -> None:
+            observed_requests.append((method, path, headers))
+
+        def getresponse(self) -> _Response:
+            return _Response()
+
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr("workflow_registry_audit.HTTPSConnection", _Connection)
+    client = GitHubReadClient(token="bounded-test-token")
+    path = f"/repos/{REPOSITORY}/actions/workflows"
+
+    assert client.get_json(path) == {}
+    assert observed_connections == [("api.github.com", 15.0)]
+    assert observed_requests == [
+        (
+            "GET",
+            path,
+            {
+                "Accept": "application/vnd.github+json",
+                "User-Agent": "pg-llm-batch-workflow-registry-audit/1",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "Authorization": "Bearer bounded-test-token",
+            },
+        )
+    ]
+    assert closed == [True]
+
+
+def test_absolute_uri_is_rejected_before_transport(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A caller cannot turn the request target into another URL or scheme."""
+    connection_attempted = False
+
+    class _Connection:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            nonlocal connection_attempted
+            connection_attempted = True
+
+    monkeypatch.setattr("workflow_registry_audit.HTTPSConnection", _Connection)
     client = GitHubReadClient(token="bounded-test-token")
 
-    assert client.get_json(f"/repos/{REPOSITORY}/actions/workflows") == {}
-    assert observed_urls == [
-        f"https://api.github.com/repos/{REPOSITORY}/actions/workflows"
-    ]
-    assert observed_authorizations == ["Bearer bounded-test-token"]
+    with pytest.raises(WorkflowRegistryAuditError, match="GitHub API path is invalid"):
+        client.get_json("https://attacker.invalid/repos/owner/repo")
+
+    assert connection_attempted is False
 
 
 def test_http_failure_does_not_retain_lower_layer_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
-    """403/404/5xx-style transport details remain outside rendered evidence."""
+    """Transport details remain outside rendered evidence and exception chaining."""
     secret_sentinel = "SECRET_HTTP_DIAGNOSTIC_SHOULD_NOT_ESCAPE"
 
-    def _raise_http_error(*_args: object, **_kwargs: object) -> object:
-        raise HTTPError(
-            "https://api.github.com/private?token=secret",
-            503,
-            secret_sentinel,
-            hdrs=None,
-            fp=io.BytesIO(json.dumps({"message": secret_sentinel}).encode()),
-        )
+    class _Connection:
+        def __init__(self, _host: str, *, timeout: float) -> None:
+            assert timeout == 15.0
 
-    monkeypatch.setattr("workflow_registry_audit.urlopen", _raise_http_error)
+        def request(
+            self,
+            _method: str,
+            _path: str,
+            *,
+            headers: dict[str, str],
+        ) -> None:
+            assert headers["Authorization"] == "Bearer token-value-that-must-not-render"
+            raise OSError(secret_sentinel)
+
+        def close(self) -> None:
+            return None
+
+    monkeypatch.setattr("workflow_registry_audit.HTTPSConnection", _Connection)
     client = GitHubReadClient(token="token-value-that-must-not-render")
 
     try:
