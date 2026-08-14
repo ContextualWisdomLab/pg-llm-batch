@@ -65,7 +65,7 @@ jobs:
           test -n "$wheel"
 
           python -m venv /tmp/pg-llm-batch-base
-          /tmp/pg-llm-batch-base/bin/python -m pip install --disable-pip-version-check "$wheel"
+          uv pip install --python /tmp/pg-llm-batch-base/bin/python "$wheel"
           /tmp/pg-llm-batch-base/bin/python - <<'PY'
           import importlib.util
           import pg_llm_batch
@@ -75,11 +75,11 @@ jobs:
           PY
 
           python -m venv /tmp/pg-llm-batch-observability
-          /tmp/pg-llm-batch-observability/bin/python -m pip install --disable-pip-version-check "${wheel}[observability]"
+          uv pip install --python /tmp/pg-llm-batch-observability/bin/python "${wheel}[observability]"
           /tmp/pg-llm-batch-observability/bin/python - <<'PY'
           import importlib.util
 
-          from pg_llm_batch.opentelemetry_client import OpenTelemetryBatchAPIClient
+          from pg_llm_batch.observability import OpenTelemetryBatchAPIClient
 
           assert importlib.util.find_spec("opentelemetry") is not None
           assert OpenTelemetryBatchAPIClient.from_global_provider is not None
