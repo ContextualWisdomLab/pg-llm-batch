@@ -62,3 +62,8 @@ if [[ "${observed}" != "1" ]]; then
   echo "PostgreSQL operational record did not reach docker logs" >&2
   exit 1
 fi
+
+# Reuse the same freshly initialized image instance for package-owned checkpoint
+# migration, tenant isolation, and rollback acceptance without adding a second
+# heavyweight container build/start path to CI.
+bash tests/smoke_checkpoint_postgres_acceptance.sh "${container}"

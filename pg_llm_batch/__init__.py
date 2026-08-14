@@ -9,6 +9,7 @@ Public API:
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultRecord                   -- immutable streamed result/error record
     BatchResultCheckpoint               -- host-persistable resume evidence
+    PostgresBatchResultCheckpointStore  -- durable result checkpoint CAS
     DurableBatchAPIClient               -- standalone durable lifecycle state
     TenantDurableBatchAPIClient         -- tenant-isolated lifecycle state
     PostgresConfigStore, SecretStore    -- database configuration and secrets
@@ -20,6 +21,12 @@ from .batch_api_client import (
     BatchAPIClient,
     GatewayCredentials,
     config_credentials_provider,
+)
+from .checkpoint_store import (
+    CheckpointConflictError,
+    PostgresBatchResultCheckpointStore,
+    apply_result_checkpoint_schema,
+    validate_checkpoint_consumer_name,
 )
 from .config import PostgresConfigStore, SecretStore, get_config_store
 from .db import (
@@ -55,6 +62,10 @@ __all__ = [
     "BatchResultRecord",
     "BatchResultCheckpoint",
     "CheckpointedBatchResultRecord",
+    "CheckpointConflictError",
+    "PostgresBatchResultCheckpointStore",
+    "apply_result_checkpoint_schema",
+    "validate_checkpoint_consumer_name",
     "DurableBatchAPIClient",
     "TenantDurableBatchAPIClient",
     "DEFAULT_TENANT_SCOPE",
