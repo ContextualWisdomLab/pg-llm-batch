@@ -17,7 +17,7 @@ import uuid
 import pytest
 
 from pg_llm_batch import db
-from pg_llm_batch.config import PostgresConfigStore, SecretStore
+from pg_llm_batch.config import PostgresConfigStore
 from pg_llm_batch.health import check_health
 from pg_llm_batch.orchestrator import PostgresBatchOrchestrator
 from pg_llm_batch.token_counter import TokenCounter
@@ -58,9 +58,6 @@ def test_pg_tiktoken_counts_tokens(dsn):
 def test_end_to_end_batch_assembly(dsn):
     config = PostgresConfigStore(dsn)
     config.set("gateway", "base_url", "https://gw.invalid/v1")
-    SecretStore(dsn, require_encryption=False).set_secret(
-        "gateway_api_key.default", "sk-int-test"
-    )
 
     import psycopg
 
@@ -399,7 +396,5 @@ def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
                 cursor.execute(
                     sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role_name))
                 )
-                cursor.execute(
-                    sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name))
-                )
+                cursor.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name)))
             admin.commit()
