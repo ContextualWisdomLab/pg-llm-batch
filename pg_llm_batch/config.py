@@ -173,10 +173,10 @@ def _schema_is_compatible(
     table_name: str,
     expected_columns: Dict[str, str],
 ) -> bool:
-    """Return whether one search-path-resolved relation is the expected base table."""
+    """Return whether the runtime role can read the expected provisioned base table."""
     column_names = sorted(expected_columns)
     expected_rows = [
-        ("r", column_name, expected_columns[column_name])
+        ("r", column_name, expected_columns[column_name], True, True)
         for column_name in column_names
     ]
     try:
@@ -185,7 +185,9 @@ def _schema_is_compatible(
                 """
                 SELECT cls.relkind,
                        attr.attname,
-                       pg_catalog.format_type(attr.atttypid, attr.atttypmod)
+                       pg_catalog.format_type(attr.atttypid, attr.atttypmod),
+                       pg_catalog.has_schema_privilege(cls.relnamespace, 'USAGE'),
+                       pg_catalog.has_table_privilege(cls.oid, 'SELECT')
                 FROM pg_catalog.pg_class AS cls
                 JOIN pg_catalog.pg_attribute AS attr
                   ON attr.attrelid = cls.oid
