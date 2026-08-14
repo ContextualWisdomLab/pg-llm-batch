@@ -147,4 +147,4 @@ def reconciliation_single_flight(
             raise ReconciliationSingleFlightError(
                 "release",
                 "lock_release_not_confirmed",
-            )
+            ) from None
