@@ -1,0 +1,126 @@
+# Product Requirements Document
+
+## Document authority
+
+This PRD defines the product contract for `pg-llm-batch`. Repository behavior is authoritative only after it is integrated into the protected default branch. Pull requests, issue plans, historical branches, generated merge commits, workflow artifacts, and review commentary are evidence or work-in-progress, not shipped product truth.
+
+Use these status terms consistently:
+
+- **IMPLEMENTED-ON-PROTECTED-MAIN** — present in the protected default-branch tree and covered by its repository contract.
+- **ACTIVE-PR** — implemented or being repaired in an open pull request; not shipped.
+- **PARTIAL** — a protected-main primitive exists, but an end-to-end product capability still has an explicit gap.
+- **PLANNED** — accepted requirement without an integrated implementation.
+- **SUPERSEDED** — historical implementation or proposal that is not current product authority.
+
+## Product purpose
+
+`pg-llm-batch` is a standalone and embeddable PostgreSQL-centered engine for preparing, submitting, observing, and retrieving bounded LLM Batch API workloads. It is intended for operators and host applications that need durable batch state, deterministic token/resource accounting, explicit tenant boundaries, bounded provider I/O, and acquisition-grade operational evidence without coupling the package to one gateway, scheduler, web application, or ContextualWisdomLab host service.
+
+## Primary users
+
+1. **Platform operators** running the package as an independently deployable service or Compose component.
+2. **Application/platform engineers** embedding the Python package and PostgreSQL schema in a larger product.
+3. **Multi-tenant host services** that authenticate and authorize callers before supplying a trusted `tenant_scope`.
+4. **Reliability and security reviewers** who need deterministic failure boundaries, migrations, rollback, audit evidence, security gates, SBOM/provenance evidence, and bounded diagnostics.
+
+## Product outcomes
+
+The product must let a qualified host:
+
+- count model tokens through the reviewed PostgreSQL tokenizer boundary;
+- prepare JSONL batch payloads under finite token, byte, and record limits;
+- preserve package-owned payloads and lifecycle state durably in PostgreSQL;
+- submit, poll, wait, cancel, and retrieve through validated OpenAI-compatible Batch API clients;
+- operate in exact `standalone` mode or with a trusted tenant-qualified lifecycle identity;
+- recover or reconcile provider lifecycle state without introducing a second database-side networking authority;
+- prove package quality, security, reproducibility, release-artifact identity, and rollback assumptions through repository evidence.
+
+## Protected-main capability contract
+
+| Capability | Status | Product requirement |
+| --- | --- | --- |
+| PostgreSQL token counting and bounded batch preparation | IMPLEMENTED-ON-PROTECTED-MAIN | Token/resource accounting and batch partitioning remain deterministic and finite. |
+| Disk-free package payload persistence | IMPLEMENTED-ON-PROTECTED-MAIN | Package-owned JSONL payloads persist in PostgreSQL and are validated before credential/provider effects. |
+| OpenAI-compatible upload/create/poll/wait/cancel/retrieve | IMPLEMENTED-ON-PROTECTED-MAIN | Provider destinations, resource identifiers, control responses, downloads, retries, and timeouts remain bounded and validated. |
+| Standalone durable lifecycle | IMPLEMENTED-ON-PROTECTED-MAIN | Existing standalone users retain source-compatible durable lifecycle behavior. |
+| Tenant-qualified durable lifecycle with forced RLS | IMPLEMENTED-ON-PROTECTED-MAIN | Tenant scope comes only from a trusted host authorization boundary; direct arbitrary SQL remains outside the isolation guarantee. |
+| Durable resumable result checkpoint/CAS storage | IMPLEMENTED-ON-PROTECTED-MAIN | PostgreSQL supplies tenant-qualified durable checkpoint authority and conflict detection; this is not a distributed exactly-once claim. |
+| Redacted readiness reporting | IMPLEMENTED-ON-PROTECTED-MAIN | Public readiness evidence does not disclose arbitrary lower-layer diagnostic content. |
+| Scheduler-independent bounded provider reconciliation primitive | IMPLEMENTED-ON-PROTECTED-MAIN | A host can submit a finite, validated candidate set for polling/retrieval through the existing bounded provider client; candidate discovery, scheduling, and cross-process lease ownership remain outside this primitive. |
+| Durable reconciliation candidate discovery | ACTIVE-PR | Discovery must be tenant-qualified, bounded, deterministic, and database-authoritative before it can become product truth. |
+| Cross-process reconciliation single-flight | ACTIVE-PR | Concurrent workers must not race the same tenant/provider identity; merge eligibility remains governed by live repository policy. |
+| Existing-volume legacy `http` / `pg_cron` retirement | ACTIVE-PR | Existing deployments need fail-closed, reversible migration evidence before compatibility packages can be removed. |
+| First-class OpenTelemetry installation extra | ACTIVE-PR | Ordinary installs must remain telemetry-dependency-free; the optional package graph must be locked and reproducible. |
+| Autonomous package-owned reconciliation worker with crash/restart completion semantics | PARTIAL | Protected main has reconciliation and durable state primitives, but does not yet claim a complete package scheduler/worker control plane. |
+| Durable result application coupled to checkpoint advancement | PARTIAL | Existing checkpoint and retrieval primitives must not be described as end-to-end exactly-once result application until a reviewed coupling contract is integrated. |
+
+## Functional requirements
+
+### FR-1: Batch preparation
+
+The engine shall resolve an existing batch identity, select eligible requests, count tokens through the package tokenizer boundary, partition work under explicit provider/resource limits, and persist payload/file/line/request assignment state atomically for one preparation operation. Re-running a supported preparation path must not silently duplicate assignment or corrupt package-owned state.
+
+### FR-2: Provider interaction
+
+All provider operations shall use validated endpoint configuration and finite response/download budgets. Automatic retries are restricted to reviewed idempotent GET behavior. Side-effecting provider POST operations shall not gain implicit retry authority. Credentials and provider content shall not be copied into ordinary diagnostics.
+
+### FR-3: Durable lifecycle and tenancy
+
+The durable business identity is tenant-qualified where tenancy is enabled. The package shall validate tenant scope before persistence/provider effects that rely on it, bind scope through parameterized transaction-local PostgreSQL context, and keep forced row-level security enabled for application roles. PostgreSQL superuser/BYPASSRLS and arbitrary SQL access are administrative escape hatches and are not part of the tenant isolation guarantee.
+
+### FR-4: Reconciliation and recovery
+
+Reconciliation shall be finite, deterministic, payload-free in its operational evidence, and use the same validated provider client boundary as normal operations. Candidate discovery, concurrency control, scheduling, and result-application semantics must be explicit capabilities rather than inferred from polling code. Provider-success/database-failure cases must remain observable recovery states rather than being rewritten as if the provider effect never occurred.
+
+### FR-5: Persistence integrity
+
+Package-owned database rows shall use descriptive two-or-more-word `snake_case` object names where applicable, explicit durable identities, parameterized SQL, and migrations that are idempotent or have a documented one-way boundary. Schema copies maintained for package and Docker initialization shall remain synchronized where the repository contract requires it. Malformed durable payload/state shall fail closed before downstream credential or provider effects when correctness depends on that state.
+
+### FR-6: Configuration and secrets
+
+PostgreSQL-backed configuration and encrypted-secret support remain available for standalone use. Environment variables are bootstrap transport only where explicitly documented. Embedding hosts may inject credential providers without changing provider protocol semantics. The package shall not invent an external secret-management product dependency.
+
+### FR-7: Observability and diagnostics
+
+Operational telemetry is opt-in. Bounded operation/outcome vocabularies may be emitted; prompts, provider response bodies, credentials, arbitrary endpoint aliases, resource IDs, and arbitrary exception text are not telemetry attributes. Public readiness and ordinary errors shall use bounded categories when lower-layer text could contain sensitive data.
+
+### FR-8: Standalone and modular deployment
+
+The package shall remain usable without `contextual-orchestrator`, `naruon`, or another CWL repository. Host services may provide authentication, tenant routing, secret resolution, gateway/model routing, OpenTelemetry export, or scheduling, but those integrations shall not become hidden standalone requirements.
+
+## Non-functional requirements
+
+### Quality
+
+Owned production Python must maintain exact 100% statement and branch coverage and complete public docstrings under the repository's configured gates. Supported validation includes Python 3.10, 3.12, and 3.14 plus realistic PostgreSQL/container integration where behavior depends on PostgreSQL.
+
+### Security and privacy
+
+Security-sensitive validation fails closed. Secrets, DSNs, prompt/provider content, unvalidated identifiers, and arbitrary lower-layer exception text must not be retained in logs or review evidence merely for debugging. Repository controls should support SOC 2 / CSAP evidence preparation without claiming certification.
+
+### Reliability
+
+Network, response, retry, wait, candidate-scan, payload, and release-evidence operations must be explicitly bounded. Recovery and rollback must be documented before migrations or release changes are considered complete. Queued, skipped, cancelled, absent, stale, predecessor-head, synthetic-merge-only, or infrastructure-failed evidence is not success for an exact source head.
+
+### Interoperability
+
+Provider interaction stays OpenAI-Batch-compatible behind a validated Python client seam. Embedding hosts can provide credentials and control-plane context without changing the package's durable/provider semantics.
+
+### Packaging and release
+
+Dependencies must be locked/reproducible according to repository policy. Release acceptance must include required quality, security, package/container, SBOM, provenance, artifact-identity, rollback/recovery, and governance evidence on the exact integrated protected head. A release is not implied by a version string or a successful pull request.
+
+## Explicit non-goals
+
+- Replacing host authentication or authorization.
+- Treating PostgreSQL RLS as a credential or as SQL-injection prevention.
+- Making provider payload/model output an authority for tenant or endpoint selection.
+- Providing an unbounded general-purpose HTTP proxy.
+- Reintroducing provider networking or independent scheduling inside PostgreSQL.
+- Claiming distributed exactly-once processing without an integrated transaction/recovery contract spanning every external effect.
+- Requiring a specific ContextualWisdomLab host service for standalone operation.
+- Claiming SOC 2, CSAP, or other certification solely from repository controls.
+
+## Product acceptance boundary
+
+A product capability moves to **IMPLEMENTED-ON-PROTECTED-MAIN** only after its unchanged source has satisfied the live ruleset, required exact-head CI/security/coverage/package/provenance/release checks, valid review findings are resolved, and the resulting tree is integrated into the protected default branch. Documentation must then be updated to move the capability out of `ACTIVE-PR`, `PARTIAL`, or `PLANNED`; historical evidence must not be transferred as if it were proof for a different head.
