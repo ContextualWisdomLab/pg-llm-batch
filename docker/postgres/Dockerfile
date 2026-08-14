@@ -3,7 +3,7 @@
 ARG PG_MAJOR=16
 FROM postgres:${PG_MAJOR}-bookworm@sha256:da788743d2060767375896de4d646f7576f5911461444b372616f19ea61db2ec AS postgres-base
 
-ARG PG_MAJOR
+ARG PG_MAJOR=16
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Patch the base OS and remove gosu: this image always runs as the official
