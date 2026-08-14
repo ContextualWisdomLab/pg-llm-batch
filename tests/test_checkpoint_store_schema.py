@@ -5,6 +5,7 @@ from pathlib import Path
 
 PACKAGE_SQL = Path("pg_llm_batch/migrations/0007_result_stream_checkpoints.sql")
 DOCKER_SQL = Path("docker/postgres/init/03_result_stream_checkpoints.sql")
+DOCKERFILE = Path("docker/postgres/Dockerfile")
 ROLLBACK_SQL = Path("pg_llm_batch/migrations/rollback/0007_result_stream_checkpoints.sql")
 
 
@@ -12,6 +13,21 @@ def test_packaged_and_container_checkpoint_migrations_are_identical() -> None:
     """Package and container installs execute the same migration bytes."""
     assert PACKAGE_SQL.is_file()
     assert PACKAGE_SQL.read_bytes() == DOCKER_SQL.read_bytes()
+
+
+def test_postgres_image_installs_checkpoint_migration_after_existing_init_steps() -> None:
+    """The deployable image must actually install the mirrored checkpoint schema."""
+    dockerfile = DOCKERFILE.read_text(encoding="utf-8")
+    existing_init = (
+        "COPY init/03_cron_batch_retrieval.sql "
+        "/docker-entrypoint-initdb.d/03_cron_batch_retrieval.sql"
+    )
+    checkpoint_init = (
+        "COPY init/03_result_stream_checkpoints.sql "
+        "/docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql"
+    )
+    assert checkpoint_init in dockerfile
+    assert dockerfile.index(existing_init) < dockerfile.index(checkpoint_init)
 
 
 def test_checkpoint_schema_is_tenant_isolated_and_fail_closed() -> None:
