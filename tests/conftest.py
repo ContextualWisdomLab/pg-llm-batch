@@ -91,6 +91,30 @@ class FakeKVStore:
         if "from llm_endpoint_models" in s:
             return []  # no DB tokenizer mapping in unit tests
 
+        # --- provisioned runtime store catalog ------------------------------
+        if "from pg_catalog.pg_class" in s:
+            table_name, requested_columns = params
+            schema_types = {
+                "com_config": {
+                    "config_description": "text",
+                    "config_key": "text",
+                    "config_value": "text",
+                    "updated_at": "timestamp with time zone",
+                },
+                "com_secrets": {
+                    "is_encrypted": "boolean",
+                    "secret_key": "text",
+                    "secret_value": "text",
+                    "updated_at": "timestamp with time zone",
+                },
+            }
+            column_types = schema_types.get(table_name, {})
+            return [
+                ("r", column_name, column_types[column_name])
+                for column_name in sorted(requested_columns)
+                if column_name in column_types
+            ]
+
         # --- com_config -----------------------------------------------------
         if "create table" in s and "com_config" in s:
             return []
