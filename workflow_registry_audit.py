@@ -2,9 +2,10 @@
 
 The tool intentionally performs no workflow mutation. It binds one audit receipt to
 an exact protected commit, reads the repository Actions registry with complete
-pagination, and reports active workflow identities whose exact source path is
-absent from that protected tree. Those records are candidates for separate
-operator review, not automatic disable decisions.
+pagination, and reports active repository-backed workflow identities whose exact
+source path is absent from that protected tree. GitHub-managed ``dynamic/``
+identities remain receipted separately and are never treated as deleted-YAML
+candidates. All reported candidates still require separate operator review.
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _API_PATH_RE = re.compile(r"^/(?!/)[^\r\n]*$")
 _WORKFLOW_PREFIX = ".github/workflows/"
+_DYNAMIC_WORKFLOW_PREFIX = "dynamic/"
 _GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
@@ -177,9 +179,11 @@ def audit_repository_workflows(
 ) -> dict[str, object]:
     """Return an exact-SHA read-only registry/source classification receipt.
 
-    Active identities absent from the exact protected tree are reported as
-    candidates only. The caller must separately prove whether a candidate has a
-    legitimate platform role before any future workflow-state mutation. Use
+    Active repository-backed identities absent from the exact protected tree are
+    reported as candidates only. GitHub-managed dynamic identities are retained
+    in the receipt with indeterminate protected-source presence and never become
+    orphan candidates. The caller must separately prove whether any candidate has
+    a legitimate platform role before future workflow-state mutation. Use
     :func:`audit_live_protected_ref_workflows` when live-ref movement must also
     invalidate the receipt.
     """
@@ -200,19 +204,30 @@ def audit_repository_workflows(
     classified_records: list[dict[str, object]] = []
     active_absent: list[dict[str, object]] = []
     for record in workflow_records:
-        source_present = record["path"] in protected_paths
+        path = str(record["path"])
+        source_kind = (
+            "repository" if path.startswith(_WORKFLOW_PREFIX) else "platform_dynamic"
+        )
+        source_present: bool | None = (
+            path in protected_paths if source_kind == "repository" else None
+        )
         classified = {
             "workflow_id": record["workflow_id"],
-            "path": record["path"],
+            "path": path,
             "state": record["state"],
+            "source_kind": source_kind,
             "source_present": source_present,
         }
         classified_records.append(classified)
-        if record["state"] == "active" and not source_present:
+        if (
+            record["state"] == "active"
+            and source_kind == "repository"
+            and source_present is False
+        ):
             active_absent.append(
                 {
                     "workflow_id": record["workflow_id"],
-                    "path": record["path"],
+                    "path": path,
                     "state": record["state"],
                 }
             )
@@ -390,7 +405,7 @@ def _registry_signature(records: list[dict[str, object]]) -> tuple[tuple[int, st
 
 
 def _validate_workflow_record(raw_record: object) -> dict[str, object]:
-    """Validate only identity/path/state fields needed for safe classification."""
+    """Validate identity/path/state for repository and GitHub-managed records."""
     if not isinstance(raw_record, dict):
         raise WorkflowRegistryAuditError("workflow registry record is invalid")
     workflow_id = raw_record.get("id")
@@ -405,7 +420,15 @@ def _validate_workflow_record(raw_record: object) -> dict[str, object]:
         or not state
     ):
         raise WorkflowRegistryAuditError("workflow registry record is invalid")
-    if not path.startswith(_WORKFLOW_PREFIX) or "\\" in path or ".." in path.split("/"):
+    components = path.split("/")
+    if (
+        "\\" in path
+        or any(component in {"", ".", ".."} for component in components)
+        or not (
+            path.startswith(_WORKFLOW_PREFIX)
+            or path.startswith(_DYNAMIC_WORKFLOW_PREFIX)
+        )
+    ):
         raise WorkflowRegistryAuditError("workflow registry record path is invalid")
     return {"workflow_id": workflow_id, "path": path, "state": state}
 
