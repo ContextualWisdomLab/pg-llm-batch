@@ -115,10 +115,11 @@ def _select_candidates(
     *,
     max_jobs: int,
 ) -> tuple[ReconciliationCandidate, ...]:
-    """Return at most ``max_jobs`` unique validated identities from a bounded scan."""
+    """Return unique work or fail closed when the bounded candidate scan saturates."""
     selected: list[ReconciliationCandidate] = []
     seen: set[tuple[str, str]] = set()
-    for candidate in islice(candidates, MAX_RECONCILIATION_CANDIDATES):
+    candidate_iterator = iter(candidates)
+    for candidate in islice(candidate_iterator, MAX_RECONCILIATION_CANDIDATES):
         validated = _validate_candidate(candidate)
         identity = (validated.endpoint_alias, validated.remote_batch_id)
         if identity in seen:
@@ -126,8 +127,19 @@ def _select_candidates(
         seen.add(identity)
         selected.append(validated)
         if len(selected) == max_jobs:
-            break
-    return tuple(selected)
+            return tuple(selected)
+
+    try:
+        next(candidate_iterator)
+    except StopIteration:
+        return tuple(selected)
+
+    raise ValidationError(
+        field="reconciliation_candidates",
+        value="<redacted>",
+        reason="candidate scan exceeded the bounded reconciliation limit",
+        message="Reconciliation candidate scan is saturated",
+    )
 
 
 def _bounded_error_type(error: Exception) -> str:
