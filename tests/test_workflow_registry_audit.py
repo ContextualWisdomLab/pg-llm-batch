@@ -5,6 +5,7 @@ from __future__ import annotations
 import traceback
 from dataclasses import dataclass
 
+import aiohttp
 import pytest
 
 from workflow_registry_audit import (
@@ -286,49 +287,55 @@ def test_invalid_sha_is_rejected_before_any_github_read() -> None:
     assert client.requested_paths == []
 
 
-def test_authenticated_reads_use_fixed_https_origin_and_path_only(
+def test_authenticated_reads_use_fixed_aiohttp_origin_and_path_only(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Credentials stay on a fixed GitHub HTTPS connection with a path-only target."""
-    observed_connections: list[tuple[str, float]] = []
-    observed_requests: list[tuple[str, str, dict[str, str]]] = []
+    """Credentials stay on one fixed GitHub origin with a path-only request target."""
+    observed_sessions: list[tuple[str, float, dict[str, str]]] = []
+    observed_requests: list[tuple[str, bool]] = []
     closed: list[bool] = []
 
     class _Response:
         status = 200
 
-        def read(self) -> bytes:
+        async def __aenter__(self) -> "_Response":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
+            return None
+
+        async def read(self) -> bytes:
             return b"{}"
 
-    class _Connection:
-        def __init__(self, host: str, *, timeout: float) -> None:
-            observed_connections.append((host, timeout))
-
-        def request(
+    class _Session:
+        def __init__(
             self,
-            method: str,
-            path: str,
             *,
+            base_url: str,
             headers: dict[str, str],
+            timeout: aiohttp.ClientTimeout,
         ) -> None:
-            observed_requests.append((method, path, headers))
+            observed_sessions.append((base_url, float(timeout.total), headers))
 
-        def getresponse(self) -> _Response:
-            return _Response()
+        async def __aenter__(self) -> "_Session":
+            return self
 
-        def close(self) -> None:
+        async def __aexit__(self, *_args: object) -> None:
             closed.append(True)
 
-    monkeypatch.setattr("workflow_registry_audit.HTTPSConnection", _Connection)
+        def get(self, path: str, *, allow_redirects: bool) -> _Response:
+            observed_requests.append((path, allow_redirects))
+            return _Response()
+
+    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-test-token")
     path = f"/repos/{REPOSITORY}/actions/workflows"
 
     assert client.get_json(path) == {}
-    assert observed_connections == [("api.github.com", 15.0)]
-    assert observed_requests == [
+    assert observed_sessions == [
         (
-            "GET",
-            path,
+            "https://api.github.com",
+            15.0,
             {
                 "Accept": "application/vnd.github+json",
                 "User-Agent": "pg-llm-batch-workflow-registry-audit/1",
@@ -337,49 +344,57 @@ def test_authenticated_reads_use_fixed_https_origin_and_path_only(
             },
         )
     ]
+    assert observed_requests == [(path, False)]
     assert closed == [True]
 
 
 def test_absolute_uri_is_rejected_before_transport(monkeypatch: pytest.MonkeyPatch) -> None:
     """A caller cannot turn the request target into another URL or scheme."""
-    connection_attempted = False
+    session_attempted = False
 
-    class _Connection:
+    class _Session:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
-            nonlocal connection_attempted
-            connection_attempted = True
+            nonlocal session_attempted
+            session_attempted = True
 
-    monkeypatch.setattr("workflow_registry_audit.HTTPSConnection", _Connection)
+    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-test-token")
 
     with pytest.raises(WorkflowRegistryAuditError, match="GitHub API path is invalid"):
         client.get_json("https://attacker.invalid/repos/owner/repo")
 
-    assert connection_attempted is False
+    assert session_attempted is False
 
 
-def test_http_failure_does_not_retain_lower_layer_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_transport_failure_does_not_retain_lower_layer_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Transport details remain outside rendered evidence and exception chaining."""
     secret_sentinel = "SECRET_HTTP_DIAGNOSTIC_SHOULD_NOT_ESCAPE"
 
-    class _Connection:
-        def __init__(self, _host: str, *, timeout: float) -> None:
-            assert timeout == 15.0
-
-        def request(
+    class _Session:
+        def __init__(
             self,
-            _method: str,
-            _path: str,
             *,
+            base_url: str,
             headers: dict[str, str],
+            timeout: aiohttp.ClientTimeout,
         ) -> None:
+            assert base_url == "https://api.github.com"
             assert headers["Authorization"] == "Bearer token-value-that-must-not-render"
-            raise OSError(secret_sentinel)
+            assert timeout.total == 15.0
 
-        def close(self) -> None:
+        async def __aenter__(self) -> "_Session":
+            return self
+
+        async def __aexit__(self, *_args: object) -> None:
             return None
 
-    monkeypatch.setattr("workflow_registry_audit.HTTPSConnection", _Connection)
+        def get(self, _path: str, *, allow_redirects: bool) -> object:
+            assert allow_redirects is False
+            raise aiohttp.ClientConnectionError(secret_sentinel)
+
+    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="token-value-that-must-not-render")
 
     try:
