@@ -1,0 +1,241 @@
+name: Runtime Store Provisioning Probe
+
+on:
+  push:
+    branches:
+      - fix/runtime-store-provisioning-d0a4b30
+    paths:
+      - .github/workflows/runtime-store-provisioning-probe.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-store-provisioning-probe
+  cancel-in-progress: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - name: Check out exact probe head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact source head
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.12.3"
+          prune-cache: true
+
+      - name: Install locked dependencies
+        run: uv sync --locked
+
+      - name: Prove exact RED contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p probe
+          if uv run pytest -q tests/test_runtime_store_provisioning_boundary.py >probe/red.log 2>&1; then
+            cat probe/red.log
+            echo "runtime provisioning contract unexpectedly passed before implementation" >&2
+            exit 1
+          fi
+          cat probe/red.log
+
+      - name: Materialize bounded GREEN candidate without repository writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          uv run python - <<'PY'
+          from pathlib import Path
+
+          config_path = Path("pg_llm_batch/config.py")
+          package_schema_path = Path("pg_llm_batch/schema.sql")
+          docker_schema_path = Path("docker/postgres/init/02_schema.sql")
+
+          config_connection = "        self._conn = psycopg.connect(self.dsn)\n"
+          config_load_method = "    def _load_cache(self) -> None:\n"
+          secret_class = "class SecretStore:\n"
+          secret_encode_method = "    def _encode(self, raw: str) -> Tuple[str, bool]:\n"
+
+          config_runtime_block = '''        self._conn = psycopg.connect(self.dsn)
+          try:
+              self._conn.autocommit = True
+              self.cache: Dict[str, Dict[str, Any]] = {}
+              schema_ready = True
+              try:
+                  self._verify_schema()
+                  self._load_cache()
+              except Exception:
+                  schema_ready = False
+              if not schema_ready:
+                  self.close()
+                  raise ConfigError(
+                      "Configuration schema is unavailable or incompatible"
+                  ) from None
+          except BaseException:
+              self.close()
+              raise
+
+      def _verify_schema(self) -> None:
+          """Verify the provisioned config table without acquiring DDL authority."""
+          with self._conn.cursor() as cur:
+              cur.execute(
+                  f"SELECT config_key, config_value, config_description, updated_at "
+                  f"FROM {self.TABLE_NAME} WHERE config_key = %s",
+                  ("__pg_llm_batch_schema_probe__",),
+              )
+
+      '''
+
+          secret_runtime_block = '''        self._conn = psycopg.connect(self.dsn)
+          try:
+              self._conn.autocommit = True
+              self._fernet = None
+              if fernet_key and Fernet is not None:
+                  self._fernet = Fernet(fernet_key.encode("utf-8"))
+              schema_ready = True
+              try:
+                  self._verify_schema()
+              except Exception:
+                  schema_ready = False
+              if not schema_ready:
+                  self.close()
+                  raise ConfigError(
+                      "Secret schema is unavailable or incompatible"
+                  ) from None
+          except BaseException:
+              self.close()
+              raise
+
+      def _verify_schema(self) -> None:
+          """Verify the provisioned secret table without acquiring DDL authority."""
+          with self._conn.cursor() as cur:
+              cur.execute(
+                  f"SELECT secret_key, secret_value, is_encrypted, updated_at "
+                  f"FROM {self.TABLE_NAME} WHERE secret_key = %s",
+                  ("__pg_llm_batch_schema_probe__",),
+              )
+
+      '''
+
+          secret_table = '''CREATE TABLE IF NOT EXISTS com_secrets (
+              secret_key TEXT PRIMARY KEY,
+              secret_value TEXT NOT NULL,
+              is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
+              updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+          );
+          '''
+
+          default_seed_sql = '''
+
+          -- Provision built-in configuration only at the explicit schema boundary.
+          -- Existing operator values are never overwritten during upgrades or replay.
+          INSERT INTO com_config (config_key, config_value, config_description)
+          VALUES
+              ('batch_size.min', '100', 'Batch request size limit'),
+              ('batch_size.default', '50000', 'Batch request size limit'),
+              ('batch_size.max', '50000', 'Batch request size limit'),
+              ('token_limits.per_batch', '5000000000', 'Token count limits'),
+              ('token_limits.per_request', '128000', 'Token count limits'),
+              ('token_limits.buffer_percentage', '5', 'Token count limits'),
+              ('azure_limits.max_records_per_file', '100000', 'Batch upload constraints'),
+              ('azure_limits.max_bytes_per_file', '209715200', 'Batch upload constraints'),
+              ('azure_limits.max_files_per_job', '500', 'Batch upload constraints'),
+              ('optimization.auto_split', 'true', 'Optimization features'),
+              ('optimization.smart_batching', 'true', 'Optimization features')
+          ON CONFLICT (config_key) DO NOTHING;
+          '''
+
+          source = config_path.read_text(encoding="utf-8")
+          config_class = source.index("class PostgresConfigStore:")
+          config_start = source.index(config_connection, config_class)
+          config_end = source.index(config_load_method, config_start)
+          source = source[:config_start] + config_runtime_block + source[config_end:]
+          secret_start_class = source.index(secret_class)
+          secret_start = source.index(config_connection, secret_start_class)
+          secret_end = source.index(secret_encode_method, secret_start)
+          source = source[:secret_start] + secret_runtime_block + source[secret_end:]
+          if "def _ensure_defaults" in source or "CREATE TABLE IF NOT EXISTS" in source:
+              raise RuntimeError("runtime provisioning authority remained in config.py")
+          config_path.write_text(source, encoding="utf-8")
+
+          schema = package_schema_path.read_text(encoding="utf-8")
+          if default_seed_sql.strip() not in schema:
+              if schema.count(secret_table) != 1:
+                  raise RuntimeError("secret table provisioning anchor changed")
+              schema = schema.replace(secret_table, secret_table + default_seed_sql, 1)
+          package_schema_path.write_text(schema, encoding="utf-8")
+          docker_schema_path.write_text(schema, encoding="utf-8")
+          PY
+
+      - name: Verify GREEN candidate and capture exact evidence
+        id: verify
+        shell: bash
+        run: |
+          set +e
+          mkdir -p probe
+          : > probe/status.txt
+          run_probe() {
+            name="$1"
+            shift
+            "$@" >"probe/${name}.log" 2>&1
+            status=$?
+            printf '%s=%s\n' "$name" "$status" >> probe/status.txt
+            return 0
+          }
+          run_probe focused uv run pytest -q tests/test_runtime_store_provisioning_boundary.py
+          run_probe unit uv run pytest -q -m "not integration"
+          run_probe ruff uv run ruff check pg_llm_batch tests
+          run_probe compile uv run python -m compileall -q pg_llm_batch
+          run_probe coverage uv run --with pytest-cov==7.1.0 pytest -q -m "not integration" --cov=pg_llm_batch --cov-report=term-missing --cov-fail-under=100
+          run_probe lock uv lock --check
+          run_probe build uv build --no-sources
+          if cmp -s pg_llm_batch/schema.sql docker/postgres/init/02_schema.sql; then
+            echo schema_mirror=0 >> probe/status.txt
+          else
+            echo schema_mirror=1 >> probe/status.txt
+          fi
+          git diff --check >probe/diff-check.log 2>&1
+          echo diff_check=$? >> probe/status.txt
+          cat probe/status.txt
+
+      - name: Preserve generated candidate and probe evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: runtime-store-provisioning-probe-${{ github.sha }}
+          path: |
+            pg_llm_batch/config.py
+            pg_llm_batch/schema.sql
+            docker/postgres/init/02_schema.sql
+            probe/
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Fail when any candidate gate failed
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -Ev '^[a-z_]+=(0)$' probe/status.txt | grep -q .; then
+            cat probe/status.txt
+            exit 1
+          fi
