@@ -20,7 +20,7 @@ from pg_llm_batch.reconciliation_store import (
 class RecordingCursor:
     """Minimal cursor double recording tenant binding and candidate query calls."""
 
-    def __init__(self, rows: list[tuple[Any, ...]]) -> None:
+    def __init__(self, rows: list[Any]) -> None:
         """Store rows returned by ``fetchall`` and initialize an empty call log."""
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
@@ -29,7 +29,7 @@ class RecordingCursor:
         """Record one parameterized SQL execution."""
         self.calls.append((sql, params))
 
-    def fetchall(self) -> list[tuple[Any, ...]]:
+    def fetchall(self) -> list[Any]:
         """Return the configured candidate rows."""
         return list(self.rows)
 
@@ -105,7 +105,7 @@ def test_invalid_tenant_scope_fails_before_database_work():
 def test_invalid_persisted_candidate_is_redacted():
     """Corrupt durable identifiers must not escape through validation evidence."""
     sentinel = "secret/provider/path"
-    cursor = RecordingCursor([(sentinel, "batch-1")])
+    cursor = RecordingCursor([("gateway-a", sentinel)])
 
     with pytest.raises(ValidationError) as caught:
         load_reconciliation_candidates_in_transaction(
@@ -115,6 +115,22 @@ def test_invalid_persisted_candidate_is_redacted():
         )
 
     assert sentinel not in str(caught.value)
+    assert caught.value.details["value"] == "<redacted>"
+
+
+@pytest.mark.parametrize("malformed_row", ["not-a-row", ["only-one-field"]])
+def test_malformed_persisted_candidate_shape_is_redacted(malformed_row: Any):
+    """Malformed durable row shapes must fail closed without reflecting row data."""
+    cursor = RecordingCursor([malformed_row])
+
+    with pytest.raises(ValidationError) as caught:
+        load_reconciliation_candidates_in_transaction(
+            cursor,
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert str(malformed_row) not in str(caught.value)
     assert caught.value.details["value"] == "<redacted>"
 
 
