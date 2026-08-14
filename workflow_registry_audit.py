@@ -14,14 +14,14 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Protocol
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _WORKFLOW_PREFIX = ".github/workflows/"
-_DEFAULT_API_URL = "https://api.github.com"
+_GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
 
@@ -44,20 +44,18 @@ class GitHubReadClient:
         self,
         *,
         token: str | None = None,
-        api_url: str = _DEFAULT_API_URL,
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
-        """Configure read-only API access without retaining response diagnostics."""
+        """Configure fixed-origin read-only API access with a finite timeout."""
         if timeout_seconds <= 0:
             raise WorkflowRegistryAuditError("GitHub audit timeout must be positive")
         self._token = token
-        self._api_url = api_url.rstrip("/")
         self._timeout_seconds = timeout_seconds
 
     def get_json(self, path: str) -> dict[str, object]:
         """Read one JSON object and replace transport/parser failures with fixed evidence."""
         request = Request(
-            f"{self._api_url}{path}",
+            f"{_GITHUB_API_URL}{path}",
             headers=self._headers(),
             method="GET",
         )
@@ -105,10 +103,11 @@ def audit_repository_workflows(
     """
     _validate_repository(repository_full_name)
     _validate_protected_sha(protected_sha)
+    normalized_sha = protected_sha.lower()
 
     protected_paths = _read_protected_workflow_paths(
         repository_full_name=repository_full_name,
-        protected_sha=protected_sha,
+        protected_sha=normalized_sha,
         client=client,
     )
     workflow_records, pages_scanned, registry_total_count = _read_registry(
@@ -139,7 +138,7 @@ def audit_repository_workflows(
     active_absent.sort(key=lambda item: (str(item["path"]), int(item["workflow_id"])))
     return {
         "repository_full_name": repository_full_name,
-        "protected_sha": protected_sha.lower(),
+        "protected_sha": normalized_sha,
         "captured_at": captured_at or _utc_timestamp(),
         "pages_scanned": pages_scanned,
         "registry_total_count": registry_total_count,
@@ -287,15 +286,10 @@ def _parser() -> argparse.ArgumentParser:
         help="Exact 40-hex protected commit SHA; mutable ref names are rejected",
     )
     parser.add_argument(
-        "--api-url",
-        default=_DEFAULT_API_URL,
-        help="GitHub API base URL (default: https://api.github.com)",
-    )
-    parser.add_argument(
         "--timeout-seconds",
         type=float,
         default=_DEFAULT_TIMEOUT_SECONDS,
-        help="Finite timeout for each read-only API request",
+        help="Finite timeout for each read-only GitHub API request",
     )
     return parser
 
@@ -306,7 +300,6 @@ def main(argv: list[str] | None = None) -> int:
     try:
         client = GitHubReadClient(
             token=os.environ.get("GITHUB_TOKEN"),
-            api_url=args.api_url,
             timeout_seconds=args.timeout_seconds,
         )
         receipt = audit_repository_workflows(
