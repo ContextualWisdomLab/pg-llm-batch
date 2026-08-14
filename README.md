@@ -311,15 +311,21 @@ psql "$PG_LLM_BATCH_DSN" --set ON_ERROR_STOP=1 \
 ```
 
 The migration fails closed if any cron job or retired helper signature remains,
-uses a five-second transaction-local lock timeout, and removes only `http` and
-`pg_cron` with `DROP EXTENSION ... RESTRICT`. It never uses `CASCADE` and does
-not drop `gateway_retrieval_logs`, another table, or an application schema. A
-failed attempt rolls back, and the same migration is idempotent after success.
+if `pg_depend` shows an explicit `DEPENDS ON EXTENSION` object, or if a
+table-like object is unexpectedly enrolled as an extension member outside the
+expected `pg_cron` `cron`-schema boundary. These checks are required because
+`DROP EXTENSION ... RESTRICT` still removes extension members and explicit
+auto-extension dependencies. After those guards pass, the migration uses a
+five-second transaction-local lock timeout and removes only `http` and `pg_cron`
+with `DROP EXTENSION ... RESTRICT`. It never uses `CASCADE` and does not drop
+`gateway_retrieval_logs`, another application table, or an application schema.
+A failed attempt rolls back, and the same migration is idempotent after success.
 
 Follow the complete preflight, verification, recovery, replay, and rollback
 procedure in [`docs/OPERABILITY.md`](docs/OPERABILITY.md). In particular, do not
 rename operator jobs, delete a modified same-signature helper as package-owned,
-or replace `RESTRICT` with `CASCADE` merely to make the migration pass.
+detach an extension member, remove a `DEPENDS ON EXTENSION` relationship, or
+replace `RESTRICT` with `CASCADE` merely to make the migration pass.
 
 ---
 
