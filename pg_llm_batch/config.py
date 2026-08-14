@@ -318,7 +318,7 @@ class SecretStore:
         *,
         require_encryption: bool = True,
     ) -> None:
-        """Connect with encrypted storage by default; local/dev may explicitly opt out."""
+        """Validate encryption policy before acquiring a database connection."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
@@ -331,13 +331,21 @@ class SecretStore:
             raise ConfigError(
                 "Fernet encryption requires the optional cryptography dependency"
             )
+
+        self._fernet = None
+        invalid_fernet_key = False
+        if fernet_key and Fernet is not None:
+            try:
+                self._fernet = Fernet(fernet_key.encode("utf-8"))
+            except (TypeError, ValueError):
+                invalid_fernet_key = True
+        if invalid_fernet_key:
+            raise ConfigError("Secret encryption key is invalid") from None
+
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
         try:
             self._conn.autocommit = True
-            self._fernet = None
-            if fernet_key and Fernet is not None:
-                self._fernet = Fernet(fernet_key.encode("utf-8"))
             self._ensure_table()
         except BaseException:
             self.close()
