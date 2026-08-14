@@ -39,8 +39,12 @@ def test_config_set_get_roundtrip(fake_pg):
     assert store.get("gateway", "base_url") == "https://gw.example/v1"
 
 
-def test_secret_store_base64_without_key(fake_pg, caplog):
-    store = SecretStore("postgresql://x", fernet_key=None)
+def test_secret_store_base64_requires_explicit_local_dev_opt_out(fake_pg, caplog):
+    store = SecretStore(
+        "postgresql://x",
+        fernet_key=None,
+        require_encryption=False,
+    )
     store.set_secret("gateway_api_key.default", "sk-secret-123")
     # stored obfuscated, not plaintext
     stored_value = fake_pg.store.secrets["gateway_api_key.default"][0]
@@ -66,7 +70,7 @@ def test_secret_store_fernet_encrypts_at_rest(fake_pg):
 
 
 def test_require_secret_raises_when_missing(fake_pg):
-    store = SecretStore("postgresql://x")
+    store = SecretStore("postgresql://x", require_encryption=False)
     with pytest.raises(ConfigError):
         store.require_secret("does_not_exist")
 
@@ -136,7 +140,7 @@ def test_store_constructor_requires_dependency_and_dsn(monkeypatch, fake_pg):
 
 def test_encrypted_secret_requires_matching_key(fake_pg):
     fake_pg.store.secrets["encrypted"] = ("opaque", True)
-    store = SecretStore("postgresql://x")
+    store = SecretStore("postgresql://x", require_encryption=False)
     with pytest.raises(ConfigError, match="no Fernet key"):
         store.get_secret("encrypted")
     assert store.get_secret("absent", "default") == "default"
@@ -154,7 +158,7 @@ def test_close_swallows_driver_cleanup_errors(fake_pg):
     config.close()
     assert config._conn is None
 
-    secrets = SecretStore("postgresql://x")
+    secrets = SecretStore("postgresql://x", require_encryption=False)
     secrets._conn = BrokenConnection()
     secrets.close()
     assert secrets._conn is None
