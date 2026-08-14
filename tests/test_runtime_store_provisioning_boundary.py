@@ -111,6 +111,112 @@ def test_missing_or_incompatible_runtime_schema_fails_with_bounded_package_error
     assert caught.value.__context__ is None
 
 
+class _SchemaShapeCursor:
+    """Cursor that makes a relation selectable while exposing catalog shape metadata."""
+
+    def __init__(self, relation_kind: str, column_types: dict[str, str]) -> None:
+        self._relation_kind = relation_kind
+        self._column_types = column_types
+        self._result: list[tuple[Any, ...]] = []
+
+    def __enter__(self) -> "_SchemaShapeCursor":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
+        """Allow ordinary SELECT and return modeled rows for pg_catalog probes."""
+        normalized = " ".join(sql.lower().split())
+        self._result = []
+        if "from pg_catalog.pg_class" not in normalized:
+            return
+        requested_columns = tuple((params or (None, ()))[1])
+        self._result = [
+            (self._relation_kind, column_name, self._column_types[column_name])
+            for column_name in requested_columns
+            if column_name in self._column_types
+        ]
+
+    def fetchall(self) -> list[tuple[Any, ...]]:
+        return list(self._result)
+
+
+class _SchemaShapeConnection:
+    """Connection exposing a selectable relation with a controlled catalog shape."""
+
+    def __init__(self, relation_kind: str, column_types: dict[str, str]) -> None:
+        self.autocommit = False
+        self.closed = False
+        self._relation_kind = relation_kind
+        self._column_types = column_types
+
+    def cursor(self) -> _SchemaShapeCursor:
+        return _SchemaShapeCursor(self._relation_kind, self._column_types)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _SchemaShapePsycopg:
+    """Return a single connection with controlled relation/catalog metadata."""
+
+    def __init__(self, relation_kind: str, column_types: dict[str, str]) -> None:
+        self.connection = _SchemaShapeConnection(relation_kind, column_types)
+
+    def connect(self, _dsn: str) -> _SchemaShapeConnection:
+        return self.connection
+
+
+_CONFIG_TYPES = {
+    "config_key": "text",
+    "config_value": "text",
+    "config_description": "text",
+    "updated_at": "timestamp with time zone",
+}
+_SECRET_TYPES = {
+    "secret_key": "text",
+    "secret_value": "text",
+    "is_encrypted": "boolean",
+    "updated_at": "timestamp with time zone",
+}
+
+
+@pytest.mark.parametrize(
+    ("store_kind", "relation_kind", "column_types"),
+    [
+        ("config", "v", _CONFIG_TYPES),
+        ("config", "r", {**_CONFIG_TYPES, "config_value": "integer"}),
+        ("secret", "v", _SECRET_TYPES),
+        ("secret", "r", {**_SECRET_TYPES, "is_encrypted": "text"}),
+    ],
+)
+def test_runtime_store_rejects_selectable_view_or_wrong_column_type(
+    monkeypatch: pytest.MonkeyPatch,
+    store_kind: str,
+    relation_kind: str,
+    column_types: dict[str, str],
+) -> None:
+    """Selectable views and wrong column types must fail closed and clean up."""
+    fake = _SchemaShapePsycopg(relation_kind, column_types)
+    monkeypatch.setattr(config_mod, "psycopg", fake)
+
+    expected_message = (
+        "Configuration schema is unavailable or incompatible"
+        if store_kind == "config"
+        else "Secret schema is unavailable or incompatible"
+    )
+    with pytest.raises(ConfigError, match=f"^{expected_message}$") as caught:
+        if store_kind == "config":
+            config_mod.PostgresConfigStore("postgresql://runtime")
+        else:
+            config_mod.SecretStore("postgresql://runtime")
+
+    assert fake.connection.closed is True
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_provisioned_schema_owns_default_seeding_and_docker_mirror() -> None:
     """Fresh provisioning must seed built-ins outside runtime constructors."""
     package_schema = Path("pg_llm_batch/schema.sql").read_text(encoding="utf-8")
