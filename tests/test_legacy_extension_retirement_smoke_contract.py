@@ -28,3 +28,14 @@ def test_live_cleanup_smoke_preserves_application_evidence_after_retirement() ->
     assert "retirement unexpectedly removed gateway_retrieval_logs" in smoke
     assert "unrelated cron job" in smoke
     assert "retirement unexpectedly accepted an unrelated cron job" in smoke
+
+
+def test_live_cleanup_smoke_rejects_auto_dropped_dependency_fixtures() -> None:
+    """Exercise extension-member and DEPENDS ON EXTENSION preservation boundaries."""
+    smoke = SMOKE.read_text(encoding="utf-8")
+
+    assert "ALTER EXTENSION http ADD TABLE gateway_retrieval_logs" in smoke
+    assert "unexpectedly accepted an application extension member" in smoke
+    assert "ALTER FUNCTION public.operator_retirement_dependency() DEPENDS ON EXTENSION http" in smoke
+    assert "unexpectedly accepted an explicit extension dependency" in smoke
+    assert "NO DEPENDS ON EXTENSION http" in smoke
