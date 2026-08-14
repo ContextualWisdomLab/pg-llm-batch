@@ -112,11 +112,20 @@ def test_missing_or_incompatible_runtime_schema_fails_with_bounded_package_error
 
 
 class _SchemaShapeCursor:
-    """Cursor that makes a relation selectable while exposing catalog shape metadata."""
+    """Cursor exposing controlled catalog shape and current-role privilege metadata."""
 
-    def __init__(self, relation_kind: str, column_types: dict[str, str]) -> None:
+    def __init__(
+        self,
+        relation_kind: str,
+        column_types: dict[str, str],
+        *,
+        schema_usage: bool = True,
+        table_select: bool = True,
+    ) -> None:
         self._relation_kind = relation_kind
         self._column_types = column_types
+        self._schema_usage = schema_usage
+        self._table_select = table_select
         self._result: list[tuple[Any, ...]] = []
 
     def __enter__(self) -> "_SchemaShapeCursor":
@@ -126,12 +135,29 @@ class _SchemaShapeCursor:
         return None
 
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
-        """Allow ordinary SELECT and return modeled rows for pg_catalog probes."""
+        """Return catalog rows matching the production probe's requested evidence."""
         normalized = " ".join(sql.lower().split())
         self._result = []
         if "from pg_catalog.pg_class" not in normalized:
             return
         requested_columns = tuple((params or (None, ()))[1])
+        includes_privileges = (
+            "has_schema_privilege" in normalized
+            and "has_table_privilege" in normalized
+        )
+        if includes_privileges:
+            self._result = [
+                (
+                    self._relation_kind,
+                    column_name,
+                    self._column_types[column_name],
+                    self._schema_usage,
+                    self._table_select,
+                )
+                for column_name in requested_columns
+                if column_name in self._column_types
+            ]
+            return
         self._result = [
             (self._relation_kind, column_name, self._column_types[column_name])
             for column_name in requested_columns
@@ -143,26 +169,52 @@ class _SchemaShapeCursor:
 
 
 class _SchemaShapeConnection:
-    """Connection exposing a selectable relation with a controlled catalog shape."""
+    """Connection exposing a selectable relation with controlled catalog metadata."""
 
-    def __init__(self, relation_kind: str, column_types: dict[str, str]) -> None:
+    def __init__(
+        self,
+        relation_kind: str,
+        column_types: dict[str, str],
+        *,
+        schema_usage: bool = True,
+        table_select: bool = True,
+    ) -> None:
         self.autocommit = False
         self.closed = False
         self._relation_kind = relation_kind
         self._column_types = column_types
+        self._schema_usage = schema_usage
+        self._table_select = table_select
 
     def cursor(self) -> _SchemaShapeCursor:
-        return _SchemaShapeCursor(self._relation_kind, self._column_types)
+        return _SchemaShapeCursor(
+            self._relation_kind,
+            self._column_types,
+            schema_usage=self._schema_usage,
+            table_select=self._table_select,
+        )
 
     def close(self) -> None:
         self.closed = True
 
 
 class _SchemaShapePsycopg:
-    """Return a single connection with controlled relation/catalog metadata."""
+    """Return one connection with controlled relation/catalog metadata."""
 
-    def __init__(self, relation_kind: str, column_types: dict[str, str]) -> None:
-        self.connection = _SchemaShapeConnection(relation_kind, column_types)
+    def __init__(
+        self,
+        relation_kind: str,
+        column_types: dict[str, str],
+        *,
+        schema_usage: bool = True,
+        table_select: bool = True,
+    ) -> None:
+        self.connection = _SchemaShapeConnection(
+            relation_kind,
+            column_types,
+            schema_usage=schema_usage,
+            table_select=table_select,
+        )
 
     def connect(self, _dsn: str) -> _SchemaShapeConnection:
         return self.connection
@@ -199,6 +251,47 @@ def test_runtime_store_rejects_selectable_view_or_wrong_column_type(
 ) -> None:
     """Selectable views and wrong column types must fail closed and clean up."""
     fake = _SchemaShapePsycopg(relation_kind, column_types)
+    monkeypatch.setattr(config_mod, "psycopg", fake)
+
+    expected_message = (
+        "Configuration schema is unavailable or incompatible"
+        if store_kind == "config"
+        else "Secret schema is unavailable or incompatible"
+    )
+    with pytest.raises(ConfigError, match=f"^{expected_message}$") as caught:
+        if store_kind == "config":
+            config_mod.PostgresConfigStore("postgresql://runtime")
+        else:
+            config_mod.SecretStore("postgresql://runtime")
+
+    assert fake.connection.closed is True
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    ("store_kind", "schema_usage", "table_select"),
+    [
+        ("config", False, True),
+        ("config", True, False),
+        ("secret", False, True),
+        ("secret", True, False),
+    ],
+)
+def test_runtime_store_rejects_insufficient_runtime_read_privileges(
+    monkeypatch: pytest.MonkeyPatch,
+    store_kind: str,
+    schema_usage: bool,
+    table_select: bool,
+) -> None:
+    """Compatible tables must still fail closed when the runtime role cannot read."""
+    column_types = _CONFIG_TYPES if store_kind == "config" else _SECRET_TYPES
+    fake = _SchemaShapePsycopg(
+        "r",
+        column_types,
+        schema_usage=schema_usage,
+        table_select=table_select,
+    )
     monkeypatch.setattr(config_mod, "psycopg", fake)
 
     expected_message = (
