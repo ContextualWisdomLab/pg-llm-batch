@@ -281,6 +281,37 @@ def test_invalid_sha_is_rejected_before_any_github_read() -> None:
     assert client.requested_paths == []
 
 
+def test_authenticated_reads_are_pinned_to_github_api(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A maintenance token can never be redirected to a caller-selected API origin."""
+    observed_urls: list[str] = []
+    observed_authorizations: list[str | None] = []
+
+    class _Response:
+        def __enter__(self) -> "_Response":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return b"{}"
+
+    def _capture_request(request: object, *, timeout: float) -> _Response:
+        assert timeout == 15.0
+        observed_urls.append(request.full_url)  # type: ignore[attr-defined]
+        observed_authorizations.append(request.get_header("Authorization"))  # type: ignore[attr-defined]
+        return _Response()
+
+    monkeypatch.setattr("workflow_registry_audit.urlopen", _capture_request)
+    client = GitHubReadClient(token="bounded-test-token")
+
+    assert client.get_json(f"/repos/{REPOSITORY}/actions/workflows") == {}
+    assert observed_urls == [
+        f"https://api.github.com/repos/{REPOSITORY}/actions/workflows"
+    ]
+    assert observed_authorizations == ["Bearer bounded-test-token"]
+
+
 def test_http_failure_does_not_retain_lower_layer_diagnostics(monkeypatch: pytest.MonkeyPatch) -> None:
     """403/404/5xx-style transport details remain outside rendered evidence."""
     secret_sentinel = "SECRET_HTTP_DIAGNOSTIC_SHOULD_NOT_ESCAPE"
