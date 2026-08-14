@@ -32,6 +32,24 @@ CREATE TABLE IF NOT EXISTS com_secrets (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+
+-- Provision built-in configuration only at the explicit schema boundary.
+-- Existing operator values are never overwritten during upgrades or replay.
+INSERT INTO com_config (config_key, config_value, config_description)
+VALUES
+    ('batch_size.min', '100', 'Batch request size limit'),
+    ('batch_size.default', '50000', 'Batch request size limit'),
+    ('batch_size.max', '50000', 'Batch request size limit'),
+    ('token_limits.per_batch', '5000000000', 'Token count limits'),
+    ('token_limits.per_request', '128000', 'Token count limits'),
+    ('token_limits.buffer_percentage', '5', 'Token count limits'),
+    ('azure_limits.max_records_per_file', '100000', 'Batch upload constraints'),
+    ('azure_limits.max_bytes_per_file', '209715200', 'Batch upload constraints'),
+    ('azure_limits.max_files_per_job', '500', 'Batch upload constraints'),
+    ('optimization.auto_split', 'true', 'Optimization features'),
+    ('optimization.smart_batching', 'true', 'Optimization features')
+ON CONFLICT (config_key) DO NOTHING;
+
 -- =============================================================================
 -- Queues and batches
 -- =============================================================================
