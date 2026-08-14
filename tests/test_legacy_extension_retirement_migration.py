@@ -41,6 +41,17 @@ def test_retirement_fails_closed_for_unrelated_cron_jobs() -> None:
     assert "Refusing to retire pg_cron while cron jobs remain" in sql
 
 
+def test_retirement_preflights_auto_dropped_extension_dependencies() -> None:
+    """Reject dependencies that RESTRICT would still remove automatically."""
+    sql = _migration()
+
+    assert "pg_catalog.pg_depend" in sql
+    assert "dep.deptype = 'e'" in sql
+    assert "dep.deptype = 'x'" in sql
+    assert "Refusing to retire provider extensions while unexpected relation members remain" in sql
+    assert "Refusing to retire provider extensions while explicit extension dependencies remain" in sql
+
+
 def test_retirement_uses_restrict_and_preserves_application_data() -> None:
     """Extension cleanup must never cascade through application-owned state."""
     sql = _migration()
