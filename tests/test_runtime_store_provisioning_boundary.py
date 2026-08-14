@@ -142,6 +142,9 @@ class _SchemaShapeCursor:
         """Return catalog rows matching the production probe's requested evidence."""
         normalized = " ".join(sql.lower().split())
         self._result = []
+        if "pg_catalog.pg_index" in normalized:
+            self._result = [(True,)]
+            return
         if "from pg_catalog.pg_class" not in normalized:
             return
         requested_columns = tuple((params or (None, ()))[1])
@@ -167,6 +170,10 @@ class _SchemaShapeCursor:
             for column_name in requested_columns
             if column_name in self._column_types
         ]
+
+    def fetchone(self) -> tuple[Any, ...] | None:
+        """Return the first controlled catalog row, matching psycopg cursor behavior."""
+        return self._result[0] if self._result else None
 
     def fetchall(self) -> list[tuple[Any, ...]]:
         return list(self._result)
@@ -328,7 +335,7 @@ class _MissingUniqueCursor(_SchemaShapeCursor):
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
         super().execute(sql, params)
         if "pg_catalog.pg_index" in " ".join(sql.lower().split()):
-            self._result = [(*row, False) for row in self._result]
+            self._result = [(False,)]
 
 
 class _MissingUniqueConnection(_SchemaShapeConnection):
