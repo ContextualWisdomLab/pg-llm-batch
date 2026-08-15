@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import re
 import sys
@@ -54,8 +55,8 @@ class GitHubReadClient:
         timeout_seconds: float = _DEFAULT_TIMEOUT_SECONDS,
     ) -> None:
         """Configure fixed-origin read-only API access with a finite timeout."""
-        if timeout_seconds <= 0:
-            raise WorkflowRegistryAuditError("GitHub audit timeout must be positive")
+        if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+            raise WorkflowRegistryAuditError("GitHub audit timeout must be positive finite")
         self._token = token
         self._timeout_seconds = timeout_seconds
 
