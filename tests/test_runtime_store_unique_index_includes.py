@@ -6,6 +6,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 
 from pg_llm_batch import config as config_mod
 from pg_llm_batch.exceptions import ConfigError
@@ -22,6 +23,11 @@ _SECRET_TYPES = {
     "secret_value": "text",
     "updated_at": "timestamp with time zone",
 }
+
+
+def _fernet_key() -> str:
+    """Return a valid key so secret-store tests reach unique-index probes."""
+    return Fernet.generate_key().decode()
 
 
 class _IncludeOnlyCursor:
@@ -160,7 +166,7 @@ def test_runtime_store_rejects_storage_key_that_is_only_an_included_column(
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore(
-                "postgresql://runtime", require_encryption=False
+                "postgresql://runtime", fernet_key=_fernet_key()
             )
 
     assert caught.value.message == expected_message
@@ -190,7 +196,7 @@ def test_runtime_store_rejects_deferrable_unique_storage_key_constraint(
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore(
-                "postgresql://runtime", require_encryption=False
+                "postgresql://runtime", fernet_key=_fernet_key()
             )
 
     assert caught.value.message == expected_message
