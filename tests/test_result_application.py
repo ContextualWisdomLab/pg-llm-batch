@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import traceback
+from dataclasses import replace
 from typing import Any, Callable
 
 import pytest
@@ -321,6 +322,36 @@ def test_malformed_loaded_checkpoint_fails_before_record_effect() -> None:
     """Malformed durable predecessor evidence must fail before local effects."""
     store = _Store()
     store.previous = object()  # type: ignore[assignment]
+    effect_called = False
+
+    def effect(_cursor: Any, _record: dict[str, Any]) -> None:
+        nonlocal effect_called
+        effect_called = True
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), store, "result-writer", _item(_checkpoint()), effect
+        )
+
+    assert caught.value.details == {"phase": "checkpoint_load"}
+    assert effect_called is False
+    assert [event[0] for event in store.events] == ["load"]
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+@pytest.mark.parametrize(
+    "previous",
+    [
+        replace(_checkpoint(), batch_id="other-batch"),
+        replace(_checkpoint(), endpoint_alias="other-endpoint"),
+    ],
+)
+def test_loaded_checkpoint_identity_must_match_requested_stream_before_effect(
+    previous: BatchResultCheckpoint,
+) -> None:
+    """A cross-stream predecessor must fail before caller-owned business effects."""
+    store = _Store(previous)
     effect_called = False
 
     def effect(_cursor: Any, _record: dict[str, Any]) -> None:
