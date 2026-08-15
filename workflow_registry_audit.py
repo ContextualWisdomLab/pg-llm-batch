@@ -32,6 +32,7 @@ _DYNAMIC_WORKFLOW_PREFIX = "dynamic/"
 _GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
+_MAX_REGISTRY_WORKFLOWS = 10_000
 _MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _RESPONSE_CHUNK_BYTES = 64 * 1024
 
@@ -412,6 +413,10 @@ def _read_registry_pass(
         )
         pages_scanned += 1
         total_count = _require_nonnegative_int(payload.get("total_count"))
+        if total_count > _MAX_REGISTRY_WORKFLOWS:
+            raise WorkflowRegistryAuditError(
+                "workflow registry exceeds supported workflow limit"
+            )
         if expected_total is None:
             expected_total = total_count
         elif total_count != expected_total:
