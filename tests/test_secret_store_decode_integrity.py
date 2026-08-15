@@ -10,19 +10,40 @@ from pg_llm_batch.exceptions import ConfigError
 
 
 def _store_with_fernet(fernet: object | None) -> SecretStore:
-    """Build a database-free SecretStore instance for decode-boundary tests."""
+    """Build a database-free SecretStore instance for crypto-boundary tests."""
     store = SecretStore.__new__(SecretStore)
     store._fernet = fernet
-    store._require_encryption = False
     return store
 
 
-def test_corrupt_base64_secret_fails_closed_without_silent_normalization() -> None:
-    """Invalid persisted Base64 must not decode to a different plaintext value."""
+def test_unencrypted_persisted_secret_is_rejected_without_base64_decode() -> None:
+    """Legacy Base64 state must never become runtime plaintext after hardening."""
     store = _store_with_fernet(None)
 
-    with pytest.raises(ConfigError, match="Stored secret could not be decoded") as caught:
-        store._decode("%%%", False)
+    with pytest.raises(ConfigError, match="required encryption policy") as caught:
+        store._decode("Zm9v", False)
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_encode_without_fernet_key_fails_closed() -> None:
+    """A broken internal invariant must not re-enable unencrypted persistence."""
+    store = _store_with_fernet(None)
+
+    with pytest.raises(ConfigError, match="encryption key is unavailable") as caught:
+        store._encode("plaintext")
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_encrypted_decode_without_fernet_key_fails_closed() -> None:
+    """Encrypted durable state cannot be read without its configured Fernet key."""
+    store = _store_with_fernet(None)
+
+    with pytest.raises(ConfigError, match="no Fernet key") as caught:
+        store._decode("ciphertext", True)
 
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
