@@ -217,6 +217,12 @@ def _schema_is_compatible(
                      AND idx.indpred IS NULL
                      AND idx.indexprs IS NULL
                      AND idx.indnkeyatts = 1
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM pg_catalog.pg_constraint AS constraint_def
+                         WHERE constraint_def.conindid = idx.indexrelid
+                           AND constraint_def.condeferrable
+                     )
                     JOIN LATERAL unnest(idx.indkey::smallint[]) WITH ORDINALITY
                          AS index_key(attnum, ordinal_position)
                       ON index_key.ordinal_position <= idx.indnkeyatts
