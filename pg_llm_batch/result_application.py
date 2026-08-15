@@ -88,8 +88,9 @@ def apply_checkpointed_result_in_transaction(
     The durable predecessor is loaded before the local effect.  An exact replay
     returns without re-running the effect.  Fresh work invokes ``apply_record``
     using the supplied cursor and advances the checkpoint only after that callback
-    completes synchronously and returns ``None``.  The caller remains responsible
-    for committing or rolling back the surrounding transaction.
+    completes synchronously and returns ``None``.  The checkpoint store must then
+    confirm the exact requested checkpoint before success is reported.  The caller
+    remains responsible for committing or rolling back the surrounding transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
     signal from the checkpoint store.  All other store/callback failures are
@@ -128,12 +129,14 @@ def apply_checkpointed_result_in_transaction(
 
     save_failure: ResultApplicationError | None = None
     try:
-        checkpoint_store.save_in_transaction(
+        saved_checkpoint = checkpoint_store.save_in_transaction(
             cursor,
             consumer_name,
             candidate.checkpoint,
             expected_previous=previous,
         )
+        if saved_checkpoint != candidate.checkpoint:
+            save_failure = ResultApplicationError("checkpoint_save")
     except CheckpointConflictError:
         raise
     except Exception:
