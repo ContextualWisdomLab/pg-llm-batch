@@ -308,17 +308,20 @@ def test_authenticated_reads_use_fixed_aiohttp_origin_and_path_only(
     observed_requests: list[tuple[str, bool]] = []
     closed: list[bool] = []
 
+    class _Content:
+        async def iter_chunked(self, _size: int):
+            yield b"{}"
+
     class _Response:
         status = 200
+        content_length = 2
+        content = _Content()
 
         async def __aenter__(self) -> "_Response":
             return self
 
         async def __aexit__(self, *_args: object) -> None:
             return None
-
-        async def read(self) -> bytes:
-            return b"{}"
 
     class _Session:
         def __init__(
