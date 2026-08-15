@@ -118,6 +118,22 @@ def test_invalid_persisted_candidate_is_redacted():
     assert caught.value.details["value"] == "<redacted>"
 
 
+def test_persisted_endpoint_alias_must_already_be_canonical():
+    """Durable key corruption must fail closed instead of changing endpoint identity."""
+    sentinel = " gateway-a "
+    cursor = RecordingCursor([(sentinel, "batch-1")])
+
+    with pytest.raises(ValidationError) as caught:
+        load_reconciliation_candidates_in_transaction(
+            cursor,
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert sentinel not in str(caught.value)
+    assert caught.value.details["value"] == "<redacted>"
+
+
 @pytest.mark.parametrize("malformed_row", ["not-a-row", ["only-one-field"]])
 def test_malformed_persisted_candidate_shape_is_redacted(malformed_row: Any):
     """Malformed durable row shapes must fail closed without reflecting row data."""
