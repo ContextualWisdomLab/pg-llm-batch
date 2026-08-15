@@ -412,14 +412,29 @@ class SecretStore:
         return base64.b64encode(raw.encode("utf-8")).decode("utf-8"), False
 
     def _decode(self, stored: str, is_encrypted: bool) -> str:
-        """Decrypt or de-obfuscate a stored secret back to its plaintext value."""
-        if is_encrypted:
-            if self._fernet is None:
-                raise ConfigError(
-                    "Secret is encrypted but no Fernet key is configured to decrypt it"
-                )
-            return self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
-        return base64.b64decode(stored.encode("utf-8")).decode("utf-8")
+        """Decode one persisted secret or fail closed with content-free evidence."""
+        if type(stored) is not str or type(is_encrypted) is not bool:
+            raise ConfigError("Stored secret could not be decoded") from None
+        if is_encrypted and self._fernet is None:
+            raise ConfigError(
+                "Secret is encrypted but no Fernet key is configured to decrypt it"
+            )
+
+        decode_failure = False
+        decoded = ""
+        try:
+            if is_encrypted:
+                decoded = self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
+            else:
+                decoded = base64.b64decode(
+                    stored.encode("ascii"),
+                    validate=True,
+                ).decode("utf-8")
+        except Exception:
+            decode_failure = True
+        if decode_failure:
+            raise ConfigError("Stored secret could not be decoded") from None
+        return decoded
 
     def set_secret(self, key: str, value: str) -> None:
         """Encrypt or obfuscate and persist a secret value."""
