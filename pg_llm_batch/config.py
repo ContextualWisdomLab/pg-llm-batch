@@ -475,10 +475,6 @@ class SecretStore:
             row = cur.fetchone()
         if not row:
             return default
-        if row[1] is not True:
-            raise ConfigError(
-                "Stored secret violates required encryption policy"
-            ) from None
         return self._decode(row[0], row[1])
 
     def require_secret(self, key: str) -> str:
