@@ -10,6 +10,10 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 
+_VALIDATION_REDACTED_VALUE = "<redacted>"
+_MAX_SAFE_VALIDATION_VALUE_CHARS = 128
+
+
 class PgLlmBatchError(Exception):
     """Base error for all pg_llm_batch failures."""
 
@@ -66,13 +70,43 @@ class ValidationError(PgLlmBatchError):
         value: Any = None,
         reason: str = "",
         message: Optional[str] = None,
+        *,
+        safe_value: Optional[str] = None,
     ) -> None:
-        """Describe an invalid field value and its reason."""
-        rendered = message or f"Invalid value for '{field}': {value!r} ({reason})"
+        """Describe invalid input without exporting rejected content by default.
+
+        ``value`` is retained only for call compatibility and is deliberately never
+        rendered, copied into details, or otherwise inspected. A caller may instead
+        provide ``safe_value`` after explicitly determining that the diagnostic is
+        non-sensitive. That evidence must be a bounded printable ASCII string so an
+        exception cannot become an unbounded or control-character-bearing log sink.
+        """
+        if safe_value is not None:
+            if not isinstance(safe_value, str):
+                raise TypeError("safe_value must be a string or None")
+            if (
+                not safe_value
+                or len(safe_value) > _MAX_SAFE_VALIDATION_VALUE_CHARS
+                or any(ord(character) < 32 or ord(character) > 126 for character in safe_value)
+            ):
+                raise ValueError(
+                    "safe_value must contain 1-128 printable ASCII characters"
+                )
+            evidence_value = safe_value
+        else:
+            evidence_value = _VALIDATION_REDACTED_VALUE
+
+        if message is not None:
+            rendered = message
+        elif safe_value is not None:
+            rendered = f"Invalid value for '{field}': {safe_value} ({reason})"
+        else:
+            rendered = f"Invalid value for '{field}' ({reason})"
+
         super().__init__(
             message=rendered,
             error_code="VALIDATION_ERROR",
-            details={"field": field, "value": value, "reason": reason},
+            details={"field": field, "value": evidence_value, "reason": reason},
         )
 
 
