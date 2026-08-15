@@ -7,10 +7,16 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 
 from pg_llm_batch import config as config_mod
 from pg_llm_batch.exceptions import ConfigError
 from tests.conftest import FakePsycopg
+
+
+def _fernet_key() -> str:
+    """Return a valid key so secret-store tests reach PostgreSQL boundaries."""
+    return Fernet.generate_key().decode()
 
 
 def _record_sql(fake: FakePsycopg) -> list[str]:
@@ -36,7 +42,7 @@ def test_runtime_store_construction_does_not_provision_schema_or_seed_defaults(
 
     config_store = config_mod.PostgresConfigStore("postgresql://runtime")
     secret_store = config_mod.SecretStore(
-        "postgresql://runtime", require_encryption=False
+        "postgresql://runtime", fernet_key=_fernet_key()
     )
 
     normalized = [statement.lower() for statement in statements]
@@ -104,7 +110,7 @@ def test_missing_or_incompatible_runtime_schema_fails_with_bounded_package_error
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore(
-                "postgresql://runtime", require_encryption=False
+                "postgresql://runtime", fernet_key=_fernet_key()
             )
 
     rendered = str(caught.value)
@@ -274,7 +280,7 @@ def test_runtime_store_rejects_selectable_view_or_wrong_column_type(
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore(
-                "postgresql://runtime", require_encryption=False
+                "postgresql://runtime", fernet_key=_fernet_key()
             )
 
     assert caught.value.message == expected_message
@@ -319,7 +325,7 @@ def test_runtime_store_rejects_insufficient_runtime_read_privileges(
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore(
-                "postgresql://runtime", require_encryption=False
+                "postgresql://runtime", fernet_key=_fernet_key()
             )
 
     assert caught.value.message == expected_message
@@ -380,7 +386,7 @@ def test_runtime_store_rejects_table_without_unique_storage_key(
             config_mod.PostgresConfigStore("postgresql://runtime")
         else:
             config_mod.SecretStore(
-                "postgresql://runtime", require_encryption=False
+                "postgresql://runtime", fernet_key=_fernet_key()
             )
 
     assert caught.value.message == expected_message
