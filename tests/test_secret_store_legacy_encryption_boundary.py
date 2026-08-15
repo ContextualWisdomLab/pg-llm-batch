@@ -7,6 +7,7 @@ import pytest
 
 from pg_llm_batch import config as config_mod
 from pg_llm_batch.exceptions import ConfigError
+from tests.conftest import FakePsycopg
 
 
 class _PolicyCursor:
@@ -72,7 +73,10 @@ class _ValidFernet:
         """Accept the supplied key as valid for constructor-boundary testing."""
 
 
-def _install_policy_doubles(monkeypatch, policy_row: tuple[bool] | BaseException) -> _Psycopg:
+def _install_policy_doubles(
+    monkeypatch,
+    policy_row: tuple[bool] | BaseException,
+) -> _Psycopg:
     """Install deterministic schema, crypto, and PostgreSQL boundary doubles."""
     fake_psycopg = _Psycopg(policy_row)
     monkeypatch.setattr(config_mod, "psycopg", fake_psycopg)
@@ -135,3 +139,22 @@ def test_required_encryption_probe_redacts_database_failures(monkeypatch) -> Non
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
     assert fake_psycopg.connection.close_calls == 1
+
+
+def test_required_encryption_rejects_late_unencrypted_row(monkeypatch) -> None:
+    """A required-mode store must reject legacy rows introduced after readiness."""
+    fake_psycopg = FakePsycopg()
+    monkeypatch.setattr(config_mod, "psycopg", fake_psycopg)
+    monkeypatch.setattr(config_mod, "Fernet", _ValidFernet)
+    store = config_mod.SecretStore(
+        "postgresql://database",
+        fernet_key="opaque-valid-key",
+        require_encryption=True,
+    )
+    fake_psycopg.store.secrets["late_secret"] = ("Zm9v", False)
+
+    with pytest.raises(ConfigError, match="required encryption policy") as caught:
+        store.get_secret("late_secret")
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
