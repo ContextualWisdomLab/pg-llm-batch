@@ -43,8 +43,9 @@ The tenant lifecycle material in this canonical cohort is a reconstruction of al
 - Exact contributor heads, generated merge commits, check IDs, and transient queue state belong in PR/review evidence, not durable architecture/product documents.
 - Standalone operation and modular MSA embedding must be documented as co-equal supported boundaries; no ContextualWisdomLab host is a hidden runtime requirement.
 - Tenant scope is selected only by a trusted authenticated/authorized host boundary and, for the tenant durable client, validates before observation reservation, credential lookup, provider I/O, or lifecycle database I/O. Lifecycle identities, conflict targets, exact reads, and operational status indexes remain tenant-qualified where tenancy is enabled.
+- `pg_llm_batch.tenant_scope` is transaction-local routing context, not a credential or authenticated identity. Only package code acting on trusted host selection may set it for tenant-owned operations; arbitrary SQL must not select or override tenant authority through `set_config`.
 - The standalone `DurableBatchAPIClient` retains its four-argument lifecycle-recorder seam and explicit `standalone` persistence/read scope unless a separately reviewed compatibility change is integrated.
-- PostgreSQL RLS is defense in depth, not authentication or SQL-injection prevention; production application roles for the tenant lifecycle boundary are `NOSUPERUSER NOBYPASSRLS`.
+- PostgreSQL RLS is defense in depth, not host authentication/authorization, SQL-injection prevention, or correct identity mapping; production application roles for the tenant lifecycle boundary are `NOSUPERUSER NOBYPASSRLS`.
 - Provider/model content never becomes tenant, credential, endpoint, filesystem, or database authority.
 - Distributed exactly-once processing is never implied by PostgreSQL checkpoint atomicity alone.
 - Security, privacy, SOC 2, and CSAP material is evidence-readiness documentation only unless an external certification actually exists.
