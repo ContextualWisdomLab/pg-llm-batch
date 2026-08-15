@@ -60,6 +60,21 @@ def test_encryption_required_without_key_fails_before_database_access(monkeypatc
     assert fake_psycopg.connection.close_calls == 0
 
 
+def test_encryption_cannot_be_disabled_before_database_access(monkeypatch) -> None:
+    """No caller may opt back into reversible Base64 secret persistence."""
+    fake_psycopg = _Psycopg()
+    monkeypatch.setattr(config_mod, "psycopg", fake_psycopg)
+
+    with pytest.raises(ConfigError, match="encryption"):
+        config_mod.SecretStore(
+            "postgresql://database",
+            require_encryption=False,
+        )
+
+    assert fake_psycopg.connect_calls == 0
+    assert fake_psycopg.connection.close_calls == 0
+
+
 def test_malformed_fernet_key_fails_before_database_access(monkeypatch) -> None:
     """Malformed encryption keys must fail closed before database acquisition."""
     fake_psycopg = _Psycopg()
