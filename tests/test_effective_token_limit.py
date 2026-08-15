@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from pg_llm_batch.exceptions import ValidationError
@@ -71,6 +73,22 @@ def test_oversized_numeric_evidence_falls_back_to_redaction():
 
     with pytest.raises(ValidationError, match="effective_token_limit") as exc_info:
         _validate_effective_token_limit(oversized_negative_integer)
+
+    assert exc_info.value.details["value"] == "<redacted>"
+
+
+def test_integer_render_limit_failure_falls_back_to_redaction():
+    """Interpreter integer-render limits cannot widen a validation failure type."""
+    previous_limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(640)
+    try:
+        conversion_limited_integer = -(10**1000)
+        with pytest.raises(
+            ValidationError, match="effective_token_limit"
+        ) as exc_info:
+            _validate_effective_token_limit(conversion_limited_integer)
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
 
     assert exc_info.value.details["value"] == "<redacted>"
 
