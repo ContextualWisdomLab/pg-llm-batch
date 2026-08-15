@@ -13,6 +13,7 @@ def _store_with_fernet(fernet: object | None) -> SecretStore:
     """Build a database-free SecretStore instance for decode-boundary tests."""
     store = SecretStore.__new__(SecretStore)
     store._fernet = fernet
+    store._require_encryption = False
     return store
 
 
