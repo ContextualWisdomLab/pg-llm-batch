@@ -17,14 +17,16 @@ Status vocabulary is shared with the PRD: **IMPLEMENTED-ON-PROTECTED-MAIN**, **A
 | `token_counter.py` | resolve reviewed tokenizer metadata and call `pg_tiktoken` for token accounting | provider credentials, tenant authorization, provider I/O |
 | `orchestrator.py` | select queued requests, partition under limits, persist package payload/file/line/request assignments | provider protocol and retry policy |
 | `batch_api_client.py` | validate provider destination and remote identifiers; upload/create/poll/wait/cancel/retrieve under finite budgets | tenant authentication, scheduler ownership |
-| `durable_client.py` | compose provider operations with durable lifecycle ordering/persistence | authenticating or authorizing host tenants |
-| `db.py` | schema application and parameterized persistence/read helpers | database-side provider networking |
+| `durable_client.py` | compose provider operations with durable lifecycle ordering/persistence; preserve `DurableBatchAPIClient` source compatibility, its four-argument `LifecycleRecorder(postgres_dsn, endpoint_alias, provider_batch, observation_order)` seam, and default `standalone` database scope; provide a distinct tenant-qualified recorder seam | authenticating or authorizing host tenants, deriving tenant authority from provider data |
+| `db.py` | schema application and parameterized persistence/read helpers, including tenant-qualified lifecycle context, conflict identity, and exact-row lookup | database-side provider networking, authenticating tenant callers |
 | `checkpoint_store.py` | tenant-qualified PostgreSQL checkpoint/CAS operations and conflict semantics | distributed exactly-once claims |
 | `reconciliation.py` | finite host-selected polling/retrieval pass using the existing validated client surface | candidate discovery, scheduling, cross-process leasing |
 | `config.py` | PostgreSQL-backed configuration and encrypted secret storage for standalone composition | prescribing an embedding host's external secret manager |
 | `observability.py` | opt-in bounded traces/metrics around reviewed operations | configuring global SDK/exporter/resource policy |
 | `health.py` | readiness aggregation and redacted public health response | general-purpose web serving or arbitrary diagnostic reflection |
 | `cli.py` | standalone operator composition and bounded input surfaces | higher-level workflow orchestration |
+
+The protected-main validation authority for the `durable_client.py` compatibility row is `pg_llm_batch/durable_client.py`, `tests/test_tenant_durable_client.py`, and `tests/test_tenant_lifecycle_persistence.py`: the tests prove construction-time tenant rejection before downstream effects, exact four-argument standalone recorder invocation, explicit `standalone` persistence/read delegation, and tenant-qualified lifecycle persistence/read identities.
 
 ## Runtime architecture
 
@@ -49,7 +51,9 @@ Automatic provider retry is limited to reviewed idempotent GET operations and th
 
 ### Durable lifecycle tenancy
 
-Standalone lifecycle data uses the exact `standalone` tenant scope. Tenant-aware hosts use a trusted host-selected scope after authentication and authorization. Provider metadata, request payloads, model output, transport headers, endpoint aliases, and provider resource identifiers never choose tenant authority.
+Standalone lifecycle data uses the exact `standalone` tenant scope. `DurableBatchAPIClient` preserves its original four-argument lifecycle-recorder interface `(postgres_dsn, endpoint_alias, provider_batch, observation_order)`; its default persistence path and `get_remote_batch_state(...)` compatibility helper resolve through the explicit `standalone` scope. Tenant-aware hosts instead use `TenantDurableBatchAPIClient` with a distinct tenant-qualified recorder seam so tenant identity cannot be silently dropped.
+
+A tenant-aware client validates the trusted host-selected `tenant_scope` synchronously during construction, before any observation reservation, credential-provider lookup, provider I/O, or lifecycle database I/O can occur. Provider metadata, request payloads, model output, transport headers, endpoint aliases, provider resource identifiers, and credential data never choose tenant authority. Credential resolution remains a separate deployment/host concern: ordering tenant validation before it does not make the credential store tenant-keyed.
 
 The durable lifecycle identity is:
 
@@ -57,7 +61,9 @@ The durable lifecycle identity is:
 (tenant_scope, endpoint_alias, remote_batch_id)
 ```
 
-Package reads/writes bind tenant scope with parameterized transaction-local `set_config`. The schema enables and forces PostgreSQL row-level security for tenant-qualified lifecycle state. Production application roles must be `NOSUPERUSER NOBYPASSRLS`. A role that can execute arbitrary SQL can choose arbitrary custom setting values; therefore generic arbitrary SQL access is explicitly outside the package isolation guarantee.
+Every tenant-aware lifecycle persistence conflict target and exact-row lookup includes the full identity. The protected schema's lifecycle operational status index begins with `tenant_scope`, and package reads/writes bind the validated scope with parameterized transaction-local `set_config`. The schema enables and forces PostgreSQL row-level security for tenant-qualified lifecycle state. Production application roles must be `NOSUPERUSER NOBYPASSRLS`. A role that can execute arbitrary SQL can choose arbitrary custom setting values; therefore generic arbitrary SQL access is explicitly outside the package isolation guarantee.
+
+These invariants are deterministically verified on protected main: `tests/test_tenant_durable_client.py` proves malformed scope fails before reservation or credentials and proves the unchanged four-argument standalone recorder seam; `tests/test_tenant_lifecycle_persistence.py` proves malformed scope fails before database access, the upsert conflict target is `(tenant_scope, endpoint_alias, remote_batch_id)`, exact reads bind the same full identity, and standalone helpers delegate to `standalone`; `pg_llm_batch/schema.sql` supplies the tenant-qualified unique constraint, forced RLS policy, and `idx_llm_remote_batch_jobs_tenant_status_observed` index. `docs/remote-batch-lifecycle.md`, ADR 0002, and `docs/doctoring/tenant-scoped-lifecycle.md` document the same migration, direct-SQL/RLS, role, and rollback boundaries.
 
 ### Durable result checkpoints
 
