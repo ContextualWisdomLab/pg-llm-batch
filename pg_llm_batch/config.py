@@ -385,6 +385,8 @@ class SecretStore:
         try:
             self._conn.autocommit = True
             self._ensure_table()
+            if require_encryption:
+                self._ensure_encrypted_rows()
         except BaseException:
             self.close()
             raise
@@ -399,6 +401,26 @@ class SecretStore:
         ):
             raise ConfigError(
                 "Secret schema is unavailable or incompatible"
+            ) from None
+
+    def _ensure_encrypted_rows(self) -> None:
+        """Refuse encryption-required startup while any durable row is unencrypted."""
+        policy_failure = False
+        policy_row: Any = None
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT EXISTS (SELECT 1 FROM {self.TABLE_NAME} "
+                    "WHERE is_encrypted IS NOT TRUE)"
+                )
+                policy_row = cur.fetchone()
+        except Exception:
+            policy_failure = True
+        if policy_failure:
+            raise ConfigError("Secret encryption policy could not be verified") from None
+        if policy_row != (False,):
+            raise ConfigError(
+                "Secret encryption policy rejected existing unencrypted rows"
             ) from None
 
     def _encode(self, raw: str) -> Tuple[str, bool]:
