@@ -235,6 +235,25 @@ def test_async_effect_hook_fails_before_checkpoint_store_access() -> None:
     assert store.events == []
 
 
+def test_effect_must_complete_synchronously_before_checkpoint_advance() -> None:
+    """A callback return value must fail closed instead of acknowledging deferred work."""
+    store = _Store()
+
+    def effect(cursor: Any, record: dict[str, Any]) -> object:
+        store.events.append(("effect", cursor, record.copy()))
+        return object()
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), store, "result-writer", _item(_checkpoint()), effect
+        )
+
+    assert caught.value.details == {"phase": "record_effect"}
+    assert [event[0] for event in store.events] == ["load", "effect"]
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_effect_failure_is_bounded_and_never_advances_checkpoint() -> None:
     """Sensitive callback diagnostics must not replace the stable package error."""
     store = _Store()
