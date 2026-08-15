@@ -139,6 +139,12 @@ class FakeKVStore:
         # --- com_secrets ----------------------------------------------------
         if "create table" in s and "com_secrets" in s:
             return []
+        if (
+            "select exists" in s
+            and "from com_secrets" in s
+            and "is_encrypted is not true" in s
+        ):
+            return [(any(not encrypted for _, encrypted in self.secrets.values()),)]
         if "insert into com_secrets" in s:
             key, value, is_enc = params
             self.secrets[key] = (value, bool(is_enc))
