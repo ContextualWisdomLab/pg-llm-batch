@@ -29,6 +29,15 @@ _PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _API_PATH_RE = re.compile(r"^/(?!/)[^\r\n]*$")
 _WORKFLOW_PREFIX = ".github/workflows/"
 _DYNAMIC_WORKFLOW_PREFIX = "dynamic/"
+_WORKFLOW_STATES = frozenset(
+    {
+        "active",
+        "deleted",
+        "disabled_fork",
+        "disabled_inactivity",
+        "disabled_manually",
+    }
+)
 _GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
@@ -471,8 +480,7 @@ def _validate_workflow_record(raw_record: object) -> dict[str, object]:
         or not isinstance(workflow_id, int)
         or workflow_id <= 0
         or not isinstance(path, str)
-        or not isinstance(state, str)
-        or not state
+        or state not in _WORKFLOW_STATES
     ):
         raise WorkflowRegistryAuditError("workflow registry record is invalid")
     components = path.split("/")
