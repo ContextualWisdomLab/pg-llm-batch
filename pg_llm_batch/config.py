@@ -380,6 +380,7 @@ class SecretStore:
         if invalid_fernet_key:
             raise ConfigError("Secret encryption key is invalid") from None
 
+        self._require_encryption = require_encryption
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
         try:
@@ -485,6 +486,10 @@ class SecretStore:
             row = cur.fetchone()
         if not row:
             return default
+        if self._require_encryption and row[1] is not True:
+            raise ConfigError(
+                "Stored secret violates required encryption policy"
+            ) from None
         return self._decode(row[0], row[1])
 
     def require_secret(self, key: str) -> str:
