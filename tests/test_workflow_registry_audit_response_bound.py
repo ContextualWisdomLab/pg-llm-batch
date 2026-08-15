@@ -104,3 +104,30 @@ def test_chunked_oversize_response_fails_with_bounded_nonsecret_evidence(
         assert exc.__cause__ is None
     else:
         raise AssertionError("expected WorkflowRegistryAuditError")
+
+
+def test_recursive_json_decoder_failure_is_normalized_without_diagnostics(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recursion-limited JSON decoder failure remains a fixed audit error."""
+    secret_sentinel = "SECRET_RECURSION_DIAGNOSTIC_MUST_NOT_ESCAPE"
+    _Session.response = _Response(b"{}", content_length=2)
+    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+
+    def _raise_recursion(_content: str) -> object:
+        raise RecursionError(secret_sentinel)
+
+    monkeypatch.setattr("workflow_registry_audit.json.loads", _raise_recursion)
+    client = GitHubReadClient(token="bounded-token")
+
+    try:
+        client.get_json("/repos/ContextualWisdomLab/pg-llm-batch/actions/workflows")
+    except WorkflowRegistryAuditError as exc:
+        rendered = "".join(traceback.format_exception(exc))
+        assert str(exc) == "GitHub workflow audit read failed"
+        assert secret_sentinel not in rendered
+        assert "bounded-token" not in rendered
+        assert exc.__cause__ is None
+        assert exc.__suppress_context__ is True
+    else:
+        raise AssertionError("expected WorkflowRegistryAuditError")
