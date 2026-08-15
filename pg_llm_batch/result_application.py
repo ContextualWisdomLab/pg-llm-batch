@@ -114,7 +114,11 @@ def apply_checkpointed_result_in_transaction(
         load_failure = ResultApplicationError("checkpoint_load")
     if load_failure is not None:
         raise load_failure from None
-    if previous is not None and not isinstance(previous, BatchResultCheckpoint):
+    if previous is not None and (
+        not isinstance(previous, BatchResultCheckpoint)
+        or previous.batch_id != candidate.checkpoint.batch_id
+        or previous.endpoint_alias != candidate.checkpoint.endpoint_alias
+    ):
         raise ResultApplicationError("checkpoint_load") from None
 
     if previous == candidate.checkpoint:
