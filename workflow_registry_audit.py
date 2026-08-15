@@ -443,7 +443,11 @@ def _require_nonnegative_int(value: object) -> int:
 
 def _validate_repository(repository_full_name: str) -> None:
     """Reject malformed repository selectors before any network read."""
-    if not _REPOSITORY_RE.fullmatch(repository_full_name):
+    components = repository_full_name.split("/")
+    if (
+        not _REPOSITORY_RE.fullmatch(repository_full_name)
+        or any(component in {".", ".."} for component in components)
+    ):
         raise WorkflowRegistryAuditError("repository must use owner/name syntax")
 
 
