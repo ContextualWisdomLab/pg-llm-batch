@@ -23,15 +23,28 @@ def test_missing_token_limit_preserves_configured_default():
     assert _validate_effective_token_limit(None) is None
 
 
-@pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "100", object()])
-def test_invalid_token_limits_raise_structured_validation_errors(value):
-    """Coercive, disabled, fractional, and non-positive values fail closed."""
+@pytest.mark.parametrize(
+    ("value", "expected_evidence"),
+    [
+        (0, "0"),
+        (-1, "-1"),
+        (True, "True"),
+        (False, "False"),
+        (1.5, "1.5"),
+        ("100", "<redacted>"),
+        (object(), "<redacted>"),
+    ],
+)
+def test_invalid_token_limits_raise_structured_validation_errors(
+    value, expected_evidence
+):
+    """Only bounded numeric configuration evidence is explicitly disclosed."""
     with pytest.raises(ValidationError, match="effective_token_limit") as exc_info:
         _validate_effective_token_limit(value)
 
     assert exc_info.value.details == {
         "field": "effective_token_limit",
-        "value": value,
+        "value": expected_evidence,
         "reason": "must be a positive integer when provided",
     }
 
