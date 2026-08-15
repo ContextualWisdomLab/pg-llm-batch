@@ -104,6 +104,8 @@ Owned production Python must maintain exact 100% statement and branch coverage a
 
 Security-sensitive validation fails closed. Secrets, DSNs, prompt/provider content, unvalidated identifiers, and arbitrary lower-layer exception text must not be retained in logs or review evidence merely for debugging. Repository controls should support SOC 2 / CSAP evidence preparation without claiming certification.
 
+The package must not apply blanket masking or lossy transformation to authorized business payloads merely because they contain PII: changing prompt, request, or result content can invalidate business meaning, token accounting, provider behavior, auditability, or downstream decisions. Authorized content fidelity is therefore a product requirement. Confidentiality controls belong at explicit boundaries instead: trusted host authentication/authorization and tenant selection, least-privilege database/service access, transport protection, deployment/storage protection where provided, purpose-limited retention and deletion, and package-owned logs/telemetry/errors that omit content-bearing values. Any content transformation must be an explicit host/business policy with provenance and acceptance evidence, not a hidden package default or a claim that redacted diagnostics mean persisted business data was masked.
+
 ### Reliability
 
 Network, response, retry, wait, candidate-scan, payload, and release-evidence operations must be explicitly bounded. Recovery and rollback must be documented before migrations or release changes are considered complete. Queued, skipped, cancelled, absent, stale, predecessor-head, synthetic-merge-only, or infrastructure-failed evidence is not success for an exact source head.
