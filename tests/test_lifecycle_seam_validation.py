@@ -43,7 +43,7 @@ def test_standalone_client_rejects_non_callable_lifecycle_seams(
 
     assert exc_info.value.details == {
         "field": option_name,
-        "value": None,
+        "value": "<redacted>",
         "reason": expected_reason,
     }
 
@@ -60,6 +60,6 @@ def test_tenant_client_rejects_a_non_callable_tenant_recorder() -> None:
 
     assert exc_info.value.details == {
         "field": "tenant_lifecycle_recorder",
-        "value": None,
+        "value": "<redacted>",
         "reason": "must be callable",
     }
