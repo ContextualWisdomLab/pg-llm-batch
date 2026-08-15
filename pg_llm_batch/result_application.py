@@ -12,6 +12,7 @@ guarantee for external APIs, queues, object stores, or other databases.
 
 from __future__ import annotations
 
+import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -58,6 +59,10 @@ def _validate_item_and_effect(
         )
     if not callable(apply_record):
         raise _redacted_validation_error("apply_record", "must be callable")
+    if inspect.iscoroutinefunction(apply_record):
+        raise _redacted_validation_error(
+            "apply_record", "must complete synchronously in the caller transaction"
+        )
     if item.batch_id != item.checkpoint.batch_id:
         raise _redacted_validation_error(
             "item.batch_id", "must match the checkpoint batch identity"
@@ -82,10 +87,9 @@ def apply_checkpointed_result_in_transaction(
 
     The durable predecessor is loaded before the local effect.  An exact replay
     returns without re-running the effect.  Fresh work invokes ``apply_record``
-    using the supplied cursor and only then compares-and-swaps the checkpoint
-    against the exact predecessor observed in this transaction.  The caller
-    remains responsible for committing or rolling back the surrounding
-    transaction.
+    using the supplied cursor and advances the checkpoint only after that callback
+    completes synchronously and returns ``None``.  The caller remains responsible
+    for committing or rolling back the surrounding transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
     signal from the checkpoint store.  All other store/callback failures are
@@ -114,7 +118,9 @@ def apply_checkpointed_result_in_transaction(
 
     effect_failure: ResultApplicationError | None = None
     try:
-        apply_record(cursor, candidate.record)
+        effect_result = apply_record(cursor, candidate.record)
+        if effect_result is not None:
+            effect_failure = ResultApplicationError("record_effect")
     except Exception:
         effect_failure = ResultApplicationError("record_effect")
     if effect_failure is not None:
