@@ -108,6 +108,7 @@ class GitHubReadClient:
             asyncio.TimeoutError,
             UnicodeDecodeError,
             json.JSONDecodeError,
+            RecursionError,
         ):
             raise WorkflowRegistryAuditError("GitHub workflow audit read failed") from None
         if not isinstance(payload, dict):
