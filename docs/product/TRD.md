@@ -99,6 +99,12 @@ Durable provider/resource identifiers and tenant identities are validated before
 
 Standalone provider configuration and encrypted secrets are PostgreSQL-backed. Environment variables are limited to explicitly documented bootstrap transport such as the database DSN and optional encryption key. CLI secret entry uses no-echo prompting or bounded standard input rather than plaintext process arguments. Embedding hosts may supply another credential provider through the supported seam.
 
+### Authorized content fidelity
+
+The package does not gain authority to mask, tokenize away, truncate for privacy, or otherwise alter an authorized prompt, request, JSONL record, or provider result merely because the content may contain PII. Silent transformation would change token counts, provider semantics, persisted evidence, replay behavior, and downstream business meaning. Package serialization, token accounting, persistence, upload, retrieval, and result application therefore preserve authorized business content unless an explicit reviewed feature contract says otherwise.
+
+Confidentiality for content-bearing data is enforced through boundary controls rather than a blanket masking default: the embedding host authenticates and authorizes the caller and selects tenant scope; package/database/service identities remain least-privilege; transport uses the reviewed secure destination policy; deployment/storage protections are owned and evidenced at the applicable layer; retention and deletion are purpose-limited and explicit; and package-owned errors, logs, telemetry, readiness, CI/review evidence, and other operational surfaces omit content-bearing values. A host that intentionally transforms content must do so through an explicit business-policy boundary with provenance and acceptance tests. Redacted operational evidence must never be represented as proof that persisted or provider-bound business content was masked.
+
 ### Diagnostic confidentiality
 
 Errors, logs, telemetry, check evidence, and public readiness must avoid DSNs, credentials, prompts, provider bodies, arbitrary SQL/provider exception text, unvalidated identifiers, and dynamic exception-class names where those values are not required for operation. Failure categories intended for public/operational evidence use bounded vocabularies.
