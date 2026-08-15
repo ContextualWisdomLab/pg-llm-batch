@@ -463,7 +463,7 @@ class SecretStore:
             row = cur.fetchone()
         if not row:
             return default
-        return self._decode(row[0], bool(row[1]))
+        return self._decode(row[0], row[1])
 
     def require_secret(self, key: str) -> str:
         """Return a decoded secret or raise when the key is absent."""
