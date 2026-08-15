@@ -85,12 +85,13 @@ def apply_checkpointed_result_in_transaction(
 ) -> ResultApplicationOutcome:
     """Apply one result and advance its checkpoint in the caller's transaction.
 
-    The durable predecessor is loaded before the local effect.  An exact replay
-    returns without re-running the effect.  Fresh work invokes ``apply_record``
-    using the supplied cursor and advances the checkpoint only after that callback
-    completes synchronously and returns ``None``.  The checkpoint store must then
-    confirm the exact requested checkpoint before success is reported.  The caller
-    remains responsible for committing or rolling back the surrounding transaction.
+    The durable predecessor is loaded and validated before the local effect.  An
+    exact replay returns without re-running the effect.  Fresh work invokes
+    ``apply_record`` using the supplied cursor and advances the checkpoint only
+    after that callback completes synchronously and returns ``None``.  The
+    checkpoint store must then confirm the exact requested checkpoint before
+    success is reported.  The caller remains responsible for committing or
+    rolling back the surrounding transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
     signal from the checkpoint store.  All other store/callback failures are
@@ -113,6 +114,8 @@ def apply_checkpointed_result_in_transaction(
         load_failure = ResultApplicationError("checkpoint_load")
     if load_failure is not None:
         raise load_failure from None
+    if previous is not None and not isinstance(previous, BatchResultCheckpoint):
+        raise ResultApplicationError("checkpoint_load") from None
 
     if previous == candidate.checkpoint:
         return ResultApplicationOutcome(applied=False, checkpoint=candidate.checkpoint)
