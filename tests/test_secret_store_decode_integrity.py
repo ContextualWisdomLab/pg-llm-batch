@@ -45,3 +45,41 @@ def test_encrypted_decode_failure_is_redacted_to_fixed_package_error() -> None:
     assert "sensitive-provider-or-ciphertext-diagnostic" not in str(caught.value)
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
+
+
+class _PersistedSecretCursor:
+    """Return one intentionally malformed persisted secret row."""
+
+    def __enter__(self) -> _PersistedSecretCursor:
+        """Enter the lightweight cursor context."""
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        """Leave the lightweight cursor context."""
+
+    def execute(self, *_args: object) -> None:
+        """Accept the fixed package lookup query without side effects."""
+
+    def fetchone(self) -> tuple[str, str]:
+        """Return a text flag that must not be coerced into encryption authority."""
+        return ("Zm9v", "false")
+
+
+class _PersistedSecretConnection:
+    """Provide the malformed persisted row to ``SecretStore.get_secret``."""
+
+    def cursor(self) -> _PersistedSecretCursor:
+        """Return the deterministic persisted-secret cursor."""
+        return _PersistedSecretCursor()
+
+
+def test_persisted_encryption_flag_type_is_not_coerced_before_validation() -> None:
+    """A non-boolean durable encryption flag must fail closed as corrupt state."""
+    store = _store_with_fernet(None)
+    store._conn = _PersistedSecretConnection()
+
+    with pytest.raises(ConfigError, match="Stored secret could not be decoded") as caught:
+        store.get_secret("gateway_api_key")
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
