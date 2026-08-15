@@ -35,10 +35,12 @@ def _validate_effective_token_limit(value: Optional[int]) -> Optional[int]:
     if value is None:
         return None
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        safe_value = str(value) if isinstance(value, (bool, int, float)) else None
         raise ValidationError(
             field="effective_token_limit",
             value=value,
             reason="must be a positive integer when provided",
+            safe_value=safe_value,
         )
     return value
 
