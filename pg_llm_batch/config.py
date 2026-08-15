@@ -217,7 +217,10 @@ def _schema_is_compatible(
                      AND idx.indpred IS NULL
                      AND idx.indexprs IS NULL
                      AND idx.indnkeyatts = 1
-                     AND key_attr.attnum = ANY(idx.indkey::smallint[])
+                    JOIN LATERAL unnest(idx.indkey::smallint[]) WITH ORDINALITY
+                         AS index_key(attnum, ordinal_position)
+                      ON index_key.ordinal_position <= idx.indnkeyatts
+                     AND index_key.attnum = key_attr.attnum
                     WHERE cls.oid = pg_catalog.to_regclass(%s)
                       AND key_attr.attname = %s
                       AND key_attr.attnum > 0
