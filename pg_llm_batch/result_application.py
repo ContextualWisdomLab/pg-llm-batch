@@ -86,7 +86,8 @@ def apply_checkpointed_result_in_transaction(
     """Apply one result and advance its checkpoint in the caller's transaction.
 
     The durable predecessor is loaded and validated before the local effect.  An
-    exact replay returns without re-running the effect.  Fresh work invokes
+    exact replay returns without re-running the effect, while a count regression
+    is rejected before caller-owned business logic.  Fresh work invokes
     ``apply_record`` using the supplied cursor and advances the checkpoint only
     after that callback completes synchronously and returns ``None``.  The
     checkpoint store must then confirm the exact requested checkpoint before
@@ -123,6 +124,15 @@ def apply_checkpointed_result_in_transaction(
 
     if previous == candidate.checkpoint:
         return ResultApplicationOutcome(applied=False, checkpoint=candidate.checkpoint)
+    if previous is not None and (
+        candidate.checkpoint.record_count <= previous.record_count
+        or candidate.checkpoint.batch_line_count <= previous.batch_line_count
+    ):
+        raise CheckpointConflictError(
+            consumer_name,
+            candidate.batch_id,
+            "checkpoint_regression",
+        ) from None
 
     effect_failure: ResultApplicationError | None = None
     try:
