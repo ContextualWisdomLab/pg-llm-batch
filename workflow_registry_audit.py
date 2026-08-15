@@ -32,6 +32,8 @@ _DYNAMIC_WORKFLOW_PREFIX = "dynamic/"
 _GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT_SECONDS = 15.0
 _PAGE_SIZE = 100
+_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+_RESPONSE_CHUNK_BYTES = 64 * 1024
 
 
 class WorkflowRegistryAuditError(RuntimeError):
@@ -75,7 +77,7 @@ class GitHubReadClient:
         return asyncio.run(self._get_json(path))
 
     async def _get_json(self, path: str) -> dict[str, object]:
-        """Perform one fixed-origin aiohttp GET with redirects disabled."""
+        """Perform one fixed-origin aiohttp GET with redirects and body growth bounded."""
         timeout = aiohttp.ClientTimeout(total=self._timeout_seconds)
         try:
             async with aiohttp.ClientSession(
@@ -97,7 +99,7 @@ class GitHubReadClient:
                         raise WorkflowRegistryAuditError(
                             "GitHub workflow audit read failed"
                         )
-                    raw = await response.read()
+                    raw = await self._read_bounded_response(response)
             payload = json.loads(raw.decode("utf-8"))
         except WorkflowRegistryAuditError:
             raise
@@ -111,6 +113,52 @@ class GitHubReadClient:
         if not isinstance(payload, dict):
             raise WorkflowRegistryAuditError("GitHub workflow audit response is invalid")
         return payload
+
+    async def _read_bounded_response(self, response: object) -> bytes:
+        """Stream one decoded HTTP body while enforcing a fixed memory budget.
+
+        GitHub documents a 7 MB recursive-tree response ceiling. The 16 MiB
+        budget deliberately leaves protocol/envelope headroom while preventing
+        a malformed or unexpectedly large authenticated response from being
+        materialized without bound. The limit is also enforced for chunked
+        responses that omit ``Content-Length``.
+        """
+        declared_value = getattr(response, "content_length", None)
+        declared_bytes = (
+            declared_value
+            if isinstance(declared_value, int)
+            and not isinstance(declared_value, bool)
+            and declared_value >= 0
+            else None
+        )
+        if declared_bytes is not None and declared_bytes > _MAX_RESPONSE_BYTES:
+            raise WorkflowRegistryAuditError(
+                "GitHub workflow audit response exceeded byte limit"
+            )
+
+        stream = getattr(response, "content", None)
+        iterator = getattr(stream, "iter_chunked", None)
+        if not callable(iterator):
+            raise WorkflowRegistryAuditError(
+                "GitHub workflow audit response stream is invalid"
+            )
+
+        payload = bytearray()
+        async for chunk in iterator(_RESPONSE_CHUNK_BYTES):
+            if isinstance(chunk, memoryview):
+                chunk_bytes = chunk.tobytes()
+            elif isinstance(chunk, (bytes, bytearray)):
+                chunk_bytes = bytes(chunk)
+            else:
+                raise WorkflowRegistryAuditError(
+                    "GitHub workflow audit response stream is invalid"
+                )
+            if len(payload) + len(chunk_bytes) > _MAX_RESPONSE_BYTES:
+                raise WorkflowRegistryAuditError(
+                    "GitHub workflow audit response exceeded byte limit"
+                )
+            payload.extend(chunk_bytes)
+        return bytes(payload)
 
     def _headers(self) -> dict[str, str]:
         """Build fixed GitHub headers without exposing the token in output."""
