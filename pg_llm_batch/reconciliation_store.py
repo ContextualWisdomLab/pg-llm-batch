@@ -58,7 +58,14 @@ def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
             message="Persisted reconciliation candidate is invalid",
         )
     try:
-        endpoint_alias = validate_endpoint_alias(row[0])
+        persisted_endpoint_alias = row[0]
+        endpoint_alias = validate_endpoint_alias(persisted_endpoint_alias)
+        if endpoint_alias != persisted_endpoint_alias:
+            raise ValidationError(
+                field="endpoint_alias",
+                value="<redacted>",
+                reason="persisted endpoint alias must already be canonical",
+            )
         remote_batch_id = validate_remote_resource_id(row[1], "remote_batch_id")
     except ValidationError:
         raise ValidationError(
