@@ -176,7 +176,7 @@ def test_exact_checkpoint_replay_is_idempotent_without_reapplying_effect() -> No
             lambda item: CheckpointedBatchResultRecord(
                 batch_id=item.batch_id,
                 file_kind=item.file_kind,
-                record=[] ,  # type: ignore[arg-type]
+                record=[],  # type: ignore[arg-type]
                 checkpoint=item.checkpoint,
             ),
             "item.record",
@@ -215,6 +215,23 @@ def test_argument_types_fail_closed_before_store_access() -> None:
             object(), store, "result-writer", _item(_checkpoint()), None  # type: ignore[arg-type]
         )
     assert bad_effect.value.details["field"] == "apply_record"
+    assert store.events == []
+
+
+def test_async_effect_hook_fails_before_checkpoint_store_access() -> None:
+    """An async callback must not be mistaken for an executed synchronous effect."""
+    store = _Store()
+
+    async def async_effect(_cursor: Any, _record: dict[str, Any]) -> None:
+        return None
+
+    with pytest.raises(ValidationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), store, "result-writer", _item(_checkpoint()), async_effect
+        )
+
+    assert caught.value.details["field"] == "apply_record"
+    assert caught.value.details["value"] == "<redacted>"
     assert store.events == []
 
 
