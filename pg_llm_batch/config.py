@@ -6,7 +6,7 @@ This module replaces the ~75 ``os.getenv`` reads in the upstream app. All
 tunables and secrets live in Postgres KV tables (``com_config`` for plain
 config, ``com_secrets`` for credentials). The only permitted bootstrap
 transport is the DSN itself (see :func:`pg_llm_batch.bootstrap.resolve_dsn`)
-plus an optional Fernet key used to decrypt secrets at rest.
+plus the Fernet key required to construct an encrypted secret store.
 
 Two-word snake_case table names satisfy the org DB naming rule:
 ``com_config`` and ``com_secrets``.
@@ -14,9 +14,7 @@ Two-word snake_case table names satisfy the org DB naming rule:
 
 from __future__ import annotations
 
-import base64
 import json
-import logging
 from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
@@ -31,8 +29,6 @@ try:  # pragma: no cover - optional dependency
     from cryptography.fernet import Fernet  # type: ignore
 except ImportError:  # pragma: no cover
     Fernet = None  # type: ignore
-
-logger = logging.getLogger(__name__)
 
 # Default configuration tree. Mirrors the upstream batch tunables so behaviour
 # is preserved after extraction. Secrets are NOT stored here.
@@ -339,12 +335,12 @@ class PostgresConfigStore:
 
 
 class SecretStore:
-    """PostgreSQL-backed secret store (``com_secrets`` table).
+    """PostgreSQL-backed encrypted secret store (``com_secrets`` table).
 
-    Values are Fernet-encrypted at rest when a key is supplied (mirrors the
-    naruon Fernet-DB pattern). Encryption is required by default. Local/dev
-    callers may explicitly pass ``require_encryption=False`` to use Base64
-    obfuscation, which is never suitable as an at-rest protection control.
+    Every durable value is Fernet-encrypted at rest. The historical
+    ``require_encryption`` keyword remains only as a compatibility surface for
+    callers that already pass ``True``; passing ``False`` is rejected before
+    database acquisition and cannot re-enable reversible Base64 persistence.
     """
 
     TABLE_NAME = "com_secrets"
@@ -356,38 +352,37 @@ class SecretStore:
         *,
         require_encryption: bool = True,
     ) -> None:
-        """Validate encryption policy before acquiring a database connection."""
+        """Validate mandatory encryption policy before acquiring a connection."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
-        if require_encryption and not fernet_key:
+        if require_encryption is not True:
+            raise ConfigError("Secret encryption cannot be disabled") from None
+        if not fernet_key:
             raise ConfigError(
                 "Secret encryption is required but no Fernet key is configured"
             )
-        if fernet_key and Fernet is None:
+        if Fernet is None:
             raise ConfigError(
                 "Fernet encryption requires the optional cryptography dependency"
             )
 
         self._fernet = None
         invalid_fernet_key = False
-        if fernet_key and Fernet is not None:
-            try:
-                self._fernet = Fernet(fernet_key.encode("utf-8"))
-            except (TypeError, ValueError):
-                invalid_fernet_key = True
+        try:
+            self._fernet = Fernet(fernet_key.encode("utf-8"))
+        except (TypeError, ValueError):
+            invalid_fernet_key = True
         if invalid_fernet_key:
             raise ConfigError("Secret encryption key is invalid") from None
 
-        self._require_encryption = require_encryption
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
         try:
             self._conn.autocommit = True
             self._ensure_table()
-            if require_encryption:
-                self._ensure_encrypted_rows()
+            self._ensure_encrypted_rows()
         except BaseException:
             self.close()
             raise
@@ -405,7 +400,7 @@ class SecretStore:
             ) from None
 
     def _ensure_encrypted_rows(self) -> None:
-        """Refuse encryption-required startup while any durable row is unencrypted."""
+        """Refuse startup while any durable row is not explicitly encrypted."""
         policy_failure = False
         policy_row: Any = None
         try:
@@ -425,20 +420,20 @@ class SecretStore:
             ) from None
 
     def _encode(self, raw: str) -> Tuple[str, bool]:
-        """Encode a secret for storage, returning the text and whether it is encrypted."""
-        if self._fernet is not None:
-            return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
-        logger.warning(  # nosemgrep -- python-logger-credential-disclosure FP: the message text contains the word "secret", but the only logged argument is the literal mask "***"; no secret value is ever logged.
-            "No Fernet key configured; secret '%s' stored base64-obfuscated only.",
-            "***",
-        )
-        return base64.b64encode(raw.encode("utf-8")).decode("utf-8"), False
+        """Encrypt one secret for storage and return its authenticated ciphertext."""
+        if self._fernet is None:
+            raise ConfigError("Secret encryption key is unavailable") from None
+        return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
 
     def _decode(self, stored: str, is_encrypted: bool) -> str:
-        """Decode one persisted secret or fail closed with content-free evidence."""
+        """Decrypt one encrypted persisted secret or fail closed without content."""
         if type(stored) is not str or type(is_encrypted) is not bool:
             raise ConfigError("Stored secret could not be decoded") from None
-        if is_encrypted and self._fernet is None:
+        if is_encrypted is not True:
+            raise ConfigError(
+                "Stored secret violates required encryption policy"
+            ) from None
+        if self._fernet is None:
             raise ConfigError(
                 "Secret is encrypted but no Fernet key is configured to decrypt it"
             )
@@ -446,13 +441,7 @@ class SecretStore:
         decode_failure = False
         decoded = ""
         try:
-            if is_encrypted:
-                decoded = self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
-            else:
-                decoded = base64.b64decode(
-                    stored.encode("ascii"),
-                    validate=True,
-                ).decode("utf-8")
+            decoded = self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
         except Exception:
             decode_failure = True
         if decode_failure:
@@ -460,7 +449,7 @@ class SecretStore:
         return decoded
 
     def set_secret(self, key: str, value: str) -> None:
-        """Encrypt or obfuscate and persist a secret value."""
+        """Encrypt and persist a secret value."""
         encoded, is_encrypted = self._encode(value)
         with self._conn.cursor() as cur:
             cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
@@ -476,7 +465,7 @@ class SecretStore:
             )
 
     def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Return a decoded secret or the supplied default when absent."""
+        """Return a decrypted secret or the supplied default when absent."""
         with self._conn.cursor() as cur:
             cur.execute(
                 f"SELECT secret_value, is_encrypted FROM {self.TABLE_NAME} "
@@ -486,7 +475,7 @@ class SecretStore:
             row = cur.fetchone()
         if not row:
             return default
-        if self._require_encryption and row[1] is not True:
+        if row[1] is not True:
             raise ConfigError(
                 "Stored secret violates required encryption policy"
             ) from None
