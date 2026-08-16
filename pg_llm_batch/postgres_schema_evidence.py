@@ -74,8 +74,15 @@ def inspect_postgres_schema() -> PostgresSchemaEvidence:
         digest = hashlib.sha256()
         size_bytes = 0
         while True:
+            # Read no more than the remaining hashing budget plus one sentinel
+            # byte. The sentinel distinguishes an exactly-at-budget schema from
+            # a compromised oversized resource without allowing a full chunk of
+            # work beyond the package-owned ceiling.
+            remaining_probe_bytes = _MAX_SCHEMA_BYTES - size_bytes + 1
             try:
-                chunk = stream.read(_HASH_CHUNK_BYTES)
+                chunk = stream.read(
+                    min(_HASH_CHUNK_BYTES, remaining_probe_bytes)
+                )
             except Exception:
                 # A packaged archive/resource reader can fail with ordinary
                 # exceptions that are not OSError subclasses. Normalize them
