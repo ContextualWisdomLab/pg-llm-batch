@@ -318,6 +318,22 @@ def test_checkpoint_conflict_remains_a_stable_retry_signal() -> None:
     assert caught.value.reason == "expected_previous_stale"
 
 
+def test_checkpoint_load_conflict_remains_a_stable_retry_signal() -> None:
+    """Load-time CAS conflicts must retain their package-owned retry contract."""
+    store = _Store()
+    store.load_error = CheckpointConflictError(
+        "result-writer", "batch-123", "load_snapshot_stale"
+    )
+
+    with pytest.raises(CheckpointConflictError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), store, "result-writer", _item(_checkpoint()), lambda _c, _r: None
+        )
+
+    assert caught.value.reason == "load_snapshot_stale"
+    assert [event[0] for event in store.events] == ["load"]
+
+
 def test_malformed_loaded_checkpoint_fails_before_record_effect() -> None:
     """Malformed durable predecessor evidence must fail before local effects."""
     store = _Store()
