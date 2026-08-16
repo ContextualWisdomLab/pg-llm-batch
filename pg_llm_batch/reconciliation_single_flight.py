@@ -55,7 +55,10 @@ def _validated_identity(
     exact built-in strings. Subclasses are rejected before attribute methods,
     regex, normalization, hashing, or encoding authority can execute.
     """
-    if type(tenant_scope) is not str or type(candidate) is not ReconciliationCandidate:
+    if (
+        type(tenant_scope) is not str
+        or type(candidate) is not ReconciliationCandidate
+    ):
         raise _invalid_identity() from None
     endpoint_value = candidate.endpoint_alias
     remote_value = candidate.remote_batch_id
@@ -101,7 +104,11 @@ def _execute_boolean_lock_operation(
             "database_operation_failed",
         ) from None
 
-    if type(row) not in (tuple, list) or len(row) != 1 or type(row[0]) is not bool:
+    if (
+        type(row) not in (tuple, list)
+        or len(row) != 1
+        or type(row[0]) is not bool
+    ):
         reason = (
             "invalid_database_result"
             if phase == "acquire"
