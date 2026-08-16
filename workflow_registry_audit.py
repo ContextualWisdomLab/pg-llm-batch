@@ -469,17 +469,17 @@ def _registry_signature(records: list[dict[str, object]]) -> tuple[tuple[int, st
 
 
 def _validate_workflow_record(raw_record: object) -> dict[str, object]:
-    """Validate identity/path/state for repository and GitHub-managed records."""
-    if not isinstance(raw_record, dict):
+    """Validate exact decoder primitive types for one workflow registry record."""
+    if type(raw_record) is not dict:
         raise WorkflowRegistryAuditError("workflow registry record is invalid")
     workflow_id = raw_record.get("id")
     path = raw_record.get("path")
     state = raw_record.get("state")
     if (
-        isinstance(workflow_id, bool)
-        or not isinstance(workflow_id, int)
+        type(workflow_id) is not int
         or workflow_id <= 0
-        or not isinstance(path, str)
+        or type(path) is not str
+        or type(state) is not str
         or state not in _WORKFLOW_STATES
     ):
         raise WorkflowRegistryAuditError("workflow registry record is invalid")
