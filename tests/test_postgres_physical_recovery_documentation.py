@@ -24,6 +24,9 @@ def test_physical_pitr_docs_record_operator_and_citation_contract() -> None:
         assert "pg_basebackup" in document
         assert "backup-internal wal" in document or "backup-internal" in document
         assert "continuous" in document and "archive" in document
+        assert "immediate" in document
+        assert "end-of-backup" in document
+        assert "replay-to-end-of-archive" in document
         assert "swanson" in document
         assert "nist" in document
         assert "postgresql" in document
