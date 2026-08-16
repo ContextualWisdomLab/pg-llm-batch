@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -38,3 +39,24 @@ def test_inspector_rejects_parent_traversal_before_artifact_open(
 
     with pytest.raises(PostgresBackupEvidenceError, match="invalid backup artifact path"):
         inspect_postgres_backup_artifact("../backup.dump")
+
+
+def test_inspector_rejects_root_without_final_artifact() -> None:
+    """Require one final filename instead of accepting the filesystem root."""
+    with pytest.raises(PostgresBackupEvidenceError, match="invalid backup artifact path"):
+        inspect_postgres_backup_artifact("/")
+
+
+def test_inspector_accepts_relative_path_without_parent_redirect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve ordinary relative operator paths under the pinned working directory."""
+    payload = b"relative-backup"
+    (tmp_path / "backup.dump").write_bytes(payload)
+    monkeypatch.chdir(tmp_path)
+
+    evidence = inspect_postgres_backup_artifact("./backup.dump")
+
+    assert evidence.sha256 == hashlib.sha256(payload).hexdigest()
+    assert evidence.size_bytes == len(payload)
