@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 # Package metadata requires Python >=3.10, so this stdlib import is supported.
 from importlib import resources  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
 from typing import BinaryIO
+from weakref import ReferenceType, ref
 
 
 _HASH_CHUNK_BYTES = 1024 * 1024
@@ -16,14 +17,16 @@ _MAX_SCHEMA_BYTES = 16 * 1024 * 1024
 _SCHEMA_PACKAGE = "pg_llm_batch"
 _SCHEMA_RESOURCE = "schema.sql"
 _SCHEMA_INSPECTION_MARK = object()
-_INSPECTED_SCHEMA_EVIDENCE_IDS: set[int] = set()
+_INSPECTED_SCHEMA_EVIDENCE_IDS: dict[
+    int, tuple[ReferenceType[PostgresSchemaEvidence], str, int]
+] = {}
 
 
 class PostgresSchemaEvidenceError(ValueError):
     """Report a fail-closed packaged PostgreSQL schema evidence violation."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PostgresSchemaEvidence:
     """Represent content-free integrity evidence for the packaged schema bytes."""
 
@@ -34,6 +37,24 @@ class PostgresSchemaEvidence:
     def as_dict(self) -> dict[str, object]:
         """Return the stable machine-readable packaged schema evidence schema."""
         return {"sha256": self.sha256, "size_bytes": self.size_bytes}
+
+
+def _record_inspected_schema_evidence(evidence: PostgresSchemaEvidence) -> None:
+    """Remember a live inspected object and its immutable observed field snapshot."""
+    evidence_id = id(evidence)
+
+    def discard(collected: ReferenceType[PostgresSchemaEvidence]) -> None:
+        """Remove only the registry entry that owns this collected weak reference."""
+        current = _INSPECTED_SCHEMA_EVIDENCE_IDS.get(evidence_id)
+        if current is not None and current[0] is collected:
+            _INSPECTED_SCHEMA_EVIDENCE_IDS.pop(evidence_id, None)
+
+    evidence_reference = ref(evidence, discard)
+    _INSPECTED_SCHEMA_EVIDENCE_IDS[evidence_id] = (
+        evidence_reference,
+        evidence.sha256,
+        evidence.size_bytes,
+    )
 
 
 def _open_schema_resource() -> BinaryIO:
@@ -118,19 +139,28 @@ def inspect_postgres_schema() -> PostgresSchemaEvidence:
             size_bytes=size_bytes,
             _inspection_mark=_SCHEMA_INSPECTION_MARK,
         )
-        _INSPECTED_SCHEMA_EVIDENCE_IDS.add(id(evidence))
     except BaseException:
         _quiet_close(stream)
         raise
 
     _close_schema_stream(stream)
+    _record_inspected_schema_evidence(evidence)
     return evidence
 
 
 def postgres_schema_evidence_was_inspected(evidence: object) -> bool:
-    """Return whether evidence is the exact object inspect_postgres_schema() returned."""
+    """Return whether a live exact object still matches its observed inspection fields."""
+    if type(evidence) is not PostgresSchemaEvidence:
+        return False
+    observed = _INSPECTED_SCHEMA_EVIDENCE_IDS.get(id(evidence))
+    if observed is None:
+        return False
+    evidence_reference, observed_sha256, observed_size_bytes = observed
     return (
-        type(evidence) is PostgresSchemaEvidence
+        evidence_reference() is evidence
         and evidence._inspection_mark is _SCHEMA_INSPECTION_MARK
-        and id(evidence) in _INSPECTED_SCHEMA_EVIDENCE_IDS
+        and type(evidence.sha256) is str
+        and type(evidence.size_bytes) is int
+        and evidence.sha256 == observed_sha256
+        and evidence.size_bytes == observed_size_bytes
     )
