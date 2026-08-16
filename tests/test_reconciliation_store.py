@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import traceback
 from typing import Any
 
 import pytest
@@ -15,6 +16,8 @@ from pg_llm_batch.reconciliation import (
 from pg_llm_batch.reconciliation_store import (
     load_reconciliation_candidates_in_transaction,
 )
+
+_SECRET_SENTINEL = "SECRET-SENTINEL hostile durable candidate"
 
 
 class RecordingCursor:
@@ -32,6 +35,31 @@ class RecordingCursor:
     def fetchall(self) -> list[Any]:
         """Return the configured candidate rows."""
         return list(self.rows)
+
+
+class _HostileCandidateRow(tuple[Any, ...]):
+    """Execute caller-controlled code if a row subclass is inspected."""
+
+    def __len__(self) -> int:
+        """Raise instead of supplying a trustworthy persisted row shape."""
+        raise RuntimeError(_SECRET_SENTINEL)
+
+
+class _HostileEndpointAlias(str):
+    """Execute caller-controlled code if persisted alias subclasses are trusted."""
+
+    def strip(self, _chars: str | None = None) -> str:
+        """Raise instead of supplying a trustworthy canonical alias."""
+        raise RuntimeError(_SECRET_SENTINEL)
+
+
+class _HostileRemoteBatchId(str):
+    """Represent a forged persisted resource-ID subclass."""
+
+
+def _rendered_exception(error: BaseException) -> str:
+    """Render one traceback for confidentiality assertions."""
+    return "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
 
 def test_load_reconciliation_candidates_binds_tenant_and_orders_oldest_first():
@@ -148,6 +176,32 @@ def test_malformed_persisted_candidate_shape_is_redacted(malformed_row: Any):
 
     assert str(malformed_row) not in str(caught.value)
     assert caught.value.details["value"] == "<redacted>"
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        _HostileCandidateRow(("gateway-a", "batch-1")),
+        (_HostileEndpointAlias("gateway-a"), "batch-1"),
+        ("gateway-a", _HostileRemoteBatchId("batch-1")),
+    ],
+)
+def test_hostile_persisted_candidate_subclasses_are_bounded(row: Any) -> None:
+    """Persisted rows and identities must use exact database primitive types."""
+    cursor = RecordingCursor([row])
+
+    with pytest.raises(ValidationError) as caught:
+        load_reconciliation_candidates_in_transaction(
+            cursor,
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert caught.value.details["field"] == "reconciliation_candidate"
+    assert caught.value.details["value"] == "<redacted>"
+    assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_empty_candidate_page_is_a_valid_bounded_result():
