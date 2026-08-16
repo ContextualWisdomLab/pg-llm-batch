@@ -100,12 +100,11 @@ def _inspect_initial_archive(
     return status
 
 
-def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[str, str]:
-    """Return only inherited libpq variables plus bounded package overrides."""
+def _libpq_environment(connect_timeout_seconds: int) -> dict[str, str]:
+    """Return only inherited libpq variables plus the bounded connect timeout."""
     environment = {
         key: value for key, value in os.environ.items() if key.startswith("PG")
     }
-    environment["PGSERVICE"] = service_name
     environment["PGCONNECT_TIMEOUT"] = str(connect_timeout_seconds)
     return environment
 
@@ -123,8 +122,9 @@ def _run_pg_restore(
         pg_restore_executable,
         "--single-transaction",
         "--exit-on-error",
+        f"--dbname=service={service_name}",
     ]
-    environment = _libpq_environment(service_name, connect_timeout_seconds)
+    environment = _libpq_environment(connect_timeout_seconds)
     try:
         completed = subprocess.run(
             arguments,
@@ -199,11 +199,13 @@ def restore_postgres_logical_backup(
     """Restore one bounded custom archive through a caller-owned file descriptor.
 
     The caller selects the target libpq service and is responsible for making that
-    service an isolated recovery target. The package does not receive an archive
-    path, place connection material in process arguments, or reflect archive/database
-    content in diagnostics. ``pg_restore`` runs with one transaction and exits on the
-    first SQL error so timeout or execution failure does not intentionally commit a
-    partial package restore.
+    service an isolated recovery target. The package does not receive an archive path,
+    place credentials in process arguments, or reflect archive/database content in
+    diagnostics. The validated non-secret service selector is supplied to ``pg_restore``
+    through ``--dbname=service=...`` so the command performs a direct database restore
+    rather than merely rendering SQL to standard output. ``pg_restore`` runs with one
+    transaction and exits on the first SQL error so timeout or execution failure does
+    not intentionally commit a partial package restore.
     """
     if not _parameters_are_valid(
         service_name,
