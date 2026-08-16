@@ -69,31 +69,41 @@ def test_inspector_rejects_initial_size_above_explicit_budget_before_read(
     assert read_started is False
 
 
-def test_inspector_stops_stream_growth_at_explicit_budget(
+def test_inspector_caps_each_stream_read_at_remaining_budget(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Bound read work even when a regular file grows after its initial stat."""
+    """Reach final metadata validation without reading beyond the declared byte budget."""
     artifact = tmp_path / "growing.dump"
     artifact.write_bytes(b"x")
-    reads = 0
+    remaining_budget = 4
+    requested_counts: list[int] = []
+    original_fstat = os.fstat
+    fstat_calls = 0
 
-    def growing_read(file_descriptor: int, count: int) -> bytes:
-        nonlocal reads
-        del file_descriptor, count
-        reads += 1
-        if reads == 1:
-            return b"abcd"
-        if reads == 2:
-            return b"e"
-        raise AssertionError("inspection exceeded its declared work budget")
+    def bounded_growth_read(file_descriptor: int, count: int) -> bytes:
+        nonlocal remaining_budget
+        del file_descriptor
+        assert 0 < count <= remaining_budget
+        requested_counts.append(count)
+        chunk = b"abcd"[:count]
+        remaining_budget -= len(chunk)
+        return chunk
 
-    monkeypatch.setattr(os, "read", growing_read)
+    def tracking_fstat(file_descriptor: int) -> os.stat_result:
+        nonlocal fstat_calls
+        fstat_calls += 1
+        return original_fstat(file_descriptor)
 
-    with pytest.raises(PostgresBackupEvidenceError, match="positive bounded size"):
+    monkeypatch.setattr(os, "read", bounded_growth_read)
+    monkeypatch.setattr(os, "fstat", tracking_fstat)
+
+    with pytest.raises(PostgresBackupEvidenceError, match="changed during inspection"):
         inspect_postgres_backup_artifact(str(artifact), maximum_size_bytes=4)
 
-    assert reads == 2
+    assert requested_counts == [4]
+    assert remaining_budget == 0
+    assert fstat_calls == 2
 
 
 def test_inspector_accepts_explicit_budget_covering_artifact(tmp_path: Path) -> None:
