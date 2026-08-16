@@ -118,6 +118,21 @@ def _execute_boolean_lock_operation(
     return row[0]
 
 
+def _release_single_flight(cursor: Any, lock_key: int) -> None:
+    """Release one acquired lock or raise bounded integrity evidence."""
+    released = _execute_boolean_lock_operation(
+        cursor,
+        "SELECT pg_advisory_unlock(%s)",
+        lock_key,
+        phase="release",
+    )
+    if not released:
+        raise ReconciliationSingleFlightError(
+            "release",
+            "lock_release_not_confirmed",
+        ) from None
+
+
 @contextmanager
 def reconciliation_single_flight(
     cursor: Any,
@@ -138,6 +153,11 @@ def reconciliation_single_flight(
     session currently holds that authority and the caller should defer. This is
     a transient single-flight primitive, not a durable lease or an exactly-once
     delivery guarantee.
+
+    A release failure remains bounded package evidence. It replaces ordinary
+    caller exceptions so sensitive diagnostics are not retained in traceback
+    context, while process-control ``BaseException`` signals remain primary and
+    chain the bounded release-integrity error as their cause.
     """
     tenant, endpoint_alias, remote_batch_id = _validated_identity(
         tenant_scope,
@@ -154,17 +174,16 @@ def reconciliation_single_flight(
         yield False
         return
 
+    caller_error: BaseException | None = None
     try:
         yield True
+    except BaseException as error:
+        caller_error = error
+        raise
     finally:
-        released = _execute_boolean_lock_operation(
-            cursor,
-            "SELECT pg_advisory_unlock(%s)",
-            lock_key,
-            phase="release",
-        )
-        if not released:
-            raise ReconciliationSingleFlightError(
-                "release",
-                "lock_release_not_confirmed",
-            ) from None
+        try:
+            _release_single_flight(cursor, lock_key)
+        except ReconciliationSingleFlightError as release_error:
+            if caller_error is not None and not isinstance(caller_error, Exception):
+                raise caller_error from release_error
+            raise
