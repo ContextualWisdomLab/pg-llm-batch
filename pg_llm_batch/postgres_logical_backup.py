@@ -172,8 +172,10 @@ def _run_pg_dump(
     return completed
 
 
-def _finalize_output(output_descriptor: int) -> int:
-    """Synchronize and validate the caller-owned backup file after pg_dump exits."""
+def _finalize_output(
+    output_descriptor: int, initial_status: os.stat_result
+) -> int:
+    """Synchronize and validate the same caller-owned backup file after pg_dump exits."""
     try:
         os.fsync(output_descriptor)
         status = os.fstat(output_descriptor)
@@ -193,6 +195,10 @@ def _finalize_output(output_descriptor: int) -> int:
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output became unsafe"
         )
+    if (status.st_dev, status.st_ino) != (initial_status.st_dev, initial_status.st_ino):
+        raise PostgresLogicalBackupError(
+            "PostgreSQL logical backup output changed during execution"
+        )
     return status.st_size
 
 
@@ -211,8 +217,9 @@ def create_postgres_logical_backup(
     package never receives an output path or places connection material in process
     arguments. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
     inherited; the package owns ``PGSERVICE`` and the bounded ``PGCONNECT_TIMEOUT``.
-    Any partial output selected by this function is emptied and rewound best-effort on
-    failure so the caller can safely decide whether to retry or discard the descriptor.
+    Partial output is emptied and rewound best-effort when failure still refers to the
+    inspected file. Descriptor substitution fails closed without mutating the unrelated
+    replacement file.
     """
     if not _parameters_are_valid(
         service_name,
@@ -225,7 +232,7 @@ def create_postgres_logical_backup(
             "invalid PostgreSQL logical backup parameters"
         )
 
-    _inspect_initial_output(output_descriptor)
+    initial_status = _inspect_initial_output(output_descriptor)
     _run_pg_dump(
         service_name=service_name,
         output_descriptor=output_descriptor,
@@ -234,5 +241,5 @@ def create_postgres_logical_backup(
         connect_timeout_seconds=connect_timeout_seconds,
     )
     return PostgresLogicalBackupResult(
-        size_bytes=_finalize_output(output_descriptor)
+        size_bytes=_finalize_output(output_descriptor, initial_status)
     )
