@@ -36,10 +36,32 @@ class _RecordingStore:
 
 
 class _AsyncCallableEffect:
-    """Represent a callable object whose invocation would return a coroutine."""
+    """Represent an ordinary callable object with asynchronous invocation."""
 
     async def __call__(self, _cursor: Any, _record: dict[str, Any]) -> None:
         """Model deferred work that cannot share the caller transaction."""
+        return None
+
+
+class _StaticAsyncCallableEffect:
+    """Represent an asynchronous static-method callable object."""
+
+    @staticmethod
+    async def __call__(_cursor: Any, _record: dict[str, Any]) -> None:
+        """Model a descriptor-wrapped asynchronous effect."""
+        return None
+
+
+class _ClassAsyncCallableEffect:
+    """Represent an asynchronous class-method callable object."""
+
+    @classmethod
+    async def __call__(
+        cls,
+        _cursor: Any,
+        _record: dict[str, Any],
+    ) -> None:
+        """Model another descriptor-wrapped asynchronous effect."""
         return None
 
 
@@ -80,8 +102,18 @@ def _item() -> CheckpointedBatchResultRecord:
     )
 
 
-def test_async_callable_object_fails_before_checkpoint_store_access() -> None:
-    """An async ``__call__`` cannot masquerade as a synchronous transaction effect."""
+@pytest.mark.parametrize(
+    "effect_type",
+    [
+        _AsyncCallableEffect,
+        _StaticAsyncCallableEffect,
+        _ClassAsyncCallableEffect,
+    ],
+)
+def test_async_callable_object_fails_before_checkpoint_store_access(
+    effect_type: type[Any],
+) -> None:
+    """Every statically visible async ``__call__`` must fail before store work."""
     store = _RecordingStore()
 
     with pytest.raises(ValidationError) as caught:
@@ -90,7 +122,7 @@ def test_async_callable_object_fails_before_checkpoint_store_access() -> None:
             store,
             "result-writer",
             _item(),
-            _AsyncCallableEffect(),
+            effect_type(),
         )
 
     assert caught.value.details["field"] == "apply_record"
