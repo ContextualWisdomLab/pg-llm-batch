@@ -37,6 +37,14 @@ class RecordingCursor:
         return list(self.rows)
 
 
+class _HostileTenantScope(str):
+    """Represent forged tenant text that must be rejected before database work."""
+
+    def __hash__(self) -> int:
+        """Raise if the subclass reaches behavior-bearing identity operations."""
+        raise RuntimeError(_SECRET_SENTINEL)
+
+
 class _HostileCandidateRow(tuple[Any, ...]):
     """Execute caller-controlled code if a row subclass is inspected."""
 
@@ -128,6 +136,26 @@ def test_invalid_tenant_scope_fails_before_database_work():
         )
 
     assert cursor.calls == []
+
+
+def test_hostile_tenant_scope_subclass_fails_before_database_work() -> None:
+    """Tenant authority must use an exact built-in string before cursor work."""
+    cursor = RecordingCursor([])
+    tenant_scope = _HostileTenantScope("tenant-a")
+
+    with pytest.raises(ValidationError) as caught:
+        load_reconciliation_candidates_in_transaction(
+            cursor,
+            tenant_scope,
+            max_candidates=1,
+        )
+
+    assert cursor.calls == []
+    assert caught.value.details["field"] == "tenant_scope"
+    assert caught.value.details["value"] == "<redacted>"
+    assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_invalid_persisted_candidate_is_redacted():
