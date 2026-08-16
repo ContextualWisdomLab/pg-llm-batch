@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from workflow_registry_audit import (
+from pg_llm_batch.workflow_registry_audit import (
     WorkflowRegistryAuditError,
     _validate_workflow_record,
 )

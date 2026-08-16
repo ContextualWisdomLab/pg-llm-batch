@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Read-only workflow-registry audit (`pg-llm-batch-workflow-audit`) that binds one receipt to an exact protected commit, verifies the live protected ref before and after the read, classifies active repository-backed identities missing from that tree as `active_absent_workflows` candidates only, receipts GitHub-managed `dynamic/` identities without treating them as orphans, and fails closed on hostile identity-member types, truncated trees, pagination drift, and rate limits. The tool never disables or edits workflows.
 - Read-only exact-head release acceptance that builds wheel and source distribution artifacts twice from clean Git archives, proves byte-identical SHA-256 identity, records bounded canonical evidence, and keeps publication and attestation authority separate.
 - Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
 - Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.

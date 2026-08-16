@@ -7,7 +7,7 @@ import traceback
 import aiohttp
 import pytest
 
-from workflow_registry_audit import GitHubReadClient, WorkflowRegistryAuditError
+from pg_llm_batch.workflow_registry_audit import GitHubReadClient, WorkflowRegistryAuditError
 
 
 class _Content:
@@ -76,7 +76,7 @@ def test_declared_oversize_response_fails_before_whole_body_read(
 ) -> None:
     """A declared oversized response must fail before materializing its body."""
     _Session.response = _Response(b"{}", content_length=32 * 1024 * 1024)
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-token")
 
     with pytest.raises(WorkflowRegistryAuditError, match="response exceeded byte limit"):
@@ -90,8 +90,8 @@ def test_chunked_oversize_response_fails_with_bounded_nonsecret_evidence(
     secret_sentinel = "SECRET_RESPONSE_BODY_MUST_NOT_ESCAPE"
     body = ('{"value":"' + secret_sentinel + '"}').encode()
     _Session.response = _Response(body, content_length=None)
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
-    monkeypatch.setattr("workflow_registry_audit._MAX_RESPONSE_BYTES", 8, raising=False)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit._MAX_RESPONSE_BYTES", 8, raising=False)
     client = GitHubReadClient(token="bounded-token")
 
     try:
@@ -112,12 +112,12 @@ def test_recursive_json_decoder_failure_is_normalized_without_diagnostics(
     """A recursion-limited JSON decoder failure remains a fixed audit error."""
     secret_sentinel = "SECRET_RECURSION_DIAGNOSTIC_MUST_NOT_ESCAPE"
     _Session.response = _Response(b"{}", content_length=2)
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
 
     def _raise_recursion(_content: str) -> object:
         raise RecursionError(secret_sentinel)
 
-    monkeypatch.setattr("workflow_registry_audit.json.loads", _raise_recursion)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.json.loads", _raise_recursion)
     client = GitHubReadClient(token="bounded-token")
 
     try:

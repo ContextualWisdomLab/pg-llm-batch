@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from workflow_registry_audit import WorkflowRegistryAuditError, audit_repository_workflows
+from pg_llm_batch.workflow_registry_audit import WorkflowRegistryAuditError, audit_repository_workflows
 
 
 PROTECTED_SHA = "d0a4b30be1f46536e352443309f3a35533156767"

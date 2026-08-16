@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import aiohttp
 import pytest
 
-from workflow_registry_audit import (
+from pg_llm_batch.workflow_registry_audit import (
     GitHubReadClient,
     WorkflowRegistryAuditError,
     audit_repository_workflows,
@@ -343,7 +343,7 @@ def test_authenticated_reads_use_fixed_aiohttp_origin_and_path_only(
             observed_requests.append((path, allow_redirects))
             return _Response()
 
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-test-token")
     path = f"/repos/{REPOSITORY}/actions/workflows"
 
@@ -373,7 +373,7 @@ def test_absolute_uri_is_rejected_before_transport(monkeypatch: pytest.MonkeyPat
             nonlocal session_attempted
             session_attempted = True
 
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-test-token")
 
     with pytest.raises(WorkflowRegistryAuditError, match="GitHub API path is invalid"):
@@ -410,7 +410,7 @@ def test_transport_failure_does_not_retain_lower_layer_diagnostics(
             assert allow_redirects is False
             raise aiohttp.ClientConnectionError(secret_sentinel)
 
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="token-value-that-must-not-render")
 
     try:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workflow_registry_audit import (
+from pg_llm_batch.workflow_registry_audit import (
     WorkflowRegistryAuditError,
     audit_live_protected_ref_workflows,
     audit_repository_workflows,
@@ -75,6 +75,25 @@ class _HostileInt(int):
 class _HostileList(list):
     def __len__(self):
         raise AssertionError("hostile list length executed")
+
+
+_SECRET_IDENTITY = "SECRET-SENTINEL hostile identity member"
+
+
+class _LyingIdentity(str):
+    def __eq__(self, _other: object) -> bool:
+        return True
+
+    def __ne__(self, _other: object) -> bool:
+        return False
+
+
+class _RaisingIdentity(str):
+    def __eq__(self, _other: object) -> bool:
+        raise RuntimeError(_SECRET_IDENTITY)
+
+    def __ne__(self, _other: object) -> bool:
+        raise RuntimeError(_SECRET_IDENTITY)
 
 
 @pytest.mark.parametrize(
@@ -161,4 +180,138 @@ def test_audit_rejects_hostile_registry_list_before_shape_operations():
             protected_sha=_PROTECTED_SHA,
             client=_StaticClient(responses),
             captured_at="2026-08-16T00:00:00Z",
+        )
+
+
+def test_audit_rejects_lying_commit_sha_before_tree_resolution() -> None:
+    """A sha subclass must not certify the caller SHA while resolving another tree."""
+    planted_tree = "c" * 40
+    planted_path = ".github/workflows/planted.yml"
+    responses = _valid_responses()
+    responses[f"/repos/{_REPOSITORY}/git/commits/{_PROTECTED_SHA}"] = {
+        "sha": _LyingIdentity(planted_tree),
+        "tree": {"sha": planted_tree},
+    }
+    responses[f"/repos/{_REPOSITORY}/git/trees/{planted_tree}?recursive=1"] = {
+        "sha": planted_tree,
+        "truncated": False,
+        "tree": [{"path": planted_path, "type": "blob"}],
+    }
+
+    with pytest.raises(WorkflowRegistryAuditError, match="commit response is invalid"):
+        audit_repository_workflows(
+            repository_full_name=_REPOSITORY,
+            protected_sha=_PROTECTED_SHA,
+            client=_StaticClient(responses),
+            captured_at="2026-08-16T00:00:00Z",
+        )
+
+
+def test_audit_rejects_raising_commit_sha_without_leaking_custom_code() -> None:
+    """Identity comparison must not execute subclass equality methods."""
+    responses = _valid_responses()
+    responses[f"/repos/{_REPOSITORY}/git/commits/{_PROTECTED_SHA}"] = {
+        "sha": _RaisingIdentity(_PROTECTED_SHA),
+        "tree": {"sha": _TREE_SHA},
+    }
+
+    with pytest.raises(WorkflowRegistryAuditError, match="commit response is invalid") as caught:
+        audit_repository_workflows(
+            repository_full_name=_REPOSITORY,
+            protected_sha=_PROTECTED_SHA,
+            client=_StaticClient(responses),
+            captured_at="2026-08-16T00:00:00Z",
+        )
+
+    assert _SECRET_IDENTITY not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_audit_rejects_lying_tree_sha_before_path_collection() -> None:
+    """Tree object identity must be an exact decoder string before comparison."""
+    planted_tree = "c" * 40
+    responses = _valid_responses()
+    responses[f"/repos/{_REPOSITORY}/git/trees/{_TREE_SHA}?recursive=1"] = {
+        "sha": _LyingIdentity(planted_tree),
+        "truncated": False,
+        "tree": [{"path": ".github/workflows/planted.yml", "type": "blob"}],
+    }
+
+    with pytest.raises(WorkflowRegistryAuditError, match="tree SHA does not match"):
+        audit_repository_workflows(
+            repository_full_name=_REPOSITORY,
+            protected_sha=_PROTECTED_SHA,
+            client=_StaticClient(responses),
+            captured_at="2026-08-16T00:00:00Z",
+        )
+
+
+def test_live_audit_rejects_lying_ref_member_before_equality() -> None:
+    """A ref subclass must not certify the requested branch by lying about equality."""
+
+    class _LyingRefClient:
+        def get_json(self, path: str) -> dict[str, object]:
+            if path == f"/repos/{_REPOSITORY}/git/ref/heads/main":
+                return {
+                    "ref": _LyingIdentity("refs/heads/other"),
+                    "object": {"sha": _PROTECTED_SHA, "type": "commit"},
+                }
+            raise AssertionError(f"unexpected GitHub read: {path}")
+
+    with pytest.raises(WorkflowRegistryAuditError, match="protected ref response is invalid"):
+        audit_live_protected_ref_workflows(
+            repository_full_name=_REPOSITORY,
+            protected_ref="main",
+            expected_protected_sha=_PROTECTED_SHA,
+            client=_LyingRefClient(),
+            captured_at="2026-08-16T00:00:00Z",
+        )
+
+
+def test_live_audit_rejects_raising_ref_member_without_leaking_custom_code() -> None:
+    """Protected-ref membership checks must not run subclass equality methods."""
+
+    class _RaisingRefClient:
+        def get_json(self, path: str) -> dict[str, object]:
+            if path == f"/repos/{_REPOSITORY}/git/ref/heads/main":
+                return {
+                    "ref": _RaisingIdentity("refs/heads/main"),
+                    "object": {"sha": _PROTECTED_SHA, "type": "commit"},
+                }
+            raise AssertionError(f"unexpected GitHub read: {path}")
+
+    with pytest.raises(WorkflowRegistryAuditError, match="protected ref response is invalid") as caught:
+        audit_live_protected_ref_workflows(
+            repository_full_name=_REPOSITORY,
+            protected_ref="main",
+            expected_protected_sha=_PROTECTED_SHA,
+            client=_RaisingRefClient(),
+            captured_at="2026-08-16T00:00:00Z",
+        )
+
+    assert _SECRET_IDENTITY not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_audit_generates_rfc3339_captured_at_when_omitted() -> None:
+    """Operators receive a UTC receipt timestamp when they do not supply one."""
+    receipt = audit_repository_workflows(
+        repository_full_name=_REPOSITORY,
+        protected_sha=_PROTECTED_SHA,
+        client=_StaticClient(_valid_responses()),
+    )
+    assert type(receipt["captured_at"]) is str
+    assert receipt["captured_at"].endswith("Z")
+
+
+def test_audit_rejects_non_string_captured_at_before_receipt() -> None:
+    """Receipt timestamps must be exact strings or omitted."""
+    with pytest.raises(WorkflowRegistryAuditError, match="captured_at"):
+        audit_repository_workflows(
+            repository_full_name=_REPOSITORY,
+            protected_sha=_PROTECTED_SHA,
+            client=_NoReadClient(),
+            captured_at=20260816,  # type: ignore[arg-type]
         )

@@ -57,6 +57,7 @@ than a second database-side network authority.
 | DDL subset | `pg_llm_batch/schema.sql` |
 | Readiness (`/healthz`) | `pg_llm_batch/health.py` |
 | CLI | `pg_llm_batch/cli.py` |
+| Read-only workflow registry audit | `pg_llm_batch/workflow_registry_audit.py` |
 
 ## Requirements
 
@@ -153,6 +154,27 @@ python -m pg_llm_batch health   # prints the report, exit 0 ready / 1 not ready
 
 The Docker `HEALTHCHECK` and the compose `postgres` service both gate on the
 same `pg_llm_batch_health_check()` SQL function.
+
+### Workflow registry audit
+
+Detect active GitHub Actions identities that are missing from an exact
+protected source tree. The command is read-only: it never disables, edits, or
+reruns workflows. Review `active_absent_workflows` yourself. GitHub-managed
+`dynamic/` identities are listed but are not orphan candidates.
+
+```bash
+export GITHUB_TOKEN="$(gh auth token)"   # contents:read + actions:read
+pg-llm-batch-workflow-audit \
+  --repository ContextualWisdomLab/pg-llm-batch \
+  --protected-ref main \
+  --protected-sha "$(git rev-parse origin/main)"
+```
+
+Exit `0` means the protected ref stayed on the supplied SHA and no
+repository-backed orphan candidates were found. Exit `2` prints a JSON receipt
+with candidates for a separate review. Exit `1` is a fail-closed audit error.
+See [`docs/doctoring/workflow-registry-audit.md`](docs/doctoring/workflow-registry-audit.md)
+for token scope, rate-limit evidence, and recovery.
 
 ---
 

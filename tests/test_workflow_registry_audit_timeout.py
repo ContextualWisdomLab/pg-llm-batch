@@ -6,7 +6,7 @@ import math
 
 import pytest
 
-from workflow_registry_audit import GitHubReadClient, WorkflowRegistryAuditError
+from pg_llm_batch.workflow_registry_audit import GitHubReadClient, WorkflowRegistryAuditError
 
 
 @pytest.mark.parametrize("timeout_seconds", [math.nan, math.inf, -math.inf])

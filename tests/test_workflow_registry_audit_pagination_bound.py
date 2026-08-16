@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from workflow_registry_audit import WorkflowRegistryAuditError, _read_registry
+from pg_llm_batch.workflow_registry_audit import WorkflowRegistryAuditError, _read_registry
 
 
 class _OversizedRegistryClient:

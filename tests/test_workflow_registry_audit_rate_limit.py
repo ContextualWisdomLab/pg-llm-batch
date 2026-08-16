@@ -5,7 +5,7 @@ from __future__ import annotations
 import aiohttp
 import pytest
 
-from workflow_registry_audit import GitHubReadClient, WorkflowRegistryAuditError
+from pg_llm_batch.workflow_registry_audit import GitHubReadClient, WorkflowRegistryAuditError
 
 
 REPOSITORY = "ContextualWisdomLab/pg-llm-batch"
@@ -61,7 +61,7 @@ def test_rate_limit_responses_have_bounded_distinct_diagnostic(
             assert allow_redirects is False
             return response
 
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-test-token")
 
     with pytest.raises(WorkflowRegistryAuditError, match="^GitHub workflow audit rate limited$"):
@@ -100,7 +100,7 @@ def test_ordinary_forbidden_response_remains_generic(
             assert allow_redirects is False
             return _Response()
 
-    monkeypatch.setattr("workflow_registry_audit.aiohttp.ClientSession", _Session)
+    monkeypatch.setattr("pg_llm_batch.workflow_registry_audit.aiohttp.ClientSession", _Session)
     client = GitHubReadClient(token="bounded-test-token")
 
     with pytest.raises(WorkflowRegistryAuditError, match="^GitHub workflow audit read failed$"):
