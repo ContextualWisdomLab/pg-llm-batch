@@ -61,6 +61,14 @@ def _validate_item_and_effect(
         raise _redacted_validation_error(
             "item.checkpoint", "must be an exact batch result checkpoint"
         )
+    if type(item.batch_id) is not str:
+        raise _redacted_validation_error(
+            "item.batch_id", "must be an exact built-in string"
+        )
+    if type(item.file_kind) is not str:
+        raise _redacted_validation_error(
+            "item.file_kind", "must be an exact built-in string"
+        )
     if not callable(apply_record):
         raise _redacted_validation_error("apply_record", "must be callable")
     static_call = inspect.getattr_static(apply_record, "__call__", None)
