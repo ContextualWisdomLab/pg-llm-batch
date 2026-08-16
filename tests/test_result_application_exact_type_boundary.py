@@ -91,6 +91,9 @@ class _HostileItem(CheckpointedBatchResultRecord):
 class _HostileCheckpoint(BatchResultCheckpoint):
     """Expose secret-bearing code if loaded checkpoint subclasses are trusted."""
 
+    def __post_init__(self) -> None:
+        """Keep fixture construction inert so product access is the first hostile read."""
+
     def __getattribute__(self, name: str) -> Any:
         """Raise before forged durable identity can be inspected."""
         if name == "batch_id":
