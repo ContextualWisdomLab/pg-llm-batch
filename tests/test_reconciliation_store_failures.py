@@ -18,6 +18,13 @@ _EXPECTED_MESSAGE = "Reconciliation candidate store operation failed"
 _EXPECTED_CODE = "RECONCILIATION_STORE_ERROR"
 
 
+class _ExplodingRows:
+    """Raise secret-bearing lower-layer evidence only when row iteration starts."""
+
+    def __iter__(self):
+        raise RuntimeError(f"{_SECRET} iterate")
+
+
 class _FailingCursor:
     """Fail at one selected cursor operation with secret-bearing lower-layer text."""
 
@@ -31,9 +38,11 @@ class _FailingCursor:
         if self.fail_on == phase:
             raise RuntimeError(f"{_SECRET} {phase}")
 
-    def fetchall(self) -> list[tuple[str, str]]:
+    def fetchall(self) -> Any:
         if self.fail_on == "fetch":
             raise RuntimeError(f"{_SECRET} fetch")
+        if self.fail_on == "iterate":
+            return _ExplodingRows()
         return [("gateway-a", "batch-1")]
 
 
@@ -42,7 +51,7 @@ def _rendered(error: BaseException) -> str:
     return "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
 
-@pytest.mark.parametrize("fail_on", ["tenant", "query", "fetch"])
+@pytest.mark.parametrize("fail_on", ["tenant", "query", "fetch", "iterate"])
 def test_store_operational_failures_are_bounded_and_redacted(fail_on: str) -> None:
     """Database operational detail must not escape the package error boundary."""
     cursor = _FailingCursor(fail_on=fail_on)
