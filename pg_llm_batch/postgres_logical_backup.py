@@ -65,16 +65,18 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
     """Require a caller-owned descriptor for one private empty regular file."""
     try:
         status = os.fstat(output_descriptor)
+        if not stat.S_ISREG(status.st_mode) or status.st_size != 0:
+            raise PostgresLogicalBackupError(
+                "PostgreSQL logical backup output must be a private empty regular file"
+            )
         offset = os.lseek(output_descriptor, 0, os.SEEK_CUR)
+    except PostgresLogicalBackupError:
+        raise
     except (OSError, ValueError):
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output could not be inspected"
         ) from None
 
-    if not stat.S_ISREG(status.st_mode) or status.st_size != 0:
-        raise PostgresLogicalBackupError(
-            "PostgreSQL logical backup output must be a private empty regular file"
-        )
     if offset != 0:
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output must start at offset zero"
