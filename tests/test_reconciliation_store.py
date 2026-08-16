@@ -124,6 +124,23 @@ def test_candidate_budget_fails_before_database_work(max_candidates: Any):
     assert str(max_candidates) not in str(caught.value)
 
 
+@pytest.mark.parametrize("max_candidates", [1, MAX_RECONCILIATION_CANDIDATES])
+def test_candidate_budget_accepts_inclusive_bounds(max_candidates: int) -> None:
+    """Both documented candidate-budget boundaries must reach the durable query."""
+    cursor = RecordingCursor([])
+
+    assert (
+        load_reconciliation_candidates_in_transaction(
+            cursor,
+            "tenant-a",
+            max_candidates=max_candidates,
+        )
+        == ()
+    )
+    assert len(cursor.calls) == 2
+    assert cursor.calls[1][1] == ("tenant-a", max_candidates)
+
+
 def test_invalid_tenant_scope_fails_before_database_work():
     """Untrusted tenant text must never reach tenant-context or candidate SQL."""
     cursor = RecordingCursor([])
