@@ -68,6 +68,19 @@ def _archive_is_owner_only(mode: int) -> bool:
     return mode & (stat.S_IRWXG | stat.S_IRWXO) == 0
 
 
+def _archive_metadata(status: object) -> tuple[object, ...]:
+    """Return observable file identity metadata used to detect archive mutation."""
+    return (
+        getattr(status, "st_mode", None),
+        getattr(status, "st_size", None),
+        getattr(status, "st_nlink", None),
+        getattr(status, "st_dev", None),
+        getattr(status, "st_ino", None),
+        getattr(status, "st_mtime_ns", None),
+        getattr(status, "st_ctime_ns", None),
+    )
+
+
 def _inspect_initial_archive(
     input_descriptor: int,
     maximum_archive_size_bytes: int,
@@ -183,16 +196,7 @@ def _verify_archive_unchanged(
             "PostgreSQL logical restore archive could not be verified"
         ) from None
 
-    if (
-        not stat.S_ISREG(final_status.st_mode)
-        or final_status.st_size != initial_status.st_size
-        or final_status.st_nlink != 1
-        or not _archive_is_owner_only(final_status.st_mode)
-        or getattr(final_status, "st_dev", None) != initial_status.st_dev
-        or getattr(final_status, "st_ino", None) != initial_status.st_ino
-        or getattr(final_status, "st_mtime_ns", None) != initial_status.st_mtime_ns
-        or getattr(final_status, "st_ctime_ns", None) != initial_status.st_ctime_ns
-    ):
+    if _archive_metadata(final_status) != _archive_metadata(initial_status):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive changed during execution"
         )
