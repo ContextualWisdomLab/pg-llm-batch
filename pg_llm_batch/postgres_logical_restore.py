@@ -38,6 +38,7 @@ class PostgresLogicalRestoreResult:
 def _parameters_are_valid(
     service_name: object,
     input_descriptor: object,
+    source_superusers_trusted: object,
     pg_restore_executable: object,
     timeout_seconds: object,
     connect_timeout_seconds: object,
@@ -49,6 +50,7 @@ def _parameters_are_valid(
         and _SERVICE_NAME_RE.fullmatch(service_name) is not None
         and type(input_descriptor) is int
         and input_descriptor >= 0
+        and type(source_superusers_trusted) is bool
         and type(pg_restore_executable) is str
         and os.path.isabs(pg_restore_executable)
         and os.path.basename(pg_restore_executable) == "pg_restore"
@@ -200,6 +202,7 @@ def restore_postgres_logical_backup(
     service_name: str,
     input_descriptor: int,
     *,
+    source_superusers_trusted: bool = False,
     pg_restore_executable: str,
     timeout_seconds: int = 1800,
     connect_timeout_seconds: int = 15,
@@ -207,21 +210,25 @@ def restore_postgres_logical_backup(
 ) -> PostgresLogicalRestoreResult:
     """Restore one bounded custom archive through a caller-owned file descriptor.
 
-    The caller selects the target libpq service and is responsible for making that
-    service an isolated recovery target; the service name is not an authorization or
-    proof-of-isolation boundary. The package does not receive an archive path, place
-    credentials in process arguments, or reflect archive/database content in
-    diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
-    inherited, so ambient host/database/options/SSL-mode variables cannot silently
-    redirect or weaken the target session. The validated non-secret service selector
-    is supplied through ``--dbname=service=...`` so ``pg_restore`` performs a direct
-    database restore rather than merely rendering SQL. The command runs with one
-    transaction and exits on the first SQL error, so timeout or execution failure does
-    not intentionally commit a partial package restore.
+    The caller must explicitly assert that the archive originates from trusted source
+    superusers. This assertion is a caller-owned precondition, not package proof that
+    archive definitions, ownership, or privileges are safe. The caller also selects
+    the target libpq service and is responsible for making that service an isolated
+    recovery target; the service name is not an authorization or proof-of-isolation
+    boundary. The package does not receive an archive path, place credentials in
+    process arguments, or reflect archive/database content in diagnostics. Only
+    ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be inherited, so ambient
+    host/database/options/SSL-mode variables cannot silently redirect or weaken the
+    target session. The validated non-secret service selector is supplied through
+    ``--dbname=service=...`` so ``pg_restore`` performs a direct database restore
+    rather than merely rendering SQL. The command runs with one transaction and exits
+    on the first SQL error, so timeout or execution failure does not intentionally
+    commit a partial package restore.
     """
     if not _parameters_are_valid(
         service_name,
         input_descriptor,
+        source_superusers_trusted,
         pg_restore_executable,
         timeout_seconds,
         connect_timeout_seconds,
@@ -229,6 +236,10 @@ def restore_postgres_logical_backup(
     ):
         raise PostgresLogicalRestoreError(
             "invalid PostgreSQL logical restore parameters"
+        )
+    if not source_superusers_trusted:
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore requires trusted source superusers"
         )
 
     initial_status = _inspect_initial_archive(
