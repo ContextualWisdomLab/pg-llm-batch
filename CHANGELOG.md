@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded `restore_postgres_logical_backup()` executor that runs one
+  shell-free `pg_restore --single-transaction --exit-on-error` against a
+  caller-owned private archive descriptor. Callers must pass exact-boolean
+  `source_superusers_trusted=True`; the service name is not an authorization
+  boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be
+  inherited.
+
+### Fixed
+
+- Logical restore no longer treats a mid-archive descriptor offset as failure.
+  Custom-format `pg_restore` seeks to the table of contents and data blocks, so
+  a successful restore is not required to leave the descriptor at end-of-file.
+  A post-restore metadata mismatch remains fail-closed and must be treated as
+  unsafe because the SQL transaction may already have committed.
+
+### Added
+
 - Read-only exact-head release acceptance that builds wheel and source distribution artifacts twice from clean Git archives, proves byte-identical SHA-256 identity, records bounded canonical evidence, and keeps publication and attestation authority separate.
 - Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
 - Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.
