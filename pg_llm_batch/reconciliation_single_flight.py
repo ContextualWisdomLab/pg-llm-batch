@@ -31,28 +31,45 @@ class ReconciliationSingleFlightError(PgLlmBatchError):
         )
 
 
+def _invalid_identity() -> ValidationError:
+    """Build the fixed redacted single-flight identity error."""
+    return ValidationError(
+        field="reconciliation_single_flight_identity",
+        value="<redacted>",
+        reason=(
+            "must contain a valid trusted tenant scope, endpoint alias, and "
+            "remote batch identifier"
+        ),
+        message="Reconciliation single-flight identity is invalid",
+    )
+
+
 def _validated_identity(
     tenant_scope: Any,
     candidate: Any,
 ) -> tuple[str, str, str]:
-    """Return one canonical trusted lock identity without reflecting bad input."""
+    """Return one canonical exact-type lock identity without reflecting bad input.
+
+    Caller-owned identity evidence must use an exact built-in tenant string and
+    the exact package-owned candidate dataclass. Candidate members must also be
+    exact built-in strings. Subclasses are rejected before attribute methods,
+    regex, normalization, hashing, or encoding authority can execute.
+    """
+    if type(tenant_scope) is not str or type(candidate) is not ReconciliationCandidate:
+        raise _invalid_identity() from None
+    endpoint_value = candidate.endpoint_alias
+    remote_value = candidate.remote_batch_id
+    if type(endpoint_value) is not str or type(remote_value) is not str:
+        raise _invalid_identity() from None
     try:
         tenant = validate_tenant_scope(tenant_scope)
-        endpoint_alias = validate_endpoint_alias(candidate.endpoint_alias)
+        endpoint_alias = validate_endpoint_alias(endpoint_value)
         remote_batch_id = validate_remote_resource_id(
-            candidate.remote_batch_id,
+            remote_value,
             "remote_batch_id",
         )
-    except (AttributeError, ValidationError):
-        raise ValidationError(
-            field="reconciliation_single_flight_identity",
-            value="<redacted>",
-            reason=(
-                "must contain a valid trusted tenant scope, endpoint alias, and "
-                "remote batch identifier"
-            ),
-            message="Reconciliation single-flight identity is invalid",
-        ) from None
+    except ValidationError:
+        raise _invalid_identity() from None
     return tenant, endpoint_alias, remote_batch_id
 
 
@@ -84,11 +101,7 @@ def _execute_boolean_lock_operation(
             "database_operation_failed",
         ) from None
 
-    if (
-        not isinstance(row, (tuple, list))
-        or len(row) != 1
-        or type(row[0]) is not bool
-    ):
+    if type(row) not in (tuple, list) or len(row) != 1 or type(row[0]) is not bool:
         reason = (
             "invalid_database_result"
             if phase == "acquire"
