@@ -152,6 +152,21 @@ def test_parse_rejects_maximum_depth_json_with_package_error() -> None:
         parse_postgres_recovery_receipt(raw_receipt)
 
 
+def test_parse_normalizes_decoder_recursion_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    decoder_detail = "decoder recursion detail must stay private"
+
+    def fail_decode(*_args: object, **_kwargs: object) -> object:
+        raise RecursionError(decoder_detail)
+
+    monkeypatch.setattr(json, "loads", fail_decode)
+    with pytest.raises(PostgresRecoveryReceiptError, match="receipt JSON") as raised:
+        parse_postgres_recovery_receipt(_receipt().to_json())
+
+    assert decoder_detail not in str(raised.value)
+
+
 def test_parse_rejects_surrogate_text() -> None:
     with pytest.raises(PostgresRecoveryReceiptError, match="receipt JSON"):
         parse_postgres_recovery_receipt("\ud800")
