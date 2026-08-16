@@ -15,6 +15,7 @@ _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_CONNECT_TIMEOUT_SECONDS = 60
 _MAX_SIGNED_BIGINT = (1 << 63) - 1
 _DEFAULT_MAXIMUM_ARCHIVE_SIZE_BYTES = 64 * 1024 * 1024 * 1024
+_MISSING_ARCHIVE_METADATA = object()
 _INHERITED_LIBPQ_VARIABLES = frozenset(
     {
         "PGPASSWORD",
@@ -71,13 +72,13 @@ def _archive_is_owner_only(mode: int) -> bool:
 def _archive_metadata(status: object) -> tuple[object, ...]:
     """Return observable file identity metadata used to detect archive mutation."""
     return (
-        getattr(status, "st_mode", None),
-        getattr(status, "st_size", None),
-        getattr(status, "st_nlink", None),
-        getattr(status, "st_dev", None),
-        getattr(status, "st_ino", None),
-        getattr(status, "st_mtime_ns", None),
-        getattr(status, "st_ctime_ns", None),
+        getattr(status, "st_mode", _MISSING_ARCHIVE_METADATA),
+        getattr(status, "st_size", _MISSING_ARCHIVE_METADATA),
+        getattr(status, "st_nlink", _MISSING_ARCHIVE_METADATA),
+        getattr(status, "st_dev", _MISSING_ARCHIVE_METADATA),
+        getattr(status, "st_ino", _MISSING_ARCHIVE_METADATA),
+        getattr(status, "st_mtime_ns", _MISSING_ARCHIVE_METADATA),
+        getattr(status, "st_ctime_ns", _MISSING_ARCHIVE_METADATA),
     )
 
 
@@ -170,8 +171,6 @@ def _run_pg_restore(
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore execution failed"
         ) from None
-    except BaseException:
-        raise
 
     if type(completed) is not subprocess.CompletedProcess:
         raise PostgresLogicalRestoreError(
