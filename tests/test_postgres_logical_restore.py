@@ -37,6 +37,11 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
     observed = {}
     monkeypatch.setenv("PGSERVICEFILE", "/run/secrets/pg_service.conf")
     monkeypatch.setenv("PGPASSWORD", "credential-value")
+    monkeypatch.setenv("PGPASSFILE", "/run/secrets/pgpass")
+    monkeypatch.setenv("PGHOST", "attacker-controlled-host")
+    monkeypatch.setenv("PGDATABASE", "attacker-controlled-database")
+    monkeypatch.setenv("PGOPTIONS", "-c search_path=attacker")
+    monkeypatch.setenv("PGSSLMODE", "disable")
     monkeypatch.setenv("NVIDIA_NIM_API_KEY", "must-not-reach-pg-restore")
 
     def fake_run(argv, **kwargs):
@@ -67,10 +72,12 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
         assert observed["kwargs"]["timeout"] == 41
         assert observed["kwargs"]["check"] is False
         assert observed["kwargs"]["close_fds"] is True
-        assert observed["kwargs"]["env"]["PGCONNECT_TIMEOUT"] == "9"
-        assert observed["kwargs"]["env"]["PGPASSWORD"] == "credential-value"
-        assert "NVIDIA_NIM_API_KEY" not in observed["kwargs"]["env"]
-        assert all(key.startswith("PG") for key in observed["kwargs"]["env"])
+        assert observed["kwargs"]["env"] == {
+            "PGSERVICEFILE": "/run/secrets/pg_service.conf",
+            "PGPASSWORD": "credential-value",
+            "PGPASSFILE": "/run/secrets/pgpass",
+            "PGCONNECT_TIMEOUT": "9",
+        }
         assert str(path) not in " ".join(observed["argv"])
         assert "credential-value" not in " ".join(observed["argv"])
         assert os.lseek(descriptor, 0, os.SEEK_CUR) == size
@@ -376,13 +383,16 @@ def test_restore_requires_complete_archive_consumption(tmp_path, monkeypatch):
 def test_restore_normalizes_final_inspection_failure(tmp_path, monkeypatch):
     _path, descriptor, _size = _open_private_archive(tmp_path)
     real_fstat = os.fstat
-    calls = 0
+    target_seen = False
 
     def flaky_fstat(target_descriptor):
-        nonlocal calls
-        calls += 1
-        if calls == 1:
-            return real_fstat(target_descriptor)
+        nonlocal target_seen
+        status = real_fstat(target_descriptor)
+        if target_descriptor != descriptor:
+            return status
+        if not target_seen:
+            target_seen = True
+            return status
         raise OSError("secret final stat detail")
 
     monkeypatch.setattr(logical_restore.subprocess, "run", _consume_successfully)
@@ -413,13 +423,15 @@ def test_restore_rejects_archive_mutation_during_execution(
 ):
     _path, descriptor, _size = _open_private_archive(tmp_path)
     real_fstat = os.fstat
-    calls = 0
+    target_seen = False
 
     def changed_fstat(target_descriptor):
-        nonlocal calls
-        calls += 1
+        nonlocal target_seen
         status = real_fstat(target_descriptor)
-        if calls == 1:
+        if target_descriptor != descriptor:
+            return status
+        if not target_seen:
+            target_seen = True
             return status
         values = {
             "st_mode": status.st_mode,
