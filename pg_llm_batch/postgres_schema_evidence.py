@@ -81,6 +81,13 @@ def inspect_postgres_schema() -> PostgresSchemaEvidence:
                 raise PostgresSchemaEvidenceError(
                     "PostgreSQL package schema could not be read"
                 ) from None
+            if type(chunk) is not bytes:
+                # Binary package streams must return exact built-in bytes. Refuse
+                # subclasses and alternate buffer types before truthiness, len,
+                # or hashing can invoke behavior outside the evidence boundary.
+                raise PostgresSchemaEvidenceError(
+                    "PostgreSQL package schema could not be read"
+                )
             if not chunk:
                 break
             size_bytes += len(chunk)
