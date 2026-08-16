@@ -33,6 +33,28 @@ class _ArchiveReadFailure(BytesIO):
         raise zipfile.BadZipFile("sensitive corrupt archive diagnostic")
 
 
+class _HostileBytes(bytes):
+    """Expose caller-controlled byte-subclass behavior before hashing authority."""
+
+    def __len__(self) -> int:
+        raise RuntimeError("sensitive hostile chunk diagnostic")
+
+
+class _HostileChunkStream(BytesIO):
+    """Return a bytes subclass that violates the exact binary-stream contract."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._returned_chunk = False
+
+    def read(self, size: int = -1) -> bytes:
+        del size
+        if self._returned_chunk:
+            return b""
+        self._returned_chunk = True
+        return _HostileBytes(b"schema")
+
+
 class _CloseFailure(BytesIO):
     """Expose one deterministic lower-layer close failure for cleanup tests."""
 
@@ -163,6 +185,23 @@ def test_inspector_normalizes_corrupt_archive_read_failure(
 
     assert str(raised.value) == "PostgreSQL package schema could not be read"
     assert "sensitive corrupt archive diagnostic" not in str(raised.value)
+
+
+def test_inspector_rejects_hostile_binary_chunk_subclass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject non-exact bytes before any subclass-controlled operation can execute."""
+    monkeypatch.setattr(
+        schema_evidence,
+        "_open_schema_resource",
+        _HostileChunkStream,
+    )
+
+    with pytest.raises(PostgresSchemaEvidenceError) as raised:
+        inspect_postgres_schema()
+
+    assert str(raised.value) == "PostgreSQL package schema could not be read"
+    assert "sensitive hostile chunk diagnostic" not in str(raised.value)
 
 
 def test_inspector_normalizes_success_path_close_failure(
