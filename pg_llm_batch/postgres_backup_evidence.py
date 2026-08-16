@@ -7,6 +7,7 @@ import hashlib
 import os
 import stat
 from dataclasses import dataclass, field
+from weakref import ReferenceType, ref
 
 
 _HASH_CHUNK_BYTES = 1024 * 1024
@@ -32,14 +33,16 @@ _FILE_FLAGS = (
 )
 _ArtifactIdentity = tuple[int, int, int, int, int, int]
 _BACKUP_INSPECTION_MARK = object()
-_INSPECTED_BACKUP_EVIDENCE_IDS: set[int] = set()
+_INSPECTED_BACKUP_EVIDENCE_IDS: dict[
+    int, tuple[ReferenceType[PostgresBackupArtifactEvidence], str, int]
+] = {}
 
 
 class PostgresBackupEvidenceError(ValueError):
     """Report a fail-closed PostgreSQL backup artifact evidence violation."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class PostgresBackupArtifactEvidence:
     """Represent content-free integrity evidence for one pinned backup artifact."""
 
@@ -50,6 +53,24 @@ class PostgresBackupArtifactEvidence:
     def as_dict(self) -> dict[str, object]:
         """Return the stable machine-readable backup artifact evidence schema."""
         return {"sha256": self.sha256, "size_bytes": self.size_bytes}
+
+
+def _record_inspected_backup_evidence(evidence: PostgresBackupArtifactEvidence) -> None:
+    """Remember one live inspected object and its immutable observed field snapshot."""
+    evidence_id = id(evidence)
+
+    def discard(collected: ReferenceType[PostgresBackupArtifactEvidence]) -> None:
+        """Remove only the registry entry that owns this collected weak reference."""
+        current = _INSPECTED_BACKUP_EVIDENCE_IDS.get(evidence_id)
+        if current is not None and current[0] is collected:
+            _INSPECTED_BACKUP_EVIDENCE_IDS.pop(evidence_id, None)
+
+    evidence_reference = ref(evidence, discard)
+    _INSPECTED_BACKUP_EVIDENCE_IDS[evidence_id] = (
+        evidence_reference,
+        evidence.sha256,
+        evidence.size_bytes,
+    )
 
 
 def _path_parts(path: str) -> tuple[str, tuple[str, ...], str]:
@@ -219,19 +240,28 @@ def inspect_postgres_backup_artifact(
             size_bytes=bytes_read,
             _inspection_mark=_BACKUP_INSPECTION_MARK,
         )
-        _INSPECTED_BACKUP_EVIDENCE_IDS.add(id(evidence))
     except BaseException:
         _quiet_close(file_descriptor)
         raise
 
     _close_descriptor(file_descriptor)
+    _record_inspected_backup_evidence(evidence)
     return evidence
 
 
 def postgres_backup_artifact_evidence_was_inspected(evidence: object) -> bool:
-    """Return whether evidence is the exact object inspect_postgres_backup_artifact() returned."""
+    """Return whether a live exact object still matches its observed inspection fields."""
+    if type(evidence) is not PostgresBackupArtifactEvidence:
+        return False
+    observed = _INSPECTED_BACKUP_EVIDENCE_IDS.get(id(evidence))
+    if observed is None:
+        return False
+    evidence_reference, observed_sha256, observed_size_bytes = observed
     return (
-        type(evidence) is PostgresBackupArtifactEvidence
+        evidence_reference() is evidence
         and evidence._inspection_mark is _BACKUP_INSPECTION_MARK
-        and id(evidence) in _INSPECTED_BACKUP_EVIDENCE_IDS
+        and type(evidence.sha256) is str
+        and type(evidence.size_bytes) is int
+        and evidence.sha256 == observed_sha256
+        and evidence.size_bytes == observed_size_bytes
     )
