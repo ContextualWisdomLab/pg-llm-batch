@@ -140,7 +140,7 @@ def parse_postgres_recovery_receipt(raw_receipt: str) -> PostgresRecoveryReceipt
             raw_receipt,
             object_pairs_hook=_reject_duplicate_object_pairs,
         )
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, RecursionError):
         raise PostgresRecoveryReceiptError(
             "invalid PostgreSQL recovery receipt JSON"
         ) from None
