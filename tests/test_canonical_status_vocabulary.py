@@ -70,3 +70,22 @@ def test_product_contract_names_active_recovery_capability_families() -> None:
         assert "catalog" in document.lower()
         assert "pitr" in document.lower()
         assert "target isolation" in document.lower() or "restore-target" in document.lower()
+
+
+def test_canonical_overlay_register_names_current_successor_without_draft_instruction() -> None:
+    """The durable register must name the live overlay and must not freeze Draft/Ready instructions."""
+    traceability = _read(REPOSITORY_ROOT / "docs" / "TRACEABILITY.md")
+    fitness = _read(REPOSITORY_ROOT / "docs" / "DOCUMENTATION_FITNESS.md")
+
+    assert "#214" in traceability
+    assert "superseded" in traceability.lower()
+    assert "#226" in traceability
+    assert "not the landing vehicle" in traceability
+    assert "keep it Draft" not in traceability
+    assert "keep it Ready" not in traceability
+    assert "#225" in traceability
+    assert "ADR 0022" in traceability
+    assert "ADR 0021 collision" in traceability
+    assert "#226" in fitness
+    assert "superseded #214" in fitness
+    assert "current canonical documentation landing vehicle" in traceability
