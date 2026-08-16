@@ -12,10 +12,17 @@ from dataclasses import dataclass
 _HASH_CHUNK_BYTES = 1024 * 1024
 _MAX_SIGNED_BIGINT = (1 << 63) - 1
 _MAX_PATH_CHARACTERS = 4096
-_SECURE_FILE_FLAGS_AVAILABLE = all(
-    hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_NONBLOCK")
+_SECURE_FILE_FLAGS_AVAILABLE = (
+    all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"))
+    and os.open in getattr(os, "supports_dir_fd", frozenset())
 )
 _CLOSE_ON_EXEC = getattr(os, "O_CLOEXEC", 0)
+_DIRECTORY_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | _CLOSE_ON_EXEC
+)
 _FILE_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_NOFOLLOW", 0)
@@ -41,6 +48,60 @@ class PostgresBackupArtifactEvidence:
         return {"sha256": self.sha256, "size_bytes": self.size_bytes}
 
 
+def _path_parts(path: str) -> tuple[str, tuple[str, ...], str]:
+    """Return a no-parent-traversal anchor, parent components, and final filename."""
+    anchor = os.sep if path.startswith(os.sep) else "."
+    components: list[str] = []
+    for component in path.split(os.sep):
+        if component in {"", "."}:
+            continue
+        if component == "..":
+            raise PostgresBackupEvidenceError("invalid backup artifact path")
+        components.append(component)
+    if not components:
+        raise PostgresBackupEvidenceError("invalid backup artifact path")
+    return anchor, tuple(components[:-1]), components[-1]
+
+
+def _open_backup_artifact(path: str) -> int:
+    """Open a backup by descriptor without following parent or final symlinks."""
+    anchor, parent_components, artifact_name = _path_parts(path)
+    try:
+        parent_descriptor = os.open(anchor, _DIRECTORY_FLAGS)
+    except (OSError, ValueError):
+        raise PostgresBackupEvidenceError(
+            "PostgreSQL backup artifact could not be opened"
+        ) from None
+
+    try:
+        for component in parent_components:
+            try:
+                next_descriptor = os.open(
+                    component,
+                    _DIRECTORY_FLAGS,
+                    dir_fd=parent_descriptor,
+                )
+            except (OSError, ValueError):
+                raise PostgresBackupEvidenceError(
+                    "PostgreSQL backup artifact could not be opened"
+                ) from None
+            os.close(parent_descriptor)
+            parent_descriptor = next_descriptor
+
+        try:
+            return os.open(
+                artifact_name,
+                _FILE_FLAGS,
+                dir_fd=parent_descriptor,
+            )
+        except (OSError, ValueError):
+            raise PostgresBackupEvidenceError(
+                "PostgreSQL backup artifact could not be opened"
+            ) from None
+    finally:
+        os.close(parent_descriptor)
+
+
 def _artifact_identity(status: os.stat_result) -> _ArtifactIdentity:
     """Return descriptor metadata that detects replacement or in-place mutation."""
     return (
@@ -62,13 +123,7 @@ def inspect_postgres_backup_artifact(path: str) -> PostgresBackupArtifactEvidenc
             "secure backup artifact inspection is unavailable on this platform"
         )
 
-    try:
-        file_descriptor = os.open(path, _FILE_FLAGS)
-    except (OSError, ValueError):
-        raise PostgresBackupEvidenceError(
-            "PostgreSQL backup artifact could not be opened"
-        ) from None
-
+    file_descriptor = _open_backup_artifact(path)
     try:
         try:
             initial_status = os.fstat(file_descriptor)
