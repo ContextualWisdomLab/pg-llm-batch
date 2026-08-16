@@ -18,9 +18,12 @@ backup or restore, and must not treat a receipt or hash as restorability.
 PostgreSQL publishes `relrowsecurity` and `relforcerowsecurity` on `pg_class`
 as the catalog truth for whether row-level security is enabled and whether it
 also applies to the table owner (PostgreSQL Global Development Group, 2026b,
-2026c). Contingency planning requires proving that recovered information-system
-state is usable, not only that a backup command returned zero (Swanson et al.,
-2010).
+2026c). Index ownership, key identity, uniqueness, validity, and access method
+are published on `pg_index` and `pg_am`, and `pg_get_indexdef` reconstructs
+each key when a column number is supplied (PostgreSQL Global Development
+Group, 2026d, 2026e, 2026f). Contingency planning requires proving that
+recovered information-system state is usable, not only that a backup command
+returned zero (Swanson et al., 2010).
 
 ## Decision
 
@@ -33,8 +36,11 @@ probe:
    query. Relation names and kinds are bound; they are never concatenated into
    SQL.
 3. Required packaged-schema tables and the tenant-qualified lifecycle unique
-   index plus tenant-status index must be present. Missing required objects fail
-   closed.
+   index plus tenant-status index must be present. Those indexes must belong to
+   `llm_remote_batch_jobs`, use the packaged key order, stay valid and ready,
+   remain plain btree indexes with default key options, and, for the unique
+   identity, remain a non-deferrable unique constraint. Missing or same-name
+   decoy objects fail closed.
 4. `llm_remote_batch_jobs` must have row-level security enabled and forced.
    If `llm_result_stream_checkpoints` is present, it must also be forced. A
    schema-init target that has not applied migration 0007 may omit the
@@ -70,6 +76,16 @@ documentation*. https://www.postgresql.org/docs/18/catalog-pg-class.html
 PostgreSQL Global Development Group. (2026c). *Row security policies*. In
 *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/ddl-rowsecurity.html
+
+PostgreSQL Global Development Group. (2026d). *pg_index*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-index.html
+
+PostgreSQL Global Development Group. (2026e). *pg_am*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-am.html
+
+PostgreSQL Global Development Group. (2026f). *System information functions and
+operators*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-info.html
 
 Swanson, M., Bowen, P., Phillips, A., Gallup, D., & Lynes, D. (2010).
 *Contingency planning guide for federal information systems* (NIST Special

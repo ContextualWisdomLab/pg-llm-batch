@@ -50,6 +50,13 @@ WHERE n.nspname = current_schema()
           AND idx.indexprs IS NULL
           AND idx.indnkeyatts = 3
           AND idx.indnatts = 3
+          AND idx.indoption = '0 0 0'::pg_catalog.int2vector
+          AND EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_am AS access_method
+              WHERE access_method.oid = c.relam
+                AND access_method.amname = 'btree'
+          )
           AND pg_catalog.pg_get_indexdef(c.oid, 1, TRUE) = 'tenant_scope'
           AND (
               (
@@ -188,7 +195,8 @@ def inspect_postgres_restore_catalog(
     tables or tenant-status indexes fail closed. Lifecycle row-level security
     must be enabled and forced. A present checkpoint store must also be forced.
     Required lifecycle indexes must belong to that lifecycle table and match the
-    packaged key order, uniqueness, validity, readiness, and plain-index shape.
+    packaged key order, uniqueness, validity, readiness, btree access method,
+    default key options, and plain-index shape.
     """
     relation_names = list(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,))
     try:

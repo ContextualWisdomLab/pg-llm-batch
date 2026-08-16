@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from pg_llm_batch import postgres_restore_acceptance
 from pg_llm_batch.postgres_restore_acceptance import inspect_postgres_restore_catalog
 
 
@@ -100,12 +103,49 @@ def test_catalog_query_authenticates_index_structure() -> None:
         "indpred",
         "indexprs",
         "pg_catalog.pg_get_indexdef",
+        "pg_catalog.pg_am",
         "llm_remote_batch_jobs",
         "tenant_scope",
         "endpoint_alias",
         "remote_batch_id",
         "batch_status",
         "last_observed_at",
+        "btree",
+        "int2vector",
     )
     for fragment in required_fragments:
         assert fragment in sql
+
+
+def test_catalog_sql_matches_packaged_lifecycle_index_shapes() -> None:
+    """Bind probe predicates to the exact packaged unique and status indexes."""
+    schema = (
+        Path(__file__).resolve().parents[1] / "pg_llm_batch" / "schema.sql"
+    ).read_text(encoding="utf-8")
+    sql = postgres_restore_acceptance._CATALOG_SQL
+
+    assert "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)" in schema
+    assert "CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_tenant_status_observed" in schema
+    assert "tenant_scope,\n        batch_status,\n        last_observed_at" in schema
+    assert "pg_catalog.pg_get_indexdef(c.oid, 1, TRUE) = 'tenant_scope'" in sql
+    assert "pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'endpoint_alias'" in sql
+    assert "pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'remote_batch_id'" in sql
+    assert "pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'batch_status'" in sql
+    assert "pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'last_observed_at'" in sql
+    assert "NOT idx.indisunique" in sql
+    assert "idx.indisunique" in sql
+    assert "constraint_row.contype = 'u'" in sql
+    assert "NOT constraint_row.condeferrable" in sql
+    assert "access_method.amname = 'btree'" in sql
+    assert "idx.indoption = '0 0 0'::pg_catalog.int2vector" in sql
+
+
+def test_container_logging_smoke_runs_restore_catalog_index_decoys() -> None:
+    """CI must execute the live same-name decoy proof on the packaged image."""
+    logging_smoke = (
+        Path(__file__).resolve().parents[1]
+        / "tests"
+        / "smoke_postgres_container_logging.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "bash tests/smoke_restore_catalog_index_semantics.sh" in logging_smoke

@@ -14,7 +14,11 @@ hash on the evidence with the backup you intended to apply.
 This probe proves that the caller-owned connection can see the required
 package-owned tables, the tenant-qualified lifecycle unique index, the
 tenant-status index, and forced row-level security on
-`llm_remote_batch_jobs`. If `llm_result_stream_checkpoints` is present, it
+`llm_remote_batch_jobs`. The required indexes must belong to
+`llm_remote_batch_jobs` and match the packaged key order, uniqueness,
+validity, readiness, btree access method, and default key options. A
+same-name index on another table, with swapped keys, or without the unique
+constraint, is incomplete. If `llm_result_stream_checkpoints` is present, it
 must also be forced.
 
 It does **not** execute `pg_dump` or `pg_restore`, open a package-owned
@@ -44,7 +48,12 @@ Focused tests prove a complete isolated catalog is accepted, a missing
 lifecycle table or tenant-status index is incomplete, unforced lifecycle or
 checkpoint RLS fails tenant-isolation checks, hostile name subclasses and
 lower-layer diagnostics stay out of exceptions, and the probe binds
-`current_schema()` with parameters. Coverage for
+`current_schema()` with parameters. The catalog SQL is bound to the packaged
+`UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)` and
+`idx_llm_remote_batch_jobs_tenant_status_observed` column order. The
+container smoke creates same-name decoys on the live packaged image and
+requires `inspect_postgres_restore_catalog` to fail closed, then restore the
+packaged indexes and accept again. Coverage for
 `pg_llm_batch.postgres_restore_acceptance` is 100% statement and branch.
 Public docstrings are complete.
 
@@ -59,6 +68,16 @@ documentation*. https://www.postgresql.org/docs/18/catalog-pg-class.html
 PostgreSQL Global Development Group. (2026c). *Row security policies*. In
 *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/ddl-rowsecurity.html
+
+PostgreSQL Global Development Group. (2026d). *pg_index*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-index.html
+
+PostgreSQL Global Development Group. (2026e). *pg_am*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-am.html
+
+PostgreSQL Global Development Group. (2026f). *System information functions and
+operators*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-info.html
 
 Swanson, M., Bowen, P., Phillips, A., Gallup, D., & Lynes, D. (2010).
 *Contingency planning guide for federal information systems* (NIST Special
