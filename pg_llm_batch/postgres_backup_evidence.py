@@ -187,15 +187,15 @@ def inspect_postgres_backup_artifact(
         digest = hashlib.sha256()
         bytes_read = 0
         try:
-            while True:
-                chunk = os.read(file_descriptor, _HASH_CHUNK_BYTES)
+            while bytes_read < maximum_size_bytes:
+                remaining_bytes = maximum_size_bytes - bytes_read
+                chunk = os.read(
+                    file_descriptor,
+                    min(_HASH_CHUNK_BYTES, remaining_bytes),
+                )
                 if not chunk:
                     break
                 bytes_read += len(chunk)
-                if bytes_read > maximum_size_bytes:
-                    raise PostgresBackupEvidenceError(
-                        "PostgreSQL backup artifact must have a positive bounded size"
-                    )
                 digest.update(chunk)
             final_status = os.fstat(file_descriptor)
         except OSError:
