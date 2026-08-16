@@ -12,6 +12,7 @@ guarantee for external APIs, queues, object stores, or other databases.
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
@@ -97,12 +98,13 @@ def apply_checkpointed_result_in_transaction(
     after that callback completes synchronously and returns ``None``.  Statically
     visible asynchronous callables, including static-method and class-method
     descriptors, are rejected before checkpoint-store access.  A raw coroutine
-    returned by an otherwise synchronous callable is closed before the bounded
-    failure is raised, so rejected deferred work cannot retain the cursor or
-    provider record until garbage collection.  The checkpoint store must then
-    confirm the exact requested checkpoint before success is reported.  The
-    caller remains responsible for committing or rolling back the surrounding
-    transaction.
+    returned by an otherwise synchronous callable is closed, and a returned
+    pending :class:`asyncio.Future` is cancelled, before the bounded failure is
+    raised.  Rejected deferred work therefore cannot keep the cursor or provider
+    record live merely because the caller returned its asynchronous handle.  The
+    checkpoint store must then confirm the exact requested checkpoint before
+    success is reported.  The caller remains responsible for committing or
+    rolling back the surrounding transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
     signal from the checkpoint store.  All other store/callback failures are
@@ -149,6 +151,8 @@ def apply_checkpointed_result_in_transaction(
         effect_result = apply_record(cursor, candidate.record)
         if inspect.iscoroutine(effect_result):
             effect_result.close()
+        elif isinstance(effect_result, asyncio.Future):
+            effect_result.cancel()
         if effect_result is not None:
             effect_failure = ResultApplicationError("record_effect")
     except Exception:
