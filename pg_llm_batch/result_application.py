@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
@@ -47,6 +48,28 @@ def _redacted_validation_error(field: str, reason: str) -> ValidationError:
     return ValidationError(field=field, value="<redacted>", reason=reason)
 
 
+def _checkpoint_primitive_type_error(checkpoint: BatchResultCheckpoint) -> str | None:
+    """Return the first checkpoint field whose primitive type can execute behavior."""
+    for field in (
+        "batch_id",
+        "endpoint_alias",
+        "file_kind",
+        "file_id",
+        "prefix_sha256",
+    ):
+        if type(getattr(checkpoint, field)) is not str:
+            return field
+    for field in (
+        "schema_version",
+        "file_line_number",
+        "batch_line_count",
+        "record_count",
+    ):
+        if type(getattr(checkpoint, field)) is not int:
+            return field
+    return None
+
+
 def _validate_item_and_effect(
     item: Any,
     apply_record: Any,
@@ -60,6 +83,12 @@ def _validate_item_and_effect(
     if type(checkpoint) is not BatchResultCheckpoint:
         raise _redacted_validation_error(
             "item.checkpoint", "must be an exact batch result checkpoint"
+        )
+    checkpoint_field = _checkpoint_primitive_type_error(checkpoint)
+    if checkpoint_field is not None:
+        raise _redacted_validation_error(
+            f"item.checkpoint.{checkpoint_field}",
+            "must use an exact built-in primitive type",
         )
     if type(item.batch_id) is not str:
         raise _redacted_validation_error(
@@ -102,31 +131,33 @@ def apply_checkpointed_result_in_transaction(
 ) -> ResultApplicationOutcome:
     """Apply one result and advance its checkpoint in the caller's transaction.
 
-    The item, checkpoint, JSON object, loaded predecessor, and save confirmation
-    must use the exact package-owned built-in classes.  Subclasses are rejected
-    before their attributes or equality methods can execute, so caller-controlled
-    subclass code cannot disclose diagnostics or forge durable confirmation.
+    The item, checkpoint, checkpoint primitive fields, JSON object, loaded
+    predecessor, and save confirmation must use exact package-owned or built-in
+    types. Subclasses are rejected before their behavior-bearing comparison or
+    attribute hooks can execute, so caller-controlled subclass code cannot
+    disclose diagnostics or forge durable confirmation.
 
-    The durable predecessor is loaded and validated before the local effect.  An
+    The durable predecessor is loaded and validated before the local effect. An
     exact replay returns without re-running the effect, while a count regression
-    is rejected before caller-owned business logic.  Fresh work invokes
+    is rejected before caller-owned business logic. Fresh work invokes
     ``apply_record`` using the supplied cursor and advances the checkpoint only
-    after that callback completes synchronously and returns ``None``.  Statically
+    after that callback completes synchronously and returns ``None``. Statically
     visible asynchronous callables, including static-method and class-method
-    descriptors, are rejected before checkpoint-store access.  A raw coroutine
-    returned by an otherwise synchronous callable is closed, and a returned
-    pending :class:`asyncio.Future` is cancelled, before the bounded failure is
-    raised.  Rejected deferred work therefore cannot keep the cursor or provider
-    record live merely because the caller returned its asynchronous handle.  The
-    checkpoint store must then confirm the exact requested checkpoint before
-    success is reported.  The caller remains responsible for committing or
-    rolling back the surrounding transaction.
+    descriptors, are rejected before checkpoint-store access. A raw coroutine
+    returned by an otherwise synchronous callable is closed, and returned
+    pending :class:`asyncio.Future` or :class:`concurrent.futures.Future` work is
+    cancelled before the bounded failure is raised. Rejected deferred work
+    therefore cannot keep the cursor or provider record live merely because the
+    caller returned its asynchronous handle. The checkpoint store must then
+    confirm the exact requested checkpoint before success is reported. The
+    caller remains responsible for committing or rolling back the surrounding
+    transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
-    signal from the checkpoint store.  All other store/callback failures are
-    replaced with a fixed phase-only package error after their exception scope
-    has ended, preventing implicit traceback context from retaining provider or
-    database diagnostics.
+    signal from both checkpoint load and save operations. All other
+    store/callback failures are replaced with a fixed phase-only package error
+    after their exception scope has ended, preventing implicit traceback context
+    from retaining provider or database diagnostics.
     """
     candidate = _validate_item_and_effect(item, apply_record)
 
@@ -139,16 +170,22 @@ def apply_checkpointed_result_in_transaction(
             candidate.batch_id,
             candidate.checkpoint.endpoint_alias,
         )
+    except CheckpointConflictError:
+        raise
     except Exception:
         load_failure = ResultApplicationError("checkpoint_load")
     if load_failure is not None:
         raise load_failure from None
-    if previous is not None and (
-        type(previous) is not BatchResultCheckpoint
-        or previous.batch_id != candidate.checkpoint.batch_id
-        or previous.endpoint_alias != candidate.checkpoint.endpoint_alias
-    ):
-        raise ResultApplicationError("checkpoint_load") from None
+    if previous is not None:
+        if type(previous) is not BatchResultCheckpoint:
+            raise ResultApplicationError("checkpoint_load") from None
+        if _checkpoint_primitive_type_error(previous) is not None:
+            raise ResultApplicationError("checkpoint_load") from None
+        if (
+            previous.batch_id != candidate.checkpoint.batch_id
+            or previous.endpoint_alias != candidate.checkpoint.endpoint_alias
+        ):
+            raise ResultApplicationError("checkpoint_load") from None
 
     if previous == candidate.checkpoint:
         return ResultApplicationOutcome(applied=False, checkpoint=candidate.checkpoint)
@@ -167,7 +204,7 @@ def apply_checkpointed_result_in_transaction(
         effect_result = apply_record(cursor, candidate.record)
         if inspect.iscoroutine(effect_result):
             effect_result.close()
-        elif isinstance(effect_result, asyncio.Future):
+        elif isinstance(effect_result, (asyncio.Future, ConcurrentFuture)):
             effect_result.cancel()
         if effect_result is not None:
             effect_failure = ResultApplicationError("record_effect")
@@ -184,10 +221,11 @@ def apply_checkpointed_result_in_transaction(
             candidate.checkpoint,
             expected_previous=previous,
         )
-        if (
-            type(saved_checkpoint) is not BatchResultCheckpoint
-            or saved_checkpoint != candidate.checkpoint
-        ):
+        if type(saved_checkpoint) is not BatchResultCheckpoint:
+            save_failure = ResultApplicationError("checkpoint_save")
+        elif _checkpoint_primitive_type_error(saved_checkpoint) is not None:
+            save_failure = ResultApplicationError("checkpoint_save")
+        elif saved_checkpoint != candidate.checkpoint:
             save_failure = ResultApplicationError("checkpoint_save")
     except CheckpointConflictError:
         raise
