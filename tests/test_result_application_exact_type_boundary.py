@@ -109,6 +109,14 @@ class _AlwaysEqualCheckpoint(BatchResultCheckpoint):
         return True
 
 
+class _HostileIdentityText(str):
+    """Raise if an exact item trusts behavior-bearing string subclasses."""
+
+    def __ne__(self, _other: object) -> bool:
+        """Expose the sentinel if product code compares this forged identity."""
+        raise RuntimeError(_SECRET_SENTINEL)
+
+
 def _rendered_exception(error: BaseException) -> str:
     """Render one traceback for confidentiality assertions."""
     return "".join(traceback.format_exception(type(error), error, error.__traceback__))
@@ -133,6 +141,40 @@ def test_hostile_item_subclass_is_rejected_before_attribute_access() -> None:
     assert caught.value.details["field"] == "item"
     assert caught.value.details["value"] == "<redacted>"
     assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
+    assert store.events == []
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("batch_id", _HostileIdentityText("batch-123")),
+        ("file_kind", _HostileIdentityText("result")),
+    ],
+)
+def test_hostile_item_identity_text_is_rejected_before_comparison(
+    field: str,
+    value: str,
+) -> None:
+    """Identity fields must be exact strings before equality can execute."""
+    checkpoint = _checkpoint()
+    item = CheckpointedBatchResultRecord(
+        batch_id=value if field == "batch_id" else checkpoint.batch_id,
+        file_kind=value if field == "file_kind" else checkpoint.file_kind,
+        record={"custom_id": "request-1"},
+        checkpoint=checkpoint,
+    )
+    store = _RecordingStore()
+
+    with pytest.raises(ValidationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), store, "result-writer", item, lambda _cursor, _record: None
+        )
+
+    assert caught.value.details["field"] == f"item.{field}"
+    assert caught.value.details["value"] == "<redacted>"
+    assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert store.events == []
 
 
