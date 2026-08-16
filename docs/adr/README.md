@@ -4,7 +4,7 @@
 
 This index is a navigation and status aid for architecture decision records that exist on protected `main`. The decision record itself remains the normative source for its context, decision, consequences, security boundary, and supersession rules.
 
-The protected-main tree used to reconstruct this index is `d0a4b30be1f46536e352443309f3a35533156767`. A pull request, historical branch, generated merge commit, workflow run, review comment, or proposed file that is not on protected main is not silently promoted into this index.
+The protected-main tree used to reconstruct this index is `d2f1e32271910a6db98a0757d67194ddadca4566`. A pull request, historical branch, generated merge commit, workflow run, review comment, or proposed file that is not on protected main is not silently promoted into this index.
 
 ## Protected-main decisions
 
@@ -16,6 +16,8 @@ The protected-main tree used to reconstruct this index is `d0a4b30be1f46536e3524
 | [0006](0006-resumable-result-checkpoints.md) | Resumable provider-result checkpoints | Accepted | Defines immutable prefix checkpoint evidence and its explicit prefix-only, non-authentication, non-whole-stream assurance boundary. |
 | [0007](0007-durable-result-checkpoint-store.md) | Durable tenant-isolated result checkpoint store | Accepted | Adds optional PostgreSQL persistence, tenant isolation, compare-and-swap concurrency, and a caller-owned transaction seam without claiming distributed exactly-once delivery. Depends on ADR 0006. |
 | [0015](0015-http-425-too-early-retry.md) | HTTP 425 retry for bounded idempotent GETs | Accepted for the bounded retry slice | Keeps the default GET retry-status set closed, side-effecting POSTs single-attempt, and TLS/certificate/fingerprint failures outside automatic retry. |
+
+Protected main also contains bounded PostgreSQL recovery-evidence primitives in `postgres_recovery_receipt.py`, `postgres_backup_evidence.py`, and `postgres_schema_evidence.py`. Their integration does **not** create an implicit ADR. They are implementation/evidence contracts recorded by the PRD/TRD/traceability map, while executable logical backup/restore and end-to-end recovery remain active/partial work. If a future restore executor introduces a durable architectural decision about direct SQL authority, target isolation, source-superuser trust, libpq credential/environment handling, or rollback/acceptance semantics, that decision must be added or explicitly amended through normal ADR governance rather than inferred from the implementation.
 
 ## Numbering and missing identifiers
 
@@ -46,4 +48,4 @@ For a material architecture change:
 
 ## Non-guarantees that must remain visible
 
-The current ADR set does not establish authentication from PostgreSQL RLS alone, provider authenticity from result checkpointing, full-stream immutability from a prefix checkpoint, distributed exactly-once processing, retry permission for arbitrary HTTP failures, or organizational security/compliance certification. Those boundaries must not be weakened by summaries, operator docs, marketing material, or future ADR titles.
+The current ADR set does not establish authentication from PostgreSQL RLS alone, provider authenticity from result checkpointing, full-stream immutability from a prefix checkpoint, distributed exactly-once processing, retry permission for arbitrary HTTP failures, backup restorability or PITR/RPO/RTO/HA/DR from recovery receipts/hashes alone, or organizational security/compliance certification. Those boundaries must not be weakened by summaries, operator docs, marketing material, or future ADR titles.
