@@ -106,6 +106,27 @@ def test_binder_reproduces_true_schema_and_artifact_digests(tmp_path: Path) -> N
     assert "postgresql://" not in encoded
 
 
+def test_binder_rejects_fabricated_exact_type_evidence() -> None:
+    """Do not treat public evidence dataclass construction as inspection provenance."""
+    fabricated_schema = PostgresSchemaEvidence("d" * 64, 1234)
+    fabricated_backup = PostgresBackupArtifactEvidence("e" * 64, 5678)
+
+    with pytest.raises(
+        PostgresRecoveryBindingError,
+        match="^invalid PostgreSQL recovery binding inputs$",
+    ):
+        bind_postgres_recovery_receipt(
+            package_version="0.1.0",
+            source_commit=COMMIT,
+            postgres_major=18,
+            schema_evidence=fabricated_schema,
+            backup_method="logical",
+            backup_evidence=fabricated_backup,
+            started_at_epoch=1_786_800_000,
+            completed_at_epoch=1_786_800_030,
+        )
+
+
 @pytest.mark.parametrize("method", ["logical", "physical", "pitr"])
 def test_binder_copies_reviewed_backup_methods(method: str) -> None:
     receipt = _bind(backup_method=method)
