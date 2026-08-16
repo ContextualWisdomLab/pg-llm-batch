@@ -63,6 +63,20 @@ does not require either host and retains standalone operation. When embedded,
 tenant scope is a local control-plane identity and not model- or
 provider-returned data.
 
+## Workflow registry audit
+
+`pg-llm-batch-workflow-audit` is a packaged read-only control-plane detector
+(ADR 0021).
+It compares the GitHub Actions registry to one exact protected commit and
+reports active repository-backed identities that are absent from that tree as
+`active_absent_workflows` candidates. Platform-managed `dynamic/` identities
+are receipted and never treated as deleted YAML. The tool does not mutate
+workflow state, select tenant scope, or perform provider I/O.
+
+Operators install the package and run the console script. A moving protected
+ref, truncated tree, pagination drift, rate limit, or hostile identity-member
+type fails closed. Candidate review remains a human control-plane decision.
+
 ## Verification boundary
 
 Deterministic gates cover strict tenant validation, standalone compatibility,

@@ -27,3 +27,7 @@
 - Maintain 100% production statement, branch, and public-docstring coverage.
   Add realistic migration, rollback, compatibility, security, and
   tenant-isolation tests before implementation changes.
+- Keep the workflow-registry auditor read-only, packaged as
+  `pg_llm_batch.workflow_registry_audit` / `pg-llm-batch-workflow-audit`,
+  exact-type fail-closed on identity members, and documented in README,
+  architecture, ADR, doctoring, and CHANGELOG.

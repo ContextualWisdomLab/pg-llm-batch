@@ -39,6 +39,7 @@ dev = [
 
 [project.scripts]
 pg-llm-batch = "pg_llm_batch.cli:main"
+pg-llm-batch-workflow-audit = "pg_llm_batch.workflow_registry_audit:main"
 
 [project.urls]
 Homepage = "https://github.com/ContextualWisdomLab/pg-llm-batch"

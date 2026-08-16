@@ -41,6 +41,20 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   realistic tenant-isolation, migration, rollback, compatibility, and
   concurrency tests.
 
+## Workflow registry audit
+
+- Keep the detector read-only. It may classify active identities that are
+  absent from an exact protected tree as candidates; it must never disable,
+  enable, edit, or rerun workflows.
+- Derive audit identity from an independently resolved 40-hex protected SHA
+  plus a live protected-ref pre/post check. Registry rows, `dynamic/` paths,
+  and transport headers are not source authority.
+- Require exact JSON-decoder types for containers and for `ref` / commit
+  `sha` / tree `sha` members before any equality test.
+- Keep the production module under `pg_llm_batch`, the console script
+  `pg-llm-batch-workflow-audit`, and the operator/ADR/doctoring/CHANGELOG
+  contract synchronized.
+
 ## Provider retry invariant
 
 Automatic provider retries are restricted to idempotent GET operations. The
