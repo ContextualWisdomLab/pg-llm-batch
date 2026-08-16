@@ -35,7 +35,11 @@ def _open_schema_resource() -> BinaryIO:
     """Open the package-owned schema resource without exposing resource diagnostics."""
     try:
         return resources.files(_SCHEMA_PACKAGE).joinpath(_SCHEMA_RESOURCE).open("rb")
-    except (ModuleNotFoundError, OSError, TypeError):
+    except Exception:
+        # Import-resource loaders may surface ordinary exceptions outside the
+        # OSError family (for example a corrupt archive). Keep every such
+        # lower-layer diagnostic outside the stable recovery-evidence boundary
+        # while allowing BaseException control flow to propagate normally.
         raise PostgresSchemaEvidenceError(
             "PostgreSQL package schema could not be opened"
         ) from None
@@ -45,7 +49,9 @@ def _quiet_close(stream: BinaryIO) -> None:
     """Attempt cleanup without replacing an already-selected bounded error."""
     try:
         stream.close()
-    except OSError:
+    except Exception:
+        # Cleanup is best effort only after a primary bounded failure has been
+        # selected. Ordinary stream-state/importer exceptions must not mask it.
         pass
 
 
@@ -53,7 +59,7 @@ def _close_schema_stream(stream: BinaryIO) -> None:
     """Close one schema stream or raise a fixed content-free cleanup error."""
     try:
         stream.close()
-    except OSError:
+    except Exception:
         raise PostgresSchemaEvidenceError(
             "PostgreSQL package schema stream could not be closed"
         ) from None
@@ -68,7 +74,10 @@ def inspect_postgres_schema() -> PostgresSchemaEvidence:
         while True:
             try:
                 chunk = stream.read(_HASH_CHUNK_BYTES)
-            except OSError:
+            except Exception:
+                # A packaged archive/resource reader can fail with ordinary
+                # exceptions that are not OSError subclasses. Normalize them
+                # before they can become operator or recovery-receipt evidence.
                 raise PostgresSchemaEvidenceError(
                     "PostgreSQL package schema could not be read"
                 ) from None
