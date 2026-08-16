@@ -114,7 +114,7 @@ def _execute_boolean_lock_operation(
             if phase == "acquire"
             else "lock_release_not_confirmed"
         )
-        raise ReconciliationSingleFlightError(phase, reason)
+        raise ReconciliationSingleFlightError(phase, reason) from None
     return row[0]
 
 
