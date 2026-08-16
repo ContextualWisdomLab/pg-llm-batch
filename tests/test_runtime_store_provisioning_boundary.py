@@ -405,5 +405,7 @@ def test_provisioned_schema_owns_default_seeding_and_docker_mirror() -> None:
     lowered = package_schema.lower()
     assert "insert into com_config" in lowered
     assert "on conflict (config_key) do nothing" in lowered
+    assert "is_encrypted explicitly to true" in lowered
+    assert "fernet ciphertext only" in lowered
     for full_key in sorted(config_mod.DEFAULT_CONFIG_INDEX):
         assert full_key in package_schema

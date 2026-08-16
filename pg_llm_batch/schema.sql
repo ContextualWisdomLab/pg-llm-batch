@@ -25,6 +25,10 @@ CREATE TABLE IF NOT EXISTS com_config (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- Runtime SecretStore rejects any row whose is_encrypted flag is not TRUE.
+-- DEFAULT FALSE keeps omitted flags detectable as unencrypted rather than
+-- silently marking raw INSERT rows as encrypted. Direct SQL writers must set
+-- is_encrypted explicitly to TRUE and store Fernet ciphertext only.
 CREATE TABLE IF NOT EXISTS com_secrets (
     secret_key TEXT PRIMARY KEY,
     secret_value TEXT NOT NULL,
