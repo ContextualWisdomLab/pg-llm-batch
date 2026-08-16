@@ -49,16 +49,30 @@ def _validate_candidate_tenant(tenant_scope: Any) -> str:
 
 
 def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
-    """Convert one persisted lifecycle identity into redaction-safe worker input."""
-    if not isinstance(row, (tuple, list)) or len(row) != 2:
+    """Convert exact database primitives into redaction-safe worker input.
+
+    PostgreSQL row and text evidence must use exact built-in tuple/list and string
+    types.  Subclasses are rejected before shape, normalization, regex, equality,
+    or model construction so caller-controlled row factories cannot execute
+    overridden methods or preserve forged identity objects in worker input.
+    """
+    if type(row) not in (tuple, list) or len(row) != 2:
         raise ValidationError(
             field="reconciliation_candidate",
             value="<redacted>",
             reason="durable candidate row has an invalid shape",
             message="Persisted reconciliation candidate is invalid",
         )
+    persisted_endpoint_alias = row[0]
+    persisted_remote_batch_id = row[1]
+    if type(persisted_endpoint_alias) is not str or type(persisted_remote_batch_id) is not str:
+        raise ValidationError(
+            field="reconciliation_candidate",
+            value="<redacted>",
+            reason="durable candidate identity has invalid primitive types",
+            message="Persisted reconciliation candidate is invalid",
+        )
     try:
-        persisted_endpoint_alias = row[0]
         endpoint_alias = validate_endpoint_alias(persisted_endpoint_alias)
         if endpoint_alias != persisted_endpoint_alias:
             raise ValidationError(
@@ -66,7 +80,10 @@ def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
                 value="<redacted>",
                 reason="persisted endpoint alias must already be canonical",
             )
-        remote_batch_id = validate_remote_resource_id(row[1], "remote_batch_id")
+        remote_batch_id = validate_remote_resource_id(
+            persisted_remote_batch_id,
+            "remote_batch_id",
+        )
     except ValidationError:
         raise ValidationError(
             field="reconciliation_candidate",
