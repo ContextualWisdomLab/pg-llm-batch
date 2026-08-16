@@ -246,6 +246,32 @@ def test_binder_rejects_replaced_inspected_evidence(tmp_path: Path) -> None:
         )
 
 
+def test_binder_rejects_schema_evidence_mutated_after_inspection(tmp_path: Path) -> None:
+    """A frozen dataclass mutation must not preserve inspection provenance."""
+    schema = inspect_postgres_schema()
+    backup = _inspected_backup(tmp_path)
+    object.__setattr__(schema, "sha256", "d" * 64)
+
+    with pytest.raises(
+        PostgresRecoveryBindingError,
+        match="^invalid PostgreSQL recovery binding inputs$",
+    ):
+        _bind(tmp_path, schema_evidence=schema, backup_evidence=backup)
+
+
+def test_binder_rejects_backup_evidence_mutated_after_inspection(tmp_path: Path) -> None:
+    """Low-level mutation must not turn unobserved backup fields into receipt truth."""
+    schema = inspect_postgres_schema()
+    backup = _inspected_backup(tmp_path)
+    object.__setattr__(backup, "size_bytes", backup.size_bytes + 1)
+
+    with pytest.raises(
+        PostgresRecoveryBindingError,
+        match="^invalid PostgreSQL recovery binding inputs$",
+    ):
+        _bind(tmp_path, schema_evidence=schema, backup_evidence=backup)
+
+
 def test_binder_does_not_accept_a_parallel_size_that_can_disagree(
     tmp_path: Path,
 ) -> None:
