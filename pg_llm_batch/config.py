@@ -365,7 +365,7 @@ class SecretStore:
             )
         if Fernet is None:
             raise ConfigError(
-                "Fernet encryption requires the optional cryptography dependency"
+                "Fernet encryption requires the cryptography package"
             )
         if type(fernet_key) is not str:
             raise ConfigError("Secret encryption key is invalid") from None
