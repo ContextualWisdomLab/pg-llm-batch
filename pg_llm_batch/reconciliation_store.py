@@ -137,7 +137,10 @@ def load_reconciliation_candidates_in_transaction(
     delivery semantics.
 
     Args:
-        cursor: Caller-owned PostgreSQL cursor in an active transaction.
+        cursor: Caller-owned PostgreSQL cursor in an active transaction. It must
+            yield exact built-in tuple or list rows; dictionary, named-tuple,
+            subclass, or other behavior-bearing row-factory results are rejected
+            as invalid persisted evidence.
         tenant_scope: Trusted host-authorized tenant identity.
         max_candidates: Maximum rows to return, from 1 through the package scan
             ceiling.
