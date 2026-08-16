@@ -13,6 +13,13 @@ from dataclasses import dataclass
 _SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_CONNECT_TIMEOUT_SECONDS = 60
+_INHERITED_LIBPQ_VARIABLES = frozenset(
+    {
+        "PGPASSWORD",
+        "PGPASSFILE",
+        "PGSERVICEFILE",
+    }
+)
 
 
 class PostgresLogicalBackupError(RuntimeError):
@@ -84,9 +91,11 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
 
 
 def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[str, str]:
-    """Return only inherited libpq variables plus bounded package overrides."""
+    """Return allowlisted libpq credentials plus package-owned connection authority."""
     environment = {
-        key: value for key, value in os.environ.items() if key.startswith("PG")
+        key: os.environ[key]
+        for key in _INHERITED_LIBPQ_VARIABLES
+        if key in os.environ
     }
     environment["PGSERVICE"] = service_name
     environment["PGCONNECT_TIMEOUT"] = str(connect_timeout_seconds)
@@ -94,9 +103,13 @@ def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[
 
 
 def _invalidate_output(output_descriptor: int) -> None:
-    """Best-effort truncate a partial dump without replacing a primary error."""
+    """Best-effort empty and rewind a partial dump without replacing a primary error."""
     try:
         os.ftruncate(output_descriptor, 0)
+    except (OSError, ValueError):
+        pass
+    try:
+        os.lseek(output_descriptor, 0, os.SEEK_SET)
     except (OSError, ValueError):
         pass
 
@@ -191,10 +204,13 @@ def create_postgres_logical_backup(
 ) -> PostgresLogicalBackupResult:
     """Create one custom-format pg_dump into a pre-opened private regular file.
 
-    The caller owns filesystem placement and descriptor lifetime. The package never
-    receives an output path, places no database service selector in process arguments,
-    and forwards only ``PG*`` environment variables to the trusted ``pg_dump`` child.
-    Any partial output selected by this function is truncated best-effort on failure.
+    The caller owns filesystem placement and descriptor lifetime. ``service_name`` is
+    only a libpq service selector and is not a tenant authorization boundary. The
+    package never receives an output path or places connection material in process
+    arguments. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
+    inherited; the package owns ``PGSERVICE`` and the bounded ``PGCONNECT_TIMEOUT``.
+    Any partial output selected by this function is emptied and rewound best-effort on
+    failure so the caller can safely decide whether to retry or discard the descriptor.
     """
     if not _parameters_are_valid(
         service_name,
