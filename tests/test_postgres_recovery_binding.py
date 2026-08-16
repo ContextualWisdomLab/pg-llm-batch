@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import gc
 import hashlib
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
+import pg_llm_batch.postgres_backup_evidence as backup_evidence_module
+import pg_llm_batch.postgres_schema_evidence as schema_evidence_module
 from pg_llm_batch.postgres_backup_evidence import (
     PostgresBackupArtifactEvidence,
     inspect_postgres_backup_artifact,
@@ -270,6 +273,25 @@ def test_binder_rejects_backup_evidence_mutated_after_inspection(tmp_path: Path)
         match="^invalid PostgreSQL recovery binding inputs$",
     ):
         _bind(tmp_path, schema_evidence=schema, backup_evidence=backup)
+
+
+def test_inspection_provenance_bookkeeping_releases_dead_evidence(
+    tmp_path: Path,
+) -> None:
+    """Repeated inspections must not accumulate stale object identities forever."""
+    artifact = tmp_path / "bounded-provenance.dump"
+    artifact.write_bytes(b"PGDMP\x01bounded-provenance\x00")
+    schema_before = len(schema_evidence_module._INSPECTED_SCHEMA_EVIDENCE_IDS)
+    backup_before = len(backup_evidence_module._INSPECTED_BACKUP_EVIDENCE_IDS)
+
+    for _ in range(8):
+        schema = inspect_postgres_schema()
+        backup = inspect_postgres_backup_artifact(str(artifact))
+    del schema, backup
+    gc.collect()
+
+    assert len(schema_evidence_module._INSPECTED_SCHEMA_EVIDENCE_IDS) <= schema_before
+    assert len(backup_evidence_module._INSPECTED_BACKUP_EVIDENCE_IDS) <= backup_before
 
 
 def test_binder_does_not_accept_a_parallel_size_that_can_disagree(
