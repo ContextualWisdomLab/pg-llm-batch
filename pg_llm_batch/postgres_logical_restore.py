@@ -186,10 +186,10 @@ def _verify_archive_unchanged(
     input_descriptor: int,
     initial_status: os.stat_result,
 ) -> int:
-    """Require the exact bounded archive to remain private and fully consumed."""
+    """Require the exact bounded archive to remain private after restore."""
     try:
         final_status = os.fstat(input_descriptor)
-        offset = os.lseek(input_descriptor, 0, os.SEEK_CUR)
+        os.lseek(input_descriptor, 0, os.SEEK_CUR)
     except (OSError, ValueError):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive could not be verified"
@@ -198,10 +198,6 @@ def _verify_archive_unchanged(
     if _archive_metadata(final_status) != _archive_metadata(initial_status):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive changed during execution"
-        )
-    if offset != initial_status.st_size:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore archive was not consumed completely"
         )
     return initial_status.st_size
 
@@ -233,7 +229,11 @@ def restore_postgres_logical_backup(
     on the first SQL error, so timeout or execution failure does not intentionally
     commit a partial package restore. Descriptor identity and observable archive
     metadata are revalidated after the restore to reject in-place mutation detected
-    during execution.
+    during execution. Custom-format ``pg_restore`` seeks to the table of contents
+    and data blocks, so a successful restore is not required to leave the
+    descriptor at end-of-file. A post-restore metadata mismatch means the SQL
+    transaction may already have committed; callers must treat that error as
+    unsafe rather than as proof that no restore occurred.
     """
     if not _parameters_are_valid(
         service_name,
