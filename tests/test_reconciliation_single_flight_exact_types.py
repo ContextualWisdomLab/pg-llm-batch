@@ -42,6 +42,14 @@ class _HostileTenantScope(str):
         raise RuntimeError(_SECRET_SENTINEL)
 
 
+class _HostileCandidateText(str):
+    """Represent forged candidate text that must be refused before use."""
+
+    def __hash__(self) -> int:
+        """Raise if the subclass reaches hashing or set membership."""
+        raise RuntimeError(_SECRET_SENTINEL)
+
+
 class _HostileCandidate(ReconciliationCandidate):
     """Execute caller code if candidate attributes are read before refusal."""
 
@@ -87,6 +95,31 @@ def test_hostile_identity_subclasses_fail_before_database_work(
 
     with pytest.raises(ValidationError) as caught:
         with reconciliation_single_flight(cursor, tenant_scope, candidate):
+            pytest.fail("invalid identity must not enter the context body")
+
+    assert caught.value.details["field"] == "reconciliation_single_flight_identity"
+    assert caught.value.details["value"] == "<redacted>"
+    assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert cursor.calls == []
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        ReconciliationCandidate(_HostileCandidateText("gateway-a"), "batch-1"),
+        ReconciliationCandidate("gateway-a", _HostileCandidateText("batch-1")),
+    ],
+)
+def test_hostile_candidate_member_subclasses_fail_before_database_work(
+    candidate: ReconciliationCandidate,
+) -> None:
+    """Candidate text subclasses must fail before validation or lock work."""
+    cursor = _RecordingCursor([])
+
+    with pytest.raises(ValidationError) as caught:
+        with reconciliation_single_flight(cursor, "tenant-a", candidate):
             pytest.fail("invalid identity must not enter the context body")
 
     assert caught.value.details["field"] == "reconciliation_single_flight_identity"
