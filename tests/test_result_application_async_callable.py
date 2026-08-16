@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
@@ -81,6 +82,22 @@ class _CoroutineReturningEffect:
         return self.returned_coroutine
 
 
+class _FutureReturningEffect:
+    """Return scheduled-style deferred work from a synchronous callable."""
+
+    def __init__(self) -> None:
+        self.event_loop = asyncio.new_event_loop()
+        self.returned_future: asyncio.Future[None] = self.event_loop.create_future()
+
+    def __call__(self, _cursor: Any, _record: dict[str, Any]) -> asyncio.Future[None]:
+        """Return a pending future that must not outlive bounded rejection."""
+        return self.returned_future
+
+    def close(self) -> None:
+        """Release the isolated event loop used by this regression fixture."""
+        self.event_loop.close()
+
+
 def _item() -> CheckpointedBatchResultRecord:
     """Build one valid result item for the focused effect boundary."""
     checkpoint = BatchResultCheckpoint(
@@ -147,3 +164,24 @@ def test_returned_coroutine_is_closed_before_bounded_failure() -> None:
     assert caught.value.details == {"phase": "record_effect"}
     assert effect.returned_coroutine.cr_frame is None
     assert store.events == ["load"]
+
+
+def test_returned_future_is_cancelled_before_bounded_failure() -> None:
+    """Rejected pending futures must not remain live after the transaction call."""
+    store = _RecordingStore()
+    effect = _FutureReturningEffect()
+    try:
+        with pytest.raises(ResultApplicationError) as caught:
+            apply_checkpointed_result_in_transaction(
+                object(),
+                store,
+                "result-writer",
+                _item(),
+                effect,
+            )
+
+        assert caught.value.details == {"phase": "record_effect"}
+        assert effect.returned_future.cancelled()
+        assert store.events == ["load"]
+    finally:
+        effect.close()
