@@ -47,7 +47,14 @@ def _validate_candidate_budget(max_candidates: Any) -> int:
 
 
 def _validate_candidate_tenant(tenant_scope: Any) -> str:
-    """Validate trusted tenant authority without reflecting rejected tenant text."""
+    """Validate exact trusted tenant text without reflecting rejected identity."""
+    if type(tenant_scope) is not str:
+        raise ValidationError(
+            field="tenant_scope",
+            value="<redacted>",
+            reason="must be a valid host-authorized tenant scope",
+            message="Reconciliation tenant scope is invalid",
+        ) from None
     try:
         return validate_tenant_scope(tenant_scope)
     except ValidationError:
