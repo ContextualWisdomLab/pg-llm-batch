@@ -29,6 +29,7 @@ _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _API_PATH_RE = re.compile(r"^/(?!/)[^\r\n]*$")
+_CAPTURED_AT_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
 _WORKFLOW_PREFIX = ".github/workflows/"
 _DYNAMIC_WORKFLOW_PREFIX = "dynamic/"
 _WORKFLOW_STATES = frozenset(
@@ -529,9 +530,19 @@ def _require_nonnegative_int(value: object) -> int:
 
 
 def _validate_captured_at(captured_at: str | None) -> None:
-    """Reject non-string receipt timestamps before any GitHub read."""
-    if captured_at is not None and type(captured_at) is not str:
-        raise WorkflowRegistryAuditError("captured_at must be an exact timestamp string")
+    """Require a finite canonical UTC RFC 3339 receipt timestamp before reads."""
+    message = "captured_at must be a canonical UTC RFC 3339 timestamp"
+    if captured_at is None:
+        return
+    if type(captured_at) is not str or not _CAPTURED_AT_RE.fullmatch(captured_at):
+        raise WorkflowRegistryAuditError(message)
+    try:
+        parsed = datetime.fromisoformat(captured_at[:-1] + "+00:00")
+    except ValueError:
+        raise WorkflowRegistryAuditError(message) from None
+    canonical = parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+    if canonical != captured_at:
+        raise WorkflowRegistryAuditError(message)
 
 
 def _validate_repository(repository_full_name: str) -> None:
