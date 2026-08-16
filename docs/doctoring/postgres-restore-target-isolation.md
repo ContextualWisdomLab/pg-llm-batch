@@ -1,7 +1,7 @@
 # PostgreSQL restore-target isolation
 
 This record is the operator contract for
-`verify_postgres_restore_target_isolation()` and ADR 0021. Use it after you
+`verify_postgres_restore_target_isolation()` and ADR 0022. Use it after you
 have a stored recovery receipt and before you run `pg_restore`. The function
 proves that the restore-drill libpq service name is distinct from the live
 service. It does not accept a DSN, and it does not run `pg_dump` or
@@ -38,7 +38,8 @@ identity. It does not accept a parallel DSN, password, host, port,
 
 This slice does not execute `pg_dump` or `pg_restore`, does not prove a
 backup is restorable, and does not establish RPO/RTO, CSAP, or SOC 2
-readiness. It never emits a package capability claim.
+readiness. It never emits a package capability claim. The decision number is
+0022 so it stays distinct from #222 ADR 0021.
 
 ## Failure handling
 

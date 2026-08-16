@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 DOCTORING = Path("docs/doctoring/postgres-restore-target-isolation.md")
-ADR = Path("docs/adr/0021-postgres-restore-target-isolation.md")
+ADR = Path("docs/adr/0022-postgres-restore-target-isolation.md")
 
 
 def _normalized(path: Path) -> str:
@@ -27,5 +27,8 @@ def test_restore_target_docs_record_isolation_and_citation_contract() -> None:
         assert "800-34" in document
         assert "800-53" in document
         assert "cwe-669" in document
-        assert "0021" in document
+        assert "0022" in document
         assert "postgresql 18" in document
+    assert "0021" in _normalized(ADR)
+    assert "#222" in _normalized(ADR)
+    assert not Path("docs/adr/0021-postgres-restore-target-isolation.md").exists()

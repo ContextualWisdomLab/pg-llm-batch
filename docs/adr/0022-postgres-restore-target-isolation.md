@@ -1,4 +1,4 @@
-# ADR 0021: Isolate restore-target libpq service names
+# ADR 0022: Isolate restore-target libpq service names
 
 - **Status:** Accepted for the bounded restore-target identity seam
 - **Date:** 2026-08-16
@@ -7,7 +7,7 @@
 
 Protected main can inspect packaged schema bytes and a caller-owned backup
 artifact. Active writers own `pg_dump` (#208), custom-format `pg_restore`
-(#212), receipt binding (#215), catalog acceptance (#216), receipt
+(#212), receipt binding (#215), catalog acceptance (#223), receipt
 re-inspection (#221), and the physical/PITR profile (#219).
 
 #212 accepts one `service_name` and does not compare it to the live
@@ -26,9 +26,9 @@ identity, not a reuse of the live system (Swanson et al., 2010).
 Both must be exact built-in strings matching the same libpq service-name
 grammar used by the logical dump and restore executors. The names must
 differ. DSNs, passwords, hosts, ports, `tenant_scope`, and backup-byte
-arguments are not accepted. This record is ADR 0021 so it does not collide
-with #212 ADR 0016, #215 ADR 0017, #216 ADR 0018, #219 ADR 0019, or #221
-ADR 0020.
+arguments are not accepted. This record is ADR 0022 so it does not collide
+with #212 ADR 0016, #215 ADR 0017, #223 ADR 0018, #219 ADR 0019, #221
+ADR 0020, or #222 ADR 0021.
 
 ```mermaid
 flowchart TD
@@ -43,7 +43,7 @@ flowchart TD
 Hosts can prove the restore-drill service is not the live service before
 they invoke `pg_restore`. The seam does not execute dump or restore, open
 a connection, or claim RPO/RTO, CSAP, or SOC 2 readiness. Logical restore
-remains #208/#212. Catalog acceptance remains #216.
+remains #208/#212. Catalog acceptance remains #223.
 
 ## Rollback
 
