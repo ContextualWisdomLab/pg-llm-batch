@@ -155,7 +155,7 @@ def reconciliation_single_flight(
     delivery guarantee.
 
     A release failure remains bounded package evidence. It replaces ordinary
-    caller exceptions so sensitive diagnostics are not retained in traceback
+    caller exceptions so sensitive diagnostics are not rendered through traceback
     context, while process-control ``BaseException`` signals remain primary and
     chain the bounded release-integrity error as their cause.
     """
