@@ -52,11 +52,14 @@ def _validate_item_and_effect(
     apply_record: Any,
 ) -> CheckpointedBatchResultRecord:
     """Validate the local application boundary before store or callback work."""
-    if not isinstance(item, CheckpointedBatchResultRecord) or not isinstance(
-        getattr(item, "checkpoint", None), BatchResultCheckpoint
-    ):
+    if type(item) is not CheckpointedBatchResultRecord:
         raise _redacted_validation_error(
-            "item", "must be a checkpointed batch result record"
+            "item", "must be an exact checkpointed batch result record"
+        )
+    checkpoint = item.checkpoint
+    if type(checkpoint) is not BatchResultCheckpoint:
+        raise _redacted_validation_error(
+            "item.checkpoint", "must be an exact batch result checkpoint"
         )
     if not callable(apply_record):
         raise _redacted_validation_error("apply_record", "must be callable")
@@ -69,16 +72,16 @@ def _validate_item_and_effect(
         raise _redacted_validation_error(
             "apply_record", "must complete synchronously in the caller transaction"
         )
-    if item.batch_id != item.checkpoint.batch_id:
+    if item.batch_id != checkpoint.batch_id:
         raise _redacted_validation_error(
             "item.batch_id", "must match the checkpoint batch identity"
         )
-    if item.file_kind != item.checkpoint.file_kind:
+    if item.file_kind != checkpoint.file_kind:
         raise _redacted_validation_error(
             "item.file_kind", "must match the checkpoint file kind"
         )
-    if not isinstance(item.record, dict):
-        raise _redacted_validation_error("item.record", "must be a JSON object")
+    if type(item.record) is not dict:
+        raise _redacted_validation_error("item.record", "must be an exact JSON object")
     return item
 
 
@@ -90,6 +93,11 @@ def apply_checkpointed_result_in_transaction(
     apply_record: Callable[[Any, Mapping[str, Any]], None],
 ) -> ResultApplicationOutcome:
     """Apply one result and advance its checkpoint in the caller's transaction.
+
+    The item, checkpoint, JSON object, loaded predecessor, and save confirmation
+    must use the exact package-owned built-in classes.  Subclasses are rejected
+    before their attributes or equality methods can execute, so caller-controlled
+    subclass code cannot disclose diagnostics or forge durable confirmation.
 
     The durable predecessor is loaded and validated before the local effect.  An
     exact replay returns without re-running the effect, while a count regression
@@ -128,7 +136,7 @@ def apply_checkpointed_result_in_transaction(
     if load_failure is not None:
         raise load_failure from None
     if previous is not None and (
-        not isinstance(previous, BatchResultCheckpoint)
+        type(previous) is not BatchResultCheckpoint
         or previous.batch_id != candidate.checkpoint.batch_id
         or previous.endpoint_alias != candidate.checkpoint.endpoint_alias
     ):
@@ -168,7 +176,10 @@ def apply_checkpointed_result_in_transaction(
             candidate.checkpoint,
             expected_previous=previous,
         )
-        if saved_checkpoint != candidate.checkpoint:
+        if (
+            type(saved_checkpoint) is not BatchResultCheckpoint
+            or saved_checkpoint != candidate.checkpoint
+        ):
             save_failure = ResultApplicationError("checkpoint_save")
     except CheckpointConflictError:
         raise
