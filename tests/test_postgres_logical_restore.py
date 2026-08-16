@@ -32,6 +32,40 @@ def _consume_successfully(argv, **kwargs):
     return subprocess.CompletedProcess(argv, 0)
 
 
+def _restore_trusted(service_name, descriptor, **kwargs):
+    return restore_postgres_logical_backup(
+        service_name,
+        descriptor,
+        source_superusers_trusted=True,
+        **kwargs,
+    )
+
+
+def test_restore_refuses_implicit_source_trust_before_subprocess(tmp_path, monkeypatch):
+    _path, descriptor, _size = _open_private_archive(tmp_path)
+    called = False
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("untrusted archive must not execute")
+
+    monkeypatch.setattr(logical_restore.subprocess, "run", forbidden_run)
+    try:
+        with pytest.raises(
+            PostgresLogicalRestoreError,
+            match="^PostgreSQL logical restore requires trusted source superusers$",
+        ):
+            restore_postgres_logical_backup(
+                "isolated_restore",
+                descriptor,
+                pg_restore_executable="/usr/bin/pg_restore",
+            )
+        assert called is False
+    finally:
+        os.close(descriptor)
+
+
 def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeypatch):
     path, descriptor, size = _open_private_archive(tmp_path)
     observed = {}
@@ -51,7 +85,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
 
     monkeypatch.setattr(logical_restore.subprocess, "run", fake_run)
     try:
-        result = restore_postgres_logical_backup(
+        result = _restore_trusted(
             "isolated_restore",
             descriptor,
             pg_restore_executable="/usr/lib/postgresql/18/bin/pg_restore",
@@ -105,6 +139,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
         {"maximum_archive_size_bytes": 0},
         {"maximum_archive_size_bytes": True},
         {"maximum_archive_size_bytes": (1 << 63)},
+        {"source_superusers_trusted": 1},
     ],
 )
 def test_restore_rejects_untrusted_parameters_before_subprocess(
@@ -126,6 +161,7 @@ def test_restore_rejects_untrusted_parameters_before_subprocess(
         "timeout_seconds": 60,
         "connect_timeout_seconds": 10,
         "maximum_archive_size_bytes": 4096,
+        "source_superusers_trusted": True,
     }
     parameters.update(overrides)
     try:
@@ -151,7 +187,7 @@ def test_restore_rejects_closed_descriptor_before_subprocess(tmp_path, monkeypat
         PostgresLogicalRestoreError,
         match="^PostgreSQL logical restore archive could not be inspected$",
     ):
-        restore_postgres_logical_backup(
+        _restore_trusted(
             "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
         )
 
@@ -169,7 +205,7 @@ def test_restore_rejects_non_regular_input_before_subprocess(monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive must be a private regular file$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service",
                 read_descriptor,
                 pg_restore_executable="/usr/bin/pg_restore",
@@ -192,7 +228,7 @@ def test_restore_rejects_empty_input_before_subprocess(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive must be non-empty and bounded$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -211,7 +247,7 @@ def test_restore_rejects_oversized_input_before_subprocess(tmp_path, monkeypatch
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive must be non-empty and bounded$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service",
                 descriptor,
                 pg_restore_executable="/usr/bin/pg_restore",
@@ -234,7 +270,7 @@ def test_restore_rejects_nonzero_input_offset_before_subprocess(tmp_path, monkey
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive must start at offset zero$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -254,7 +290,7 @@ def test_restore_rejects_group_or_other_readable_input(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive must be owner-only$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -274,7 +310,7 @@ def test_restore_rejects_hard_linked_input(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive must have one link$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -299,7 +335,7 @@ def test_restore_normalizes_execution_failures(tmp_path, monkeypatch, failure, m
     monkeypatch.setattr(logical_restore.subprocess, "run", failing_run)
     try:
         with pytest.raises(PostgresLogicalRestoreError, match=f"^{message}$") as caught:
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
         assert "secret" not in str(caught.value)
@@ -316,7 +352,7 @@ def test_restore_preserves_baseexception(tmp_path, monkeypatch):
     )
     try:
         with pytest.raises(KeyboardInterrupt):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -335,7 +371,7 @@ def test_restore_rejects_nonzero_exit(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore command failed$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -354,7 +390,7 @@ def test_restore_rejects_malformed_runner_result(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore execution failed$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -373,7 +409,7 @@ def test_restore_requires_complete_archive_consumption(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive was not consumed completely$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
@@ -402,7 +438,7 @@ def test_restore_normalizes_final_inspection_failure(tmp_path, monkeypatch):
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive could not be verified$",
         ) as caught:
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
         assert "secret" not in str(caught.value)
@@ -448,7 +484,7 @@ def test_restore_rejects_archive_mutation_during_execution(
             PostgresLogicalRestoreError,
             match="^PostgreSQL logical restore archive changed during execution$",
         ):
-            restore_postgres_logical_backup(
+            _restore_trusted(
                 "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
             )
     finally:
