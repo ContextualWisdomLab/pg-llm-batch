@@ -117,6 +117,17 @@ def test_parse_round_trips_exact_receipt() -> None:
     assert parse_postgres_recovery_receipt(receipt.to_json()) == receipt
 
 
+def test_parse_rejects_duplicate_keys() -> None:
+    raw_receipt = _receipt().to_json()
+    duplicate = raw_receipt.replace(
+        '"schema_version":1',
+        '"schema_version":1,"schema_version":1',
+    )
+
+    with pytest.raises(PostgresRecoveryReceiptError, match="receipt schema"):
+        parse_postgres_recovery_receipt(duplicate)
+
+
 @pytest.mark.parametrize(
     "raw_receipt",
     [
