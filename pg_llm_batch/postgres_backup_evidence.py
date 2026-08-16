@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 _HASH_CHUNK_BYTES = 1024 * 1024
 _MAX_SIGNED_BIGINT = (1 << 63) - 1
+_DEFAULT_MAX_INSPECTION_BYTES = 64 * 1024 * 1024 * 1024
 _MAX_PATH_CHARACTERS = 4096
 _SECURE_FILE_FLAGS_AVAILABLE = (
     all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"))
@@ -142,10 +143,24 @@ def _artifact_identity(status: os.stat_result) -> _ArtifactIdentity:
     )
 
 
-def inspect_postgres_backup_artifact(path: str) -> PostgresBackupArtifactEvidence:
-    """Hash one stable regular backup file without returning its path or content."""
+def inspect_postgres_backup_artifact(
+    path: str,
+    *,
+    maximum_size_bytes: int = _DEFAULT_MAX_INSPECTION_BYTES,
+) -> PostgresBackupArtifactEvidence:
+    """Hash one stable backup within an explicit finite byte-work budget.
+
+    The default 64 GiB ceiling prevents an untrusted or concurrently growing file
+    from turning integrity evidence into effectively unbounded hashing work. A
+    deployment that intentionally handles larger backup artifacts can raise the
+    keyword-only ceiling after applying its own resource and timeout policy.
+    """
     if type(path) is not str or not (1 <= len(path) <= _MAX_PATH_CHARACTERS):
         raise PostgresBackupEvidenceError("invalid backup artifact path")
+    if type(maximum_size_bytes) is not int or not (
+        1 <= maximum_size_bytes <= _MAX_SIGNED_BIGINT
+    ):
+        raise PostgresBackupEvidenceError("invalid backup artifact size budget")
     if not _SECURE_FILE_FLAGS_AVAILABLE:
         raise PostgresBackupEvidenceError(
             "secure backup artifact inspection is unavailable on this platform"
@@ -164,7 +179,7 @@ def inspect_postgres_backup_artifact(path: str) -> PostgresBackupArtifactEvidenc
             raise PostgresBackupEvidenceError(
                 "PostgreSQL backup artifact must be a regular file"
             )
-        if not (0 < initial_status.st_size <= _MAX_SIGNED_BIGINT):
+        if not (0 < initial_status.st_size <= maximum_size_bytes):
             raise PostgresBackupEvidenceError(
                 "PostgreSQL backup artifact must have a positive bounded size"
             )
@@ -172,9 +187,16 @@ def inspect_postgres_backup_artifact(path: str) -> PostgresBackupArtifactEvidenc
         digest = hashlib.sha256()
         bytes_read = 0
         try:
-            while chunk := os.read(file_descriptor, _HASH_CHUNK_BYTES):
-                digest.update(chunk)
+            while True:
+                chunk = os.read(file_descriptor, _HASH_CHUNK_BYTES)
+                if not chunk:
+                    break
                 bytes_read += len(chunk)
+                if bytes_read > maximum_size_bytes:
+                    raise PostgresBackupEvidenceError(
+                        "PostgreSQL backup artifact must have a positive bounded size"
+                    )
+                digest.update(chunk)
             final_status = os.fstat(file_descriptor)
         except OSError:
             raise PostgresBackupEvidenceError(
