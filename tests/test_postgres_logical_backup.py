@@ -500,13 +500,16 @@ def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, mo
 def test_logical_backup_primary_error_survives_offset_reset_failure(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
     real_lseek = os.lseek
+    offset_reset_failed = False
 
     def failed_run(argv, **kwargs):
         os.write(kwargs["stdout"], b"partial")
         return subprocess.CompletedProcess(argv, 4)
 
     def failing_lseek(target_descriptor, offset, whence):
-        if target_descriptor == descriptor and offset == 0 and whence == os.SEEK_SET:
+        nonlocal offset_reset_failed
+        if offset == 0 and whence == os.SEEK_SET:
+            offset_reset_failed = True
             raise OSError("offset cleanup secret")
         return real_lseek(target_descriptor, offset, whence)
 
@@ -521,5 +524,6 @@ def test_logical_backup_primary_error_survives_offset_reset_failure(tmp_path, mo
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
             )
         assert "offset cleanup secret" not in str(caught.value)
+        assert offset_reset_failed
     finally:
         os.close(descriptor)
