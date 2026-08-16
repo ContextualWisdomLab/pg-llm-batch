@@ -92,10 +92,13 @@ def apply_checkpointed_result_in_transaction(
     exact replay returns without re-running the effect, while a count regression
     is rejected before caller-owned business logic.  Fresh work invokes
     ``apply_record`` using the supplied cursor and advances the checkpoint only
-    after that callback completes synchronously and returns ``None``.  The
-    checkpoint store must then confirm the exact requested checkpoint before
-    success is reported.  The caller remains responsible for committing or
-    rolling back the surrounding transaction.
+    after that callback completes synchronously and returns ``None``.  A raw
+    coroutine returned by an otherwise synchronous callable is closed before the
+    bounded failure is raised, so rejected deferred work cannot retain the
+    cursor or provider record until garbage collection.  The checkpoint store
+    must then confirm the exact requested checkpoint before success is reported.
+    The caller remains responsible for committing or rolling back the surrounding
+    transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
     signal from the checkpoint store.  All other store/callback failures are
@@ -140,6 +143,8 @@ def apply_checkpointed_result_in_transaction(
     effect_failure: ResultApplicationError | None = None
     try:
         effect_result = apply_record(cursor, candidate.record)
+        if inspect.iscoroutine(effect_result):
+            effect_result.close()
         if effect_result is not None:
             effect_failure = ResultApplicationError("record_effect")
     except Exception:
