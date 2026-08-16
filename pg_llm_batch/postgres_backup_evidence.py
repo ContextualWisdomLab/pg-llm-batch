@@ -63,6 +63,24 @@ def _path_parts(path: str) -> tuple[str, tuple[str, ...], str]:
     return anchor, tuple(components[:-1]), components[-1]
 
 
+def _quiet_close(file_descriptor: int) -> None:
+    """Attempt one descriptor close without replacing an already-selected error."""
+    try:
+        os.close(file_descriptor)
+    except OSError:
+        pass
+
+
+def _close_descriptor(file_descriptor: int) -> None:
+    """Close one descriptor or raise a fixed content-free cleanup error."""
+    try:
+        os.close(file_descriptor)
+    except OSError:
+        raise PostgresBackupEvidenceError(
+            "PostgreSQL backup artifact descriptor could not be closed"
+        ) from None
+
+
 def _open_backup_artifact(path: str) -> int:
     """Open a backup by descriptor without following parent or final symlinks."""
     anchor, parent_components, artifact_name = _path_parts(path)
@@ -73,33 +91,43 @@ def _open_backup_artifact(path: str) -> int:
             "PostgreSQL backup artifact could not be opened"
         ) from None
 
-    try:
-        for component in parent_components:
-            try:
-                next_descriptor = os.open(
-                    component,
-                    _DIRECTORY_FLAGS,
-                    dir_fd=parent_descriptor,
-                )
-            except (OSError, ValueError):
-                raise PostgresBackupEvidenceError(
-                    "PostgreSQL backup artifact could not be opened"
-                ) from None
-            os.close(parent_descriptor)
-            parent_descriptor = next_descriptor
-
+    for component in parent_components:
         try:
-            return os.open(
-                artifact_name,
-                _FILE_FLAGS,
+            next_descriptor = os.open(
+                component,
+                _DIRECTORY_FLAGS,
                 dir_fd=parent_descriptor,
             )
         except (OSError, ValueError):
+            _quiet_close(parent_descriptor)
             raise PostgresBackupEvidenceError(
                 "PostgreSQL backup artifact could not be opened"
             ) from None
-    finally:
-        os.close(parent_descriptor)
+        try:
+            _close_descriptor(parent_descriptor)
+        except PostgresBackupEvidenceError:
+            _quiet_close(next_descriptor)
+            raise
+        parent_descriptor = next_descriptor
+
+    try:
+        artifact_descriptor = os.open(
+            artifact_name,
+            _FILE_FLAGS,
+            dir_fd=parent_descriptor,
+        )
+    except (OSError, ValueError):
+        _quiet_close(parent_descriptor)
+        raise PostgresBackupEvidenceError(
+            "PostgreSQL backup artifact could not be opened"
+        ) from None
+
+    try:
+        _close_descriptor(parent_descriptor)
+    except PostgresBackupEvidenceError:
+        _quiet_close(artifact_descriptor)
+        raise
+    return artifact_descriptor
 
 
 def _artifact_identity(status: os.stat_result) -> _ArtifactIdentity:
@@ -161,9 +189,13 @@ def inspect_postgres_backup_artifact(path: str) -> PostgresBackupArtifactEvidenc
                 "PostgreSQL backup artifact changed during inspection"
             )
 
-        return PostgresBackupArtifactEvidence(
+        evidence = PostgresBackupArtifactEvidence(
             sha256=digest.hexdigest(),
             size_bytes=bytes_read,
         )
-    finally:
-        os.close(file_descriptor)
+    except BaseException:
+        _quiet_close(file_descriptor)
+        raise
+
+    _close_descriptor(file_descriptor)
+    return evidence
