@@ -293,6 +293,42 @@ for signals, ownership boundaries, privacy rules, and APA 7 references.
 
 ---
 
+## Existing-volume extension retirement
+
+Fresh bundled initialization does not create `http`, `pg_cron`, the historical
+provider-network functions, or an independent polling schedule. Existing
+volumes that still contain those surfaces must complete a reviewed operator
+migration before image packages or `shared_preload_libraries` are changed.
+
+Do not run the retirement migration until the Python provider path is deployed,
+`docker/postgres/init/03_cron_batch_retrieval.sql` has removed the exact package
+schedule/helpers, every operator cron job has been migrated or removed, and a
+restorable backup has been verified. Then run:
+
+```bash
+psql "$PG_LLM_BATCH_DSN" --set ON_ERROR_STOP=1 \
+  --file docker/postgres/migrations/retire_legacy_provider_extensions.sql
+```
+
+The migration fails closed if any cron job or retired helper signature remains,
+if `pg_depend` shows an explicit `DEPENDS ON EXTENSION` object, or if a
+table-like object is unexpectedly enrolled as an extension member outside the
+expected `pg_cron` `cron`-schema boundary. These checks are required because
+`DROP EXTENSION ... RESTRICT` still removes extension members and explicit
+auto-extension dependencies. After those guards pass, the migration uses a
+five-second transaction-local lock timeout and removes only `http` and `pg_cron`
+with `DROP EXTENSION ... RESTRICT`. It never uses `CASCADE` and does not drop
+`gateway_retrieval_logs`, another application table, or an application schema.
+A failed attempt rolls back, and the same migration is idempotent after success.
+
+Follow the complete preflight, verification, recovery, replay, and rollback
+procedure in [`docs/OPERABILITY.md`](docs/OPERABILITY.md). In particular, do not
+rename operator jobs, delete a modified same-signature helper as package-owned,
+detach an extension member, remove a `DEPENDS ON EXTENSION` relationship, or
+replace `RESTRICT` with `CASCADE` merely to make the migration pass.
+
+---
+
 ## Tests
 
 ```bash
@@ -306,6 +342,9 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
+- [`docs/OPERABILITY.md`](docs/OPERABILITY.md)
+  — existing-volume legacy extension retirement preflight, fail-closed recovery,
+  idempotent replay, verification, and rollback.
 - [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md)
   — standalone and tenant-scoped durable lifecycle operation, RLS trust boundary,
   migration, rollback, pooling, and recovery.
@@ -320,6 +359,9 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 - [`docs/doctoring/legacy-pgsql-http-retrieval.md`](docs/doctoring/legacy-pgsql-http-retrieval.md)
   — retirement of direct SQL provider networking, existing-volume remediation,
   rollback, and the validated Python provider boundary.
+- [`docs/doctoring/legacy-postgresql-extension-retirement.md`](docs/doctoring/legacy-postgresql-extension-retirement.md)
+  — PostgreSQL dependency/timeout evidence, supported claims, unsupported claims,
+  verification mapping, and APA 7 references.
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
