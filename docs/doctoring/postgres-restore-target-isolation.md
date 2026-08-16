@@ -3,9 +3,10 @@
 This record is the operator contract for
 `verify_postgres_restore_target_isolation()` and ADR 0022. Use it after you
 have a stored recovery receipt and before you run `pg_restore`. The function
-proves that the restore-drill libpq service name is distinct from the live
-service. It does not accept a DSN, and it does not run `pg_dump` or
-`pg_restore`.
+proves that the restore-drill libpq service name and caller-owned cluster
+identity are distinct from the live target. It does not accept a DSN, and it
+does not run `pg_dump` or `pg_restore`. Distinct names alone are not a
+package capability claim.
 
 ## What to do next
 
@@ -14,27 +15,38 @@ service. It does not accept a DSN, and it does not run `pg_dump` or
    seam.
 2. Provision a separate restore-drill service name that points at an empty
    isolated cluster. Keep that name out of the live service file entry.
-3. Call `verify_postgres_restore_target_isolation(live_service_name=...,
-   restore_service_name=...)`. Both values must be exact built-in strings
-   that match the reviewed libpq service-name grammar.
-4. Continue to a reviewed isolated restore only when verification returns.
-   Distinct names are not proof that restore, RLS, PITR, or a live cluster
-   succeeded, and they are not a package capability claim.
-5. If verification raises `PostgresRestoreTargetError`, stop. Do not reuse
-   the live service name. Do not edit names by hand to force a match. Create
-   or select a different restore-drill service, then retry.
+3. Open one caller-owned connection to each service. On each connection run
+   `SELECT system_identifier FROM pg_control_system();` and keep the integer
+   as `PostgresRestoreTargetIdentity(system_identifier=...)`. Do not place
+   the identifier, DSN, or password in logs.
+4. Call `verify_postgres_restore_target_isolation(live_service_name=...,
+   restore_service_name=..., live_target_identity=...,
+   restore_target_identity=...)`. Both names must be exact built-in strings
+   that match the reviewed libpq service-name grammar. Both identities must
+   be exact records whose `system_identifier` values differ.
+5. Continue to a reviewed isolated restore only when verification returns.
+   Distinct names and identifiers are not proof that restore, RLS, PITR, or
+   a live cluster succeeded.
+6. If verification raises `PostgresRestoreTargetError`, stop. Do not reuse
+   the live service name. Do not keep a second name that still resolves to
+   the production cluster. Create or select a different restore-drill
+   service and cluster, then retry.
 
 ## Evidence boundary
 
 The verifier compares only:
 
-- `live_service_name`; and
-- `restore_service_name`.
+- `live_service_name`;
+- `restore_service_name`;
+- `live_target_identity`; and
+- `restore_target_identity`.
 
 It rejects subclasses, bytes, namespace substitutes, DSNs, paths, blank
-names, and names outside the libpq service-name grammar before comparing
-identity. It does not accept a parallel DSN, password, host, port,
-`tenant_scope`, or backup-byte argument. Exception text stays content-free.
+names, names outside the libpq service-name grammar, and invalid cluster
+identifiers before comparing identity. Two different service names that
+share one `system_identifier` fail closed. It does not accept a parallel
+DSN, password, host, port, `tenant_scope`, or backup-byte argument.
+Exception text stays content-free.
 
 This slice does not execute `pg_dump` or `pg_restore`, does not prove a
 backup is restorable, and does not establish RPO/RTO, CSAP, or SOC 2
@@ -43,8 +55,9 @@ readiness. It never emits a package capability claim. The decision number is
 
 ## Failure handling
 
-Invalid name types or grammar raise a fixed inputs error. An exact name
-match raises a fixed isolation error. Lower-layer values never enter the
+Invalid name types, grammar, or cluster-identity records raise a fixed
+inputs error. An exact name match or an exact `system_identifier` match
+raises a fixed isolation error. Lower-layer values never enter the
 exception text.
 
 ## References
@@ -55,7 +68,7 @@ Special Publication 800-34 Rev. 1). National Institute of Standards and
 Technology. https://doi.org/10.6028/NIST.SP.800-34r1
 
 Joint Task Force. (2020). *Security and privacy controls for information
-systems and organizations* (NIST Special Publication 800-53 Rev. 5).
+systems and organizations* (NIST SP 800-53 Rev. 5).
 National Institute of Standards and Technology.
 https://doi.org/10.6028/NIST.SP.800-53r5
 
@@ -68,3 +81,7 @@ PostgreSQL 18 documentation. https://www.postgresql.org/docs/18/backup.html
 The PostgreSQL Global Development Group. (2026). *The connection service
 file*. PostgreSQL 18 documentation.
 https://www.postgresql.org/docs/18/libpq-pgservice.html
+
+The PostgreSQL Global Development Group. (2026). *System administration
+functions*. PostgreSQL 18 documentation.
+https://www.postgresql.org/docs/18/functions-admin.html

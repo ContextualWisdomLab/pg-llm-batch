@@ -10,19 +10,35 @@ import pytest
 
 from pg_llm_batch.postgres_restore_target import (
     PostgresRestoreTargetError,
+    PostgresRestoreTargetIdentity,
     verify_postgres_restore_target_isolation,
 )
+
+
+LIVE_CLUSTER = 7_438_291_055_661_123_456
+RESTORE_CLUSTER = 7_438_291_055_661_123_457
 
 
 class _HostileServiceName(str):
     """Identify a caller-controlled libpq service-name subclass."""
 
 
-def test_operator_can_separate_live_batch_from_isolated_restore_service() -> None:
-    """A production pg_service name must stay distinct from the restore-drill name."""
+class _HostileClusterIdentity(PostgresRestoreTargetIdentity):
+    """Identify a caller-controlled cluster-identity subclass."""
+
+
+def _identity(system_identifier: int) -> PostgresRestoreTargetIdentity:
+    """Build one exact cluster-identity record for a realistic production pair."""
+    return PostgresRestoreTargetIdentity(system_identifier=system_identifier)
+
+
+def test_operator_can_separate_live_batch_from_isolated_restore_cluster() -> None:
+    """A production service and cluster must stay distinct from the restore drill."""
     verify_postgres_restore_target_isolation(
         live_service_name="batch-prod",
         restore_service_name="batch-restore-isolated",
+        live_target_identity=_identity(LIVE_CLUSTER),
+        restore_target_identity=_identity(RESTORE_CLUSTER),
     )
 
 
@@ -35,10 +51,31 @@ def test_same_service_name_fails_closed_before_restore() -> None:
         verify_postgres_restore_target_isolation(
             live_service_name="batch-prod",
             restore_service_name="batch-prod",
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=_identity(RESTORE_CLUSTER),
         )
     assert "batch-prod" not in str(raised.value)
     assert "postgresql://" not in str(raised.value)
     assert "secret" not in str(raised.value)
+    assert str(LIVE_CLUSTER) not in str(raised.value)
+
+
+def test_aliased_service_names_for_the_same_cluster_fail_closed() -> None:
+    """A second pg_service name that still points at production is not isolated."""
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^PostgreSQL restore target is not isolated from the live service$",
+    ) as raised:
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=_identity(LIVE_CLUSTER),
+        )
+    assert "batch-prod" not in str(raised.value)
+    assert "batch-restore-isolated" not in str(raised.value)
+    assert "postgresql://" not in str(raised.value)
+    assert str(LIVE_CLUSTER) not in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -65,6 +102,8 @@ def test_dsn_path_and_malformed_names_are_rejected_before_comparison(
         verify_postgres_restore_target_isolation(
             live_service_name=live_service_name,  # type: ignore[arg-type]
             restore_service_name=restore_service_name,  # type: ignore[arg-type]
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=_identity(RESTORE_CLUSTER),
         )
     assert "postgresql://" not in str(raised.value)
     assert "secret" not in str(raised.value)
@@ -80,6 +119,8 @@ def test_service_name_subclasses_are_rejected_before_comparison() -> None:
         verify_postgres_restore_target_isolation(
             live_service_name=_HostileServiceName("batch-prod"),
             restore_service_name="batch-restore-isolated",
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=_identity(RESTORE_CLUSTER),
         )
     with pytest.raises(
         PostgresRestoreTargetError,
@@ -88,6 +129,8 @@ def test_service_name_subclasses_are_rejected_before_comparison() -> None:
         verify_postgres_restore_target_isolation(
             live_service_name="batch-prod",
             restore_service_name=_HostileServiceName("batch-restore-isolated"),
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=_identity(RESTORE_CLUSTER),
         )
 
 
@@ -113,23 +156,89 @@ def test_non_string_identities_are_rejected_before_comparison(
         verify_postgres_restore_target_isolation(
             live_service_name=live_service_name,  # type: ignore[arg-type]
             restore_service_name=restore_service_name,  # type: ignore[arg-type]
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=_identity(RESTORE_CLUSTER),
+        )
+    assert "secret" not in str(raised.value)
+
+
+def test_cluster_identity_subclasses_and_substitutes_are_rejected() -> None:
+    """Exact built-in identity records are the only accepted cluster evidence."""
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^invalid PostgreSQL restore target isolation inputs$",
+    ):
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=_HostileClusterIdentity(
+                system_identifier=LIVE_CLUSTER
+            ),
+            restore_target_identity=_identity(RESTORE_CLUSTER),
+        )
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^invalid PostgreSQL restore target isolation inputs$",
+    ):
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=SimpleNamespace(  # type: ignore[arg-type]
+                system_identifier=RESTORE_CLUSTER
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "system_identifier",
+    [0, -1, True, "7438291055661123456", None, 1 << 64],
+)
+def test_invalid_system_identifiers_fail_closed(system_identifier: object) -> None:
+    """Booleans, zero, negatives, and text are not PostgreSQL cluster identifiers."""
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^invalid PostgreSQL restore target isolation inputs$",
+    ) as raised:
+        PostgresRestoreTargetIdentity(system_identifier=system_identifier)  # type: ignore[arg-type]
+    assert "secret" not in str(raised.value)
+    assert "7438291055661123456" not in str(raised.value)
+
+
+def test_tampered_cluster_identity_fails_closed_before_comparison() -> None:
+    """A forged identity record cannot skip the bounded identifier grammar."""
+    forged = object.__new__(PostgresRestoreTargetIdentity)
+    object.__setattr__(forged, "system_identifier", 0)
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^invalid PostgreSQL restore target isolation inputs$",
+    ) as raised:
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=forged,
+            restore_target_identity=_identity(RESTORE_CLUSTER),
         )
     assert "secret" not in str(raised.value)
 
 
 def test_verifier_does_not_accept_dsn_tenant_or_credential_arguments() -> None:
     """Callers cannot inject a DSN, tenant scope, or credential as target identity."""
-    names = verify_postgres_restore_target_isolation.__code__.co_varnames
     parameters = inspect.signature(verify_postgres_restore_target_isolation).parameters
 
-    assert "dsn" not in names
-    assert "conninfo" not in names
-    assert "password" not in names
-    assert "tenant_scope" not in names
-    assert "backup_artifact_path" not in names
-    assert "live_service_name" in parameters
-    assert "restore_service_name" in parameters
+    assert tuple(parameters) == (
+        "live_service_name",
+        "restore_service_name",
+        "live_target_identity",
+        "restore_target_identity",
+    )
+    assert all(
+        parameter.kind is inspect.Parameter.KEYWORD_ONLY
+        for parameter in parameters.values()
+    )
     verify_postgres_restore_target_isolation(
         live_service_name="batch-prod",
         restore_service_name="batch-restore-isolated",
+        live_target_identity=_identity(LIVE_CLUSTER),
+        restore_target_identity=_identity(RESTORE_CLUSTER),
     )
