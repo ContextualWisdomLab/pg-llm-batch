@@ -33,9 +33,48 @@ _CATALOG_SQL = """
 SELECT c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity
 FROM pg_catalog.pg_class AS c
 INNER JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+LEFT JOIN pg_catalog.pg_index AS idx ON idx.indexrelid = c.oid
+LEFT JOIN pg_catalog.pg_class AS indexed_table ON indexed_table.oid = idx.indrelid
 WHERE n.nspname = current_schema()
   AND c.relkind = ANY(%s)
   AND c.relname = ANY(%s)
+  AND (
+      c.relkind = 'r'
+      OR (
+          c.relkind = 'i'
+          AND indexed_table.relname = 'llm_remote_batch_jobs'
+          AND indexed_table.relnamespace = n.oid
+          AND idx.indisvalid
+          AND idx.indisready
+          AND idx.indpred IS NULL
+          AND idx.indexprs IS NULL
+          AND idx.indnkeyatts = 3
+          AND idx.indnatts = 3
+          AND pg_catalog.pg_get_indexdef(c.oid, 1, TRUE) = 'tenant_scope'
+          AND (
+              (
+                  c.relname = 'idx_llm_remote_batch_jobs_tenant_status_observed'
+                  AND NOT idx.indisunique
+                  AND pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'batch_status'
+                  AND pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'last_observed_at'
+              )
+              OR (
+                  c.relname = 'uq_llm_remote_batch_jobs_tenant_endpoint_id'
+                  AND idx.indisunique
+                  AND pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'endpoint_alias'
+                  AND pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'remote_batch_id'
+                  AND EXISTS (
+                      SELECT 1
+                      FROM pg_catalog.pg_constraint AS constraint_row
+                      WHERE constraint_row.conindid = c.oid
+                        AND constraint_row.conrelid = indexed_table.oid
+                        AND constraint_row.contype = 'u'
+                        AND NOT constraint_row.condeferrable
+                  )
+              )
+          )
+      )
+  )
 """.strip()
 
 
@@ -148,12 +187,15 @@ def inspect_postgres_restore_catalog(
     connection, or claim that a backup artifact is restorable. Missing required
     tables or tenant-status indexes fail closed. Lifecycle row-level security
     must be enabled and forced. A present checkpoint store must also be forced.
+    Required lifecycle indexes must belong to that lifecycle table and match the
+    packaged key order, uniqueness, validity, readiness, and plain-index shape.
     """
+    relation_names = list(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,))
     try:
         with connection.cursor() as cursor:
             cursor.execute(
                 _CATALOG_SQL,
-                (("r", "i"), _REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,)),
+                (["r", "i"], relation_names),
             )
             rows = cursor.fetchall()
     except Exception:
