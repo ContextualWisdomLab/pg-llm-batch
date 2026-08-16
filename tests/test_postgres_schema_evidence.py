@@ -55,6 +55,21 @@ class _HostileChunkStream(BytesIO):
         return _HostileBytes(b"schema")
 
 
+class _BoundedOversizeStream(BytesIO):
+    """Reject any read request larger than a size budget plus one sentinel byte."""
+
+    def __init__(self, payload: bytes, maximum_request_bytes: int) -> None:
+        super().__init__(payload)
+        self.maximum_request_bytes = maximum_request_bytes
+        self.requested_sizes: list[int] = []
+
+    def read(self, size: int = -1) -> bytes:
+        if not (0 < size <= self.maximum_request_bytes):
+            raise AssertionError("schema inspection exceeded its bounded read request")
+        self.requested_sizes.append(size)
+        return super().read(size)
+
+
 class _CloseFailure(BytesIO):
     """Expose one deterministic lower-layer close failure for cleanup tests."""
 
@@ -142,17 +157,18 @@ def test_inspector_rejects_empty_schema(monkeypatch: pytest.MonkeyPatch) -> None
         inspect_postgres_schema()
 
 
-def test_inspector_rejects_oversized_schema(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Bound hashing work even if package-resource integrity has been compromised."""
+def test_inspector_rejects_oversized_schema_with_bounded_read_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detect oversize using at most one sentinel byte beyond the hashing budget."""
+    stream = _BoundedOversizeStream(b"12345", maximum_request_bytes=5)
     monkeypatch.setattr(schema_evidence, "_MAX_SCHEMA_BYTES", 4)
-    monkeypatch.setattr(
-        schema_evidence,
-        "_open_schema_resource",
-        lambda: BytesIO(b"12345"),
-    )
+    monkeypatch.setattr(schema_evidence, "_open_schema_resource", lambda: stream)
 
     with pytest.raises(PostgresSchemaEvidenceError, match="positive bounded size"):
         inspect_postgres_schema()
+
+    assert stream.requested_sizes == [5]
 
 
 def test_inspector_normalizes_read_failure(monkeypatch: pytest.MonkeyPatch) -> None:
