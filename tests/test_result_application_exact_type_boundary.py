@@ -110,7 +110,7 @@ class _AlwaysEqualCheckpoint(BatchResultCheckpoint):
 
 
 class _HostileIdentityText(str):
-    """Raise if an exact item trusts behavior-bearing string subclasses."""
+    """Raise if an exact object trusts behavior-bearing string subclasses."""
 
     def __ne__(self, _other: object) -> bool:
         """Expose the sentinel if product code compares this forged identity."""
@@ -171,6 +171,40 @@ def test_hostile_item_identity_text_is_rejected_before_comparison(
         )
 
     assert caught.value.details["field"] == f"item.{field}"
+    assert caught.value.details["value"] == "<redacted>"
+    assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert store.events == []
+
+
+def test_hostile_checkpoint_identity_text_is_rejected_before_comparison() -> None:
+    """Checkpoint identity fields must be exact strings before equality can execute."""
+    checkpoint = BatchResultCheckpoint(
+        schema_version=1,
+        batch_id=_HostileIdentityText("batch-123"),
+        endpoint_alias="openrouter",
+        file_kind="result",
+        file_id="file-123",
+        file_line_number=1,
+        batch_line_count=1,
+        record_count=1,
+        prefix_sha256="a" * 64,
+    )
+    item = CheckpointedBatchResultRecord(
+        batch_id="batch-123",
+        file_kind="result",
+        record={"custom_id": "request-1"},
+        checkpoint=checkpoint,
+    )
+    store = _RecordingStore()
+
+    with pytest.raises(ValidationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), store, "result-writer", item, lambda _cursor, _record: None
+        )
+
+    assert caught.value.details["field"] == "item.checkpoint.batch_id"
     assert caught.value.details["value"] == "<redacted>"
     assert _SECRET_SENTINEL not in _rendered_exception(caught.value)
     assert caught.value.__cause__ is None
