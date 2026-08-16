@@ -33,6 +33,7 @@ The product must let a qualified host:
 - submit, poll, wait, cancel, and retrieve through validated OpenAI-compatible Batch API clients;
 - operate in exact `standalone` mode or with a trusted tenant-qualified lifecycle identity;
 - recover or reconcile provider lifecycle state without introducing a second database-side networking authority;
+- derive bounded content-free PostgreSQL recovery evidence for backup artifacts and the packaged schema without treating evidence as proof of restorability; and
 - prove package quality, security, reproducibility, release-artifact identity, and rollback assumptions through repository evidence.
 
 ## Protected-main capability contract
@@ -47,6 +48,12 @@ The product must let a qualified host:
 | Durable resumable result checkpoint/CAS storage | IMPLEMENTED-ON-PROTECTED-MAIN | PostgreSQL supplies tenant-qualified durable checkpoint authority and conflict detection; this is not a distributed exactly-once claim. |
 | Redacted readiness reporting | IMPLEMENTED-ON-PROTECTED-MAIN | Public readiness evidence does not disclose arbitrary lower-layer diagnostic content. |
 | Scheduler-independent bounded provider reconciliation primitive | IMPLEMENTED-ON-PROTECTED-MAIN | A host can submit a finite, validated candidate set for polling/retrieval through the existing bounded provider client; candidate discovery, scheduling, and cross-process lease ownership remain outside this primitive. |
+| Bounded PostgreSQL recovery receipt | IMPLEMENTED-ON-PROTECTED-MAIN | The package can encode/decode deterministic bounded content-free metadata that identifies package/source/PostgreSQL/schema/backup evidence without carrying credentials, DSNs, SQL, business payloads, or arbitrary diagnostics. |
+| Bounded PostgreSQL backup-artifact integrity evidence | IMPLEMENTED-ON-PROTECTED-MAIN | The package can derive SHA-256 and byte-size evidence from one private regular backup artifact under descriptor-pinned, no-follow, finite-work constraints without executing backup or restore. |
+| Bounded packaged PostgreSQL schema evidence | IMPLEMENTED-ON-PROTECTED-MAIN | The package can derive SHA-256 and byte-size evidence from the exact distributed `schema.sql` resource under a finite package-owned work budget without executing SQL or asserting live-cluster parity. |
+| PostgreSQL logical backup execution | ACTIVE-PR | A `pg_dump` candidate exists in #208 but is not shipped; protected main must not be described as creating a restorable backup from the evidence primitives alone. |
+| PostgreSQL logical restore execution | ACTIVE-PR | A direct `pg_restore` candidate exists in #209 but is not shipped; its caller-owned source trust, target-isolation responsibility, libpq allowlist, transactional failure boundary, and archive-integrity contract remain active-PR semantics. |
+| End-to-end PostgreSQL recovery readiness | PARTIAL | Integrated evidence primitives do not yet prove an isolated restore with schema/RLS/constraint/extension parity, migration compatibility, external key/config custody, physical/WAL/PITR recovery, or a stated RPO/RTO/HA/DR objective. |
 | Durable reconciliation candidate discovery | ACTIVE-PR | Discovery must be tenant-qualified, bounded, deterministic, and database-authoritative before it can become product truth. |
 | Cross-process reconciliation single-flight | ACTIVE-PR | Concurrent workers must not race the same tenant/provider identity; merge eligibility remains governed by live repository policy. |
 | Existing-volume legacy `http` / `pg_cron` retirement | ACTIVE-PR | Existing deployments need fail-closed, reversible migration evidence before compatibility packages can be removed. |
@@ -76,13 +83,17 @@ Standalone source compatibility is also normative. `DurableBatchAPIClient` retai
 
 Protected-main acceptance authority for these invariants is deterministic: `tests/test_tenant_durable_client.py` proves construction-time pre-effect tenant validation and the four-argument standalone recorder seam; `tests/test_tenant_lifecycle_persistence.py` proves explicit `standalone` delegation, tenant-qualified conflict targets and reads, malformed-scope rejection before database access, and distinct tenant identities; `pg_llm_batch/schema.sql` supplies the tenant-qualified unique key, forced RLS policy, and tenant-qualified operational status index. `docs/remote-batch-lifecycle.md`, ADR 0002, and `docs/doctoring/tenant-scoped-lifecycle.md` describe the same protected-main contract.
 
-### FR-4: Reconciliation and recovery
+### FR-4: Reconciliation and provider-effect recovery
 
 Reconciliation shall be finite, deterministic, payload-free in its operational evidence, and use the same validated provider client boundary as normal operations. Candidate discovery, concurrency control, scheduling, and result-application semantics must be explicit capabilities rather than inferred from polling code. Provider-success/database-failure cases must remain observable recovery states rather than being rewritten as if the provider effect never occurred.
 
-### FR-5: Persistence integrity
+### FR-5: Persistence integrity and PostgreSQL recovery evidence
 
 Package-owned database rows shall use descriptive two-or-more-word `snake_case` object names where applicable, explicit durable identities, parameterized SQL, and migrations that are idempotent or have a documented one-way boundary. Schema copies maintained for package and Docker initialization shall remain synchronized where the repository contract requires it. Malformed durable payload/state shall fail closed before downstream credential or provider effects when correctness depends on that state.
+
+Protected main shall provide bounded, content-free recovery evidence without overstating its guarantee. `PostgresRecoveryReceipt` identifies one evidence set using package version, exact source commit, PostgreSQL major version, schema SHA-256, a reviewed backup-method vocabulary, backup-artifact SHA-256 and size, and bounded start/completion epochs. Backup-artifact inspection shall pin directory/file identity, reject symlink traversal and unsafe file shapes, remain within a caller-visible finite hashing budget, and return only hash/size evidence. Packaged-schema inspection shall stream the exact distributed `schema.sql` under a finite package-owned budget and return only hash/size evidence. Malformed, ambiguous, duplicate-member, hostile-subclass, oversized, mutating, unreadable, or cleanup-failing evidence shall fail closed through fixed package diagnostics.
+
+These primitives do not execute `pg_dump` or `pg_restore`, persist backup bytes, prove backup provenance or restorability, prove a live-cluster schema matches the package, authorize a tenant/operator, manage encryption keys, manage WAL, establish PITR, or prove RPO/RTO/HA/DR/compliance. Executable logical backup/restore and isolated-restore acceptance remain separate governed capabilities. A future direct restore must make caller-owned source-superuser trust, target isolation, allowed libpq credential/service environment, transaction rollback behavior, and post-restore acceptance explicit before it can become protected-main truth.
 
 ### FR-6: Configuration and secrets
 
@@ -110,11 +121,11 @@ The package must not apply blanket masking or lossy transformation to authorized
 
 ### Reliability
 
-Network, response, retry, wait, candidate-scan, payload, and release-evidence operations must be explicitly bounded. Recovery and rollback must be documented before migrations or release changes are considered complete. Queued, skipped, cancelled, absent, stale, predecessor-head, synthetic-merge-only, or infrastructure-failed evidence is not success for an exact source head.
+Network, response, retry, wait, candidate-scan, payload, recovery-evidence, and release-evidence operations must be explicitly bounded. Recovery receipts and hashes are integrity/identity evidence, not restoration success. Recovery and rollback must be documented before migrations or release changes are considered complete. Queued, skipped, cancelled, absent, stale, predecessor-head, synthetic-merge-only, or infrastructure-failed evidence is not success for an exact source head.
 
 ### Interoperability
 
-Provider interaction stays OpenAI-Batch-compatible behind a validated Python client seam. Embedding hosts can provide credentials and control-plane context without changing the package's durable/provider semantics.
+Provider interaction stays OpenAI-Batch-compatible behind a validated Python client seam. Embedding hosts can provide credentials and control-plane context without changing the package's durable/provider semantics. PostgreSQL backup/restore executors, when integrated, must remain caller-targeted infrastructure seams rather than hidden dependencies on a specific ContextualWisdomLab host.
 
 ### Packaging and release
 
@@ -127,6 +138,7 @@ Dependencies must be locked/reproducible according to repository policy. Release
 - Making provider payload/model output an authority for tenant or endpoint selection.
 - Providing an unbounded general-purpose HTTP proxy.
 - Reintroducing provider networking or independent scheduling inside PostgreSQL.
+- Claiming a backup is restorable, a live cluster matches packaged schema, or a recovery objective is met from receipt/hash evidence alone.
 - Claiming distributed exactly-once processing without an integrated transaction/recovery contract spanning every external effect.
 - Requiring a specific ContextualWisdomLab host service for standalone operation.
 - Claiming SOC 2, CSAP, or other certification solely from repository controls.
