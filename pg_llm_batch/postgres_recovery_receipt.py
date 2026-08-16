@@ -49,6 +49,20 @@ def _bounded_nonnegative_integer(value: object) -> bool:
     return type(value) is int and 0 <= value <= _MAX_SIGNED_BIGINT
 
 
+def _reject_duplicate_object_pairs(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    """Build one JSON object while rejecting ambiguous duplicate member names."""
+    decoded: dict[str, object] = {}
+    for key, value in pairs:
+        if key in decoded:
+            raise PostgresRecoveryReceiptError(
+                "invalid PostgreSQL recovery receipt schema"
+            )
+        decoded[key] = value
+    return decoded
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresRecoveryReceipt:
     """Represent content-free integrity metadata for one PostgreSQL backup artifact."""
@@ -122,7 +136,10 @@ def parse_postgres_recovery_receipt(raw_receipt: str) -> PostgresRecoveryReceipt
     if encoded_size == 0 or encoded_size > _MAX_RECEIPT_JSON_BYTES:
         raise PostgresRecoveryReceiptError("invalid PostgreSQL recovery receipt JSON")
     try:
-        decoded = json.loads(raw_receipt)
+        decoded = json.loads(
+            raw_receipt,
+            object_pairs_hook=_reject_duplicate_object_pairs,
+        )
     except json.JSONDecodeError:
         raise PostgresRecoveryReceiptError(
             "invalid PostgreSQL recovery receipt JSON"
