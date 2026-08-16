@@ -11,6 +11,7 @@ import pytest
 import pg_llm_batch.postgres_logical_backup as logical_backup
 from pg_llm_batch.postgres_logical_backup import (
     PostgresLogicalBackupError,
+    PostgresLogicalBackupResult,
     create_postgres_logical_backup,
 )
 
@@ -83,3 +84,72 @@ def test_logical_backup_failure_does_not_invalidate_substituted_descriptor(
     finally:
         os.close(replacement_descriptor)
         os.close(descriptor)
+
+
+def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
+    tmp_path, monkeypatch
+):
+    """Fail with bounded evidence if the original descriptor cannot be retained."""
+    original_path = tmp_path / "dup-failure.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    subprocess_called = False
+
+    def fail_dup(_descriptor):
+        raise OSError("secret duplicate failure")
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run")
+
+    monkeypatch.setattr(logical_backup.os, "dup", fail_dup)
+    monkeypatch.setattr(logical_backup.subprocess, "run", forbidden_run)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match=r"^PostgreSQL logical backup output could not be retained$",
+        ) as caught:
+            create_postgres_logical_backup(
+                "safe_service",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+        assert "secret" not in str(caught.value)
+        assert subprocess_called is False
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_backup_cleanup_close_failure_preserves_success(
+    tmp_path, monkeypatch
+):
+    """Do not replace valid backup evidence with a duplicate-close diagnostic."""
+    original_path = tmp_path / "close-failure.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    real_close = os.close
+    leaked_cleanup_descriptors: list[int] = []
+
+    def write_successfully(argv, **kwargs):
+        os.write(kwargs["stdout"], b"PGDMP-safe")
+        return subprocess.CompletedProcess(argv, 0)
+
+    def fail_cleanup_close(target_descriptor):
+        if target_descriptor == descriptor:
+            return real_close(target_descriptor)
+        leaked_cleanup_descriptors.append(target_descriptor)
+        raise OSError("secret cleanup close failure")
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", write_successfully)
+    monkeypatch.setattr(logical_backup.os, "close", fail_cleanup_close)
+    try:
+        assert create_postgres_logical_backup(
+            "safe_service",
+            descriptor,
+            pg_dump_executable="/usr/bin/pg_dump",
+        ) == PostgresLogicalBackupResult(size_bytes=10)
+        assert len(leaked_cleanup_descriptors) == 1
+    finally:
+        monkeypatch.setattr(logical_backup.os, "close", real_close)
+        for cleanup_descriptor in leaked_cleanup_descriptors:
+            real_close(cleanup_descriptor)
+        real_close(descriptor)
