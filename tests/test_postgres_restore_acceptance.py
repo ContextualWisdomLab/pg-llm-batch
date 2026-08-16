@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from pg_llm_batch.postgres_restore_acceptance import (
@@ -243,6 +241,183 @@ def test_inspect_restore_catalog_uses_parameterized_current_schema_probe() -> No
     assert params is not None
     assert "llm_remote_batch_jobs" in params[1]
     assert CHECKPOINT_TABLE in params[1]
+
+
+def test_inspect_restore_catalog_rejects_non_list_catalog_rows() -> None:
+    class _TupleFetchCursor(_CatalogCursor):
+        def fetchall(self) -> list[tuple[object, ...]]:
+            return tuple(_complete_catalog())  # type: ignore[return-value]
+
+    class _TupleFetchConnection(_CatalogConnection):
+        def cursor(self) -> _CatalogCursor:
+            return _TupleFetchCursor([])
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(_TupleFetchConnection([]))
+
+
+def test_inspect_restore_catalog_rejects_list_row_instead_of_tuple() -> None:
+    rows = _complete_catalog()
+    rows[0] = ["com_config", "r", False, False]  # type: ignore[assignment]
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_unknown_relation_name() -> None:
+    rows = _complete_catalog(include_checkpoint=False)
+    rows.append(_relation("secret_audit_dump", "r"))
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_non_string_relation_kind() -> None:
+    rows = _complete_catalog()
+    rows[0] = ("com_config", b"r", False, False)
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_non_bool_force_flag() -> None:
+    rows = _complete_catalog()
+    rows[0] = ("com_config", "r", False, 1)
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_malformed_row_shape() -> None:
+    rows = _complete_catalog()
+    rows[0] = ("com_config", "r", False)
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_unknown_relation_kind() -> None:
+    rows = _complete_catalog()
+    rows[0] = ("com_config", "v", False, False)
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_non_bool_security_flags() -> None:
+    rows = _complete_catalog()
+    rows[0] = ("com_config", "r", 0, False)
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_duplicate_table_row() -> None:
+    rows = _complete_catalog()
+    rows.append(_relation("com_config", "r"))
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_duplicate_index_row() -> None:
+    rows = _complete_catalog()
+    rows.append(_relation(REQUIRED_INDEXES[0], "i"))
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_missing_tenant_status_index() -> None:
+    rows = [
+        row
+        for row in _complete_catalog()
+        if row[0] != "idx_llm_remote_batch_jobs_tenant_status_observed"
+    ]
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog is incomplete",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_lifecycle_enabled_without_force() -> None:
+    rows = _complete_catalog(lifecycle_rls=False)
+    for index, row in enumerate(rows):
+        if row[0] == "llm_remote_batch_jobs":
+            rows[index] = _relation(
+                "llm_remote_batch_jobs",
+                "r",
+                row_security=True,
+                force_row_security=False,
+            )
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog failed tenant isolation checks",
+    ):
+        inspect_postgres_restore_catalog(connection)
+
+
+def test_inspect_restore_catalog_rejects_checkpoint_without_enabled_rls() -> None:
+    rows = _complete_catalog(include_checkpoint=False)
+    rows.append(
+        _relation(
+            CHECKPOINT_TABLE,
+            "r",
+            row_security=False,
+            force_row_security=True,
+        )
+    )
+    connection = _CatalogConnection(rows)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog failed tenant isolation checks",
+    ):
+        inspect_postgres_restore_catalog(connection)
 
 
 def test_inspect_restore_catalog_rejects_non_tuple_params_leakage_path() -> None:
