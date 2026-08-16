@@ -14,6 +14,14 @@ from workflow_registry_audit import (
 _SECRET_SENTINEL = "SECRET-SENTINEL hostile registry primitive"
 
 
+class _HostileWorkflowRecord(dict[str, object]):
+    """Execute caller-controlled code when record members are retrieved."""
+
+    def get(self, _key: str, _default: object = None) -> object:
+        """Raise instead of supplying trustworthy decoded JSON members."""
+        raise RuntimeError(_SECRET_SENTINEL)
+
+
 class _HostileWorkflowId(int):
     """Execute caller-controlled code when numeric range validation runs."""
 
@@ -53,6 +61,22 @@ def test_unhashable_workflow_state_is_bounded_invalid_evidence(state: Any) -> No
             }
         )
 
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_record_subclass_is_rejected_before_member_access() -> None:
+    """Registry parsing must not execute caller-controlled mapping methods."""
+    with pytest.raises(WorkflowRegistryAuditError, match="record is invalid") as caught:
+        _validate_workflow_record(
+            _HostileWorkflowRecord(
+                id=1,
+                path=".github/workflows/ci.yml",
+                state="active",
+            )
+        )
+
+    assert _SECRET_SENTINEL not in str(caught.value)
     assert caught.value.__cause__ is None
     assert caught.value.__context__ is None
 
