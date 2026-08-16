@@ -144,6 +144,14 @@ def test_parse_rejects_malformed_or_unbounded_receipts(raw_receipt: str) -> None
         parse_postgres_recovery_receipt(raw_receipt)
 
 
+def test_parse_rejects_maximum_depth_json_with_package_error() -> None:
+    raw_receipt = "[" * 1023 + "0" + "]" * 1023
+
+    assert len(raw_receipt.encode("utf-8")) == 2047
+    with pytest.raises(PostgresRecoveryReceiptError, match="receipt"):
+        parse_postgres_recovery_receipt(raw_receipt)
+
+
 def test_parse_rejects_surrogate_text() -> None:
     with pytest.raises(PostgresRecoveryReceiptError, match="receipt JSON"):
         parse_postgres_recovery_receipt("\ud800")
