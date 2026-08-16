@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import Future as ConcurrentFuture
 from typing import Any
 
 import pytest
@@ -98,6 +99,17 @@ class _FutureReturningEffect:
         self.event_loop.close()
 
 
+class _ConcurrentFutureReturningEffect:
+    """Return a thread-pool-style future from a synchronous callable."""
+
+    def __init__(self) -> None:
+        self.returned_future: ConcurrentFuture[None] = ConcurrentFuture()
+
+    def __call__(self, _cursor: Any, _record: dict[str, Any]) -> ConcurrentFuture[None]:
+        """Return pending concurrent work that must receive cancellation."""
+        return self.returned_future
+
+
 def _item() -> CheckpointedBatchResultRecord:
     """Build one valid result item for the focused effect boundary."""
     checkpoint = BatchResultCheckpoint(
@@ -167,7 +179,7 @@ def test_returned_coroutine_is_closed_before_bounded_failure() -> None:
 
 
 def test_returned_future_is_cancelled_before_bounded_failure() -> None:
-    """Rejected pending futures must not remain live after the transaction call."""
+    """Rejected pending asyncio futures must not remain live after the call."""
     store = _RecordingStore()
     effect = _FutureReturningEffect()
     try:
@@ -185,3 +197,22 @@ def test_returned_future_is_cancelled_before_bounded_failure() -> None:
         assert store.events == ["load"]
     finally:
         effect.close()
+
+
+def test_returned_concurrent_future_receives_cancellation_before_failure() -> None:
+    """Rejected concurrent futures must receive cancellation before returning."""
+    store = _RecordingStore()
+    effect = _ConcurrentFutureReturningEffect()
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(),
+            store,
+            "result-writer",
+            _item(),
+            effect,
+        )
+
+    assert caught.value.details == {"phase": "record_effect"}
+    assert effect.returned_future.cancelled()
+    assert store.events == ["load"]
