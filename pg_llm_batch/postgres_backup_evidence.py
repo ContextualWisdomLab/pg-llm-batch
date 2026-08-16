@@ -6,7 +6,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 _HASH_CHUNK_BYTES = 1024 * 1024
@@ -31,6 +31,8 @@ _FILE_FLAGS = (
     | _CLOSE_ON_EXEC
 )
 _ArtifactIdentity = tuple[int, int, int, int, int, int]
+_BACKUP_INSPECTION_MARK = object()
+_INSPECTED_BACKUP_EVIDENCE_IDS: set[int] = set()
 
 
 class PostgresBackupEvidenceError(ValueError):
@@ -43,6 +45,7 @@ class PostgresBackupArtifactEvidence:
 
     sha256: str
     size_bytes: int
+    _inspection_mark: object = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable machine-readable backup artifact evidence schema."""
@@ -214,10 +217,21 @@ def inspect_postgres_backup_artifact(
         evidence = PostgresBackupArtifactEvidence(
             sha256=digest.hexdigest(),
             size_bytes=bytes_read,
+            _inspection_mark=_BACKUP_INSPECTION_MARK,
         )
+        _INSPECTED_BACKUP_EVIDENCE_IDS.add(id(evidence))
     except BaseException:
         _quiet_close(file_descriptor)
         raise
 
     _close_descriptor(file_descriptor)
     return evidence
+
+
+def postgres_backup_artifact_evidence_was_inspected(evidence: object) -> bool:
+    """Return whether evidence is the exact object inspect_postgres_backup_artifact() returned."""
+    return (
+        type(evidence) is PostgresBackupArtifactEvidence
+        and evidence._inspection_mark is _BACKUP_INSPECTION_MARK
+        and id(evidence) in _INSPECTED_BACKUP_EVIDENCE_IDS
+    )

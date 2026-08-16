@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 # Package metadata requires Python >=3.10, so this stdlib import is supported.
 from importlib import resources  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
@@ -15,6 +15,8 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 _MAX_SCHEMA_BYTES = 16 * 1024 * 1024
 _SCHEMA_PACKAGE = "pg_llm_batch"
 _SCHEMA_RESOURCE = "schema.sql"
+_SCHEMA_INSPECTION_MARK = object()
+_INSPECTED_SCHEMA_EVIDENCE_IDS: set[int] = set()
 
 
 class PostgresSchemaEvidenceError(ValueError):
@@ -27,6 +29,7 @@ class PostgresSchemaEvidence:
 
     sha256: str
     size_bytes: int
+    _inspection_mark: object = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable machine-readable packaged schema evidence schema."""
@@ -113,10 +116,21 @@ def inspect_postgres_schema() -> PostgresSchemaEvidence:
         evidence = PostgresSchemaEvidence(
             sha256=digest.hexdigest(),
             size_bytes=size_bytes,
+            _inspection_mark=_SCHEMA_INSPECTION_MARK,
         )
+        _INSPECTED_SCHEMA_EVIDENCE_IDS.add(id(evidence))
     except BaseException:
         _quiet_close(stream)
         raise
 
     _close_schema_stream(stream)
     return evidence
+
+
+def postgres_schema_evidence_was_inspected(evidence: object) -> bool:
+    """Return whether evidence is the exact object inspect_postgres_schema() returned."""
+    return (
+        type(evidence) is PostgresSchemaEvidence
+        and evidence._inspection_mark is _SCHEMA_INSPECTION_MARK
+        and id(evidence) in _INSPECTED_SCHEMA_EVIDENCE_IDS
+    )

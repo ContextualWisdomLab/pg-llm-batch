@@ -5,12 +5,18 @@ from __future__ import annotations
 
 import re
 
-from pg_llm_batch.postgres_backup_evidence import PostgresBackupArtifactEvidence
+from pg_llm_batch.postgres_backup_evidence import (
+    PostgresBackupArtifactEvidence,
+    postgres_backup_artifact_evidence_was_inspected,
+)
 from pg_llm_batch.postgres_recovery_receipt import (
     PostgresRecoveryReceipt,
     PostgresRecoveryReceiptError,
 )
-from pg_llm_batch.postgres_schema_evidence import PostgresSchemaEvidence
+from pg_llm_batch.postgres_schema_evidence import (
+    PostgresSchemaEvidence,
+    postgres_schema_evidence_was_inspected,
+)
 
 
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
@@ -58,6 +64,8 @@ def _binding_inputs_are_valid(
         and _positive_bigint(schema_evidence.size_bytes)
         and _content_free_digest(backup_evidence.sha256)
         and _positive_bigint(backup_evidence.size_bytes)
+        and postgres_schema_evidence_was_inspected(schema_evidence)
+        and postgres_backup_artifact_evidence_was_inspected(backup_evidence)
     )
 
 
@@ -77,9 +85,11 @@ def bind_postgres_recovery_receipt(
     The binder copies ``schema_sha256`` from packaged schema evidence and
     ``backup_sha256`` plus ``backup_size_bytes`` from backup-artifact evidence.
     Callers cannot supply a parallel digest or size that disagrees with those
-    objects. ``service_name``, filesystem paths, DSNs, credentials, and backup
-    bytes never enter the receipt. ``backup_method`` remains a reviewed recovery
-    profile label, not a tenant authorization boundary.
+    objects. Public dataclass construction and ``dataclasses.replace()`` copies
+    are not inspection provenance. ``service_name``, filesystem paths, DSNs,
+    credentials, ``tenant_scope``, and backup bytes never enter the receipt.
+    ``backup_method`` remains a reviewed recovery profile label, not a tenant
+    authorization boundary.
     """
     if not _binding_inputs_are_valid(
         package_version,

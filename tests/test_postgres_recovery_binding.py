@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -62,17 +63,28 @@ def _backup_evidence(**overrides: object) -> PostgresBackupArtifactEvidence:
     return PostgresBackupArtifactEvidence(**arguments)  # type: ignore[arg-type]
 
 
-def _bind(**overrides: object) -> PostgresRecoveryReceipt:
+def _inspected_backup(
+    tmp_path: Path, payload: bytes | None = None
+) -> PostgresBackupArtifactEvidence:
+    body = b"PGDMP\x01logical-fixture\x00" if payload is None else payload
+    artifact = tmp_path / "tenant_export.dump"
+    artifact.write_bytes(body)
+    return inspect_postgres_backup_artifact(str(artifact))
+
+
+def _bind(tmp_path: Path, **overrides: object) -> PostgresRecoveryReceipt:
     arguments: dict[str, object] = {
         "package_version": "0.1.0",
         "source_commit": COMMIT,
         "postgres_major": 18,
-        "schema_evidence": _schema_evidence(),
         "backup_method": "logical",
-        "backup_evidence": _backup_evidence(),
         "started_at_epoch": 1_786_800_000,
         "completed_at_epoch": 1_786_800_030,
     }
+    if "schema_evidence" not in overrides:
+        arguments["schema_evidence"] = inspect_postgres_schema()
+    if "backup_evidence" not in overrides:
+        arguments["backup_evidence"] = _inspected_backup(tmp_path)
     arguments.update(overrides)
     return bind_postgres_recovery_receipt(**arguments)  # type: ignore[arg-type]
 
@@ -128,13 +140,20 @@ def test_binder_rejects_fabricated_exact_type_evidence() -> None:
 
 
 @pytest.mark.parametrize("method", ["logical", "physical", "pitr"])
-def test_binder_copies_reviewed_backup_methods(method: str) -> None:
-    receipt = _bind(backup_method=method)
+def test_binder_copies_reviewed_backup_methods(method: str, tmp_path: Path) -> None:
+    schema = inspect_postgres_schema()
+    backup = _inspected_backup(tmp_path)
+    receipt = _bind(
+        tmp_path,
+        backup_method=method,
+        schema_evidence=schema,
+        backup_evidence=backup,
+    )
 
     assert receipt.backup_method == method
-    assert receipt.schema_sha256 == SCHEMA_SHA256
-    assert receipt.backup_sha256 == BACKUP_SHA256
-    assert receipt.backup_size_bytes == 4096
+    assert receipt.schema_sha256 == schema.sha256
+    assert receipt.backup_sha256 == backup.sha256
+    assert receipt.backup_size_bytes == backup.size_bytes
 
 
 @pytest.mark.parametrize(
@@ -168,32 +187,77 @@ def test_binder_copies_reviewed_backup_methods(method: str) -> None:
 def test_binder_rejects_untrusted_inputs_without_reflection(
     overrides: dict[str, object],
     message: str,
+    tmp_path: Path,
 ) -> None:
     with pytest.raises(PostgresRecoveryBindingError, match=f"^{message}$") as raised:
-        _bind(**overrides)
+        _bind(tmp_path, **overrides)
 
     assert "secret" not in str(raised.value)
     assert "authorized-tenant-export" not in str(raised.value)
 
 
-def test_binder_rejects_schema_subclass_before_digest_access() -> None:
+def test_binder_rejects_schema_subclass_before_digest_access(tmp_path: Path) -> None:
     with pytest.raises(
         PostgresRecoveryBindingError,
         match="^invalid PostgreSQL recovery binding inputs$",
     ):
-        _bind(schema_evidence=_HostileSchemaEvidence(SCHEMA_SHA256, 2048))
+        _bind(tmp_path, schema_evidence=_HostileSchemaEvidence(SCHEMA_SHA256, 2048))
 
 
-def test_binder_rejects_backup_subclass_before_digest_access() -> None:
+def test_binder_rejects_backup_subclass_before_digest_access(tmp_path: Path) -> None:
     with pytest.raises(
         PostgresRecoveryBindingError,
         match="^invalid PostgreSQL recovery binding inputs$",
     ):
-        _bind(backup_evidence=_HostileBackupEvidence(BACKUP_SHA256, 4096))
+        _bind(tmp_path, backup_evidence=_HostileBackupEvidence(BACKUP_SHA256, 4096))
 
 
-def test_binder_does_not_accept_a_parallel_size_that_can_disagree() -> None:
-    receipt = _bind(backup_evidence=_backup_evidence(size_bytes=8192))
+def test_binder_rejects_equal_valued_uninspected_evidence(tmp_path: Path) -> None:
+    """Matching digests from public constructors are still not inspected evidence."""
+    schema = inspect_postgres_schema()
+    backup = _inspected_backup(tmp_path)
+    fabricated_schema = PostgresSchemaEvidence(schema.sha256, schema.size_bytes)
+    fabricated_backup = PostgresBackupArtifactEvidence(backup.sha256, backup.size_bytes)
 
+    with pytest.raises(
+        PostgresRecoveryBindingError,
+        match="^invalid PostgreSQL recovery binding inputs$",
+    ):
+        _bind(
+            tmp_path,
+            schema_evidence=fabricated_schema,
+            backup_evidence=fabricated_backup,
+        )
+
+
+def test_binder_rejects_replaced_inspected_evidence(tmp_path: Path) -> None:
+    """A field-equal copy is not the object inspect_* returned."""
+    schema = inspect_postgres_schema()
+    backup = _inspected_backup(tmp_path)
+
+    with pytest.raises(
+        PostgresRecoveryBindingError,
+        match="^invalid PostgreSQL recovery binding inputs$",
+    ):
+        _bind(
+            tmp_path,
+            schema_evidence=replace(schema),
+            backup_evidence=replace(backup),
+        )
+
+
+def test_binder_does_not_accept_a_parallel_size_that_can_disagree(
+    tmp_path: Path,
+) -> None:
+    payload = b"PGDMP\x01size-lock\x00" + bytes(8192 - 16)
+    backup = _inspected_backup(tmp_path, payload)
+    receipt = _bind(tmp_path, backup_evidence=backup)
+    names = bind_postgres_recovery_receipt.__code__.co_varnames
+
+    assert len(payload) == 8192
     assert receipt.backup_size_bytes == 8192
-    assert "size_bytes" not in bind_postgres_recovery_receipt.__code__.co_varnames
+    assert "size_bytes" not in names
+    assert "schema_sha256" not in names
+    assert "backup_sha256" not in names
+    assert "tenant_scope" not in names
+    assert "path" not in names

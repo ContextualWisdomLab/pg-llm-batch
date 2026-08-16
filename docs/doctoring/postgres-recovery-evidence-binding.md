@@ -11,9 +11,11 @@ another host.
 1. Inspect the packaged schema with `inspect_postgres_schema()`.
 2. Inspect the caller-owned backup file with
    `inspect_postgres_backup_artifact(path)`.
-3. Call `bind_postgres_recovery_receipt(...)` with those exact evidence objects
+3. Call `bind_postgres_recovery_receipt(...)` with those exact returned objects
    plus package version, source commit, PostgreSQL major version, reviewed
-   backup method, and bounded start/end epochs.
+   backup method, and bounded start/end epochs. Do not construct
+   `PostgresSchemaEvidence` or `PostgresBackupArtifactEvidence` by hand, and do
+   not pass `dataclasses.replace()` copies.
 4. Persist or compare the returned `PostgresRecoveryReceipt` JSON. Do not treat
    the receipt as proof that restore, RLS, PITR, or a live cluster succeeded.
 
@@ -29,9 +31,11 @@ The binder copies:
 - `backup_sha256` and `backup_size_bytes` from `PostgresBackupArtifactEvidence`.
 
 It rejects subclasses and attribute-shaped substitutes before reading digests.
-It does not accept a parallel digest or size argument, so a caller cannot attach
-a hash from one file to the size of another. Paths, DSNs, credentials,
-`service_name`, tenant scope, and backup bytes never enter the receipt.
+Public constructors and field-equal copies are not inspection provenance, even
+when their SHA-256 and size match a live inspect. It does not accept a parallel
+digest or size argument, so a caller cannot attach a hash from one file to the
+size of another. Paths, DSNs, credentials, `service_name`, tenant scope, and
+backup bytes never enter the receipt.
 
 `backup_method` is a reviewed profile label (`logical`, `physical`, or `pitr`).
 It is not tenant authorization and does not select a restore target.
@@ -62,3 +66,6 @@ https://doi.org/10.6028/NIST.SP.800-34r1
 Joint Task Force. (2020). *Security and privacy controls for information
 systems and organizations* (NIST Special Publication 800-53 Rev. 5). National
 Institute of Standards and Technology. https://doi.org/10.6028/NIST.SP.800-53r5
+
+The MITRE Corporation. (n.d.). *CWE-345: Insufficient verification of data
+authenticity*. https://cwe.mitre.org/data/definitions/345.html
