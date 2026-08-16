@@ -537,12 +537,9 @@ def _validate_captured_at(captured_at: str | None) -> None:
     if type(captured_at) is not str or not _CAPTURED_AT_RE.fullmatch(captured_at):
         raise WorkflowRegistryAuditError(message)
     try:
-        parsed = datetime.fromisoformat(captured_at[:-1] + "+00:00")
+        datetime.fromisoformat(captured_at[:-1] + "+00:00")
     except ValueError:
         raise WorkflowRegistryAuditError(message) from None
-    canonical = parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
-    if canonical != captured_at:
-        raise WorkflowRegistryAuditError(message)
 
 
 def _validate_repository(repository_full_name: str) -> None:

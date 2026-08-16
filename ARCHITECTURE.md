@@ -65,7 +65,8 @@ provider-returned data.
 
 ## Workflow registry audit
 
-`pg-llm-batch-workflow-audit` is a packaged read-only control-plane detector.
+`pg-llm-batch-workflow-audit` is a packaged read-only control-plane detector
+(ADR 0021).
 It compares the GitHub Actions registry to one exact protected commit and
 reports active repository-backed identities that are absent from that tree as
 `active_absent_workflows` candidates. Platform-managed `dynamic/` identities

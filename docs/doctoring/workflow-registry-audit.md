@@ -50,6 +50,12 @@ without live-ref pre/post checks. The CLI always uses
 `audit_live_protected_ref_workflows` so a moving protected branch cannot
 certify a stale head.
 
+If a library caller supplies `captured_at`, pass one exact built-in string in
+the canonical UTC RFC 3339 shape `YYYY-MM-DDTHH:MM:SSZ` with a real calendar
+instant. Empty strings, offsets such as `+00:00`, fractional seconds, lowercase
+`z`, invalid dates, and oversized values fail before any GitHub read. Omit the
+argument to let the auditor write the clock instant. See ADR 0021.
+
 ## Trust and security boundary
 
 The client sends path-only GET requests to the fixed origin
@@ -91,8 +97,10 @@ Permanent regression coverage requires that:
 - truncated trees, moving protected refs, and oversize responses fail closed;
 - the console script `pg-llm-batch-workflow-audit` is declared in package
   metadata; and
-- README, architecture, ADR, changelog, and this doctoring record all tell the
-  operator to review candidates instead of disabling workflows.
+- README, architecture, ADR 0021, changelog, and this doctoring record all tell
+  the operator to review candidates instead of disabling workflows; and
+- caller-supplied receipt timestamps are rejected unless they are finite
+  canonical UTC RFC 3339 values.
 
 ## References
 
@@ -115,6 +123,9 @@ https://docs.github.com/en/rest/git/refs
 GitHub. (n.d.). *Rate limits for the REST API*. GitHub Docs. Retrieved August
 16, 2026, from
 https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
+
+Klyne, G., & Newman, C. (2002). *Date and time on the internet: Timestamps*
+(RFC 3339). https://doi.org/10.17487/RFC3339
 
 National Institute of Standards and Technology. (2022). *Secure software
 development framework (SSDF) version 1.1: Recommendations for mitigating the

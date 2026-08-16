@@ -174,7 +174,8 @@ Exit `0` means the protected ref stayed on the supplied SHA and no
 repository-backed orphan candidates were found. Exit `2` prints a JSON receipt
 with candidates for a separate review. Exit `1` is a fail-closed audit error.
 See [`docs/doctoring/workflow-registry-audit.md`](docs/doctoring/workflow-registry-audit.md)
-for token scope, rate-limit evidence, and recovery.
+and [ADR 0021](docs/adr/0021-workflow-registry-audit.md) for token scope,
+rate-limit evidence, and recovery.
 
 ---
 
