@@ -15,6 +15,13 @@ _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_CONNECT_TIMEOUT_SECONDS = 60
 _MAX_SIGNED_BIGINT = (1 << 63) - 1
 _DEFAULT_MAXIMUM_ARCHIVE_SIZE_BYTES = 64 * 1024 * 1024 * 1024
+_INHERITED_LIBPQ_VARIABLES = frozenset(
+    {
+        "PGPASSWORD",
+        "PGPASSFILE",
+        "PGSERVICEFILE",
+    }
+)
 
 
 class PostgresLogicalRestoreError(RuntimeError):
@@ -101,9 +108,11 @@ def _inspect_initial_archive(
 
 
 def _libpq_environment(connect_timeout_seconds: int) -> dict[str, str]:
-    """Return only inherited libpq variables plus the bounded connect timeout."""
+    """Return allowlisted libpq credentials plus the bounded connect timeout."""
     environment = {
-        key: value for key, value in os.environ.items() if key.startswith("PG")
+        key: os.environ[key]
+        for key in _INHERITED_LIBPQ_VARIABLES
+        if key in os.environ
     }
     environment["PGCONNECT_TIMEOUT"] = str(connect_timeout_seconds)
     return environment
@@ -199,12 +208,15 @@ def restore_postgres_logical_backup(
     """Restore one bounded custom archive through a caller-owned file descriptor.
 
     The caller selects the target libpq service and is responsible for making that
-    service an isolated recovery target. The package does not receive an archive path,
-    place credentials in process arguments, or reflect archive/database content in
-    diagnostics. The validated non-secret service selector is supplied to ``pg_restore``
-    through ``--dbname=service=...`` so the command performs a direct database restore
-    rather than merely rendering SQL to standard output. ``pg_restore`` runs with one
-    transaction and exits on the first SQL error so timeout or execution failure does
+    service an isolated recovery target; the service name is not an authorization or
+    proof-of-isolation boundary. The package does not receive an archive path, place
+    credentials in process arguments, or reflect archive/database content in
+    diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
+    inherited, so ambient host/database/options/SSL-mode variables cannot silently
+    redirect or weaken the target session. The validated non-secret service selector
+    is supplied through ``--dbname=service=...`` so ``pg_restore`` performs a direct
+    database restore rather than merely rendering SQL. The command runs with one
+    transaction and exits on the first SQL error, so timeout or execution failure does
     not intentionally commit a partial package restore.
     """
     if not _parameters_are_valid(
