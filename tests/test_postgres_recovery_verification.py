@@ -116,6 +116,39 @@ def test_verifier_rejects_mutated_backup_bytes_before_restore(tmp_path: Path) ->
     assert str(artifact) not in str(raised.value)
 
 
+def test_verifier_rejects_size_only_backup_mismatch(tmp_path: Path) -> None:
+    """Pin the size comparison when the current artifact digest still matches."""
+    payload = b"PGDMP\x01authorized-tenant-export\x00"
+    artifact = tmp_path / "tenant_export.dump"
+    artifact.write_bytes(payload)
+    receipt = _receipt_for_artifact(artifact)
+    mismatched_receipt = PostgresRecoveryReceipt(
+        package_version=receipt.package_version,
+        source_commit=receipt.source_commit,
+        postgres_major=receipt.postgres_major,
+        schema_sha256=receipt.schema_sha256,
+        backup_method=receipt.backup_method,
+        backup_sha256=receipt.backup_sha256,
+        backup_size_bytes=receipt.backup_size_bytes + 1,
+        started_at_epoch=receipt.started_at_epoch,
+        completed_at_epoch=receipt.completed_at_epoch,
+    )
+
+    with pytest.raises(
+        PostgresRecoveryVerificationError,
+        match="^inspected backup does not match recovery receipt$",
+    ) as raised:
+        verify_postgres_recovery_receipt(
+            mismatched_receipt,
+            backup_artifact_path=str(artifact),
+        )
+
+    assert mismatched_receipt.backup_sha256 == hashlib.sha256(payload).hexdigest()
+    assert mismatched_receipt.backup_size_bytes != len(payload)
+    assert "authorized-tenant-export" not in str(raised.value)
+    assert str(artifact) not in str(raised.value)
+
+
 def test_fabricated_exact_type_evidence_cannot_replace_live_inspection(
     tmp_path: Path,
 ) -> None:
