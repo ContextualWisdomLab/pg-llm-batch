@@ -78,7 +78,7 @@ The following open pull requests are represented only as overlays. Their existen
 - **#210** — configuration/secrets operator/runtime contract successor; encryption-required policy, least-privilege runtime readiness, and provisioning separation remain unshipped until this lane is repaired and integrated.
 - **#212** — direct logical-restore successor to closed #209; it replaces the invalid EOF postcondition with metadata-fingerprint verification and owns the accompanying restore-contract documentation. It is not evidence of isolated restore acceptance or end-to-end recovery readiness.
 - **#214** — superseded canonical overlay that still froze transient Draft labels; keep it Draft.
-- **#226** — current canonical documentation successor. It removes Draft/Ready vocabulary, names adjacent recovery families, and adds the threat-model and package ERD overlays. Protected-main status does not change until this lane integrates.
+- **#226** — current canonical documentation successor. It removes Draft/Ready vocabulary, names adjacent recovery families, and adds threat-model, data-governance, UML, and package ERD overlays. Protected-main status does not change until this lane integrates.
 - **#215** — recovery receipt evidence-binding candidate; exact-type evidence objects must not be mistaken for inspection provenance, and the active lane remains unshipped until repaired and accepted.
 - **#219** — physical/WAL/PITR recovery-profile candidate; records caller-owned intent/objectives only and does not execute recovery or claim achieved RPO/RTO.
 - **#221** — recovery-receipt live re-inspection candidate; integrity agreement remains time-bound and does not prove restore success or target isolation.
