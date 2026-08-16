@@ -52,7 +52,7 @@ def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
     """Convert exact database primitives into redaction-safe worker input.
 
     PostgreSQL row and text evidence must use exact built-in tuple/list and string
-    types.  Subclasses are rejected before shape, normalization, regex, equality,
+    types. Subclasses are rejected before shape, normalization, regex, equality,
     or model construction so caller-controlled row factories cannot execute
     overridden methods or preserve forged identity objects in worker input.
     """
@@ -65,7 +65,10 @@ def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
         )
     persisted_endpoint_alias = row[0]
     persisted_remote_batch_id = row[1]
-    if type(persisted_endpoint_alias) is not str or type(persisted_remote_batch_id) is not str:
+    if (
+        type(persisted_endpoint_alias) is not str
+        or type(persisted_remote_batch_id) is not str
+    ):
         raise ValidationError(
             field="reconciliation_candidate",
             value="<redacted>",
