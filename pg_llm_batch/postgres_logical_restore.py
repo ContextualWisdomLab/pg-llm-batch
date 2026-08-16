@@ -184,9 +184,14 @@ def _verify_archive_unchanged(
         ) from None
 
     if (
-        final_status.st_size != initial_status.st_size
+        not stat.S_ISREG(final_status.st_mode)
+        or final_status.st_size != initial_status.st_size
         or final_status.st_nlink != 1
         or not _archive_is_owner_only(final_status.st_mode)
+        or getattr(final_status, "st_dev", None) != initial_status.st_dev
+        or getattr(final_status, "st_ino", None) != initial_status.st_ino
+        or getattr(final_status, "st_mtime_ns", None) != initial_status.st_mtime_ns
+        or getattr(final_status, "st_ctime_ns", None) != initial_status.st_ctime_ns
     ):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive changed during execution"
@@ -223,7 +228,9 @@ def restore_postgres_logical_backup(
     ``--dbname=service=...`` so ``pg_restore`` performs a direct database restore
     rather than merely rendering SQL. The command runs with one transaction and exits
     on the first SQL error, so timeout or execution failure does not intentionally
-    commit a partial package restore.
+    commit a partial package restore. Descriptor identity and observable archive
+    metadata are revalidated after the restore to reject in-place mutation detected
+    during execution.
     """
     if not _parameters_are_valid(
         service_name,
