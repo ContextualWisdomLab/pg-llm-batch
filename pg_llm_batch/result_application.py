@@ -59,7 +59,10 @@ def _validate_item_and_effect(
         )
     if not callable(apply_record):
         raise _redacted_validation_error("apply_record", "must be callable")
-    if inspect.iscoroutinefunction(apply_record):
+    static_call = inspect.getattr_static(apply_record, "__call__", None)
+    if inspect.iscoroutinefunction(apply_record) or inspect.iscoroutinefunction(
+        static_call
+    ):
         raise _redacted_validation_error(
             "apply_record", "must complete synchronously in the caller transaction"
         )
