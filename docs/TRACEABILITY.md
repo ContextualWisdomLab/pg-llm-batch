@@ -68,8 +68,9 @@ The following open pull requests are intentionally represented only as overlays 
 - **#184** — existing-volume legacy PostgreSQL extension retirement; migration/operator behavior remains active until merged.
 - **#190** — durable reconciliation candidate discovery; not protected-main truth and currently subject to live review/tooling evidence.
 - **#191** — tenant-qualified reconciliation single-flight; not protected-main truth until live approval/gates and merge.
-- **#192** — predecessor five-file canonical reconstruction. At `229f8d3` it still presents #209 as the active restore path and still reads as if arbitrary SQL cannot call `set_config`. Do not merge that head; this overlay is the current alignment.
+- **#192** — predecessor five-file canonical reconstruction. At `229f8d3` it still presents #209 as the active restore path and still reads as if arbitrary SQL cannot call `set_config`. Do not merge that head; #214 is the current alignment.
 - **#213** — stale overlay of #192 at `eafbfa9`. It predates the protected-main merge at `229f8d3` and must not land as a competing five-file rewrite.
+- **#214** — this overlay. It rebases the #212 successor alignment and the `set_config` capability wording onto `229f8d3` and is not shipped truth until protected-main integration.
 - **#193** — runtime-store/schema-provisioning separation plus an encryption-required `SecretStore` default with explicit local/development compatibility opt-out; both remain active overlays, and this PR does not by itself establish legacy-row migration, key rotation/recovery, or readiness-policy lifecycle completion.
 - **#210** — Draft operator-contract successor to #193. It keeps the runtime fail-closed Fernet/provisioning seam and updates public install/README/architecture/CHANGELOG wording so first-run and embed paths match the code. Historical unencrypted-row migration, key rotation, and custody remain Issue #121 residuals and are not shipped.
 - **#194** — atomic local result-effect/checkpoint application; a current-main-compatible implementation is under review but remains an active overlay and is not shipped.
