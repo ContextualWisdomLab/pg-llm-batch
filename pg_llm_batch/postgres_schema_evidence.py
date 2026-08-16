@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from importlib import resources
+
+# Package metadata requires Python >=3.10, so this stdlib import is supported.
+from importlib import resources  # nosemgrep: python.lang.compatibility.python37.python37-compatibility-importlib2
 from typing import BinaryIO
 
 
