@@ -121,7 +121,7 @@ class GitHubReadClient:
             RecursionError,
         ):
             raise WorkflowRegistryAuditError("GitHub workflow audit read failed") from None
-        if not isinstance(payload, dict):
+        if type(payload) is not dict:
             raise WorkflowRegistryAuditError("GitHub workflow audit response is invalid")
         return payload
 
@@ -137,9 +137,7 @@ class GitHubReadClient:
         declared_value = getattr(response, "content_length", None)
         declared_bytes = (
             declared_value
-            if isinstance(declared_value, int)
-            and not isinstance(declared_value, bool)
-            and declared_value >= 0
+            if type(declared_value) is int and declared_value >= 0
             else None
         )
         if declared_bytes is not None and declared_bytes > _MAX_RESPONSE_BYTES:
@@ -316,14 +314,19 @@ def _read_protected_ref_sha(
     payload = client.get_json(
         f"/repos/{repository_full_name}/git/ref/heads/{encoded_ref}"
     )
-    if payload.get("ref") != f"refs/heads/{protected_ref}":
+    if type(payload) is not dict or payload.get("ref") != f"refs/heads/{protected_ref}":
         raise WorkflowRegistryAuditError("protected ref response is invalid")
     ref_object = payload.get("object")
-    if not isinstance(ref_object, dict):
+    if type(ref_object) is not dict:
         raise WorkflowRegistryAuditError("protected ref response is invalid")
     sha = ref_object.get("sha")
     object_type = ref_object.get("type")
-    if not isinstance(sha, str) or not _SHA_RE.fullmatch(sha) or object_type != "commit":
+    if (
+        type(sha) is not str
+        or not _SHA_RE.fullmatch(sha)
+        or type(object_type) is not str
+        or object_type != "commit"
+    ):
         raise WorkflowRegistryAuditError("protected ref response is invalid")
     return sha.lower()
 
@@ -338,34 +341,34 @@ def _read_protected_workflow_paths(
     commit_payload = client.get_json(
         f"/repos/{repository_full_name}/git/commits/{protected_sha}"
     )
-    if commit_payload.get("sha") != protected_sha:
+    if type(commit_payload) is not dict or commit_payload.get("sha") != protected_sha:
         raise WorkflowRegistryAuditError("protected commit response is invalid")
     commit_tree = commit_payload.get("tree")
-    if not isinstance(commit_tree, dict):
+    if type(commit_tree) is not dict:
         raise WorkflowRegistryAuditError("protected commit response is invalid")
     tree_sha = commit_tree.get("sha")
-    if not isinstance(tree_sha, str) or not _SHA_RE.fullmatch(tree_sha):
+    if type(tree_sha) is not str or not _SHA_RE.fullmatch(tree_sha):
         raise WorkflowRegistryAuditError("protected commit response is invalid")
     tree_sha = tree_sha.lower()
 
     payload = client.get_json(
         f"/repos/{repository_full_name}/git/trees/{tree_sha}?recursive=1"
     )
-    if payload.get("sha") != tree_sha:
+    if type(payload) is not dict or payload.get("sha") != tree_sha:
         raise WorkflowRegistryAuditError("protected tree SHA does not match commit tree SHA")
     if payload.get("truncated") is not False:
         raise WorkflowRegistryAuditError("protected tree is truncated")
     tree = payload.get("tree")
-    if not isinstance(tree, list):
+    if type(tree) is not list:
         raise WorkflowRegistryAuditError("protected tree response is invalid")
 
     paths: set[str] = set()
     for entry in tree:
-        if not isinstance(entry, dict):
+        if type(entry) is not dict:
             raise WorkflowRegistryAuditError("protected tree response is invalid")
         path = entry.get("path")
         entry_type = entry.get("type")
-        if not isinstance(path, str) or not isinstance(entry_type, str):
+        if type(path) is not str or type(entry_type) is not str:
             raise WorkflowRegistryAuditError("protected tree response is invalid")
         if entry_type == "blob" and path.startswith(_WORKFLOW_PREFIX):
             paths.add(path)
@@ -420,6 +423,8 @@ def _read_registry_pass(
             f"/repos/{repository_full_name}/actions/workflows"
             f"?per_page={_PAGE_SIZE}&page={page}"
         )
+        if type(payload) is not dict:
+            raise WorkflowRegistryAuditError("workflow registry response is invalid")
         pages_scanned += 1
         total_count = _require_nonnegative_int(payload.get("total_count"))
         if total_count > _MAX_REGISTRY_WORKFLOWS:
@@ -432,7 +437,7 @@ def _read_registry_pass(
             raise WorkflowRegistryAuditError("workflow registry changed during audit")
 
         workflows = payload.get("workflows")
-        if not isinstance(workflows, list):
+        if type(workflows) is not list:
             raise WorkflowRegistryAuditError("workflow registry response is invalid")
         if not workflows and len(records) < expected_total:
             raise WorkflowRegistryAuditError("workflow registry pagination is incomplete")
@@ -497,14 +502,16 @@ def _validate_workflow_record(raw_record: object) -> dict[str, object]:
 
 
 def _require_nonnegative_int(value: object) -> int:
-    """Require a non-boolean, non-negative integer API count."""
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+    """Require an exact non-negative integer API count."""
+    if type(value) is not int or value < 0:
         raise WorkflowRegistryAuditError("workflow registry total count is invalid")
     return value
 
 
 def _validate_repository(repository_full_name: str) -> None:
     """Reject malformed repository selectors before any network read."""
+    if type(repository_full_name) is not str:
+        raise WorkflowRegistryAuditError("repository must use owner/name syntax")
     components = repository_full_name.split("/")
     if (
         not _REPOSITORY_RE.fullmatch(repository_full_name)
@@ -515,12 +522,14 @@ def _validate_repository(repository_full_name: str) -> None:
 
 def _validate_protected_sha(protected_sha: str) -> None:
     """Require immutable commit identity instead of a branch/ref name."""
-    if not _SHA_RE.fullmatch(protected_sha):
+    if type(protected_sha) is not str or not _SHA_RE.fullmatch(protected_sha):
         raise WorkflowRegistryAuditError("protected_sha must be an exact 40-hex protected SHA")
 
 
 def _validate_protected_ref(protected_ref: str) -> None:
     """Reject ambiguous or path-like branch selectors before any network read."""
+    if type(protected_ref) is not str:
+        raise WorkflowRegistryAuditError("protected_ref must be a safe branch name")
     if (
         not _PROTECTED_REF_RE.fullmatch(protected_ref)
         or protected_ref.startswith("/")
