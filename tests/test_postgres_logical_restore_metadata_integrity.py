@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regress equal-size archive mutation during PostgreSQL logical restore."""
+"""Regress single-field archive metadata mutation during logical restore."""
 
 from __future__ import annotations
 
@@ -16,8 +16,22 @@ from pg_llm_batch.postgres_logical_restore import (
 )
 
 
-def test_restore_rejects_equal_size_archive_metadata_mutation(tmp_path, monkeypatch):
-    """Reject in-place archive mutation even when size and permissions are unchanged."""
+@pytest.mark.parametrize(
+    "metadata_field",
+    [
+        "st_mode",
+        "st_size",
+        "st_nlink",
+        "st_dev",
+        "st_ino",
+        "st_mtime_ns",
+        "st_ctime_ns",
+    ],
+)
+def test_restore_rejects_single_archive_metadata_mutation(
+    tmp_path, monkeypatch, metadata_field
+):
+    """Reject mutation when exactly one observable archive field changes."""
     archive_path = tmp_path / "backup.dump"
     descriptor = os.open(archive_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     os.write(descriptor, b"PGDMP-archive")
@@ -34,15 +48,17 @@ def test_restore_rejects_equal_size_archive_metadata_mutation(tmp_path, monkeypa
         target_calls += 1
         if target_calls == 1:
             return status
-        return SimpleNamespace(
-            st_size=status.st_size,
-            st_nlink=status.st_nlink,
-            st_mode=status.st_mode,
-            st_dev=status.st_dev,
-            st_ino=status.st_ino,
-            st_mtime_ns=status.st_mtime_ns + 1,
-            st_ctime_ns=status.st_ctime_ns + 1,
-        )
+        values = {
+            "st_mode": status.st_mode,
+            "st_size": status.st_size,
+            "st_nlink": status.st_nlink,
+            "st_dev": status.st_dev,
+            "st_ino": status.st_ino,
+            "st_mtime_ns": status.st_mtime_ns,
+            "st_ctime_ns": status.st_ctime_ns,
+        }
+        values[metadata_field] += 1
+        return SimpleNamespace(**values)
 
     def consume_archive(argv, **kwargs):
         while os.read(kwargs["stdin"], 1024):
