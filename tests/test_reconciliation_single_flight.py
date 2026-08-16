@@ -246,6 +246,32 @@ def test_unconfirmed_release_suppresses_sensitive_caller_traceback() -> None:
     assert sentinel not in rendered
 
 
+def test_malformed_release_suppresses_sensitive_caller_traceback() -> None:
+    """Malformed unlock evidence must not retain a sensitive caller exception."""
+    sentinel = "caller payload secret from malformed release"
+    cursor = RecordingCursor([(True,), (1,)])
+
+    with pytest.raises(ReconciliationSingleFlightError) as caught:
+        with reconciliation_single_flight(
+            cursor,
+            "tenant-a",
+            ReconciliationCandidate("gateway-a", "batch-1"),
+        ) as acquired:
+            assert acquired is True
+            raise RuntimeError(sentinel)
+
+    rendered = "".join(
+        traceback.format_exception(
+            type(caught.value),
+            caught.value,
+            caught.value.__traceback__,
+        )
+    )
+    assert caught.value.__suppress_context__ is True
+    assert caught.value.__cause__ is None
+    assert sentinel not in rendered
+
+
 def test_single_flight_redacts_database_release_failure() -> None:
     """Lower-layer release diagnostics must not escape package evidence."""
     sentinel = "postgres release secret"
