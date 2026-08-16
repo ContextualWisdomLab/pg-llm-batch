@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import zipfile
 from importlib import resources
 from io import BytesIO
 
@@ -24,6 +25,14 @@ class _ReadFailure(BytesIO):
         raise OSError("sensitive schema read diagnostic")
 
 
+class _ArchiveReadFailure(BytesIO):
+    """Model a corrupt packaged archive surfacing a non-OSError read failure."""
+
+    def read(self, size: int = -1) -> bytes:
+        del size
+        raise zipfile.BadZipFile("sensitive corrupt archive diagnostic")
+
+
 class _CloseFailure(BytesIO):
     """Expose one deterministic lower-layer close failure for cleanup tests."""
 
@@ -31,11 +40,25 @@ class _CloseFailure(BytesIO):
         raise OSError("sensitive schema close diagnostic")
 
 
+class _StateCloseFailure(BytesIO):
+    """Model an ordinary stream-state close failure outside the OSError family."""
+
+    def close(self) -> None:
+        raise ValueError("sensitive stream state diagnostic")
+
+
 class _ReadAndCloseFailure(_ReadFailure):
     """Fail both reading and cleanup so the primary bounded error can be asserted."""
 
     def close(self) -> None:
         raise OSError("sensitive schema close diagnostic")
+
+
+class _ReadAndStateCloseFailure(_ReadFailure):
+    """Fail reading plus non-OSError cleanup to prove primary-error preservation."""
+
+    def close(self) -> None:
+        raise ValueError("sensitive stream state diagnostic")
 
 
 def test_inspector_matches_packaged_schema_identity() -> None:
@@ -69,6 +92,24 @@ def test_inspector_normalizes_resource_open_failure(
 
     assert str(raised.value) == "PostgreSQL package schema could not be opened"
     assert "sensitive package resource diagnostic" not in str(raised.value)
+
+
+def test_inspector_normalizes_corrupt_archive_open_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep corrupt packaged-archive diagnostics outside recovery evidence."""
+
+    def corrupt_files(package: str) -> object:
+        del package
+        raise zipfile.BadZipFile("sensitive corrupt archive diagnostic")
+
+    monkeypatch.setattr(schema_evidence.resources, "files", corrupt_files)
+
+    with pytest.raises(PostgresSchemaEvidenceError) as raised:
+        inspect_postgres_schema()
+
+    assert str(raised.value) == "PostgreSQL package schema could not be opened"
+    assert "sensitive corrupt archive diagnostic" not in str(raised.value)
 
 
 def test_inspector_rejects_empty_schema(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +148,23 @@ def test_inspector_normalizes_read_failure(monkeypatch: pytest.MonkeyPatch) -> N
     assert "sensitive schema read diagnostic" not in str(raised.value)
 
 
+def test_inspector_normalizes_corrupt_archive_read_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normalize non-OSError failures raised while reading packaged archives."""
+    monkeypatch.setattr(
+        schema_evidence,
+        "_open_schema_resource",
+        lambda: _ArchiveReadFailure(b"schema"),
+    )
+
+    with pytest.raises(PostgresSchemaEvidenceError) as raised:
+        inspect_postgres_schema()
+
+    assert str(raised.value) == "PostgreSQL package schema could not be read"
+    assert "sensitive corrupt archive diagnostic" not in str(raised.value)
+
+
 def test_inspector_normalizes_success_path_close_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -124,6 +182,23 @@ def test_inspector_normalizes_success_path_close_failure(
     assert "sensitive schema close diagnostic" not in str(raised.value)
 
 
+def test_inspector_normalizes_non_os_close_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normalize ordinary stream-state cleanup failures on the success path."""
+    monkeypatch.setattr(
+        schema_evidence,
+        "_open_schema_resource",
+        lambda: _StateCloseFailure(b"schema"),
+    )
+
+    with pytest.raises(PostgresSchemaEvidenceError) as raised:
+        inspect_postgres_schema()
+
+    assert str(raised.value) == "PostgreSQL package schema stream could not be closed"
+    assert "sensitive stream state diagnostic" not in str(raised.value)
+
+
 def test_close_failure_does_not_mask_primary_read_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -139,3 +214,20 @@ def test_close_failure_does_not_mask_primary_read_failure(
 
     assert str(raised.value) == "PostgreSQL package schema could not be read"
     assert "sensitive schema close diagnostic" not in str(raised.value)
+
+
+def test_non_os_close_failure_does_not_mask_primary_read_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve the bounded primary error across ordinary cleanup exceptions."""
+    monkeypatch.setattr(
+        schema_evidence,
+        "_open_schema_resource",
+        lambda: _ReadAndStateCloseFailure(b"schema"),
+    )
+
+    with pytest.raises(PostgresSchemaEvidenceError) as raised:
+        inspect_postgres_schema()
+
+    assert str(raised.value) == "PostgreSQL package schema could not be read"
+    assert "sensitive stream state diagnostic" not in str(raised.value)
