@@ -109,6 +109,22 @@ def test_parent_descriptor_close_failure_is_content_free(
     assert "secret parent cleanup diagnostic" not in str(raised.value)
 
 
+def test_parent_close_failure_after_artifact_open_is_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Close an opened artifact when its final parent cleanup reports failure."""
+    (tmp_path / "backup.dump").write_bytes(b"backup")
+    monkeypatch.chdir(tmp_path)
+    _fail_first_directory_close(monkeypatch)
+
+    with pytest.raises(PostgresBackupEvidenceError) as raised:
+        inspect_postgres_backup_artifact("backup.dump")
+
+    assert str(raised.value) == "PostgreSQL backup artifact descriptor could not be closed"
+    assert "secret parent cleanup diagnostic" not in str(raised.value)
+
+
 def test_parent_close_failure_does_not_mask_existing_open_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
