@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Caller-owned physical/WAL/PITR recovery profile binder
+  (`bind_postgres_physical_recovery_profile()` /
+  `parse_postgres_physical_recovery_profile()`). The seam records method,
+  recovery-target kind, continuous-WAL necessity, isolated-target readiness,
+  and optional RPO/RTO objectives. It does not execute `pg_basebackup` or
+  restore. `wal_archive_required=False` means no continuous archive, not the
+  absence of backup-internal WAL. `pitr` plus `immediate` is a consistent-state
+  stop, not replay-to-end-of-archive. Lone-surrogate profile text fails as
+  `PostgresPhysicalRecoveryError`.
 - Read-only exact-head release acceptance that builds wheel and source distribution artifacts twice from clean Git archives, proves byte-identical SHA-256 identity, records bounded canonical evidence, and keeps publication and attestation authority separate.
 - Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
 - Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.
