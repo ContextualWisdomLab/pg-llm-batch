@@ -60,6 +60,8 @@ def _validate_item_and_effect(
     if not callable(apply_record):
         raise _redacted_validation_error("apply_record", "must be callable")
     static_call = inspect.getattr_static(apply_record, "__call__", None)
+    if isinstance(static_call, (staticmethod, classmethod)):
+        static_call = static_call.__func__
     if inspect.iscoroutinefunction(apply_record) or inspect.iscoroutinefunction(
         static_call
     ):
@@ -92,12 +94,14 @@ def apply_checkpointed_result_in_transaction(
     exact replay returns without re-running the effect, while a count regression
     is rejected before caller-owned business logic.  Fresh work invokes
     ``apply_record`` using the supplied cursor and advances the checkpoint only
-    after that callback completes synchronously and returns ``None``.  A raw
-    coroutine returned by an otherwise synchronous callable is closed before the
-    bounded failure is raised, so rejected deferred work cannot retain the
-    cursor or provider record until garbage collection.  The checkpoint store
-    must then confirm the exact requested checkpoint before success is reported.
-    The caller remains responsible for committing or rolling back the surrounding
+    after that callback completes synchronously and returns ``None``.  Statically
+    visible asynchronous callables, including static-method and class-method
+    descriptors, are rejected before checkpoint-store access.  A raw coroutine
+    returned by an otherwise synchronous callable is closed before the bounded
+    failure is raised, so rejected deferred work cannot retain the cursor or
+    provider record until garbage collection.  The checkpoint store must then
+    confirm the exact requested checkpoint before success is reported.  The
+    caller remains responsible for committing or rolling back the surrounding
     transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
