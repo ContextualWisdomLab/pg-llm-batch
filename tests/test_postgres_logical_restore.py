@@ -59,6 +59,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
             "/usr/lib/postgresql/18/bin/pg_restore",
             "--single-transaction",
             "--exit-on-error",
+            "--dbname=service=isolated_restore",
         ]
         assert observed["kwargs"]["stdin"] == descriptor
         assert observed["kwargs"]["stdout"] is subprocess.DEVNULL
@@ -66,13 +67,12 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
         assert observed["kwargs"]["timeout"] == 41
         assert observed["kwargs"]["check"] is False
         assert observed["kwargs"]["close_fds"] is True
-        assert observed["kwargs"]["env"]["PGSERVICE"] == "isolated_restore"
         assert observed["kwargs"]["env"]["PGCONNECT_TIMEOUT"] == "9"
         assert observed["kwargs"]["env"]["PGPASSWORD"] == "credential-value"
         assert "NVIDIA_NIM_API_KEY" not in observed["kwargs"]["env"]
         assert all(key.startswith("PG") for key in observed["kwargs"]["env"])
         assert str(path) not in " ".join(observed["argv"])
-        assert "isolated_restore" not in " ".join(observed["argv"])
+        assert "credential-value" not in " ".join(observed["argv"])
         assert os.lseek(descriptor, 0, os.SEEK_CUR) == size
     finally:
         os.close(descriptor)
