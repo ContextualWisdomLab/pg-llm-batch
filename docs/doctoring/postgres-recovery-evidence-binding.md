@@ -32,10 +32,22 @@ The binder copies:
 
 It rejects subclasses and attribute-shaped substitutes before reading digests.
 Public constructors and field-equal copies are not inspection provenance, even
-when their SHA-256 and size match a live inspect. It does not accept a parallel
-digest or size argument, so a caller cannot attach a hash from one file to the
-size of another. Paths, DSNs, credentials, `service_name`, tenant scope, and
-backup bytes never enter the receipt.
+when their SHA-256 and size match a live inspect. Each inspector records a weak
+process-local reference to the exact returned object together with an immutable
+snapshot of the SHA-256 and size it observed. Binding requires the same live
+object, the private inspection marker, exact built-in field types, and values
+that still equal that snapshot. Low-level mutation such as
+`object.__setattr__()` therefore invalidates provenance instead of changing
+receipt truth. When an evidence object is collected, its weak registry entry is
+removed, so repeated inspections do not leave stale object IDs behind.
+
+This process-local provenance is an in-process composition guard, not a
+cryptographic capability and not evidence that bytes remain unchanged later.
+Re-inspect current bytes at the later restore boundary when time has passed.
+The binder does not accept a parallel digest or size argument, so a caller
+cannot attach a hash from one file to the size of another. Paths, DSNs,
+credentials, `service_name`, tenant scope, and backup bytes never enter the
+receipt.
 
 `backup_method` is a reviewed profile label (`logical`, `physical`, or `pitr`).
 It is not tenant authorization and does not select a restore target.
