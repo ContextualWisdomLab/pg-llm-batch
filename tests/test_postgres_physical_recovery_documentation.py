@@ -22,6 +22,8 @@ def test_physical_pitr_docs_record_operator_and_citation_contract() -> None:
         assert "package_capability_claim" in document
         assert "point-in-time" in document or "point in time" in document
         assert "pg_basebackup" in document
+        assert "backup-internal wal" in document or "backup-internal" in document
+        assert "continuous" in document and "archive" in document
         assert "swanson" in document
         assert "nist" in document
         assert "postgresql" in document

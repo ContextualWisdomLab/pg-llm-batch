@@ -25,6 +25,11 @@ point-in-time restore.
 - `recovery_target_kind` is exactly `immediate`, `time`, `xid`, `name`, or `lsn`.
 - Point-in-time kinds require `backup_method="pitr"`.
 - `pitr` requires `wal_archive_required=True`.
+- `wal_archive_required=False` on a physical+immediate profile means no
+  continuous WAL archive. It does not waive backup-internal WAL required to
+  reach crash consistency (`pg_basebackup -X stream` or `-X fetch`).
+- `immediate` is end-of-backup consistency. Replay-to-end-of-archive is the
+  absence of a `recovery_target*` setting and is not a recorded kind.
 - `isolated_target_prepared` must be the exact boolean `True`.
 - Optional `rpo_seconds` and `rto_seconds` are deployer-selected objectives.
 - Emitted evidence always sets `package_capability_claim` to `False`.

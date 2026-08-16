@@ -53,7 +53,7 @@ def test_pitr_time_profile_is_deterministic_and_not_a_capability_claim() -> None
 
 
 def test_physical_immediate_profile_allows_crash_consistent_base_backup() -> None:
-    """A physical base backup may omit WAL when the target kind is immediate."""
+    """Physical+immediate may omit a continuous WAL archive, not backup-internal WAL."""
     profile = _profile(
         backup_method="physical",
         recovery_target_kind="immediate",
@@ -68,8 +68,23 @@ def test_physical_immediate_profile_allows_crash_consistent_base_backup() -> Non
     assert profile.as_dict()["package_capability_claim"] is False
 
 
+def test_pitr_immediate_profile_is_end_of_backup_not_end_of_archive() -> None:
+    """PITR plus immediate stops at backup consistency, not replay-to-end-of-archive."""
+    profile = _profile(
+        backup_method="pitr",
+        recovery_target_kind="immediate",
+        wal_archive_required=True,
+        rpo_seconds=None,
+        rto_seconds=None,
+    )
+
+    assert profile.backup_method == "pitr"
+    assert profile.recovery_target_kind == "immediate"
+    assert profile.as_dict()["package_capability_claim"] is False
+
+
 def test_physical_immediate_profile_may_archive_wal_without_claiming_pitr() -> None:
-    """Archiving WAL does not let a physical profile claim a time-flow target."""
+    """A continuous archive does not let a physical profile claim a time-flow target."""
     profile = _profile(
         backup_method="physical",
         recovery_target_kind="immediate",
@@ -170,6 +185,15 @@ def test_parse_rejects_non_string() -> None:
         match="^invalid PostgreSQL physical recovery profile JSON$",
     ):
         parse_postgres_physical_recovery_profile(b"{}")  # type: ignore[arg-type]
+
+
+def test_parse_rejects_surrogate_text() -> None:
+    """Lone surrogates stay inside the typed JSON error, matching the receipt parser."""
+    with pytest.raises(
+        PostgresPhysicalRecoveryError,
+        match="^invalid PostgreSQL physical recovery profile JSON$",
+    ):
+        parse_postgres_physical_recovery_profile("\ud800")
 
 
 def test_parse_rejects_empty_or_oversized_document() -> None:

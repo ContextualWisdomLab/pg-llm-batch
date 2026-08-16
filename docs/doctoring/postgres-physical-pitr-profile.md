@@ -11,10 +11,16 @@ not run `pg_basebackup`, `restore_command`, or `pg_restore`.
    `isolated_target_prepared=True` only after that target exists. The boolean
    is your assertion, not package proof of isolation.
 2. Choose `backup_method="physical"` only for a crash-consistent base backup
-   whose recovery target kind is `immediate`.
-3. Choose `backup_method="pitr"` only when a WAL archive is already being
-   written and you can restore to a time, transaction identifier, named restore
-   point, LSN, or immediate consistent state.
+   whose recovery target kind is `immediate`. `wal_archive_required=False`
+   means you are not claiming a continuous WAL archive. It does not mean the
+   base backup can omit backup-internal WAL. Keep the WAL generated during
+   the backup (`pg_basebackup -X stream` or `-X fetch`) with the backup.
+3. Choose `backup_method="pitr"` only when a continuous WAL archive is already
+   being written and you can restore to a time, transaction identifier, named
+   restore point, LSN, or immediate consistent state. `immediate` on a `pitr`
+   profile is end-of-backup consistency, not replay to the end of the archive.
+   Replay-to-end-of-archive is the absence of a `recovery_target*` setting, not
+   a kind this binder records.
 4. Record deployer-selected `rpo_seconds` and `rto_seconds` when your
    organization has those objectives. Read `package_capability_claim=false` as
    a hard rule: this package did not meet those numbers for you.
@@ -51,6 +57,7 @@ Confirm on the exact current head that:
 - point-in-time kinds on a `physical` method fail closed;
 - `isolated_target_prepared=False` fails closed;
 - exact-type and hostile-subclass metadata fail closed;
+- parse rejects lone UTF-8 surrogates with the typed profile JSON error;
 - parse rejects duplicate keys, unknown keys, and a true capability claim;
 - production statement and branch coverage and public docstrings remain 100%.
 

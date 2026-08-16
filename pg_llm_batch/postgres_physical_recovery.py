@@ -184,7 +184,12 @@ def parse_postgres_physical_recovery_profile(
         raise PostgresPhysicalRecoveryError(
             "invalid PostgreSQL physical recovery profile JSON"
         )
-    encoded_size = len(raw_profile.encode("utf-8"))
+    try:
+        encoded_size = len(raw_profile.encode("utf-8"))
+    except UnicodeError:
+        raise PostgresPhysicalRecoveryError(
+            "invalid PostgreSQL physical recovery profile JSON"
+        ) from None
     if encoded_size == 0 or encoded_size > _MAX_PROFILE_JSON_BYTES:
         raise PostgresPhysicalRecoveryError(
             "invalid PostgreSQL physical recovery profile JSON"
