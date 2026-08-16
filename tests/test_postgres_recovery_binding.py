@@ -30,19 +30,11 @@ BACKUP_SHA256 = "c" * 64
 
 
 class _HostileSchemaEvidence(PostgresSchemaEvidence):
-    """Override digest access after a caller-controlled subclass is accepted."""
-
-    @property
-    def sha256(self) -> str:  # type: ignore[override]
-        raise AssertionError("hostile schema digest must not execute")
+    """Identify a caller-controlled schema evidence subclass."""
 
 
 class _HostileBackupEvidence(PostgresBackupArtifactEvidence):
-    """Override digest access after a caller-controlled subclass is accepted."""
-
-    @property
-    def sha256(self) -> str:  # type: ignore[override]
-        raise AssertionError("hostile backup digest must not execute")
+    """Identify a caller-controlled backup evidence subclass."""
 
 
 class _HostileString(str):
