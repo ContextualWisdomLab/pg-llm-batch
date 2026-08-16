@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regression for asynchronous callable-object result effects."""
+"""Regressions for asynchronous result-effect boundaries."""
 
 from __future__ import annotations
 
@@ -8,26 +8,29 @@ from typing import Any
 import pytest
 
 from pg_llm_batch.exceptions import ValidationError
-from pg_llm_batch.result_application import apply_checkpointed_result_in_transaction
+from pg_llm_batch.result_application import (
+    ResultApplicationError,
+    apply_checkpointed_result_in_transaction,
+)
 from pg_llm_batch.result_streaming import (
     BatchResultCheckpoint,
     CheckpointedBatchResultRecord,
 )
 
 
-class _NoReadStore:
-    """Record whether validation allowed checkpoint-store access."""
+class _RecordingStore:
+    """Record whether the application seam reached checkpoint storage."""
 
     def __init__(self) -> None:
         self.events: list[str] = []
 
     def load_in_transaction(self, *_args: object) -> None:
-        """Record an unexpected load after an invalid effect boundary."""
+        """Record checkpoint loading and provide no durable predecessor."""
         self.events.append("load")
         return None
 
     def save_in_transaction(self, *_args: object, **_kwargs: object) -> None:
-        """Record an unexpected save after an invalid effect boundary."""
+        """Record an unexpected checkpoint save after an invalid effect."""
         self.events.append("save")
         return None
 
@@ -40,8 +43,24 @@ class _AsyncCallableEffect:
         return None
 
 
+class _CoroutineReturningEffect:
+    """Return a raw coroutine from an otherwise synchronous callable."""
+
+    def __init__(self) -> None:
+        self.returned_coroutine: Any = None
+
+    def __call__(self, _cursor: Any, _record: dict[str, Any]) -> Any:
+        """Create deferred work whose frame retains caller-owned arguments."""
+
+        async def _deferred_work() -> None:
+            return None
+
+        self.returned_coroutine = _deferred_work()
+        return self.returned_coroutine
+
+
 def _item() -> CheckpointedBatchResultRecord:
-    """Build one valid result item for the focused validation boundary."""
+    """Build one valid result item for the focused effect boundary."""
     checkpoint = BatchResultCheckpoint(
         schema_version=1,
         batch_id="batch-123",
@@ -63,7 +82,7 @@ def _item() -> CheckpointedBatchResultRecord:
 
 def test_async_callable_object_fails_before_checkpoint_store_access() -> None:
     """An async ``__call__`` cannot masquerade as a synchronous transaction effect."""
-    store = _NoReadStore()
+    store = _RecordingStore()
 
     with pytest.raises(ValidationError) as caught:
         apply_checkpointed_result_in_transaction(
@@ -77,3 +96,22 @@ def test_async_callable_object_fails_before_checkpoint_store_access() -> None:
     assert caught.value.details["field"] == "apply_record"
     assert caught.value.details["value"] == "<redacted>"
     assert store.events == []
+
+
+def test_returned_coroutine_is_closed_before_bounded_failure() -> None:
+    """Rejected deferred work must not retain cursor or result data until GC."""
+    store = _RecordingStore()
+    effect = _CoroutineReturningEffect()
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(),
+            store,
+            "result-writer",
+            _item(),
+            effect,
+        )
+
+    assert caught.value.details == {"phase": "record_effect"}
+    assert effect.returned_coroutine.cr_frame is None
+    assert store.events == ["load"]
