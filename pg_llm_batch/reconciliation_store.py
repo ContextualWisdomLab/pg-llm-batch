@@ -12,11 +12,22 @@ from .db import (
     validate_remote_resource_id,
     validate_tenant_scope,
 )
-from .exceptions import ValidationError
+from .exceptions import PgLlmBatchError, ValidationError
 from .reconciliation import (
     MAX_RECONCILIATION_CANDIDATES,
     ReconciliationCandidate,
 )
+
+
+class ReconciliationStoreError(PgLlmBatchError):
+    """Report a bounded redacted durable reconciliation store failure."""
+
+    def __init__(self) -> None:
+        """Initialize the stable content-free store failure category."""
+        super().__init__(
+            message="Reconciliation candidate store operation failed",
+            error_code="RECONCILIATION_STORE_ERROR",
+        )
 
 
 def _validate_candidate_budget(max_candidates: Any) -> int:
@@ -130,20 +141,32 @@ def load_reconciliation_candidates_in_transaction(
     Raises:
         ValidationError: If tenant authority, query budget, or persisted identity
             evidence is invalid.
+        ReconciliationStoreError: If tenant binding, candidate querying, or row
+            retrieval fails at the database boundary.
     """
     budget = _validate_candidate_budget(max_candidates)
     normalized_tenant = _validate_candidate_tenant(tenant_scope)
-    _set_transaction_tenant_scope(cursor, normalized_tenant)
-    cursor.execute(
-        """
-        SELECT endpoint_alias, remote_batch_id
-        FROM llm_remote_batch_jobs
-        WHERE tenant_scope = %s
-        ORDER BY last_observed_at ASC,
-                 endpoint_alias ASC,
-                 remote_batch_id ASC
-        LIMIT %s
-        """,
-        (normalized_tenant, budget),
-    )
-    return tuple(_candidate_from_persisted_row(row) for row in cursor.fetchall())
+    try:
+        _set_transaction_tenant_scope(cursor, normalized_tenant)
+        cursor.execute(
+            """
+            SELECT endpoint_alias, remote_batch_id
+            FROM llm_remote_batch_jobs
+            WHERE tenant_scope = %s
+            ORDER BY last_observed_at ASC,
+                     endpoint_alias ASC,
+                     remote_batch_id ASC
+            LIMIT %s
+            """,
+            (normalized_tenant, budget),
+        )
+        rows = cursor.fetchall()
+    except Exception:
+        raise ReconciliationStoreError() from None
+
+    try:
+        return tuple(_candidate_from_persisted_row(row) for row in rows)
+    except ValidationError:
+        raise
+    except Exception:
+        raise ReconciliationStoreError() from None
