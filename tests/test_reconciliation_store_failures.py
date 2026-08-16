@@ -70,7 +70,7 @@ def test_store_operational_failures_are_bounded_and_redacted(fail_on: str) -> No
 
 
 def test_store_does_not_swallow_process_control_baseexceptions() -> None:
-    """Process-control exceptions must remain outside the operational wrapper."""
+    """Process-control exceptions must remain outside both store error wrappers."""
 
     class InterruptingCursor:
         def execute(self, _sql: str, _params: tuple[Any, ...]) -> None:
@@ -79,6 +79,24 @@ def test_store_does_not_swallow_process_control_baseexceptions() -> None:
     with pytest.raises(KeyboardInterrupt):
         load_reconciliation_candidates_in_transaction(
             InterruptingCursor(),
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    class _InterruptingRows:
+        def __iter__(self):
+            raise KeyboardInterrupt()
+
+    class _InterruptingRowCursor:
+        def execute(self, _sql: str, _params: tuple[Any, ...]) -> None:
+            return None
+
+        def fetchall(self) -> Any:
+            return _InterruptingRows()
+
+    with pytest.raises(KeyboardInterrupt):
+        load_reconciliation_candidates_in_transaction(
+            _InterruptingRowCursor(),
             "tenant-a",
             max_candidates=1,
         )
