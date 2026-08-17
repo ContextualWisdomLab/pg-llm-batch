@@ -36,6 +36,37 @@ def _require_incomplete_catalog(connection: object) -> None:
     raise SystemExit("same-name decoy catalog object was accepted")
 
 
+def _restore_tenant_policy(
+    cursor: object,
+    *,
+    table_name: str,
+    policy_name: str,
+) -> None:
+    """Restore the exact package tenant predicate after a live decoy probe."""
+    cursor.execute(f"DROP POLICY IF EXISTS {policy_name} ON {table_name}")
+    cursor.execute(
+        f"CREATE POLICY {policy_name} ON {table_name} TO PUBLIC "
+        "USING (tenant_scope = "
+        "current_setting('pg_llm_batch.tenant_scope', true)) "
+        "WITH CHECK (tenant_scope = "
+        "current_setting('pg_llm_batch.tenant_scope', true))"
+    )
+
+
+def _install_permissive_decoy(
+    cursor: object,
+    *,
+    table_name: str,
+    policy_name: str,
+) -> None:
+    """Replace one package policy with a same-name tenant-isolation bypass."""
+    cursor.execute(f"DROP POLICY IF EXISTS {policy_name} ON {table_name}")
+    cursor.execute(
+        f"CREATE POLICY {policy_name} ON {table_name} TO PUBLIC "
+        "USING (true) WITH CHECK (true)"
+    )
+
+
 def main() -> None:
     """Prove packaged indexes and tenant policies while rejecting same-name decoys."""
     with psycopg.connect(DSN) as connection:
@@ -88,28 +119,31 @@ def main() -> None:
             )
         _require_complete_catalog(connection)
         with connection.cursor() as cursor:
-            cursor.execute(
-                "DROP POLICY IF EXISTS plc_llm_remote_batch_jobs_tenant_scope "
-                "ON llm_remote_batch_jobs"
-            )
-            cursor.execute(
-                "CREATE POLICY plc_llm_remote_batch_jobs_tenant_scope "
-                "ON llm_remote_batch_jobs TO PUBLIC "
-                "USING (true) WITH CHECK (true)"
+            _install_permissive_decoy(
+                cursor,
+                table_name="llm_remote_batch_jobs",
+                policy_name="plc_llm_remote_batch_jobs_tenant_scope",
             )
         _require_incomplete_catalog(connection)
         with connection.cursor() as cursor:
-            cursor.execute(
-                "DROP POLICY IF EXISTS plc_llm_remote_batch_jobs_tenant_scope "
-                "ON llm_remote_batch_jobs"
+            _restore_tenant_policy(
+                cursor,
+                table_name="llm_remote_batch_jobs",
+                policy_name="plc_llm_remote_batch_jobs_tenant_scope",
             )
-            cursor.execute(
-                "CREATE POLICY plc_llm_remote_batch_jobs_tenant_scope "
-                "ON llm_remote_batch_jobs TO PUBLIC "
-                "USING (tenant_scope = "
-                "current_setting('pg_llm_batch.tenant_scope', true)) "
-                "WITH CHECK (tenant_scope = "
-                "current_setting('pg_llm_batch.tenant_scope', true))"
+        _require_complete_catalog(connection)
+        with connection.cursor() as cursor:
+            _install_permissive_decoy(
+                cursor,
+                table_name="llm_result_stream_checkpoints",
+                policy_name="plc_llm_result_stream_checkpoints_tenant_scope",
+            )
+        _require_incomplete_catalog(connection)
+        with connection.cursor() as cursor:
+            _restore_tenant_policy(
+                cursor,
+                table_name="llm_result_stream_checkpoints",
+                policy_name="plc_llm_result_stream_checkpoints_tenant_scope",
             )
         _require_complete_catalog(connection)
 
