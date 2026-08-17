@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from concurrent.futures import Future as ConcurrentFuture
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -108,6 +110,44 @@ class _ConcurrentFutureReturningEffect:
     def __call__(self, _cursor: Any, _record: dict[str, Any]) -> ConcurrentFuture[None]:
         """Return pending concurrent work that must receive cancellation."""
         return self.returned_future
+
+
+class _ExecutableCursor:
+    """Record whether deferred work reached the caller-owned cursor."""
+
+    def __init__(self) -> None:
+        self.executed_sql: list[str] = []
+
+    def execute(self, sql: str) -> None:
+        """Record one SQL operation performed through the raw cursor."""
+        self.executed_sql.append(sql)
+
+
+class _RunningConcurrentFutureReturningEffect:
+    """Keep one future running until the application seam has rejected it."""
+
+    def __init__(self) -> None:
+        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.returned_future: ConcurrentFuture[None] | None = None
+
+    def __call__(self, cursor: Any, _record: dict[str, Any]) -> ConcurrentFuture[None]:
+        """Return already-running work that attempts cursor use after rejection."""
+
+        def _deferred_work() -> None:
+            self.started.set()
+            self.release.wait(timeout=2)
+            cursor.execute("SELECT 1")
+
+        self.returned_future = self.executor.submit(_deferred_work)
+        assert self.started.wait(timeout=1)
+        return self.returned_future
+
+    def close(self) -> None:
+        """Release and join the worker even when the regression assertion fails."""
+        self.release.set()
+        self.executor.shutdown(wait=True)
 
 
 def _item() -> CheckpointedBatchResultRecord:
@@ -216,3 +256,30 @@ def test_returned_concurrent_future_receives_cancellation_before_failure() -> No
     assert caught.value.details == {"phase": "record_effect"}
     assert effect.returned_future.cancelled()
     assert store.events == ["load"]
+
+
+def test_running_future_cannot_reuse_transaction_cursor_after_rejection() -> None:
+    """Already-running deferred work must lose package-supplied cursor authority."""
+    store = _RecordingStore()
+    cursor = _ExecutableCursor()
+    effect = _RunningConcurrentFutureReturningEffect()
+    try:
+        with pytest.raises(ResultApplicationError) as caught:
+            apply_checkpointed_result_in_transaction(
+                cursor,
+                store,
+                "result-writer",
+                _item(),
+                effect,
+            )
+
+        assert caught.value.details == {"phase": "record_effect"}
+        assert effect.returned_future is not None
+        effect.release.set()
+        with pytest.raises(ResultApplicationError) as worker_failure:
+            effect.returned_future.result(timeout=2)
+        assert worker_failure.value.details == {"phase": "record_effect"}
+        assert cursor.executed_sql == []
+        assert store.events == ["load"]
+    finally:
+        effect.close()
