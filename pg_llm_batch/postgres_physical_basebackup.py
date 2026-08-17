@@ -62,7 +62,7 @@ def _output_is_owner_only(mode: int) -> bool:
 
 
 def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
-    """Require a caller-owned descriptor for one private empty regular file."""
+    """Require a process-owned descriptor for one private empty regular file."""
     try:
         status = os.fstat(output_descriptor)
         if not stat.S_ISREG(status.st_mode) or status.st_size != 0:
@@ -70,9 +70,10 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
                 "PostgreSQL physical base-backup output must be a private empty regular file"
             )
         offset = os.lseek(output_descriptor, 0, os.SEEK_CUR)
+        effective_user_id = os.geteuid()
     except PostgresPhysicalBaseBackupError:
         raise
-    except (OSError, ValueError):
+    except (AttributeError, OSError, ValueError):
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup output could not be inspected"
         ) from None
@@ -80,6 +81,10 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
     if offset != 0:
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup output must start at offset zero"
+        )
+    if status.st_uid != effective_user_id:
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base-backup output must be owned by the effective process user"
         )
     if not _output_is_owner_only(status.st_mode):
         raise PostgresPhysicalBaseBackupError(
