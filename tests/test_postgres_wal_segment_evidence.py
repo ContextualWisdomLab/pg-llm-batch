@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -22,19 +23,25 @@ _MIB = 1024 * 1024
 _SEGMENT_NAME = "000000010000000000000000"
 
 
-def _inspected_mebibyte(tmp_path: object) -> PostgresBackupArtifactEvidence:
-    """Return provenance-bearing evidence for one realistic 1 MiB regular file."""
-    artifact_path = tmp_path / "000000010000000000000000"  # type: ignore[operator]
-    artifact_path.write_bytes(b"W" * _MIB)
+def _inspected_artifact(
+    tmp_path: Path,
+    *,
+    size_bytes: int = _MIB,
+) -> PostgresBackupArtifactEvidence:
+    """Return provenance-bearing evidence for one realistic regular WAL-sized file."""
+    artifact_path = tmp_path / f"wal-{size_bytes}"
+    artifact_path.write_bytes(b"W" * size_bytes)
     return inspect_postgres_backup_artifact(
         str(artifact_path),
-        maximum_size_bytes=_MIB,
+        maximum_size_bytes=size_bytes,
     )
 
 
-def test_binding_requires_real_inspected_bytes_and_reports_nonguarantees(tmp_path: object) -> None:
+def test_binding_requires_real_inspected_bytes_and_reports_nonguarantees(
+    tmp_path: Path,
+) -> None:
     """A canonical exact-size WAL segment can be bound to inspected byte evidence."""
-    artifact = _inspected_mebibyte(tmp_path)
+    artifact = _inspected_artifact(tmp_path)
 
     binding = bind_postgres_wal_segment_evidence(
         segment_name=_SEGMENT_NAME,
@@ -66,11 +73,11 @@ def test_binding_requires_real_inspected_bytes_and_reports_nonguarantees(tmp_pat
     ],
 )
 def test_noncanonical_or_zero_timeline_segment_names_fail_closed(
-    tmp_path: object,
+    tmp_path: Path,
     segment_name: str,
 ) -> None:
     """Only complete canonical uppercase WAL names on a nonzero timeline bind."""
-    artifact = _inspected_mebibyte(tmp_path)
+    artifact = _inspected_artifact(tmp_path)
     with pytest.raises(
         PostgresWalSegmentEvidenceError,
         match="^invalid PostgreSQL WAL segment identity$",
@@ -82,14 +89,16 @@ def test_noncanonical_or_zero_timeline_segment_names_fail_closed(
         )
 
 
-def test_hostile_segment_name_subclass_is_rejected_without_rendering(tmp_path: object) -> None:
+def test_hostile_segment_name_subclass_is_rejected_without_rendering(
+    tmp_path: Path,
+) -> None:
     """Caller-defined string behavior cannot run while validating segment identity."""
 
     class HostileString(str):
         def __str__(self) -> str:
             raise AssertionError("must not render hostile WAL identity")
 
-    artifact = _inspected_mebibyte(tmp_path)
+    artifact = _inspected_artifact(tmp_path)
     with pytest.raises(
         PostgresWalSegmentEvidenceError,
         match="^invalid PostgreSQL WAL segment identity$",
@@ -106,11 +115,11 @@ def test_hostile_segment_name_subclass_is_rejected_without_rendering(tmp_path: o
     [True, 0, 3 * _MIB, _MIB + 1, 2048 * _MIB],
 )
 def test_invalid_wal_segment_sizes_fail_before_artifact_authority(
-    tmp_path: object,
+    tmp_path: Path,
     wal_segment_size_bytes: object,
 ) -> None:
     """Only PostgreSQL's finite power-of-two MiB segment sizes are accepted."""
-    artifact = _inspected_mebibyte(tmp_path)
+    artifact = _inspected_artifact(tmp_path)
     with pytest.raises(
         PostgresWalSegmentEvidenceError,
         match="^invalid PostgreSQL WAL segment size$",
@@ -139,9 +148,9 @@ def test_publicly_constructed_backup_evidence_is_not_inspection_proof() -> None:
         )
 
 
-def test_segment_size_must_match_inspected_artifact_exactly(tmp_path: object) -> None:
+def test_segment_size_must_match_inspected_artifact_exactly(tmp_path: Path) -> None:
     """A complete archived WAL segment cannot be shorter than its reviewed size."""
-    artifact = _inspected_mebibyte(tmp_path)
+    artifact = _inspected_artifact(tmp_path)
     with pytest.raises(
         PostgresWalSegmentEvidenceError,
         match="^PostgreSQL WAL segment artifact size does not match configured segment size$",
@@ -153,9 +162,11 @@ def test_segment_size_must_match_inspected_artifact_exactly(tmp_path: object) ->
         )
 
 
-def test_binding_validator_rejects_wrong_type_and_replaced_fields(tmp_path: object) -> None:
-    """Downstream composition can revalidate every security-relevant binding field."""
-    artifact = _inspected_mebibyte(tmp_path)
+def test_binding_validator_rejects_wrong_type_and_replaced_fields(
+    tmp_path: Path,
+) -> None:
+    """Downstream composition revalidates every security-relevant scalar field."""
+    artifact = _inspected_artifact(tmp_path)
     binding = bind_postgres_wal_segment_evidence(
         segment_name=_SEGMENT_NAME,
         wal_segment_size_bytes=_MIB,
@@ -164,19 +175,44 @@ def test_binding_validator_rejects_wrong_type_and_replaced_fields(tmp_path: obje
 
     assert postgres_wal_segment_binding_is_valid(object()) is False
     assert postgres_wal_segment_binding_is_valid(
-        replace(binding, sha256="F" * 64)
-    ) is False
-    assert postgres_wal_segment_binding_is_valid(
         replace(binding, segment_name="000000000000000000000000")
     ) is False
     assert postgres_wal_segment_binding_is_valid(
         replace(binding, wal_segment_size_bytes=3 * _MIB)
     ) is False
+    assert postgres_wal_segment_binding_is_valid(
+        replace(binding, sha256=b"not-a-string")  # type: ignore[arg-type]
+    ) is False
+    assert postgres_wal_segment_binding_is_valid(
+        replace(binding, size_bytes=True)
+    ) is False
+    assert postgres_wal_segment_binding_is_valid(
+        replace(binding, size_bytes=_MIB - 1)
+    ) is False
+    assert postgres_wal_segment_binding_is_valid(
+        replace(binding, sha256="F" * 64)
+    ) is False
 
 
-def test_binding_validator_rejects_lost_underlying_inspection_provenance(tmp_path: object) -> None:
+def test_binding_validator_rejects_artifact_size_disagreement(tmp_path: Path) -> None:
+    """Copied scalar fields cannot disagree with still-valid inspected byte evidence."""
+    artifact = _inspected_artifact(tmp_path, size_bytes=2 * _MIB)
+    binding = PostgresWalSegmentBinding(
+        segment_name=_SEGMENT_NAME,
+        wal_segment_size_bytes=_MIB,
+        sha256=artifact.sha256,
+        size_bytes=_MIB,
+        artifact_evidence=artifact,
+    )
+
+    assert postgres_wal_segment_binding_is_valid(binding) is False
+
+
+def test_binding_validator_rejects_lost_underlying_inspection_provenance(
+    tmp_path: Path,
+) -> None:
     """Mutating the protected artifact snapshot invalidates dependent WAL evidence."""
-    artifact = _inspected_mebibyte(tmp_path)
+    artifact = _inspected_artifact(tmp_path)
     binding = bind_postgres_wal_segment_evidence(
         segment_name=_SEGMENT_NAME,
         wal_segment_size_bytes=_MIB,
