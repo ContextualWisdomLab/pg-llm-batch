@@ -17,7 +17,6 @@ _TIME_RE = re.compile(
     r"(?:\.[0-9]{1,6})?[+-][0-9]{2}:[0-9]{2}\Z"
 )
 _POINT_IN_TIME_KINDS = frozenset({"time", "xid", "lsn"})
-_VALUE_KINDS = _POINT_IN_TIME_KINDS | frozenset({"name"})
 _TIMELINE_NAMES = frozenset({"latest", "current"})
 _MAX_TIMELINE_ID = (1 << 32) - 1
 _MAX_XID = (1 << 32) - 1
@@ -50,11 +49,8 @@ def _normalize_time(value: object) -> str:
         raise PostgresPitrTargetError("invalid PostgreSQL PITR recovery target")
     try:
         parsed = datetime.fromisoformat(value)
-        offset = parsed.utcoffset()
     except (ValueError, OverflowError):
         raise PostgresPitrTargetError("invalid PostgreSQL PITR recovery target") from None
-    if offset is None:
-        raise PostgresPitrTargetError("invalid PostgreSQL PITR recovery target")
     return parsed.astimezone(timezone.utc).isoformat(timespec="microseconds")
 
 
@@ -136,10 +132,10 @@ def _canonical_target_is_valid(
             return False
     try:
         normalized_value = _normalize_target_value(target_kind, target_value)
-        normalized_inclusive = _normalize_inclusive(target_kind, inclusive)
+        _normalize_inclusive(target_kind, inclusive)
     except PostgresPitrTargetError:
         return False
-    return normalized_value == target_value and normalized_inclusive is inclusive
+    return normalized_value == target_value
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,11 +156,15 @@ class PostgresPitrRecoveryTarget:
 
     def __post_init__(self) -> None:
         """Reject direct construction that bypasses the canonical binding contract."""
-        if self.recovery_target_action != "pause" or not _canonical_target_is_valid(
-            target_kind=self.target_kind,
-            target_value=self.target_value,
-            inclusive=self.inclusive,
-            timeline=self.timeline,
+        if (
+            type(self.recovery_target_action) is not str
+            or self.recovery_target_action != "pause"
+            or not _canonical_target_is_valid(
+                target_kind=self.target_kind,
+                target_value=self.target_value,
+                inclusive=self.inclusive,
+                timeline=self.timeline,
+            )
         ):
             raise PostgresPitrTargetError("invalid PostgreSQL PITR recovery target")
 
