@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regression contract for physical backup output ownership."""
+"""Regression contracts for physical backup output ownership."""
 
 from __future__ import annotations
 
@@ -40,5 +40,54 @@ def test_output_must_be_owned_by_effective_process_user(
                 descriptor,
                 pg_basebackup_executable="/usr/bin/pg_basebackup",
             )
+    finally:
+        os.close(descriptor)
+
+
+def test_output_owner_must_not_change_during_backup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ownership drift on the same inode invalidates otherwise successful backup bytes."""
+    path = tmp_path / "ownership-drift-basebackup.tar"
+    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
+    real_fstat = os.fstat
+    inspected_status = real_fstat(descriptor)
+    fstat_calls = 0
+
+    def drifting_fstat(fd: int) -> os.stat_result:
+        nonlocal fstat_calls
+        status = real_fstat(fd)
+        if fd != descriptor:
+            return status
+        fstat_calls += 1
+        if fstat_calls == 1:
+            return status
+        fields = list(status)
+        fields[4] = inspected_status.st_uid + 1
+        return os.stat_result(fields)
+
+    def successful_run(
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        output_descriptor = kwargs["stdout"]
+        assert type(output_descriptor) is int
+        os.write(output_descriptor, b"sensitive-physical-backup")
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(os, "fstat", drifting_fstat)
+    monkeypatch.setattr(subprocess, "run", successful_run)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBaseBackupError,
+            match="became unsafe",
+        ):
+            create_postgres_physical_basebackup(
+                "physical_backup_source",
+                descriptor,
+                pg_basebackup_executable="/usr/bin/pg_basebackup",
+            )
+        assert path.read_bytes() == b""
     finally:
         os.close(descriptor)
