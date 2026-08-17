@@ -30,7 +30,73 @@ _ALLOWED_NAMES = frozenset(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_T
 _RELATION_KINDS = frozenset({"r", "i"})
 _MAX_CATALOG_ROWS = 16
 _CATALOG_SQL = """
-SELECT c.relname, c.relkind, c.relrowsecurity, c.relforcerowsecurity
+SELECT
+    c.relname,
+    c.relkind,
+    c.relrowsecurity,
+    CASE
+        WHEN c.relkind = 'r'
+             AND c.relname IN (
+                 'llm_remote_batch_jobs',
+                 'llm_result_stream_checkpoints'
+             )
+        THEN c.relforcerowsecurity AND EXISTS (
+            SELECT 1
+            FROM pg_catalog.pg_policy AS policy_row
+            WHERE policy_row.polrelid = c.oid
+              AND policy_row.polname::text = CASE c.relname
+                  WHEN 'llm_remote_batch_jobs'
+                      THEN 'plc_llm_remote_batch_jobs_tenant_scope'
+                  WHEN 'llm_result_stream_checkpoints'
+                      THEN 'plc_llm_result_stream_checkpoints_tenant_scope'
+                  ELSE NULL
+              END
+              AND policy_row.polcmd = '*'
+              AND policy_row.polpermissive IS TRUE
+              AND policy_row.polroles = ARRAY[0::oid]
+              AND replace(
+                  regexp_replace(
+                      pg_catalog.pg_get_expr(
+                          policy_row.polqual,
+                          policy_row.polrelid,
+                          FALSE
+                      ),
+                      '[[:space:]]+',
+                      '',
+                      'g'
+                  ),
+                  '''pg_llm_batch.tenant_scope''::text',
+                  '''pg_llm_batch.tenant_scope'''
+              ) IN (
+                  '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
+                  'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+              )
+              AND replace(
+                  regexp_replace(
+                      pg_catalog.pg_get_expr(
+                          policy_row.polwithcheck,
+                          policy_row.polrelid,
+                          FALSE
+                      ),
+                      '[[:space:]]+',
+                      '',
+                      'g'
+                  ),
+                  '''pg_llm_batch.tenant_scope''::text',
+                  '''pg_llm_batch.tenant_scope'''
+              ) IN (
+                  '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
+                  'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+              )
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.pg_policy AS extra_policy
+                  WHERE extra_policy.polrelid = c.oid
+                    AND extra_policy.oid <> policy_row.oid
+              )
+        )
+        ELSE c.relforcerowsecurity
+    END AS authenticated_force_row_security
 FROM pg_catalog.pg_class AS c
 INNER JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
 LEFT JOIN pg_catalog.pg_index AS idx ON idx.indexrelid = c.oid
@@ -39,70 +105,7 @@ WHERE n.nspname = current_schema()
   AND c.relkind = ANY(%s)
   AND c.relname = ANY(%s)
   AND (
-      (
-          c.relkind = 'r'
-          AND (
-              c.relname NOT IN (
-                  'llm_remote_batch_jobs',
-                  'llm_result_stream_checkpoints'
-              )
-              OR EXISTS (
-                  SELECT 1
-                  FROM pg_catalog.pg_policy AS policy_row
-                  WHERE policy_row.polrelid = c.oid
-                    AND policy_row.polname::text = CASE c.relname
-                        WHEN 'llm_remote_batch_jobs'
-                            THEN 'plc_llm_remote_batch_jobs_tenant_scope'
-                        WHEN 'llm_result_stream_checkpoints'
-                            THEN 'plc_llm_result_stream_checkpoints_tenant_scope'
-                        ELSE NULL
-                    END
-                    AND policy_row.polcmd = '*'
-                    AND policy_row.polpermissive IS TRUE
-                    AND policy_row.polroles = ARRAY[0::oid]
-                    AND replace(
-                        regexp_replace(
-                            pg_catalog.pg_get_expr(
-                                policy_row.polqual,
-                                policy_row.polrelid,
-                                FALSE
-                            ),
-                            '[[:space:]]+',
-                            '',
-                            'g'
-                        ),
-                        '''pg_llm_batch.tenant_scope''::text',
-                        '''pg_llm_batch.tenant_scope'''
-                    ) IN (
-                        '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
-                        'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
-                    )
-                    AND replace(
-                        regexp_replace(
-                            pg_catalog.pg_get_expr(
-                                policy_row.polwithcheck,
-                                policy_row.polrelid,
-                                FALSE
-                            ),
-                            '[[:space:]]+',
-                            '',
-                            'g'
-                        ),
-                        '''pg_llm_batch.tenant_scope''::text',
-                        '''pg_llm_batch.tenant_scope'''
-                    ) IN (
-                        '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
-                        'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
-                    )
-                    AND NOT EXISTS (
-                        SELECT 1
-                        FROM pg_catalog.pg_policy AS extra_policy
-                        WHERE extra_policy.polrelid = c.oid
-                          AND extra_policy.oid <> policy_row.oid
-                    )
-              )
-          )
-      )
+      c.relkind = 'r'
       OR (
           c.relkind = 'i'
           AND indexed_table.relname = 'llm_remote_batch_jobs'
@@ -260,9 +263,11 @@ def inspect_postgres_restore_catalog(
     permissive ``PUBLIC`` all-command policy whose ``USING`` and ``WITH CHECK``
     predicates bind ``tenant_scope`` to the transaction-local package setting.
     A present checkpoint store must carry the same authenticated policy shape
-    and forced RLS. Required lifecycle indexes must belong to that lifecycle
-    table and match the packaged key order, uniqueness, validity, readiness,
-    btree access method, default key options, and plain-index shape.
+    and forced RLS. Invalid policy state is represented as failed forced-RLS
+    evidence rather than being mistaken for an absent optional checkpoint table.
+    Required lifecycle indexes must belong to that lifecycle table and match the
+    packaged key order, uniqueness, validity, readiness, btree access method,
+    default key options, and plain-index shape.
     """
     relation_names = list(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,))
     try:
