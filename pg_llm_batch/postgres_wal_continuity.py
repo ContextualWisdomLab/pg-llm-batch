@@ -116,7 +116,9 @@ def assess_postgres_wal_continuity(
     ``segment_names`` must be an exact tuple of complete canonical 24-hex WAL
     filenames in replay order. PostgreSQL permits power-of-two WAL segment sizes
     from 1 MiB through 1 GiB; the caller must provide the source cluster's exact
-    size. At most 4096 segments are assessed in one call.
+    size. PostgreSQL deliberately does not use the first segment containing LSN
+    ``0/0``, so a continuity interval may not start there. At most 4096 segments
+    are assessed in one call.
 
     This seam deliberately does not read files, infer timeline history, validate
     WAL record bytes, contact PostgreSQL, or run restore/replay commands.
@@ -162,6 +164,10 @@ def assess_postgres_wal_continuity(
     if expected_count > _MAX_WAL_SEGMENTS:
         raise PostgresWalContinuityError(
             "PostgreSQL WAL continuity span exceeds bounded segment budget"
+        )
+    if first_segment_number == 0:
+        raise PostgresWalContinuityError(
+            "invalid PostgreSQL WAL continuity request"
         )
 
     expected_names = tuple(
