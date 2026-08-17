@@ -196,6 +196,31 @@ def test_archive_directory_must_be_private_process_owned_directory(
         os.close(descriptor)
 
 
+def test_archive_directory_must_start_empty_before_bounded_receive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pre-existing entries cannot choose pg_receivewal's local starting position."""
+    path, descriptor = _open_private_directory(tmp_path, "prepopulated")
+    (path / "000000010000000000000001").write_bytes(b"stale-wal-like-entry")
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("pre-existing archive state must fail before pg_receivewal")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    try:
+        with pytest.raises(PostgresWalArchiveError, match="must start empty"):
+            receive_postgres_wal_archive(
+                "physical_replication_source",
+                "pg_llm_batch_archive",
+                "16/B374D848",
+                descriptor,
+                pg_receivewal_executable="/usr/bin/pg_receivewal",
+            )
+    finally:
+        os.close(descriptor)
+
+
 def test_directory_inspection_failure_is_content_free(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
