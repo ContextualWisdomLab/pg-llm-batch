@@ -82,7 +82,7 @@ class ValidationError(PgLlmBatchError):
         exception cannot become an unbounded or control-character-bearing log sink.
         """
         if safe_value is not None:
-            if not isinstance(safe_value, str):
+            if type(safe_value) is not str:
                 raise TypeError("safe_value must be a string or None")
             if (
                 not safe_value
