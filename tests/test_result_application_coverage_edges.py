@@ -179,3 +179,57 @@ def test_exact_mismatched_save_confirmation_is_rejected() -> None:
     assert caught.value.__context__ is None
     assert store.events == ["load", "save"]
     assert effects == ["effect"]
+
+
+def test_loaded_checkpoint_integer_subclass_is_rejected_before_effect() -> None:
+    """Loaded exact checkpoints must also enforce exact primitive evidence."""
+    candidate = _checkpoint(record_count=2, digest="b" * 64)
+    previous = _checkpoint(
+        schema_version=_IntegerSubclass(1),
+        record_count=1,
+        digest="a" * 64,
+    )
+    store = _Store(previous=previous)
+    effects: list[str] = []
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(),
+            store,
+            "result-writer",
+            _item(candidate),
+            lambda *_args: effects.append("effect"),
+        )
+
+    assert caught.value.details == {"phase": "checkpoint_load"}
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert store.events == ["load"]
+    assert effects == []
+
+
+def test_saved_checkpoint_integer_subclass_is_rejected_after_effect() -> None:
+    """Save confirmation must enforce exact primitive evidence before success."""
+    candidate = _checkpoint(record_count=1, digest="a" * 64)
+    saved = _checkpoint(
+        schema_version=_IntegerSubclass(1),
+        record_count=1,
+        digest="a" * 64,
+    )
+    store = _Store(saved=saved)
+    effects: list[str] = []
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(),
+            store,
+            "result-writer",
+            _item(candidate),
+            lambda *_args: effects.append("effect"),
+        )
+
+    assert caught.value.details == {"phase": "checkpoint_save"}
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert store.events == ["load", "save"]
+    assert effects == ["effect"]
