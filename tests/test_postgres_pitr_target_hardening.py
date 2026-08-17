@@ -44,6 +44,7 @@ def test_direct_target_rejects_hostile_action_without_comparison() -> None:
         ("immediate", None, None, "4294967296"),
         ("unknown", None, None, "latest"),
         ("lsn", "16/b374d848", True, "latest"),
+        ("time", object(), True, "latest"),
         ("time", "2026-02-31T01:02:03+09:00", True, "latest"),
         ("time", "\ud800", True, "latest"),
         ("name", "\ud800", None, "latest"),
