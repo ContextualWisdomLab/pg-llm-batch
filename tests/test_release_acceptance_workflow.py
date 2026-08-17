@@ -80,3 +80,37 @@ def test_release_acceptance_workflow_runs_for_every_packaged_input() -> None:
     )
     for path in required_paths:
         assert f"- {path}" in text
+
+
+def test_release_acceptance_has_protected_main_manual_entrypoint() -> None:
+    """Manual acceptance must bind exactly one live protected-main source commit."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    required_fragments = (
+        "workflow_dispatch:",
+        "resolve-source:",
+        "github.event_name",
+        "refs/heads/main",
+        "/git/ref/heads/main",
+        "GITHUB_SHA",
+        "source_commit=",
+        "needs: resolve-source",
+        "needs.resolve-source.outputs.source_commit",
+    )
+    for fragment in required_fragments:
+        assert fragment in text
+
+
+def test_release_acceptance_manual_preflight_is_fail_closed_and_read_only() -> None:
+    """Stale/non-main manual source must fail before reproducibility work begins."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "Authorization: Bearer ${GH_TOKEN}" in text
+    assert "invalid release-acceptance source commit" in text
+    assert "manual release acceptance requires refs/heads/main" in text
+    assert "protected main moved before release acceptance" in text
+    assert "needs: resolve-source" in text
+    assert "permissions:\n  contents: read\n" in text
+    assert "contents: write" not in text
+    assert "packages: write" not in text
+    assert "id-token: write" not in text
