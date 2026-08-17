@@ -125,7 +125,10 @@ def test_catalog_sql_matches_packaged_lifecycle_index_shapes() -> None:
     sql = postgres_restore_acceptance._CATALOG_SQL
 
     assert "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)" in schema
-    assert "CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_tenant_status_observed" in schema
+    assert (
+        "CREATE INDEX IF NOT EXISTS "
+        "idx_llm_remote_batch_jobs_tenant_status_observed"
+    ) in schema
     assert "tenant_scope,\n        batch_status,\n        last_observed_at" in schema
     assert "pg_catalog.pg_get_indexdef(c.oid, 1, TRUE) = 'tenant_scope'" in sql
     assert "pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'endpoint_alias'" in sql
@@ -138,6 +141,26 @@ def test_catalog_sql_matches_packaged_lifecycle_index_shapes() -> None:
     assert "NOT constraint_row.condeferrable" in sql
     assert "access_method.amname = 'btree'" in sql
     assert "idx.indoption = '0 0 0'::pg_catalog.int2vector" in sql
+
+
+def test_catalog_query_authenticates_tenant_policy_semantics() -> None:
+    """Bind restore acceptance to the exact package tenant-policy contract."""
+    sql = postgres_restore_acceptance._CATALOG_SQL
+
+    required_fragments = (
+        "pg_catalog.pg_policy",
+        "policy_row.polcmd = '*'",
+        "policy_row.polpermissive IS TRUE",
+        "policy_row.polroles = ARRAY[0::oid]",
+        "plc_llm_remote_batch_jobs_tenant_scope",
+        "plc_llm_result_stream_checkpoints_tenant_scope",
+        "pg_catalog.pg_get_expr",
+        "pg_llm_batch.tenant_scope",
+        "extra_policy.polrelid = c.oid",
+        "extra_policy.oid <> policy_row.oid",
+    )
+    for fragment in required_fragments:
+        assert fragment in sql
 
 
 def test_container_logging_smoke_runs_restore_catalog_index_decoys() -> None:
