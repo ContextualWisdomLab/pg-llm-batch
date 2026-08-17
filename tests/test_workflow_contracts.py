@@ -197,25 +197,26 @@ def test_ci_checks_out_and_verifies_the_exact_source_head_in_every_job() -> None
 
 def test_hourly_workflow_repairs_revalidates_and_merges_pull_requests() -> None:
     workflow = _read(".github/workflows/hourly-maintenance.yml")
-    scheduler_sha = "5983b41ace75040c1d81818171ca7d0f3653254e"
+    scheduler_sha = "c47afc2dc68488292c1db7c9d6f82dcd5360f181"
 
     assert 'cron: "17 * * * *"' in workflow
     assert "workflow_dispatch:" in workflow
     assert (
         "uses: ContextualWisdomLab/.github/.github/workflows/"
-        "pr-review-fix-scheduler.yml@"
+        f"pr-review-fix-scheduler.yml@{scheduler_sha}"
     ) in workflow
     assert "target_repository: ContextualWisdomLab/pg-llm-batch" in workflow
     assert 'retry_hours: "1"' in workflow
-    assert f"canonical_ref: {scheduler_sha}" in workflow
+    assert "canonical_ref:" not in workflow
     assert (
         "uses: ContextualWisdomLab/.github/.github/workflows/"
-        "pr-review-merge-scheduler.yml@"
+        f"pr-review-merge-scheduler.yml@{scheduler_sha}"
     ) in workflow
     assert "merge_mode: direct_or_auto" in workflow
     assert "trigger_reviews: true" in workflow
     assert "enable_auto_merge: true" in workflow
     assert "update_branches: true" in workflow
+    assert "secrets: inherit" not in workflow
     assert workflow.count(f"@{scheduler_sha}") == 2
     _assert_external_actions_are_pinned(workflow)
 
