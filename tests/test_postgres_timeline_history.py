@@ -94,6 +94,7 @@ def test_invalid_request_types_bounds_and_budget_fail_closed(
 @pytest.mark.parametrize(
     "history_content",
     [
+        b"1\n",
         b"not-a-number\t0/1\n",
         b"1\tmissing-lsn\n",
         b"1\t0/100000000\n",
@@ -121,6 +122,7 @@ def test_invalid_authority_fields_fail_with_content_free_syntax_error(
 def test_parent_timeline_ids_must_increase_and_remain_below_child() -> None:
     """History ancestry follows PostgreSQL's increasing-parent/child ordering rule."""
     cases = (
+        b"",
         b"2\t0/1\n1\t0/2\n",
         b"1\t0/1\n1\t0/2\n",
         b"1\t0/1\n3\t0/2\n",
