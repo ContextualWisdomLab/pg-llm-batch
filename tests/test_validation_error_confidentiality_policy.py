@@ -74,6 +74,27 @@ def test_safe_value_rejects_non_string_evidence() -> None:
         ValidationError(field="mode", value="secret", safe_value=1)  # type: ignore[arg-type]
 
 
+def test_safe_value_rejects_string_subclass_before_behavior() -> None:
+    """String subclasses must not execute behavior while gaining evidence authority."""
+
+    class HostileSafeValue(str):
+        def __len__(self) -> int:
+            raise AssertionError("safe-value length must not run")
+
+        def __iter__(self):
+            raise AssertionError("safe-value iteration must not run")
+
+        def __str__(self) -> str:
+            raise AssertionError("safe-value rendering must not run")
+
+    with pytest.raises(TypeError, match="safe_value must be a string or None"):
+        ValidationError(
+            field="mode",
+            value="secret",
+            safe_value=HostileSafeValue("public-looking"),
+        )
+
+
 @pytest.mark.parametrize(
     "safe_value",
     ["", "x" * 129, "line\nbreak", "non-ascii-é"],
