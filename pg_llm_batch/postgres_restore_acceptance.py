@@ -39,7 +39,70 @@ WHERE n.nspname = current_schema()
   AND c.relkind = ANY(%s)
   AND c.relname = ANY(%s)
   AND (
-      c.relkind = 'r'
+      (
+          c.relkind = 'r'
+          AND (
+              c.relname NOT IN (
+                  'llm_remote_batch_jobs',
+                  'llm_result_stream_checkpoints'
+              )
+              OR EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.pg_policy AS policy_row
+                  WHERE policy_row.polrelid = c.oid
+                    AND policy_row.polname::text = CASE c.relname
+                        WHEN 'llm_remote_batch_jobs'
+                            THEN 'plc_llm_remote_batch_jobs_tenant_scope'
+                        WHEN 'llm_result_stream_checkpoints'
+                            THEN 'plc_llm_result_stream_checkpoints_tenant_scope'
+                        ELSE NULL
+                    END
+                    AND policy_row.polcmd = '*'
+                    AND policy_row.polpermissive IS TRUE
+                    AND policy_row.polroles = ARRAY[0::oid]
+                    AND replace(
+                        regexp_replace(
+                            pg_catalog.pg_get_expr(
+                                policy_row.polqual,
+                                policy_row.polrelid,
+                                FALSE
+                            ),
+                            '[[:space:]]+',
+                            '',
+                            'g'
+                        ),
+                        '''pg_llm_batch.tenant_scope''::text',
+                        '''pg_llm_batch.tenant_scope'''
+                    ) IN (
+                        '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
+                        'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+                    )
+                    AND replace(
+                        regexp_replace(
+                            pg_catalog.pg_get_expr(
+                                policy_row.polwithcheck,
+                                policy_row.polrelid,
+                                FALSE
+                            ),
+                            '[[:space:]]+',
+                            '',
+                            'g'
+                        ),
+                        '''pg_llm_batch.tenant_scope''::text',
+                        '''pg_llm_batch.tenant_scope'''
+                    ) IN (
+                        '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
+                        'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+                    )
+                    AND NOT EXISTS (
+                        SELECT 1
+                        FROM pg_catalog.pg_policy AS extra_policy
+                        WHERE extra_policy.polrelid = c.oid
+                          AND extra_policy.oid <> policy_row.oid
+                    )
+              )
+          )
+      )
       OR (
           c.relkind = 'i'
           AND indexed_table.relname = 'llm_remote_batch_jobs'
@@ -189,14 +252,17 @@ def inspect_postgres_restore_catalog(
 ) -> PostgresRestoreCatalogEvidence:
     """Prove required package catalog objects on a caller-owned restore target.
 
-    The callable inspects ``pg_class`` through the caller-owned connection. It
-    does not execute ``pg_dump`` or ``pg_restore``, open a package-owned
-    connection, or claim that a backup artifact is restorable. Missing required
-    tables or tenant-status indexes fail closed. Lifecycle row-level security
-    must be enabled and forced. A present checkpoint store must also be forced.
-    Required lifecycle indexes must belong to that lifecycle table and match the
-    packaged key order, uniqueness, validity, readiness, btree access method,
-    default key options, and plain-index shape.
+    The callable inspects ``pg_class`` and ``pg_policy`` through the caller-owned
+    connection. It does not execute ``pg_dump`` or ``pg_restore``, open a
+    package-owned connection, or claim that a backup artifact is restorable.
+    Missing required tables or tenant-status indexes fail closed. Lifecycle
+    row-level security must be enabled and forced, with exactly the packaged
+    permissive ``PUBLIC`` all-command policy whose ``USING`` and ``WITH CHECK``
+    predicates bind ``tenant_scope`` to the transaction-local package setting.
+    A present checkpoint store must carry the same authenticated policy shape
+    and forced RLS. Required lifecycle indexes must belong to that lifecycle
+    table and match the packaged key order, uniqueness, validity, readiness,
+    btree access method, default key options, and plain-index shape.
     """
     relation_names = list(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,))
     try:
