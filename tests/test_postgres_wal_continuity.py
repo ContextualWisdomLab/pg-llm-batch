@@ -155,6 +155,7 @@ def test_hostile_name_subclass_is_rejected_without_rendering() -> None:
         ("wal_segment_size_bytes", True),
         ("wal_segment_size_bytes", 0),
         ("wal_segment_size_bytes", 3 * _MIB),
+        ("wal_segment_size_bytes", (16 * _MIB) + 1),
         ("wal_segment_size_bytes", 2048 * _MIB),
         ("timeline_id", True),
         ("timeline_id", 0),
@@ -211,6 +212,21 @@ def test_manifest_work_is_bounded_before_expected_names_are_built() -> None:
             start_lsn="0/0",
             target_lsn="1/00000000",
             segment_names=(),
+        )
+
+
+def test_supplied_manifest_length_is_bounded_before_member_validation() -> None:
+    """Oversized caller tuples fail before per-member work can become unbounded."""
+    with pytest.raises(
+        PostgresWalContinuityError,
+        match="^PostgreSQL WAL continuity span exceeds bounded segment budget$",
+    ):
+        assess_postgres_wal_continuity(
+            wal_segment_size_bytes=16 * _MIB,
+            timeline_id=1,
+            start_lsn="0/0",
+            target_lsn="0/0",
+            segment_names=("not-inspected",) * 4097,
         )
 
 
