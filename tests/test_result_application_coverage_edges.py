@@ -64,6 +64,8 @@ def _checkpoint(
     schema_version: int = 1,
     batch_id: str = "batch-123",
     endpoint_alias: str = "openrouter",
+    file_kind: str = "result",
+    file_id: str = "file-123",
     record_count: int = 1,
     digest: str = "a" * 64,
 ) -> BatchResultCheckpoint:
@@ -72,8 +74,8 @@ def _checkpoint(
         schema_version=schema_version,
         batch_id=batch_id,
         endpoint_alias=endpoint_alias,
-        file_kind="result",
-        file_id="file-123",
+        file_kind=file_kind,
+        file_id=file_id,
         file_line_number=record_count,
         batch_line_count=record_count,
         record_count=record_count,
@@ -137,6 +139,43 @@ def test_loaded_checkpoint_identity_mismatch_fails_before_effect(
     previous = _checkpoint(
         batch_id=previous_batch_id,
         endpoint_alias=previous_endpoint_alias,
+        record_count=1,
+    )
+    store = _Store(previous=previous)
+    effects: list[str] = []
+
+    with pytest.raises(ResultApplicationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(),
+            store,
+            "result-writer",
+            _item(candidate),
+            lambda *_args: effects.append("effect"),
+        )
+
+    assert caught.value.details == {"phase": "checkpoint_load"}
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+    assert store.events == ["load"]
+    assert effects == []
+
+
+@pytest.mark.parametrize(
+    ("previous_file_kind", "previous_file_id"),
+    [
+        ("error", "file-123"),
+        ("result", "file-other"),
+    ],
+)
+def test_loaded_checkpoint_file_identity_mismatch_fails_before_effect(
+    previous_file_kind: str,
+    previous_file_id: str,
+) -> None:
+    """A predecessor for another provider file must never authorize an effect."""
+    candidate = _checkpoint(record_count=2, digest="b" * 64)
+    previous = _checkpoint(
+        file_kind=previous_file_kind,
+        file_id=previous_file_id,
         record_count=1,
     )
     store = _Store(previous=previous)
