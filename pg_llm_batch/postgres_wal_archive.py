@@ -73,7 +73,7 @@ def _directory_is_owner_only(mode: int) -> bool:
 def _inspect_archive_directory(
     archive_directory_descriptor: int,
 ) -> os.stat_result:
-    """Require a process-owned private directory pinned by an open descriptor."""
+    """Require a process-owned, private, initially empty directory pinned by an open fd."""
     try:
         status = os.fstat(archive_directory_descriptor)
         effective_user_id = os.geteuid()
@@ -92,6 +92,16 @@ def _inspect_archive_directory(
     if not _directory_is_owner_only(status.st_mode):
         raise PostgresWalArchiveError(
             "PostgreSQL WAL archive directory must be owner-only"
+        )
+    try:
+        directory_entries = os.listdir(archive_directory_descriptor)
+    except (OSError, ValueError):
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive directory could not be inspected"
+        ) from None
+    if directory_entries:
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive directory must start empty"
         )
     return status
 
@@ -208,10 +218,12 @@ def receive_postgres_wal_archive(
     """Receive a finite PostgreSQL WAL stream through an existing replication slot.
 
     The caller owns an already-open private archive directory descriptor and the
-    lifecycle of its WAL files. The subprocess sees that pinned directory only as
-    ``/proc/self/fd/<fd>``; no caller filesystem path or connection secret is placed
-    in argv. The selected replication slot must already exist and remain an operator-
-    governed server resource. The package never creates or drops slots.
+    lifecycle of its WAL files. The directory must be empty at invocation start so
+    pre-existing local WAL state cannot choose ``pg_receivewal``'s starting position.
+    The subprocess sees that pinned directory only as ``/proc/self/fd/<fd>``; no caller
+    filesystem path or connection secret is placed in argv. The selected replication
+    slot must already exist and remain an operator-governed server resource. The
+    package never creates or drops slots.
 
     ``pg_receivewal`` is invoked with ``--synchronous`` so received WAL is flushed in
     real time, ``--no-loop`` so connection loss is returned to the caller rather than
