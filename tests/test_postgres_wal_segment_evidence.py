@@ -63,6 +63,21 @@ def test_binding_requires_real_inspected_bytes_and_reports_nonguarantees(
     assert postgres_wal_segment_binding_is_valid(binding) is True
 
 
+def test_segment_number_must_be_canonical_for_configured_size(tmp_path: Path) -> None:
+    """A segment index that PostgreSQL would carry into the log ID is rejected."""
+    artifact = _inspected_artifact(tmp_path)
+
+    with pytest.raises(
+        PostgresWalSegmentEvidenceError,
+        match="^invalid PostgreSQL WAL segment identity$",
+    ):
+        bind_postgres_wal_segment_evidence(
+            segment_name="000000010000000000001000",
+            wal_segment_size_bytes=_MIB,
+            artifact_evidence=artifact,
+        )
+
+
 @pytest.mark.parametrize(
     "segment_name",
     [
