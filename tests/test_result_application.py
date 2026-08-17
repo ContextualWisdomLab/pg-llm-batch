@@ -107,7 +107,10 @@ def test_applies_local_effect_before_checkpoint_in_same_caller_transaction() -> 
 
     assert outcome == ResultApplicationOutcome(applied=True, checkpoint=checkpoint)
     assert [event[0] for event in store.events] == ["load", "effect", "save"]
-    assert store.events[1] == ("effect", cursor, item.record)
+    assert store.events[0][1] is cursor
+    assert store.events[1][1] is not cursor
+    assert store.events[1][2] == item.record
+    assert store.events[2][1] is cursor
     assert store.events[2][-1] is None
 
 
