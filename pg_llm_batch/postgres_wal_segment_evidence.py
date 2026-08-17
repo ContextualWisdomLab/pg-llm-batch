@@ -22,7 +22,7 @@ class PostgresWalSegmentEvidenceError(ValueError):
 
 
 def _valid_segment_name(value: object) -> bool:
-    """Return whether ``value`` is one canonical nonzero-timeline WAL filename."""
+    """Return whether ``value`` is one lexical nonzero-timeline WAL filename."""
     return (
         type(value) is str
         and _SEGMENT_NAME_PATTERN.fullmatch(value) is not None
@@ -40,6 +40,13 @@ def _valid_wal_segment_size(value: object) -> bool:
         return False
     megabytes = value // _MIB
     return megabytes & (megabytes - 1) == 0
+
+
+def _segment_name_matches_size(segment_name: str, wal_segment_size_bytes: int) -> bool:
+    """Return whether PostgreSQL can canonically emit this name at this segment size."""
+    segments_per_log_id = (1 << 32) // wal_segment_size_bytes
+    segment_id = int(segment_name[16:24], 16)
+    return segment_id < segments_per_log_id
 
 
 @dataclass(frozen=True)
@@ -104,6 +111,11 @@ def postgres_wal_segment_binding_is_valid(binding: object) -> bool:
         return False
     if not _valid_wal_segment_size(binding.wal_segment_size_bytes):
         return False
+    if not _segment_name_matches_size(
+        binding.segment_name,
+        binding.wal_segment_size_bytes,
+    ):
+        return False
     if not postgres_backup_artifact_evidence_was_inspected(binding.artifact_evidence):
         return False
     return (
@@ -124,9 +136,11 @@ def bind_postgres_wal_segment_evidence(
     """Bind canonical WAL identity to exact protected stable-file inspection evidence.
 
     PostgreSQL WAL segment sizes are constrained here to the supported
-    power-of-two 1 MiB through 1 GiB range. ``artifact_evidence`` must be the
-    exact live object returned by the protected backup-artifact inspector, and
-    its observed byte count must equal the reviewed WAL segment size.
+    power-of-two 1 MiB through 1 GiB range. The filename must also be one that
+    PostgreSQL's segment-size-dependent filename geometry can emit.
+    ``artifact_evidence`` must be the exact live object returned by the protected
+    backup-artifact inspector, and its observed byte count must equal the reviewed
+    WAL segment size.
 
     This function intentionally does not inspect a WAL header or record stream,
     infer cluster identity/timeline history, validate archive ordering, or run
@@ -139,6 +153,10 @@ def bind_postgres_wal_segment_evidence(
     if not _valid_wal_segment_size(wal_segment_size_bytes):
         raise PostgresWalSegmentEvidenceError(
             "invalid PostgreSQL WAL segment size"
+        )
+    if not _segment_name_matches_size(segment_name, wal_segment_size_bytes):
+        raise PostgresWalSegmentEvidenceError(
+            "invalid PostgreSQL WAL segment identity"
         )
     if not postgres_backup_artifact_evidence_was_inspected(artifact_evidence):
         raise PostgresWalSegmentEvidenceError(
