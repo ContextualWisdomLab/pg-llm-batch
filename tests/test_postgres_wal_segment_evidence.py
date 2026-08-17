@@ -196,6 +196,9 @@ def test_binding_validator_rejects_wrong_type_and_replaced_fields(
         replace(binding, wal_segment_size_bytes=3 * _MIB)
     ) is False
     assert postgres_wal_segment_binding_is_valid(
+        replace(binding, segment_name="000000010000000000001000")
+    ) is False
+    assert postgres_wal_segment_binding_is_valid(
         replace(binding, sha256=b"not-a-string")  # type: ignore[arg-type]
     ) is False
     assert postgres_wal_segment_binding_is_valid(
