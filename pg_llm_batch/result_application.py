@@ -184,6 +184,8 @@ def apply_checkpointed_result_in_transaction(
         if (
             previous.batch_id != candidate.checkpoint.batch_id
             or previous.endpoint_alias != candidate.checkpoint.endpoint_alias
+            or previous.file_kind != candidate.checkpoint.file_kind
+            or previous.file_id != candidate.checkpoint.file_id
         ):
             raise ResultApplicationError("checkpoint_load") from None
 
