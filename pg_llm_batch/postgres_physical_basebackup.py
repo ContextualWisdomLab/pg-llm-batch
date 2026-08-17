@@ -222,7 +222,11 @@ def _finalize_output(
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup output is incomplete"
         )
-    if status.st_nlink != 1 or not _output_is_owner_only(status.st_mode):
+    if (
+        status.st_uid != initial_status.st_uid
+        or status.st_nlink != 1
+        or not _output_is_owner_only(status.st_mode)
+    ):
         _invalidate_output(cleanup_descriptor)
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup output became unsafe"
