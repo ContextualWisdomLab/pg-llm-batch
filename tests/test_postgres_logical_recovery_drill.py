@@ -5,18 +5,18 @@ from __future__ import annotations
 
 import hashlib
 import os
-from types import SimpleNamespace
 
 import pytest
 
-from pg_llm_batch.postgres_logical_restore import PostgresLogicalRestoreResult
-from pg_llm_batch.postgres_recovery_receipt import PostgresRecoveryReceipt
-from pg_llm_batch.postgres_restore_acceptance import PostgresRestoreCatalogEvidence
-from pg_llm_batch.postgres_restore_target import PostgresRestoreTargetIdentity
 from pg_llm_batch.postgres_logical_recovery_drill import (
     PostgresLogicalRecoveryDrillError,
     run_postgres_logical_recovery_drill,
 )
+from pg_llm_batch.postgres_logical_restore import PostgresLogicalRestoreResult
+from pg_llm_batch.postgres_recovery_receipt import PostgresRecoveryReceipt
+from pg_llm_batch.postgres_restore_acceptance import PostgresRestoreCatalogEvidence
+from pg_llm_batch.postgres_restore_target import PostgresRestoreTargetIdentity
+from pg_llm_batch.postgres_schema_evidence import PostgresSchemaEvidence
 
 
 _SCHEMA_SHA = "a" * 64
@@ -38,7 +38,15 @@ def _receipt(payload: bytes, *, backup_method: str = "logical") -> PostgresRecov
     )
 
 
-def _catalog() -> PostgresRestoreCatalogEvidence:
+def _schema(*, sha256: str = _SCHEMA_SHA) -> PostgresSchemaEvidence:
+    return PostgresSchemaEvidence(sha256=sha256, size_bytes=_SCHEMA_SIZE)
+
+
+def _catalog(
+    *,
+    schema_sha256: str = _SCHEMA_SHA,
+    schema_size_bytes: int = _SCHEMA_SIZE,
+) -> PostgresRestoreCatalogEvidence:
     return PostgresRestoreCatalogEvidence(
         required_table_count=11,
         required_index_count=2,
@@ -46,8 +54,8 @@ def _catalog() -> PostgresRestoreCatalogEvidence:
         lifecycle_rls_forced=True,
         checkpoint_store_present=True,
         checkpoint_store_rls_forced=True,
-        expected_schema_sha256=_SCHEMA_SHA,
-        expected_schema_size_bytes=_SCHEMA_SIZE,
+        expected_schema_sha256=schema_sha256,
+        expected_schema_size_bytes=schema_size_bytes,
     )
 
 
@@ -56,6 +64,26 @@ def _private_archive(tmp_path, payload: bytes) -> int:
     path.write_bytes(payload)
     path.chmod(0o600)
     return os.open(path, os.O_RDONLY)
+
+
+def _run(
+    drill,
+    receipt: PostgresRecoveryReceipt,
+    descriptor: int,
+    *,
+    restore_connection: object | None = None,
+):
+    return drill.run_postgres_logical_recovery_drill(
+        receipt,
+        descriptor,
+        live_service_name="live-db",
+        restore_service_name="restore-db",
+        live_target_identity=PostgresRestoreTargetIdentity(system_identifier=11),
+        restore_target_identity=PostgresRestoreTargetIdentity(system_identifier=22),
+        restore_connection=restore_connection if restore_connection is not None else object(),
+        source_superusers_trusted=True,
+        pg_restore_executable="/usr/bin/pg_restore",
+    )
 
 
 def test_logical_recovery_drill_composes_isolation_restore_and_catalog(
@@ -71,11 +99,7 @@ def test_logical_recovery_drill_composes_isolation_restore_and_catalog(
 
     import pg_llm_batch.postgres_logical_recovery_drill as drill
 
-    monkeypatch.setattr(
-        drill,
-        "inspect_postgres_schema",
-        lambda: SimpleNamespace(sha256=_SCHEMA_SHA, size_bytes=_SCHEMA_SIZE),
-    )
+    monkeypatch.setattr(drill, "inspect_postgres_schema", _schema)
 
     def verify_target(**kwargs: object) -> None:
         assert kwargs == {
@@ -156,18 +180,213 @@ def test_logical_recovery_drill_rejects_non_logical_receipt_before_restore(
             PostgresLogicalRecoveryDrillError,
             match="logical recovery drill requires a logical recovery receipt",
         ):
-            run_postgres_logical_recovery_drill(
-                _receipt(payload, backup_method="physical"),
-                descriptor,
-                live_service_name="live-db",
-                restore_service_name="restore-db",
-                live_target_identity=PostgresRestoreTargetIdentity(system_identifier=11),
-                restore_target_identity=PostgresRestoreTargetIdentity(system_identifier=22),
-                restore_connection=object(),
-                source_superusers_trusted=True,
-                pg_restore_executable="/usr/bin/pg_restore",
-            )
+            _run(drill, _receipt(payload, backup_method="physical"), descriptor)
     finally:
         os.close(descriptor)
 
     assert called is False
+
+
+def test_logical_recovery_drill_rejects_packaged_schema_mismatch_before_restore(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = b"schema-bound logical archive"
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    monkeypatch.setattr(drill, "inspect_postgres_schema", lambda: _schema(sha256="c" * 64))
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="schema evidence does not match receipt",
+        ):
+            _run(drill, _receipt(payload), descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_recovery_drill_rejects_descriptor_parameter_and_size_mismatch(
+    tmp_path,
+) -> None:
+    payload = b"bounded logical archive"
+    receipt = _receipt(payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    with pytest.raises(PostgresLogicalRecoveryDrillError, match="artifact does not match"):
+        drill._verify_restore_descriptor(True, receipt, len(payload))
+
+    descriptor = _private_archive(tmp_path, payload[:-1])
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="artifact does not match",
+        ):
+            drill._verify_restore_descriptor(descriptor, receipt, len(payload))
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_recovery_drill_normalizes_descriptor_inspection_failure(tmp_path) -> None:
+    payload = b"closed logical archive"
+    receipt = _receipt(payload)
+    descriptor = _private_archive(tmp_path, payload)
+    os.close(descriptor)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    with pytest.raises(PostgresLogicalRecoveryDrillError, match="artifact does not match"):
+        drill._verify_restore_descriptor(descriptor, receipt, len(payload))
+
+
+def test_logical_recovery_drill_normalizes_descriptor_read_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = b"unreadable logical archive"
+    receipt = _receipt(payload)
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    def fail_pread(*args: object, **kwargs: object) -> bytes:
+        raise OSError("secret lower-layer detail")
+
+    monkeypatch.setattr(drill.os, "pread", fail_pread)
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="artifact does not match",
+        ) as caught:
+            drill._verify_restore_descriptor(descriptor, receipt, len(payload))
+    finally:
+        os.close(descriptor)
+    assert "secret lower-layer detail" not in str(caught.value)
+
+
+def test_logical_recovery_drill_rejects_empty_descriptor_read(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = b"short-read logical archive"
+    receipt = _receipt(payload)
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    monkeypatch.setattr(drill.os, "pread", lambda *args: b"")
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="artifact does not match",
+        ):
+            drill._verify_restore_descriptor(descriptor, receipt, len(payload))
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_recovery_drill_normalizes_final_descriptor_inspection_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = b"final-inspection logical archive"
+    receipt = _receipt(payload)
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    real_fstat = os.fstat
+    calls = 0
+
+    def fail_second_fstat(file_descriptor: int):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("secret final inspection detail")
+        return real_fstat(file_descriptor)
+
+    monkeypatch.setattr(drill.os, "fstat", fail_second_fstat)
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="artifact does not match",
+        ) as caught:
+            drill._verify_restore_descriptor(descriptor, receipt, len(payload))
+    finally:
+        os.close(descriptor)
+    assert "secret final inspection detail" not in str(caught.value)
+
+
+def test_logical_recovery_drill_rejects_descriptor_digest_mismatch(tmp_path) -> None:
+    payload = b"abc"
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="artifact does not match",
+        ):
+            drill._verify_restore_descriptor(descriptor, _receipt(b"abd"), len(payload))
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_recovery_drill_rejects_restore_result_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = b"restore-result logical archive"
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    monkeypatch.setattr(drill, "inspect_postgres_schema", _schema)
+    monkeypatch.setattr(drill, "verify_postgres_restore_target_isolation", lambda **kwargs: None)
+    monkeypatch.setattr(
+        drill,
+        "restore_postgres_logical_backup",
+        lambda *args, **kwargs: PostgresLogicalRestoreResult(size_bytes=len(payload) + 1),
+    )
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="restore result does not match receipt",
+        ):
+            _run(drill, _receipt(payload), descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_recovery_drill_rejects_catalog_schema_mismatch(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+) -> None:
+    payload = b"catalog-bound logical archive"
+    descriptor = _private_archive(tmp_path, payload)
+
+    import pg_llm_batch.postgres_logical_recovery_drill as drill
+
+    monkeypatch.setattr(drill, "inspect_postgres_schema", _schema)
+    monkeypatch.setattr(drill, "verify_postgres_restore_target_isolation", lambda **kwargs: None)
+    monkeypatch.setattr(
+        drill,
+        "restore_postgres_logical_backup",
+        lambda *args, **kwargs: PostgresLogicalRestoreResult(size_bytes=len(payload)),
+    )
+    monkeypatch.setattr(
+        drill,
+        "inspect_postgres_restore_catalog",
+        lambda connection: _catalog(schema_sha256="c" * 64),
+    )
+    try:
+        with pytest.raises(
+            PostgresLogicalRecoveryDrillError,
+            match="catalog evidence does not match packaged schema",
+        ):
+            _run(drill, _receipt(payload), descriptor)
+    finally:
+        os.close(descriptor)
