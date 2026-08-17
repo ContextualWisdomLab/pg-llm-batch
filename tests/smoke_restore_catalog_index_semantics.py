@@ -25,15 +25,35 @@ def _require_complete_catalog(connection: object) -> None:
         raise SystemExit("packaged restore catalog was not accepted")
 
 
-def _require_incomplete_catalog(connection: object) -> None:
-    """Reject a same-name decoy without reflecting SQL or connection text."""
+def _require_rejected_catalog(
+    connection: object,
+    *,
+    expected_message: str,
+) -> None:
+    """Reject a catalog decoy with its exact content-free failure category."""
     try:
         inspect_postgres_restore_catalog(connection)
     except PostgresRestoreAcceptanceError as error:
-        if str(error) != "PostgreSQL restore catalog is incomplete":
+        if str(error) != expected_message:
             raise SystemExit("decoy rejection used an unexpected category") from None
         return
     raise SystemExit("same-name decoy catalog object was accepted")
+
+
+def _require_incomplete_catalog(connection: object) -> None:
+    """Require structural catalog decoys to fail as incomplete."""
+    _require_rejected_catalog(
+        connection,
+        expected_message="PostgreSQL restore catalog is incomplete",
+    )
+
+
+def _require_tenant_isolation_rejection(connection: object) -> None:
+    """Require tenant-policy decoys to fail the isolation boundary explicitly."""
+    _require_rejected_catalog(
+        connection,
+        expected_message="PostgreSQL restore catalog failed tenant isolation checks",
+    )
 
 
 def _restore_tenant_policy(
@@ -124,7 +144,7 @@ def main() -> None:
                 table_name="llm_remote_batch_jobs",
                 policy_name="plc_llm_remote_batch_jobs_tenant_scope",
             )
-        _require_incomplete_catalog(connection)
+        _require_tenant_isolation_rejection(connection)
         with connection.cursor() as cursor:
             _restore_tenant_policy(
                 cursor,
@@ -138,7 +158,7 @@ def main() -> None:
                 table_name="llm_result_stream_checkpoints",
                 policy_name="plc_llm_result_stream_checkpoints_tenant_scope",
             )
-        _require_incomplete_catalog(connection)
+        _require_tenant_isolation_rejection(connection)
         with connection.cursor() as cursor:
             _restore_tenant_policy(
                 cursor,
