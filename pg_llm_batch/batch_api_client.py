@@ -2,8 +2,9 @@
 # Copyright (c) ContextualWisdomLab.
 """OpenAI-compatible Batch API client (memory-only JSONL).
 
-Talks to any OpenAI-compatible ``/files`` + ``/batches`` endpoint (OpenAI,
-Azure OpenAI, a LiteLLM gateway, ...). Credentials are resolved through a
+This client targets the OpenAI-compatible ``/files`` + ``/batches`` API shape
+used by OpenAI, Azure OpenAI, and LiteLLM gateway deployments; provider-specific
+extensions require independent verification. Credentials are resolved through a
 pluggable ``credentials`` seam (default: the Postgres KV/secret store) — never
 from ``os.getenv``. JSONL payloads are streamed from Postgres, never disk.
 
@@ -18,7 +19,7 @@ import logging
 import random
 import re
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from ipaddress import ip_address
@@ -41,7 +42,7 @@ DOWNLOAD_CHUNK_BYTES = 64 * 1024
 DEFAULT_MAX_RETRY_ATTEMPTS = 3
 DEFAULT_RETRY_BASE_DELAY_SECONDS = 0.5
 DEFAULT_RETRY_MAX_DELAY_SECONDS = 30.0
-RETRYABLE_GET_STATUSES = frozenset({408, 429, 502, 503, 504})
+RETRYABLE_GET_STATUSES = frozenset({408, 425, 429, 502, 503, 504})
 TERMINAL_BATCH_STATUSES = frozenset({"completed", "failed", "expired", "cancelled"})
 LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
@@ -92,15 +93,27 @@ def _normalize_retry_delay(field: str, value: Any) -> float:
     return float(value)
 
 
+def _bounded_transport_error_type(error: BaseException) -> str:
+    """Return one finite transport category without dependency-defined class names."""
+    if isinstance(error, aiohttp.ServerFingerprintMismatch):
+        return "ServerFingerprintMismatch"
+    if isinstance(error, aiohttp.ClientConnectorCertificateError):
+        return "ClientConnectorCertificateError"
+    if isinstance(error, aiohttp.ClientSSLError):
+        return "ClientSSLError"
+    if isinstance(error, asyncio.TimeoutError):
+        return "TimeoutError"
+    return "ClientError"
+
+
 @dataclass
 class GatewayCredentials:
     """Resolved endpoint credentials for a single batch backend."""
 
     url: str
-    api_key: str
+    api_key: str = field(repr=False)
 
 
-# A credentials provider returns GatewayCredentials for a given endpoint alias.
 CredentialsProvider = Callable[[str], GatewayCredentials]
 
 
@@ -152,15 +165,26 @@ def _is_loopback_host(hostname: str) -> bool:
 
 def _normalize_gateway_url(value: Any) -> str:
     """Validate and normalize a credential-bearing gateway base URL."""
-    raw = str(value).strip()
+    if not isinstance(value, str):
+        raise GatewayError(
+            "Gateway base_url must be an exact string URL without whitespace, "
+            "controls, or backslashes"
+        )
+    raw = value
     if (
         not raw
+        or raw != raw.strip()
         or "\\" in raw
-        or any(character.isspace() or ord(character) < 32 for character in raw)
+        or any(
+            character.isspace()
+            or ord(character) < 32
+            or ord(character) == 127
+            for character in raw
+        )
     ):
         raise GatewayError(
-            "Gateway base_url must be a valid URL without whitespace, controls, "
-            "or backslashes"
+            "Gateway base_url must be an exact string URL without whitespace, "
+            "controls, or backslashes"
         )
 
     try:
@@ -199,9 +223,9 @@ def config_credentials_provider(
     def _provider(endpoint_alias: str) -> GatewayCredentials:
         """Resolve the base URL and API key for one endpoint alias from the stores."""
         url = config_store.get("gateway", endpoint_alias, None)
-        if not url:
+        if url is None:
             url = config_store.get("gateway", "base_url", None)
-        if not url:
+        if url is None:
             raise GatewayError(
                 f"No gateway base_url configured for alias '{endpoint_alias}'"
             )
@@ -291,7 +315,16 @@ class BatchAPIClient:
                 reason="must not exceed retry_max_delay_seconds",
             )
         self.postgres_dsn = postgres_dsn
-        self._credentials = credentials
+
+        def _validated_credentials(endpoint_alias: str) -> GatewayCredentials:
+            """Revalidate custom credential destinations before authenticated I/O."""
+            resolved = credentials(endpoint_alias)
+            return GatewayCredentials(
+                url=_normalize_gateway_url(resolved.url),
+                api_key=resolved.api_key,
+            )
+
+        self._credentials = _validated_credentials
         self.request_timeout_seconds = normalized_timeout
         self.max_download_bytes = max_download_bytes
         self.max_control_response_bytes = max_control_response_bytes
@@ -303,18 +336,24 @@ class BatchAPIClient:
 
     async def __aenter__(self) -> "BatchAPIClient":
         """Open and return the asynchronous HTTP client context."""
-        self._session = aiohttp.ClientSession()
+        if self._session is None:
+            self._session = aiohttp.ClientSession()
         return self
+
+    async def aclose(self) -> None:
+        """Close the package-owned HTTP session if one has been created."""
+        session = self._session
+        self._session = None
+        if session is not None:
+            await session.close()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         """Close the HTTP session when leaving the asynchronous context."""
-        if self._session:
-            await self._session.close()
-            self._session = None
+        await self.aclose()
 
     def _get_session(self) -> aiohttp.ClientSession:
         """Return the current HTTP session, creating one on first use."""
-        if not self._session:
+        if self._session is None:
             self._session = aiohttp.ClientSession()
         return self._session
 
@@ -355,7 +394,7 @@ class BatchAPIClient:
         operation: str,
         **kwargs: Any,
     ) -> AsyncIterator[Any]:
-        """Yield a response, retrying only bounded idempotent GET failures."""
+        """Yield a response, retrying bounded GET acquisition failures only."""
         session = self._get_session()
         normalized_method = method.lower()
         request = getattr(session, normalized_method)
@@ -364,6 +403,8 @@ class BatchAPIClient:
         while True:
             delay: Optional[float] = None
             retry_reason = ""
+            terminal_error_type: Optional[str] = None
+            response_handed_off = False
             try:
                 async with request(
                     url,
@@ -378,25 +419,41 @@ class BatchAPIClient:
                     ):
                         delay = self._retry_delay_for_response(response, attempt)
                         if delay is None:
+                            response_handed_off = True
                             yield response
                             return
                         retry_reason = f"HTTP {response.status}"
                     else:
+                        response_handed_off = True
                         yield response
                         return
             except GatewayError:
                 raise
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-                if not retry_safe or attempt >= self.max_retry_attempts:
-                    raise GatewayError(
-                        f"{operation} transport failed",
-                        response_data={
-                            "error_type": type(exc).__name__,
-                            "timeout_seconds": self.request_timeout_seconds,
-                        },
-                    ) from exc
-                delay = self._fallback_retry_delay(attempt)
-                retry_reason = type(exc).__name__
+                if response_handed_off:
+                    raise
+                bounded_error_type = _bounded_transport_error_type(exc)
+                if (
+                    not retry_safe
+                    or attempt >= self.max_retry_attempts
+                    or isinstance(
+                        exc,
+                        (aiohttp.ClientSSLError, aiohttp.ServerFingerprintMismatch),
+                    )
+                ):
+                    terminal_error_type = bounded_error_type
+                else:
+                    delay = self._fallback_retry_delay(attempt)
+                    retry_reason = bounded_error_type
+
+            if terminal_error_type is not None:
+                raise GatewayError(
+                    f"{operation} transport failed",
+                    response_data={
+                        "error_type": terminal_error_type,
+                        "timeout_seconds": self.request_timeout_seconds,
+                    },
+                )
 
             logger.warning(
                 "%s retrying idempotent GET after %s "
@@ -421,14 +478,17 @@ class BatchAPIClient:
             operation,
             max_bytes=self.max_control_response_bytes,
         )
+        decode_error_type: Optional[str] = None
         try:
             result = json.loads(content)
         except (json.JSONDecodeError, RecursionError) as exc:
+            decode_error_type = type(exc).__name__
+        if decode_error_type is not None:
             raise GatewayError(
                 f"{operation} returned invalid JSON",
                 status_code=getattr(response, "status", None),
-                response_data={"error_type": type(exc).__name__},
-            ) from exc
+                response_data={"error_type": decode_error_type},
+            )
         if not isinstance(result, dict):
             raise GatewayError(
                 f"{operation} returned a non-object JSON response",
@@ -513,17 +573,23 @@ class BatchAPIClient:
                 payload.extend(chunk.tobytes())
             else:
                 payload.extend(chunk)
+        decode_error_type: Optional[str] = None
+        decode_error_offset: Optional[int] = None
         try:
-            return payload.decode("utf-8")
+            decoded = payload.decode("utf-8")
         except UnicodeDecodeError as exc:
+            decode_error_type = type(exc).__name__
+            decode_error_offset = exc.start
+        if decode_error_type is not None:
             raise GatewayError(
                 f"{operation} returned invalid UTF-8",
                 status_code=getattr(response, "status", None),
                 response_data={
-                    "error_type": type(exc).__name__,
-                    "byte_offset": exc.start,
+                    "error_type": decode_error_type,
+                    "byte_offset": decode_error_offset,
                 },
-            ) from exc
+            )
+        return decoded
 
     def _headers(self, api_key: str, *, json_body: bool = False) -> Dict[str, str]:
         """Build request headers with bearer auth, optionally declaring a JSON body."""
@@ -561,14 +627,28 @@ class BatchAPIClient:
         file_path: str,
         endpoint_alias: str,
         purpose: str = "batch",
+        expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Upload a memory-backed JSONL payload to the Files API."""
+        """Upload a memory-backed JSONL payload with optional provider retention."""
+        if expires_after_seconds is not None and (
+            type(expires_after_seconds) is not int
+            or expires_after_seconds < 3_600
+            or expires_after_seconds > 2_592_000
+        ):
+            raise ValidationError(
+                field="expires_after_seconds",
+                value="<redacted>",
+                reason="must be an integer between 3600 and 2592000 seconds",
+            )
         file_id = self._resolve_memory_identifier(file_path)
-        creds = self._credentials(endpoint_alias)
         payload_bytes = await self._load_payload_bytes(file_id)
+        creds = self._credentials(endpoint_alias)
 
         data = aiohttp.FormData()
         data.add_field("purpose", purpose)
+        if expires_after_seconds is not None:
+            data.add_field("expires_after[anchor]", "created_at")
+            data.add_field("expires_after[seconds]", str(expires_after_seconds))
         data.add_field(
             "file",
             payload_bytes,
@@ -582,14 +662,43 @@ class BatchAPIClient:
             data=data,
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await self._read_json_object(response, "Files API upload")
             if response.status != 200:
                 raise GatewayError(
                     f"Files API upload failed: {response.status}",
                     status_code=response.status,
-                    response_data=result,
+                    response_data={"error_type": "ProviderHTTPError"},
                 )
+            result = await self._read_json_object(response, "Files API upload")
             logger.info("Uploaded JSONL file: %s", result.get("id"))
+            return result
+
+    async def delete_file(
+        self,
+        file_id: str,
+        endpoint_alias: str,
+    ) -> Dict[str, Any]:
+        """Delete one validated provider file and require exact deletion evidence."""
+        validated_file_id = _validate_resource_id(file_id, "file_id")
+        creds = self._credentials(endpoint_alias)
+        async with self._request(
+            "delete",
+            f"{creds.url}/files/{validated_file_id}",
+            operation="File deletion",
+            headers=self._headers(creds.api_key),
+        ) as response:
+            if response.status != 200:
+                raise GatewayError(
+                    f"File deletion failed: {response.status}",
+                    status_code=response.status,
+                    response_data={"error_type": "ProviderHTTPError"},
+                )
+            result = await self._read_json_object(response, "File deletion")
+            if result.get("id") != validated_file_id or result.get("deleted") is not True:
+                raise GatewayError(
+                    "File deletion returned invalid evidence",
+                    status_code=response.status,
+                    response_data={"error_type": "InvalidFileDeletionEvidence"},
+                )
             return result
 
     async def create_batch_job(
@@ -598,10 +707,21 @@ class BatchAPIClient:
         endpoint_alias: str,
         endpoint: str = "/v1/chat/completions",
         metadata: Optional[Dict[str, Any]] = None,
+        output_expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Create a batch job from an uploaded input file id."""
+        """Create a batch job with an optional bounded provider output lifetime."""
         validated_file_id = _validate_resource_id(input_file_id, "input_file_id")
         validated_endpoint = _validate_batch_endpoint(endpoint)
+        if output_expires_after_seconds is not None and (
+            type(output_expires_after_seconds) is not int
+            or output_expires_after_seconds < 3_600
+            or output_expires_after_seconds > 2_592_000
+        ):
+            raise ValidationError(
+                field="output_expires_after_seconds",
+                value="<redacted>",
+                reason="must be an integer between 3600 and 2592000 seconds",
+            )
         creds = self._credentials(endpoint_alias)
         payload: Dict[str, Any] = {
             "input_file_id": validated_file_id,
@@ -610,6 +730,11 @@ class BatchAPIClient:
         }
         if metadata:
             payload["metadata"] = metadata
+        if output_expires_after_seconds is not None:
+            payload["output_expires_after"] = {
+                "anchor": "created_at",
+                "seconds": output_expires_after_seconds,
+            }
         async with self._request(
             "post",
             f"{creds.url}/batches",
@@ -617,20 +742,20 @@ class BatchAPIClient:
             json=payload,
             headers=self._headers(creds.api_key, json_body=True),
         ) as response:
-            result = await self._read_json_object(response, "Batch creation")
             if response.status not in (200, 201, 202):
                 raise GatewayError(
                     f"Batch creation failed: {response.status}",
                     status_code=response.status,
-                    response_data=result,
+                    response_data={"error_type": "ProviderHTTPError"},
                 )
+            result = await self._read_json_object(response, "Batch creation")
             logger.info("Created batch job: %s", result.get("id"))
             return result
 
     async def get_batch_status(
         self, batch_id: str, endpoint_alias: str
     ) -> Dict[str, Any]:
-        """Poll a batch job and annotate progress/completion."""
+        """Poll a batch job and annotate validated progress/completion evidence."""
         validated_batch_id = _validate_resource_id(batch_id, "batch_id")
         creds = self._credentials(endpoint_alias)
         async with self._request(
@@ -639,20 +764,65 @@ class BatchAPIClient:
             operation="Batch status",
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await self._read_json_object(response, "Batch status")
             if response.status != 200:
                 raise GatewayError(
                     f"Batch status failed: {response.status}",
                     status_code=response.status,
-                    response_data=result,
+                    response_data={"error_type": "ProviderHTTPError"},
                 )
-            counts = result.get("request_counts") or {}
+            result = await self._read_json_object(response, "Batch status")
+            status_value = result.get("status")
+            if type(status_value) is not str or not status_value:
+                raise GatewayError(
+                    "Batch status returned invalid status",
+                    status_code=response.status,
+                    response_data={
+                        "error_type": "InvalidBatchStatusPayload",
+                        "field": "status",
+                    },
+                )
+
+            counts_value = result.get("request_counts")
+            if counts_value is None:
+                counts: Dict[str, Any] = {}
+            elif type(counts_value) is dict:
+                counts = counts_value
+            else:
+                raise GatewayError(
+                    "Batch status returned invalid request_counts",
+                    status_code=response.status,
+                    response_data={
+                        "error_type": "InvalidBatchStatusPayload",
+                        "field": "request_counts",
+                    },
+                )
+
             total = counts.get("total", 0)
-            done = counts.get("completed", 0) + counts.get("failed", 0)
+            completed = counts.get("completed", 0)
+            failed = counts.get("failed", 0)
+            if (
+                type(total) is not int
+                or type(completed) is not int
+                or type(failed) is not int
+                or total < 0
+                or completed < 0
+                or failed < 0
+                or completed + failed > total
+            ):
+                raise GatewayError(
+                    "Batch status returned invalid request_counts",
+                    status_code=response.status,
+                    response_data={
+                        "error_type": "InvalidBatchStatusPayload",
+                        "field": "request_counts",
+                    },
+                )
+
+            done = completed + failed
             result["progress_percentage"] = (
                 round((done / total) * 100, 2) if total else 0
             )
-            result["is_complete"] = result.get("status") in TERMINAL_BATCH_STATUSES
+            result["is_complete"] = status_value in TERMINAL_BATCH_STATUSES
             return result
 
     async def wait_for_batch(
@@ -664,21 +834,25 @@ class BatchAPIClient:
         timeout_seconds: float = 3600.0,
     ) -> Dict[str, Any]:
         """Wait until a batch reaches a terminal state or the timeout expires."""
-        if poll_interval_seconds <= 0:
+        normalized_poll_interval = _normalize_retry_delay(
+            "poll_interval_seconds", poll_interval_seconds
+        )
+        if normalized_poll_interval <= 0:
             raise ValidationError(
                 field="poll_interval_seconds",
                 value=poll_interval_seconds,
-                reason="must be greater than zero",
+                reason="must be a finite number greater than zero",
             )
-        if timeout_seconds <= 0:
+        normalized_timeout = _normalize_retry_delay("timeout_seconds", timeout_seconds)
+        if normalized_timeout <= 0:
             raise ValidationError(
                 field="timeout_seconds",
                 value=timeout_seconds,
-                reason="must be greater than zero",
+                reason="must be a finite number greater than zero",
             )
 
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_seconds
+        deadline = loop.time() + normalized_timeout
         while True:
             status = await self.get_batch_status(batch_id, endpoint_alias)
             if status.get("is_complete"):
@@ -691,10 +865,10 @@ class BatchAPIClient:
                     response_data={
                         "batch_id": batch_id,
                         "last_status": status.get("status"),
-                        "timeout_seconds": timeout_seconds,
+                        "timeout_seconds": normalized_timeout,
                     },
                 )
-            await asyncio.sleep(min(poll_interval_seconds, remaining))
+            await asyncio.sleep(min(normalized_poll_interval, remaining))
 
     @staticmethod
     def _parse_jsonl_content(
@@ -748,17 +922,17 @@ class BatchAPIClient:
             operation=operation,
             headers=self._headers(creds.api_key),
         ) as response:
+            if response.status != 200:
+                raise GatewayError(
+                    f"{operation} failed: {response.status}",
+                    status_code=response.status,
+                    response_data={"error_type": "ProviderHTTPError"},
+                )
             content = await self._read_bounded_utf8(
                 response,
                 operation,
                 max_bytes=self.max_download_bytes,
             )
-            if response.status != 200:
-                raise GatewayError(
-                    f"{operation} failed: {response.status}",
-                    status_code=response.status,
-                    response_data={"body": content},
-                )
         return self._parse_jsonl_content(
             content,
             batch_id=batch_id,
@@ -828,15 +1002,13 @@ class BatchAPIClient:
             operation="Batch cancellation",
             headers=self._headers(creds.api_key),
         ) as response:
-            result = await self._read_json_object(response, "Batch cancellation")
             if response.status not in (200, 202):
-                error = result.get("error")
-                reason = (
-                    error.get("message", "Unknown error")
-                    if isinstance(error, dict)
-                    else "Unknown error"
-                )
-                return {"success": False, "reason": reason}
+                return {
+                    "success": False,
+                    "reason": "Batch cancellation rejected by provider",
+                    "status_code": response.status,
+                }
+            result = await self._read_json_object(response, "Batch cancellation")
             return {
                 "success": True,
                 "batch_id": validated_batch_id,

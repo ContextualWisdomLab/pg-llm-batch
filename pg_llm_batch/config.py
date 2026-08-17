@@ -17,6 +17,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
 from .exceptions import ConfigError
@@ -86,6 +87,20 @@ def _build_default_index(
 DEFAULT_CONFIG_INDEX = _build_default_index(DEFAULT_CONFIG_TREE)
 
 
+def _isolated_default(item: Optional[Dict[str, Any]], fallback: Any) -> Any:
+    """Copy a declared default while preserving caller-owned fallback identity."""
+    if item is None:
+        return fallback
+    return deepcopy(item["value"])
+
+
+def _isolated_cached_value(value: Any) -> Any:
+    """Copy mutable cache-owned configuration before returning it to a caller."""
+    if type(value) in (dict, list):
+        return deepcopy(value)
+    return value
+
+
 def _serialize_value(value: Any) -> str:
     """Serialize a config value to text (JSON for dict/list/bool, else ``str``)."""
     if isinstance(value, (dict, list, bool)):
@@ -100,33 +115,36 @@ def _deserialize_value(full_key: str, raw: str) -> Any:
 
     if target_type in (dict, list):
         try:
-            return json.loads(raw)
+            decoded = json.loads(raw)
         except json.JSONDecodeError:
-            return item["value"] if item else {}
+            return _isolated_default(item, {})
+        if type(decoded) is not target_type:
+            return _isolated_default(item, {})
+        return decoded
     if target_type is bool:
         lowered = raw.lower()
         if lowered in {"true", "1", "yes", "on"}:
             return True
         if lowered in {"false", "0", "no", "off"}:
             return False
-        return bool(raw)
+        return _isolated_default(item, False)
     if target_type is int:
         try:
             return int(raw)
         except ValueError:
-            return item["value"] if item else 0
+            return _isolated_default(item, 0)
     if target_type is float:
         try:
             return float(raw)
         except ValueError:
-            return item["value"] if item else 0.0
+            return _isolated_default(item, 0.0)
     return raw
 
 
 def _default_value(category: str, key: str, fallback: Any) -> Any:
-    """Return the built-in default for ``category.key`` or the caller's fallback."""
+    """Return an isolated built-in default or caller-owned fallback unchanged."""
     item = DEFAULT_CONFIG_INDEX.get(f"{category}.{key}")
-    return item["value"] if item else fallback
+    return _isolated_default(item, fallback)
 
 
 def _split_full_key(full_key: str) -> Tuple[str, str]:
@@ -152,11 +170,15 @@ class PostgresConfigStore:
             )
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
-        self._conn.autocommit = True
-        self.cache: Dict[str, Dict[str, Any]] = {}
-        self._ensure_table()
-        self._ensure_defaults()
-        self._load_cache()
+        try:
+            self._conn.autocommit = True
+            self.cache: Dict[str, Dict[str, Any]] = {}
+            self._ensure_table()
+            self._ensure_defaults()
+            self._load_cache()
+        except BaseException:
+            self.close()
+            raise
 
     def _ensure_table(self) -> None:
         """Create the ``com_config`` table if it does not already exist."""
@@ -201,9 +223,9 @@ class PostgresConfigStore:
                 self.cache.setdefault(category, {})[key] = value
 
     def get(self, category: str, key: str, default: Any = None) -> Any:
-        """Return a typed configuration value, falling back to its default."""
+        """Return a typed value without exposing mutable cache-owned state."""
         if category in self.cache and key in self.cache[category]:
-            return self.cache[category][key]
+            return _isolated_cached_value(self.cache[category][key])
         full_key = f"{category}.{key}"
         with self._conn.cursor() as cur:
             cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; the lookup value is bound via a %s placeholder.
@@ -214,13 +236,14 @@ class PostgresConfigStore:
         if row:
             value = _deserialize_value(full_key, row[0])
             self.cache.setdefault(category, {})[key] = value
-            return value
+            return _isolated_cached_value(value)
         return _default_value(category, key, default)
 
     def set(self, category: str, key: str, value: Any) -> None:
-        """Persist and cache a typed configuration value."""
+        """Normalize, persist, and cache one canonical configuration value."""
         full_key = f"{category}.{key}"
-        serialized = _serialize_value(value)
+        normalized = _deserialize_value(full_key, _serialize_value(value))
+        serialized = _serialize_value(normalized)
         item = DEFAULT_CONFIG_INDEX.get(full_key)
         description = item["description"] if item else full_key
         with self._conn.cursor() as cur:
@@ -236,7 +259,7 @@ class PostgresConfigStore:
                 """,
                 (full_key, serialized, description),
             )
-        self.cache.setdefault(category, {})[key] = value
+        self.cache.setdefault(category, {})[key] = normalized
 
     def show_config(self) -> Iterable[Tuple[str, str, Any]]:
         """Yield all configuration entries in stable key order."""
@@ -266,29 +289,43 @@ class SecretStore:
 
     Values are Fernet-encrypted at rest when a key is supplied (mirrors the
     naruon Fernet-DB pattern). Without a key, values are base64-obfuscated and
-    a warning is logged — acceptable only for local/dev containers.
+    a warning is logged — acceptable only for local/dev containers unless the
+    caller explicitly requires encryption.
     """
 
     TABLE_NAME = "com_secrets"
 
-    def __init__(self, dsn: str, fernet_key: Optional[str] = None) -> None:
-        """Connect to PostgreSQL and configure optional Fernet encryption."""
+    def __init__(
+        self,
+        dsn: str,
+        fernet_key: Optional[str] = None,
+        *,
+        require_encryption: bool = False,
+    ) -> None:
+        """Connect using optional Fernet encryption or fail when it is required."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
+        if require_encryption and not fernet_key:
+            raise ConfigError(
+                "Secret encryption is required but no Fernet key is configured"
+            )
+        if fernet_key and Fernet is None:
+            raise ConfigError(
+                "Fernet encryption requires the optional cryptography dependency"
+            )
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
-        self._conn.autocommit = True
-        self._fernet = None
-        if fernet_key and Fernet is not None:
-            self._fernet = Fernet(fernet_key.encode("utf-8"))
-        elif fernet_key and Fernet is None:  # pragma: no cover
-            logger.warning(
-                "Fernet key supplied but 'cryptography' is not installed; "
-                "storing secrets base64-obfuscated instead."
-            )
-        self._ensure_table()
+        try:
+            self._conn.autocommit = True
+            self._fernet = None
+            if fernet_key and Fernet is not None:
+                self._fernet = Fernet(fernet_key.encode("utf-8"))
+            self._ensure_table()
+        except BaseException:
+            self.close()
+            raise
 
     def _ensure_table(self) -> None:
         """Create the ``com_secrets`` table if it does not already exist."""

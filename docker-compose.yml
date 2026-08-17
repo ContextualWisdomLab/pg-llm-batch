@@ -11,10 +11,14 @@ services:
         PG_MAJOR: "16"
     environment:
       POSTGRES_USER: pgllm
-      POSTGRES_PASSWORD: pgllm
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_DB: pgllm
+    secrets:
+      - postgres_password
     ports:
-      - "5432:5432"
+      # Standalone host access is local-only by default. Remote deployments must
+      # opt into an explicit ingress/network policy instead of inheriting 0.0.0.0.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       # Readiness = DB up AND pg_tiktoken present (mirrors /healthz gate).
       test:
@@ -39,11 +43,28 @@ services:
       postgres:
         condition: service_healthy
     environment:
-      # Bootstrap transport only.
-      PG_LLM_BATCH_DSN: "postgresql://pgllm:pgllm@postgres:5432/pgllm"
-      PG_LLM_BATCH_HEALTH_PORT: "8080"
+      # Credential-free bootstrap target. The runtime reads the password from
+      # the same explicit Compose secret and combines it only in process memory.
+      PG_LLM_BATCH_DSN: "postgresql://pgllm@postgres:5432/pgllm"
+    secrets:
+      - postgres_password
+    command:
+      - python
+      - -m
+      - pg_llm_batch.compose_bootstrap
+      - --password-file
+      - /run/secrets/postgres_password
     ports:
-      - "8080:8080"
+      # The bundled standalone profile is deliberately host-local. Operators
+      # expose production health/API surfaces only through reviewed ingress.
+      - "127.0.0.1:8080:8080"
+
+secrets:
+  # The value must be supplied by the deployment environment. Compose mounts it
+  # only into services that explicitly request this secret; it is not committed
+  # to the repository or embedded in the configured DSN/command line.
+  postgres_password:
+    environment: PG_LLM_BATCH_POSTGRES_PASSWORD
 
 volumes:
   pgdata:

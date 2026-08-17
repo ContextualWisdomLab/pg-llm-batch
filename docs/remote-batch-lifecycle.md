@@ -1,229 +1,301 @@
 # Durable remote batch lifecycle
 
-`DurableBatchAPIClient` records successful provider batch creation, polling, and
-accepted cancellation transitions in PostgreSQL. It is intended for operators
-who need restart-safe reconciliation, a durable current-state projection, and a
-recoverable remote identifier when a provider operation succeeds but local
-persistence fails.
+`pg-llm-batch` offers two opt-in durable clients for operators who need
+restart-safe provider reconciliation:
 
-The durable client is opt-in. `BatchAPIClient` remains available for hosts that
-already own lifecycle state, ordering, or transaction coordination.
+- `DurableBatchAPIClient` stores lifecycle state in the explicit
+  `standalone` tenant scope while preserving the original four-argument
+  recorder seam.
+- `TenantDurableBatchAPIClient` requires a trusted local `tenant_scope` and
+  stores lifecycle state under a tenant-qualified identity suitable for a
+  shared-table MSA deployment.
+
+`BatchAPIClient` remains available for hosts that already own lifecycle state,
+ordering, or persistence. The durable table is a mutable current-state
+projection, not append-only audit history. Hosts that require evidentiary
+transition history must also emit immutable, tenant-attributed audit events to
+their central audit service or event store.
+
+## Trust model
+
+`tenant_scope` is selected by the embedding host only after authentication and
+authorization. It is never derived from provider metadata, endpoint aliases,
+remote resource identifiers, request payloads, model output, or transport
+headers.
+
+The exact accepted syntax is:
+
+```text
+[A-Za-z0-9][A-Za-z0-9._:-]{0,127}
+```
+
+The value is not trimmed or coerced. Empty values, whitespace, Unicode,
+controls, path separators, percent escapes, booleans, and values longer than
+128 characters fail before observation reservation, credential resolution,
+provider I/O, or database access.
+
+### What PostgreSQL RLS does and does not protect
+
+Every package-managed lifecycle transaction binds the validated scope with a
+parameterized, transaction-local call:
+
+```sql
+SELECT set_config('pg_llm_batch.tenant_scope', $1, true);
+```
+
+The row policy compares `tenant_scope` with
+`current_setting('pg_llm_batch.tenant_scope', true)`. A missing setting produces
+no matching policy row, so ordinary package access fails closed. The local flag
+also prevents a scope from surviving transaction completion on a pooled
+connection.
+
+This custom PostgreSQL setting is a **trusted application boundary**, not a
+credential. PostgreSQL accepts two-part custom option names, and a database role
+that can execute arbitrary SQL can call `set_config` with an arbitrary tenant
+scope. Consequently, this RLS policy is not a substitute for preventing SQL
+injection, restricting direct SQL access, authenticating callers, or mapping an
+external identity to an authorized tenant. Do not expose the lifecycle database
+role or a generic SQL console to untrusted tenants. Use parameterized package
+helpers or a separately reviewed security-definer/role-mapping layer when raw
+SQL access is required.
+
+Production application identities must be `NOSUPERUSER NOBYPASSRLS`. PostgreSQL
+superusers and roles with `BYPASSRLS` always bypass row security. Table owners
+are included only because the schema applies `FORCE ROW LEVEL SECURITY`.
+Administrative bypass roles must not be used by ordinary services.
 
 ## Data model
 
-The packaged schema creates `llm_remote_batch_jobs`. Every row is uniquely
-identified by `(endpoint_alias, remote_batch_id)`, so remote identifiers do not
-need to be globally unique across configured gateway aliases.
+The durable business identity is:
 
-Endpoint aliases are trimmed, must be NUL-free, and are limited to at most 128 characters
-before an observation order is reserved, credentials are resolved, or provider I/O
-starts. Remote file and batch identifiers follow the supported gateway path contract:
-at most 256 ASCII characters, beginning with an alphanumeric character and then using
-only letters, digits, dot, underscore, colon, or hyphen. This contract covers
-`input_file_id`, `output_file_id`, and `error_file_id` as well as batch identifiers.
-All caller-provided remote resource identifiers, including input file and batch
-identifiers, are validated before observation reservation, credential resolution,
-or provider I/O. Provider-returned identifiers are validated before any lifecycle
-recorder receives them. Unsupported provider-generated identifiers are redacted
-from public recovery evidence; they never reach PostgreSQL or an injected
-recorder. A rejected raw identifier must be investigated through a separately
-authorized provider-side support path. For a status poll, a present provider
-response `id` must exactly equal the already validated requested batch identifier.
-A mismatch fails before an injected recorder or PostgreSQL receives the response;
-recovery evidence exposes only the trusted requested identifier and never copies
-the mismatched provider value. Provider-returned `endpoint` and `status` text is
-also normalized before custom recorders and PostgreSQL: NUL-bearing, empty, or
-non-string endpoints become absent, while an unsafe status becomes `unknown`.
-These application checks align with the PostgreSQL storage constraints and
-prevent avoidable remote-success/local-persistence split-brain failures and
-cross-batch state contamination.
+```text
+(tenant_scope, endpoint_alias, remote_batch_id)
+```
 
-Only curated operational fields are persisted:
+This allows two authorized tenants to use the same endpoint alias and receive
+the same provider-local batch identifier without colliding.
 
-- remote and input file identifiers;
-- endpoint and provider status;
-- output and error file identifiers;
+Endpoint aliases are trimmed, NUL-free, and limited to 128 characters. Remote
+file and batch identifiers are limited to 256 ASCII characters, begin with an
+alphanumeric character, and then use only letters, digits, dot, underscore,
+colon, or hyphen. Caller-provided identifiers are validated before reservation,
+credential resolution, or provider I/O. Provider-returned identifiers are
+validated before a custom recorder or PostgreSQL sees them.
+
+Only curated operational fields are stored:
+
+- tenant scope, endpoint alias, and remote batch identifier;
+- input, output, and error file identifiers;
+- provider endpoint and status;
 - total, completed, and failed request counts;
-- bounded provider metadata when it is valid JSON;
+- bounded canonical provider metadata;
 - a database-owned observation order;
 - first-seen, last-observed, terminal, and updated timestamps.
 
-The table is a mutable current-state projection, not append-only audit history.
-Hosts that require evidentiary transition history must also emit immutable,
-tenant-attributed audit events to their central audit service or event store.
+Arbitrary provider fields are discarded. Counts become non-negative integers.
+Provider metadata is serialized as sorted compact JSON with non-finite numbers
+disabled and a 64 KiB UTF-8 limit. Cyclic, non-serializable, invalid-Unicode,
+NUL-bearing, non-finite, or oversized metadata becomes the empty object.
 
-Provider metadata, including values such as `tenant_id`, is untrusted descriptive
-data and is not an authorization or tenant-isolation boundary. A multi-tenant
-host must select a tenant-scoped database, schema, endpoint alias, row-level
-policy, or surrounding service boundary before invoking this client. It must
-never authorize lifecycle reads or writes using provider-echoed metadata.
+## Ordering and state reconciliation
 
-Arbitrary provider response fields are discarded. Counts are normalized to
-non-negative integers. Invalid optional values become deterministic safe
-defaults rather than ambiguous database values. Persisted total, completed, and
-failed counters are monotonic: the atomic update uses PostgreSQL `GREATEST`, so a
-newer sparse poll or cancellation response cannot erase known progress.
+Before every durable create, poll, or accepted cancellation request, the client
+reserves a value from `llm_remote_batch_observation_sequence`. PostgreSQL
+sequence values are global and are not reused after rollback, so failed requests
+leave harmless gaps.
 
-Provider metadata is canonicalized as sorted compact JSON with non-finite
-numbers disabled. PostgreSQL `jsonb` rejects U+0000, so any NUL in an object key
-or nested string value is normalized to the empty object before PostgreSQL or an
-injected lifecycle recorder receives it. A literal six-character `\u0000`
-backslash escape is not a NUL and remains unchanged. Cyclic, non-serializable,
-non-finite, invalid-Unicode, or greater-than-64-KiB UTF-8 metadata is likewise
-stored as the empty object. This limit applies to the canonical JSON
-representation, not the source Python object.
-
-## Global observation ordering
-
-Before every durable create, poll, or cancellation request, the client reserves
-a value from `llm_remote_batch_observation_sequence`. PostgreSQL sequence values
-are shared across client instances and are not reused after transaction rollback.
-A failed request may therefore leave a harmless gap.
-
-The reservation adds one PostgreSQL round trip before each durable provider
-operation. This is deliberate: it establishes request order before network
-latency can reorder responses. A poll that starts earlier but finishes later
-retains its lower order and cannot overwrite a later-started poll.
-
-Persistence uses one PostgreSQL `INSERT ... ON CONFLICT DO UPDATE` statement.
-The conflict identity is the endpoint alias plus remote batch identifier, and an
-existing row is updated only when the incoming `observation_order` is strictly
-greater than the stored order. There is no read-before-write race.
-
-## Terminal-state integrity
+Persistence uses one parameterized
+`INSERT ... ON CONFLICT (tenant_scope, endpoint_alias, remote_batch_id) DO
+UPDATE` statement. An existing row changes only when the incoming
+`observation_order` is strictly newer. `GREATEST` keeps request counters
+monotonic, and sparse later responses cannot erase known file identifiers or
+metadata.
 
 The terminal statuses are `completed`, `failed`, `expired`, and `cancelled`.
-Once one is stored, a later observation may update the row only when it carries
-the same terminal status. This permits delayed output/error identifiers, final
-counts, or metadata to enrich the row while preventing a terminal job from
-returning to a non-terminal or different terminal state. The first terminal
-timestamp is retained.
+Once one is stored, a later observation can enrich the row only when it carries
+the same terminal status. The first terminal timestamp is retained.
 
-## Fail-closed recovery behavior
+## Schema migration and rollback
 
-### Reservation failure
+Existing rows are backfilled to the exact `standalone` scope without deletion,
+identity merging, or silent re-parenting. The previous two-column unique
+constraint is replaced with the tenant-qualified key. The temporary owner
+transition, backfill, constraint replacement, and restoration of forced RLS run
+inside one PostgreSQL anonymous block so psql autocommit cannot commit an
+intermediate owner-bypass state.
 
-If the database order cannot be reserved, the durable client raises
-`GatewayError` before provider I/O. Its structured `response_data` includes:
+The packaged schema and the Docker initialization schema are byte-for-byte
+mirrors and support idempotent reapplication. The migration enables and forces
+RLS and installs the tenant policy and tenant-qualified operational index.
 
-- `operation`;
-- `phase` set to `reservation`;
-- `endpoint_alias`;
-- `batch_id` when it was known before the request;
-- the reservation exception type.
+Rollback to the former `(endpoint_alias, remote_batch_id)` key is unsafe until
+an operator proves that no pair appears in more than one tenant scope. Before a
+rollback, also provide an explicit replacement authorization boundary for every
+direct lifecycle query; otherwise existing package users may either lose access
+or reintroduce cross-tenant collisions.
 
-No side-effecting provider request has occurred in this case.
+Existing SQL integrations are operationally affected: once RLS is enabled,
+direct queries that do not establish an authorized transaction-local scope see
+no lifecycle rows. Migrate those consumers to the package read helpers or a
+reviewed tenant-binding database interface before deploying this schema.
 
-### Persistence failure after remote success
+## Public persistence and read helpers
 
-If a remote operation succeeds but its observation cannot be persisted, the
-client raises `GatewayError` with:
-
-- `operation`;
-- `phase` set to `persistence`;
-- `endpoint_alias`;
-- a validated `batch_id` when available;
-- `observation_order`;
-- the persistence exception type.
-
-This recovery path also covers a successful provider response containing a
-batch identifier outside the supported gateway contract. The raw value is not
-included in the public error, exception cause, custom recorder, or PostgreSQL.
-The structured evidence retains a null `batch_id`, the observation order, and
-the bounded exception type.
-
-For status polling, it also covers a valid-looking provider identifier that does
-not equal the requested identifier. The client retains the trusted requested
-identifier in structured recovery evidence, drops the mismatched provider value,
-does not call the lifecycle recorder, and does not write either identity to
-PostgreSQL for that observation. This fail-closed boundary prevents one provider
-response from mutating another batch's durable projection.
-
-A validated remote batch identifier and the observation order remain available
-for operator reconciliation. When the identifier itself is rejected, operators
-must correlate the request through separately authorized provider-side logs.
-The client does not replay side-effecting provider POST operations and does not
-pretend that an unpersisted transition succeeded locally.
-
-## Usage
-
-Apply the idempotent schema first:
+Standalone code keeps the original API:
 
 ```python
-from pg_llm_batch import db
-
-db.apply_schema(dsn)
-```
-
-Construct the durable client with the same credential seam as the base client:
-
-```python
-from pg_llm_batch import DurableBatchAPIClient
-from pg_llm_batch.batch_api_client import config_credentials_provider
-from pg_llm_batch.config import PostgresConfigStore, SecretStore
-
-provider = config_credentials_provider(
-    PostgresConfigStore(dsn),
-    SecretStore(dsn),
+from pg_llm_batch import (
+    DurableBatchAPIClient,
+    get_remote_batch_state,
 )
 
-async with DurableBatchAPIClient(dsn, provider) as client:
+async with DurableBatchAPIClient(dsn, credentials_provider) as client:
+    created = await client.create_batch_job(
+        input_file_id="file-provider-id",
+        endpoint_alias="default",
+        endpoint="/v1/responses",
+    )
+
+state = get_remote_batch_state(dsn, "default", created["id"])
+```
+
+Shared-table hosts use the tenant-aware API:
+
+```python
+from pg_llm_batch import (
+    TenantDurableBatchAPIClient,
+    get_tenant_remote_batch_state,
+    persist_tenant_remote_batch_state,
+)
+
+# tenant_scope must come from the host's authenticated authorization context.
+async with TenantDurableBatchAPIClient(
+    dsn,
+    credentials_provider,
+    tenant_scope="customer-42",
+) as client:
     created = await client.create_batch_job(
         input_file_id="file-provider-id",
         endpoint_alias="default",
         endpoint="/v1/responses",
         metadata={"batch_description": "nightly-evaluation"},
     )
-    current = await client.get_batch_status(created["id"], "default")
+
+state = get_tenant_remote_batch_state(
+    dsn,
+    "customer-42",
+    "default",
+    created["id"],
+)
 ```
 
-Tests and embedded hosts can inject compatible seams:
+The explicit persistence helper is intended for reviewed adapters and recovery
+tools:
+
+```python
+persist_tenant_remote_batch_state(
+    dsn,
+    "customer-42",
+    "default",
+    provider_batch,
+    observation_order,
+)
+```
+
+Do not accept `tenant_scope` from the provider response supplied to that helper.
+
+## Compatible custom seams
+
+`DurableBatchAPIClient` keeps the original recorder contract:
 
 ```python
 DurableBatchAPIClient(
     dsn,
-    provider,
+    credentials_provider,
     observation_reserver=lambda dsn: 42,
     lifecycle_recorder=lambda dsn, alias, batch, order: None,
+)
+```
+
+`TenantDurableBatchAPIClient` uses a separate explicit recorder seam so tenant
+identity cannot be silently dropped:
+
+```python
+TenantDurableBatchAPIClient(
+    dsn,
+    credentials_provider,
+    tenant_scope="customer-42",
+    observation_reserver=lambda dsn: 42,
+    tenant_lifecycle_recorder=(
+        lambda dsn, tenant, alias, batch, order: None
+    ),
 )
 ```
 
 A custom reserver must return a positive non-boolean integer. A custom recorder
 receives the exact order reserved before the corresponding provider operation.
 
-## Provider compatibility
+## Fail-closed recovery behavior
 
-The stored field set follows the core Batch object fields documented by OpenAI:
-`id`, `input_file_id`, `endpoint`, `status`, `output_file_id`, `error_file_id`,
-`request_counts`, and object-valued `metadata`. OpenAI-compatible gateways may
-omit optional fields; the normalization rules above preserve a stable local
-contract. A status response that includes `id` must echo the requested batch
-identifier exactly. Gateways that emit resource identifiers outside the
-documented ASCII path-segment contract, or return a different identifier for a
-status request, require an adapter before durable lifecycle persistence.
+If observation reservation fails, the client raises `GatewayError` before
+provider I/O. If a provider operation succeeds but validation or persistence
+fails, it raises `GatewayError` with bounded recovery metadata: operation,
+phase, validated endpoint alias, trusted batch identifier when available,
+observation order, exception category, and tenant scope for the tenant client.
+Provider payloads, credentials, URLs, metadata values, and rejected raw
+identifiers are excluded.
+
+For status polling, a present provider response identifier must exactly match
+the validated requested identifier. A mismatch is rejected before a custom
+recorder or PostgreSQL receives it, and only the trusted requested identifier is
+retained in recovery evidence.
+
+The client does not automatically replay side-effecting provider POST requests
+and does not report an unpersisted remote transition as locally durable.
+
+## Verification
+
+Deterministic tests cover strict tenant syntax, pre-effect validation,
+standalone recorder compatibility, tenant recorder propagation, parameterized
+transaction context, tenant-qualified conflict targets and reads, malformed
+database rows, migration preservation and reapplication, forced default-deny
+RLS, exact schema mirroring, Python 3.10/3.12/3.14 compatibility, complete public
+docstrings, and 100% production statement and branch coverage.
+
+The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
+persists an identical provider identifier in two tenant scopes, and proves that
+a transaction bound to one scope cannot read the other scope through the
+policy. This test verifies policy mechanics under the trusted package model; it
+does not claim protection after arbitrary SQL execution is granted.
 
 ## References
 
-MITRE. (2026). *CWE-532: Insertion of sensitive information into log file*
-(Version 4.20). https://cwe.mitre.org/data/definitions/532.html
+Joint Task Force. (2020). *Security and privacy controls for information systems
+and organizations* (NIST Special Publication 800-53, Revision 5). National
+Institute of Standards and Technology. https://doi.org/10.6028/NIST.SP.800-53r5
 
-OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 4,
+MITRE. (2026). *CWE-89: Improper neutralization of special elements used in an
+SQL command ('SQL injection')* (Version 4.20).
+https://cwe.mitre.org/data/definitions/89.html
+
+OpenAI. (n.d.). *Batch API reference*. OpenAI Platform. Retrieved August 5,
 2026, from https://platform.openai.com/docs/api-reference/batch/object
 
-OWASP Foundation. (n.d.). *Logging cheat sheet*. OWASP Cheat Sheet Series.
-Retrieved August 5, 2026, from
-https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html
+OWASP Foundation. (n.d.). *Multi-tenant security cheat sheet*. OWASP Cheat
+Sheet Series. Retrieved August 5, 2026, from
+https://cheatsheetseries.owasp.org/cheatsheets/Multi_Tenant_Security_Cheat_Sheet.html
 
-PostgreSQL Global Development Group. (2026). *Conditional expressions*. In
+PostgreSQL Global Development Group. (2026a). *Customized options*. In
 *PostgreSQL 18 documentation*.
-https://www.postgresql.org/docs/current/functions-conditional.html
+https://www.postgresql.org/docs/18/runtime-config-custom.html
 
-PostgreSQL Global Development Group. (2026). *INSERT*. In *PostgreSQL 18
-documentation*. https://www.postgresql.org/docs/current/sql-insert.html
+PostgreSQL Global Development Group. (2026b). *Row security policies*. In
+*PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/ddl-rowsecurity.html
 
-PostgreSQL Global Development Group. (2026). *JSON types*. In *PostgreSQL 18
-documentation*. https://www.postgresql.org/docs/current/datatype-json.html
+PostgreSQL Global Development Group. (2026c). *SET*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-set.html
 
-PostgreSQL Global Development Group. (2026). *Sequence manipulation functions*.
-In *PostgreSQL 18 documentation*.
-https://www.postgresql.org/docs/current/functions-sequence.html
+PostgreSQL Global Development Group. (2026d). *System administration
+functions*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-admin.html

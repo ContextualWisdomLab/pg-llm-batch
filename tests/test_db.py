@@ -57,26 +57,42 @@ class _Psycopg:
         return _Connection(self)
 
 
-def test_apply_schema_executes_exact_file(monkeypatch, tmp_path):
+def test_apply_schema_executes_packaged_file(monkeypatch, tmp_path):
     driver = _Psycopg()
     monkeypatch.setattr(db, "psycopg", driver)
     schema = tmp_path / "schema.sql"
     schema.write_text("CREATE TABLE snake_case_name (id int);", encoding="utf-8")
-    db.apply_schema("postgresql://x", str(schema))
+    monkeypatch.setattr(db, "SCHEMA_PATH", schema)
+
+    db.apply_schema("postgresql://x")
+
     assert driver.executions == [("CREATE TABLE snake_case_name (id int);", None)]
     assert driver.commits == 1
+
+
+def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
+    """Caller-controlled local files must not acquire arbitrary SQL authority."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", driver)
+    untrusted_schema = tmp_path / "untrusted.sql"
+    untrusted_schema.write_text("DROP TABLE llm_requests;", encoding="utf-8")
+
+    with pytest.raises(TypeError):
+        db.apply_schema("postgresql://x", str(untrusted_schema))
+
+    assert driver.connections == []
+    assert driver.executions == []
+    assert driver.commits == 0
 
 
 @pytest.mark.parametrize(
     ("stored", "expected"),
     [
-        ({"text": '{"id":1}'}, '{"id":1}\n'),
-        ({"text": ""}, ""),
-        ('{"id":2}\n', '{"id":2}\n'),
-        (123, "123\n"),
+        ({"text": '{"id":1}\n', "line_count": 1}, '{"id":1}\n'),
+        ({"text": "", "line_count": 0}, ""),
     ],
 )
-def test_load_virtual_payload_normalizes_jsonl(monkeypatch, stored, expected):
+def test_load_virtual_payload_preserves_canonical_jsonl(monkeypatch, stored, expected):
     driver = _Psycopg((stored,))
     monkeypatch.setattr(db, "psycopg", driver)
     assert db.load_virtual_payload("postgresql://x", "file-1") == expected

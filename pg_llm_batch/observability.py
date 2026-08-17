@@ -57,6 +57,12 @@ def _bounded_error_type(error: BaseException) -> str:
     return _ERROR_TYPE_NAMES.get(type(error), ERROR_TYPE_OTHER)
 
 
+def _resolve_error_status() -> Any:
+    """Build OpenTelemetry ``Status(ERROR)`` lazily from the optional trace API."""
+    trace = import_module("opentelemetry.trace")
+    return trace.Status(trace.StatusCode.ERROR)
+
+
 class _NoOpInstrument:
     """Accept metric calls when an injected meter cannot create an instrument."""
 
@@ -160,11 +166,27 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         except (Exception, CancelledError):
             return default
 
+    def _enter_span_context(self, span_context: Any) -> tuple[Any, bool]:
+        """Enter an optional span context and report whether entry completed."""
+        if span_context is None:
+            return None, False
+        try:
+            return span_context.__enter__(), True
+        except (Exception, CancelledError):
+            return None, False
+
     def _use_span(self, span: Any, action: Callable[[Any], Any]) -> None:
         """Apply a span mutation only when a usable span was created."""
         if span is None:
             return
         self._telemetry_or_default(lambda: action(span), None)
+
+    def _mark_error_span_status(self, span: Any) -> None:
+        """Mark one failed span Error without exposing exception details."""
+        self._telemetry_or_default(
+            lambda: span.set_status(_resolve_error_status()),
+            None,
+        )
 
     def _emit_measurements(
         self,
@@ -185,9 +207,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         )
 
     def _close_span_context(self, span_context: Any) -> None:
-        """Close an entered span context without exposing operation exceptions."""
-        if span_context is None:
-            return
+        """Close a span context whose entry has already completed successfully."""
         self._telemetry_or_default(
             lambda: span_context.__exit__(None, None, None),
             None,
@@ -214,9 +234,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 ),
                 None,
             )
-            span = None
-            if span_context is not None:
-                span = self._telemetry_or_default(span_context.__enter__, None)
+            span, span_entered = self._enter_span_context(span_context)
             self._use_span(
                 span,
                 lambda active_span: active_span.set_attribute(
@@ -235,13 +253,15 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                         error_type,
                     ),
                 )
+                self._mark_error_span_status(span)
                 attributes = {
                     OPERATION_NAME_ATTRIBUTE: operation_name,
                     OPERATION_OUTCOME_ATTRIBUTE: "error",
                     ERROR_TYPE_ATTRIBUTE: error_type,
                 }
                 self._emit_measurements(started_at, attributes)
-                self._close_span_context(span_context)
+                if span_entered:
+                    self._close_span_context(span_context)
                 raise
 
             attributes = {
@@ -249,7 +269,8 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 OPERATION_OUTCOME_ATTRIBUTE: "success",
             }
             self._emit_measurements(started_at, attributes)
-            self._close_span_context(span_context)
+            if span_entered:
+                self._close_span_context(span_context)
             return result
         finally:
             self._observation_depth.reset(depth_token)
@@ -259,6 +280,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         file_path: str,
         endpoint_alias: str,
         purpose: str = "batch",
+        expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Upload a virtual JSONL payload while observing the public operation."""
         return await self._run_observed(
@@ -267,6 +289,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 file_path,
                 endpoint_alias,
                 purpose,
+                expires_after_seconds=expires_after_seconds,
             ),
         )
 
@@ -276,6 +299,7 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
         endpoint_alias: str,
         endpoint: str = "/v1/chat/completions",
         metadata: Optional[Dict[str, Any]] = None,
+        output_expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Create a provider batch while observing the public operation."""
         return await self._run_observed(
@@ -285,6 +309,21 @@ class OpenTelemetryBatchAPIClient(BatchAPIClient):
                 endpoint_alias,
                 endpoint,
                 metadata,
+                output_expires_after_seconds=output_expires_after_seconds,
+            ),
+        )
+
+    async def delete_file(
+        self,
+        file_id: str,
+        endpoint_alias: str,
+    ) -> Dict[str, Any]:
+        """Delete a provider file while observing the public operation."""
+        return await self._run_observed(
+            "delete_file",
+            lambda: super(OpenTelemetryBatchAPIClient, self).delete_file(
+                file_id,
+                endpoint_alias,
             ),
         )
 

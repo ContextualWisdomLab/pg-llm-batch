@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded `restore_postgres_logical_backup()` executor that runs one
+  shell-free `pg_restore --single-transaction --exit-on-error` against a
+  caller-owned private archive descriptor. Callers must pass exact-boolean
+  `source_superusers_trusted=True`; the service name is not an authorization
+  boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be
+  inherited.
+
+### Fixed
+
+- Logical restore no longer treats a mid-archive descriptor offset as failure.
+  Custom-format `pg_restore` seeks to the table of contents and data blocks, so
+  a successful restore is not required to leave the descriptor at end-of-file.
+  A post-restore metadata mismatch remains fail-closed and must be treated as
+  unsafe because the SQL transaction may already have committed.
+
+### Added
+
+- Read-only exact-head release acceptance that builds wheel and source distribution artifacts twice from clean Git archives, proves byte-identical SHA-256 identity, records bounded canonical evidence, and keeps publication and attestation authority separate.
+- Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
+- Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.
 - Independent 1 MiB bounded-stream decoding for Files and Batches control-plane JSON before strict UTF-8 and object parsing.
 - Opt-in OpenTelemetry spans, operation counts, and duration histograms for all
   caller-invoked public Batch API client operations, with explicit tracer/meter
@@ -23,8 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decoded-byte default, strict UTF-8 validation, body-free oversize errors,
   and fail-closed handling when a bounded byte stream is unavailable.
 - Bounded retries for transient idempotent provider GET failures, including
-  RFC Retry-After support and equal-jitter exponential fallback; side-effecting
-  POST operations remain single-attempt.
+  HTTP 425 `Too Early`, RFC `Retry-After` support, and equal-jitter exponential
+  fallback. TLS handshake and certificate failures are never retried
+  automatically. Certificate fingerprint mismatches are never retried
+  automatically. Side-effecting POST operations and HTTP 500 remain
+  single-attempt by default.
 - Durable remote batch lifecycle persistence through `DurableBatchAPIClient`
   and `llm_remote_batch_jobs`, with database-owned pre-request observation
   ordering, immutable terminal status identity, bounded curated metadata, and
@@ -32,6 +55,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Bound release-artifact traversal, hashing, identity validation, and manifest publication to descriptor-relative no-follow operations with bounded enumeration, atomic replacement, and file plus parent-directory synchronization so symlink or same-name replacement cannot convert a verified artifact set into different release evidence; this closes the documented time-of-check/time-of-use boundary while version `0.1.0` remains unchanged.
+- Rejected non-callable standalone and tenant lifecycle recorders or observation reservers during client construction, before any provider operation can succeed without a usable persistence path.
+- Made the tenant lifecycle migration atomic across owner-enforcement relaxation, legacy-row backfill, constraint replacement, and forced-RLS restoration so psql autocommit cannot commit an intermediate owner-bypass state.
+- Bootstrap DSN and Fernet-key source selection now consults process environment
+  only when the corresponding explicit argument is omitted. Explicit Postgres
+  DSNs must be exact nonblank strings, explicit Fernet keys must be exact
+  strings, and an explicit empty Fernet key remains empty instead of silently
+  inheriting ambient decryption authority.
+- Restricted the bundled standalone Compose PostgreSQL and component-health
+  published ports to IPv4 loopback so the default developer profile no longer
+  listens on every host interface when operators have not made an explicit
+  ingress decision.
+- Removed plaintext secret values from `config set-secret` process arguments;
+  interactive entry now uses a no-echo prompt and fails closed if terminal echo
+  suppression is unavailable. Automation accepts one bounded logical line over
+  standard input, removes only one terminal LF/CRLF framing sequence, and rejects
+  vertical tab, form feed, ASCII file/group/record separators, Unicode Next Line,
+  U+2028, and U+2029 before `SecretStore` construction. Rejected legacy argv
+  values remain redacted from parser diagnostics instead of being reflected into
+  logs or captured stderr.
+- `BatchAPIClient.wait_for_batch()` now requires `poll_interval_seconds` and
+  `timeout_seconds` to be finite positive numeric durations before credential
+  resolution or provider I/O, rejecting booleans, strings, `None`, NaN,
+  infinities, zero, and negative values before they can create invalid deadlines,
+  sleeps, or unrelated transport/type failures.
+- Batch status responses now fail closed with `InvalidBatchStatusPayload` when
+  the provider does not return a **non-empty status string**, when
+  `request_counts` is not an object, when `total`, `completed`, or `failed` is
+  not a **non-negative integer**, or when `completed + failed` exceeds `total`;
+  malformed provider values are not copied into exported diagnostics.
+- Provider HTTP error responses no longer export provider-controlled JSON,
+  free-text bodies, debug fields, or cancellation messages through package
+  diagnostics. Files upload, batch creation/status, and file download expose
+  only the status plus fixed `ProviderHTTPError`; cancellation rejection exposes
+  only the status plus the fixed package reason.
+- Malformed successful provider responses now fail with fixed bounded package
+  diagnostics without retaining provider bytes, decoded text, or parser/decoder
+  exceptions; malformed provider response exception links are removed from the
+  exported `GatewayError` cause/context chain.
+- Dependency-defined transport exception class names never enter exported
+  diagnostics or retry warning logs; acquisition failures use the closed
+  `ServerFingerprintMismatch`, `ClientConnectorCertificateError`,
+  `ClientSSLError`, `TimeoutError`, or `ClientError` vocabulary.
 - Enforced byte-accurate control-plane limits for multi-byte `memoryview`
   chunks using `nbytes`, and rejected malformed non-byte adapter chunks with
   bounded body-free diagnostics.
@@ -69,19 +135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Serialized hourly maintenance with `queue: max` and
-  `cancel-in-progress: false`, so a later trigger cannot discard an active RCA
-  or bounded repair. The operator contract now requires root-cause analysis,
-  candidate-remedy and feasibility evaluation, then execution; only movement of
-  the same `pg-llm-batch` target creates a writer conflict, while read-only
-  dependency drift causes scoped reconciliation and unrelated safe work
-  continues.
-- Narrowed the hourly review-repair caller to the immutable central OpenCode
-  scheduler prerequisite, explicit `PR_REVIEW_MERGE_TOKEN` and
-  `OPENCODE_APPROVE_TOKEN` fallbacks, and the exact read-plus-OIDC permission set
-  required to exchange a short-lived OpenCode GitHub App token. The generated
-  GitHub token retains no repository write authority, unrelated secrets are not
-  inherited, and the independent merge plane remains unchanged.
+- Bound repository CI checkouts to the exact pull-request source head and verify
+  the checked-out commit before tests, coverage, packaging, or container gates.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
   explicit `LICENSE` and `NOTICE` files, and a compatible setuptools backend
   floor so built artifacts expose normalized legal metadata without warnings.

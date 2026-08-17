@@ -1,0 +1,90 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Regression tests for PostgreSQL credential disclosure through CLI argv."""
+
+from __future__ import annotations
+
+import pytest
+
+from pg_llm_batch import cli
+
+
+@pytest.mark.parametrize(
+    "credential_dsn",
+    [
+        "postgresql://app:secret-sentinel@db.example/batch",
+        "postgres://app:secret-sentinel@db.example/batch",
+        "host=db.example dbname=batch user=app password=secret-sentinel",
+        "host=db.example dbname=batch user=app passfile=/tmp/secret-sentinel.pgpass",
+        "host=db.example dbname=batch user=app sslkey=/tmp/secret-sentinel.key",
+        "host=db.example dbname=batch user=app sslpassword=secret-sentinel",
+        "host=db.example dbname=batch user=app oauth_client_secret=secret-sentinel",
+    ],
+)
+def test_cli_rejects_credential_bearing_dsn_arguments_without_reflection(
+    credential_dsn: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Credential-bearing DSNs fail in parsing without echoing sensitive argv."""
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(["health", "--dsn", credential_dsn])
+
+    captured = capsys.readouterr()
+    assert "secret-sentinel" not in captured.err
+    assert "secret-sentinel" not in captured.out
+
+
+def test_cli_rejects_malformed_dsn_without_reflection(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Malformed conninfo fails with a fixed parser diagnostic."""
+    parser = cli.build_parser()
+
+    with pytest.raises(SystemExit):
+        parser.parse_args(
+            ["health", "--dsn", "host=db.example password=secret-sentinel broken"]
+        )
+
+    captured = capsys.readouterr()
+    assert "secret-sentinel" not in captured.err
+    assert "secret-sentinel" not in captured.out
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        "postgresql://db.example/batch?sslmode=verify-full",
+        "host=db.example dbname=batch sslmode=verify-full",
+        "service=pg-llm-batch",
+    ],
+)
+def test_cli_retains_credential_free_explicit_database_selectors(selector: str) -> None:
+    """Explicit database targeting remains usable when argv contains no secret."""
+    args = cli.build_parser().parse_args(["health", "--dsn", selector])
+
+    assert args.dsn == selector
+
+
+def test_serve_healthz_cli_defaults_to_loopback() -> None:
+    """Direct CLI readiness serving must not bind every host interface by default."""
+    args = cli.build_parser().parse_args(
+        ["serve-healthz", "--dsn", "postgresql://db.example/batch"]
+    )
+
+    assert args.host == "127.0.0.1"
+
+
+def test_serve_healthz_cli_allows_explicit_container_binding() -> None:
+    """Container callers may deliberately request an all-interface listener."""
+    args = cli.build_parser().parse_args(
+        [
+            "serve-healthz",
+            "--dsn",
+            "postgresql://db.example/batch",
+            "--host",
+            "0.0.0.0",
+        ]
+    )
+
+    assert args.host == "0.0.0.0"

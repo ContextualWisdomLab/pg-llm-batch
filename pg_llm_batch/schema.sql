@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: Apache-2.0
 -- Copyright (c) ContextualWisdomLab.
 -- pg-llm-batch: batch DDL subset extracted from xtrmLLMBatchPython.
--- All object names are 2+ word snake_case per the org DB naming rule.
+-- All object names are 2+ word snake_case per the organization DB naming rule.
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -16,7 +16,7 @@ BEGIN
 END $$;
 
 -- =============================================================================
--- KV configuration + secrets (replace os.getenv)
+-- KV configuration and secrets
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS com_config (
     config_key TEXT PRIMARY KEY,
@@ -78,10 +78,11 @@ CREATE SEQUENCE IF NOT EXISTS llm_remote_batch_observation_sequence
     START WITH 1
     NO CYCLE;
 
--- Curated, provider-facing lifecycle state. The compound identity makes repeated
--- polling idempotent without assuming remote identifiers are globally unique.
+-- Curated provider-facing lifecycle state. tenant_scope is selected by a trusted
+-- local authorization boundary and is never derived from provider metadata.
 CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
     remote_job_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_scope TEXT NOT NULL DEFAULT 'standalone',
     endpoint_alias TEXT NOT NULL
         CHECK (LENGTH(endpoint_alias) BETWEEN 1 AND 128),
     remote_batch_id TEXT NOT NULL
@@ -108,6 +109,7 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
         ),
     total_requests INTEGER NOT NULL DEFAULT 0
         CHECK (total_requests >= 0),
+    total_requests_known BOOLEAN NOT NULL DEFAULT FALSE,
     completed_requests INTEGER NOT NULL DEFAULT 0
         CHECK (completed_requests >= 0),
     failed_requests INTEGER NOT NULL DEFAULT 0
@@ -117,12 +119,140 @@ CREATE TABLE IF NOT EXISTS llm_remote_batch_jobs (
     last_observed_at TIMESTAMPTZ NOT NULL,
     terminal_at TIMESTAMPTZ NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id
-        UNIQUE (endpoint_alias, remote_batch_id)
+    CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope
+        CHECK (tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+    CONSTRAINT ck_llm_remote_batch_jobs_known_progress
+        CHECK (
+            NOT total_requests_known OR
+            completed_requests::BIGINT + failed_requests::BIGINT
+                <= total_requests::BIGINT
+        ),
+    CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id
+        UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_status_observed
-    ON llm_remote_batch_jobs(batch_status, last_observed_at);
+-- Reapplying the schema may occur after FORCE RLS was installed. psql can
+-- autocommit individual statements, so the owner transition, legacy-row
+-- backfill, constraint migration, and RLS enable/force transition execute
+-- inside one anonymous block. If any operation fails, PostgreSQL rolls the
+-- statement back so no disabled, unforced, or partially migrated state commits.
+DO $$
+BEGIN
+    ALTER TABLE llm_remote_batch_jobs NO FORCE ROW LEVEL SECURITY;
+    ALTER TABLE llm_remote_batch_jobs
+        ADD COLUMN IF NOT EXISTS tenant_scope TEXT;
+    UPDATE llm_remote_batch_jobs
+    SET tenant_scope = 'standalone'
+    WHERE tenant_scope IS NULL;
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN tenant_scope SET DEFAULT 'standalone';
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN tenant_scope SET NOT NULL;
+
+    ALTER TABLE llm_remote_batch_jobs
+        ADD COLUMN IF NOT EXISTS total_requests_known BOOLEAN;
+    IF EXISTS (
+        SELECT 1
+        FROM llm_remote_batch_jobs
+        WHERE (total_requests_known IS TRUE OR total_requests > 0)
+          AND completed_requests::BIGINT + failed_requests::BIGINT
+              > total_requests::BIGINT
+    ) THEN
+        RAISE EXCEPTION USING
+            ERRCODE = '23514',
+            MESSAGE = 'inconsistent known remote batch progress requires operator remediation';
+    END IF;
+    UPDATE llm_remote_batch_jobs
+    SET total_requests_known = (total_requests > 0)
+    WHERE total_requests_known IS NULL;
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN total_requests_known SET DEFAULT FALSE;
+    ALTER TABLE llm_remote_batch_jobs
+        ALTER COLUMN total_requests_known SET NOT NULL;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'uq_llm_remote_batch_jobs_endpoint_id'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            DROP CONSTRAINT uq_llm_remote_batch_jobs_endpoint_id;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'ck_llm_remote_batch_jobs_tenant_scope'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            ADD CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope
+            CHECK (
+                tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+            ) NOT VALID;
+    END IF;
+    ALTER TABLE llm_remote_batch_jobs
+        VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_tenant_scope;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'ck_llm_remote_batch_jobs_known_progress'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            ADD CONSTRAINT ck_llm_remote_batch_jobs_known_progress
+            CHECK (
+                NOT total_requests_known OR
+                completed_requests::BIGINT + failed_requests::BIGINT
+                    <= total_requests::BIGINT
+            ) NOT VALID;
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'ck_llm_remote_batch_jobs_known_progress'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+          AND NOT convalidated
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            VALIDATE CONSTRAINT ck_llm_remote_batch_jobs_known_progress;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'uq_llm_remote_batch_jobs_tenant_endpoint_id'
+          AND conrelid = 'llm_remote_batch_jobs'::regclass
+    ) THEN
+        ALTER TABLE llm_remote_batch_jobs
+            ADD CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id
+            UNIQUE (tenant_scope, endpoint_alias, remote_batch_id);
+    END IF;
+    ALTER TABLE llm_remote_batch_jobs ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE llm_remote_batch_jobs FORCE ROW LEVEL SECURITY;
+END $$;
+
+DROP INDEX IF EXISTS idx_llm_remote_batch_jobs_status_observed;
+CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_tenant_status_observed
+    ON llm_remote_batch_jobs(
+        tenant_scope,
+        batch_status,
+        last_observed_at
+    );
+
+DROP POLICY IF EXISTS plc_llm_remote_batch_jobs_tenant_scope
+    ON llm_remote_batch_jobs;
+CREATE POLICY plc_llm_remote_batch_jobs_tenant_scope
+    ON llm_remote_batch_jobs
+    TO PUBLIC
+    USING (
+        tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
+    )
+    WITH CHECK (
+        tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
+    );
 
 CREATE TABLE IF NOT EXISTS llm_batch_file_payloads (
     file_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -248,7 +378,7 @@ CREATE INDEX IF NOT EXISTS idx_llm_batches_status_updated
 DROP INDEX IF EXISTS idx_llm_jsonl_lines_payload;
 
 -- =============================================================================
--- Endpoint <-> model <-> tokenizer mapping (populated by the pg_cron sync job)
+-- Endpoint, model, and tokenizer mapping
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS llm_endpoints (
     endpoint_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -271,7 +401,7 @@ CREATE TABLE IF NOT EXISTS llm_endpoint_models (
 );
 
 -- =============================================================================
--- Readiness probe helper (used by /healthz and `count-tokens --self-check`)
+-- Readiness probe helper
 -- =============================================================================
 CREATE OR REPLACE FUNCTION pg_llm_batch_health_check()
 RETURNS TABLE(component TEXT, is_ready BOOLEAN, detail TEXT) AS $$

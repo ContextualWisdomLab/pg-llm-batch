@@ -1,13 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # pg-llm-batch component image: CLI + /healthz server.
-FROM ghcr.io/astral-sh/uv:0.12.0@sha256:606e70c71c852d03f611b1e56a195d08648507018a7057fab82c4974c4eae105 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.3@sha256:2d890623d310b57771ce840f0da5eed5fc6d657da05ffaa45d82797b53fa3abc AS uv
 
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
 
 WORKDIR /app
 
 COPY --from=uv /uv /uvx /bin/
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md LICENSE NOTICE ./
 COPY pg_llm_batch ./pg_llm_batch
 RUN uv sync --frozen --no-dev --no-editable
 
@@ -15,7 +15,18 @@ FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea5
 
 WORKDIR /app
 
-RUN apt-get update && apt-get upgrade -y && \
+# Resolve runtime OS packages from one reviewed Debian snapshot. snapshot.debian.org
+# maps an arbitrary timestamp to the latest import at or before that instant, so
+# this fixed timestamp is a reproducible package-index identity. Valid-Until is
+# disabled only for these intentionally frozen snapshot entries; security refresh
+# is performed by reviewing and advancing the timestamp, not by floating builds.
+RUN rm -f /etc/apt/sources.list.d/debian.sources && \
+    printf '%s\n' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260812T000000Z/ trixie main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260812T000000Z/ trixie-updates main' \
+      'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260812T000000Z/ trixie-security main' \
+      > /etc/apt/sources.list.d/debian-snapshot.list && \
+    apt-get update && \
     apt-get install -y --no-install-recommends libpq5 curl && \
     rm -rf /var/lib/apt/lists/* \
       /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \

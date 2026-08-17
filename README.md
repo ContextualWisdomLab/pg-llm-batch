@@ -17,9 +17,16 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 - **No secrets in the environment.** All configuration and credentials live in
   Postgres KV tables (`com_config`, `com_secrets`). The environment is only a
   *bootstrap transport* for the DSN and an optional Fernet key. This replaces
-  the ~75 `os.getenv` reads in the upstream app.
+  the ~75 `os.getenv` reads in the upstream app. CLI secret values are entered
+  through a no-echo prompt or bounded standard input, never as process arguments.
+  Content-bearing `count-tokens` input is likewise accepted only through bounded
+  UTF-8 standard input, so prompt text is not placed in process arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
+- **Standalone or tenant-scoped lifecycle state.** `DurableBatchAPIClient`
+  preserves the standalone contract, while `TenantDurableBatchAPIClient` binds
+  shared-table lifecycle state to a trusted host-selected `tenant_scope` with
+  forced PostgreSQL row-level security.
 
 ## Architecture
 
@@ -31,15 +38,20 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
                      │
                      ▼
         BatchAPIClient.upload_jsonl → create_batch_job → wait_for_batch → download_results
-                     │
-   (or) pg_cron job  cron_fetch_batch_results()  polls + imports results via pgsql-http
 ```
+
+Provider-facing polling and retrieval stay behind the validated Python client
+boundary. The former bundled `pg_cron` + `pgsql-http` provider retriever is
+retired; automatic reconciliation remains a separate product capability rather
+than a second database-side network authority.
 
 | Piece | Module |
 | --- | --- |
 | Token counting + accumulation | `pg_llm_batch/token_counter.py` |
 | Batch assembly + persistence | `pg_llm_batch/orchestrator.py` |
 | Submit / poll / wait / retrieve | `pg_llm_batch/batch_api_client.py` |
+| Durable standalone and tenant lifecycle clients | `pg_llm_batch/durable_client.py` |
+| Tenant-qualified lifecycle persistence and reads | `pg_llm_batch/db.py` |
 | Opt-in OpenTelemetry operations | `pg_llm_batch/observability.py` |
 | KV config + encrypted secrets | `pg_llm_batch/config.py` |
 | DDL subset | `pg_llm_batch/schema.sql` |
@@ -48,9 +60,12 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 
 ## Requirements
 
-- PostgreSQL with `pg_tiktoken`, `pg_cron`, and `http` (pgsql-http). The bundled
-  image (`docker/postgres/Dockerfile`) builds all three.
+- PostgreSQL with `pg_tiktoken`. Fresh bundled database initialization does not
+  create `pg_cron` or `http`; their image packages are retained temporarily only
+  for existing-volume cleanup and rollback compatibility.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
+- Tenant-scoped lifecycle deployments require an application database role with
+  `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
 
 ---
 
@@ -71,8 +86,13 @@ curl -fsS localhost:8080/healthz
 export PG_LLM_BATCH_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm
 python -m pg_llm_batch init-db                                   # idempotent
 python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
-python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
+python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo prompt
 ```
+
+`config set-secret` never accepts the secret plaintext in process arguments.
+On an interactive terminal it prompts without echo. Automation may pipe exactly
+one bounded logical line on standard input from an existing credential source;
+the command does not require or define a particular external secret manager.
 
 Production gateway destinations must use HTTPS. Plain HTTP is accepted only for
 explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`).
@@ -83,13 +103,13 @@ Encrypt secrets at rest by exporting a Fernet key as bootstrap transport:
 
 ```bash
 export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
-python -m pg_llm_batch config set-secret gateway_api_key.default sk-your-key
+python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo prompt
 ```
 
 ### 3. Count, submit, wait, retrieve
 
 ```bash
-python -m pg_llm_batch count-tokens --model gpt-4o --text "hello world"
+printf '%s' 'hello world' | python -m pg_llm_batch count-tokens --model gpt-4o --stdin
 # {"model": "gpt-4o", "tokens": 2}
 
 # after prepare_batches() has produced a memory://<file_id> payload:
@@ -99,6 +119,13 @@ python -m pg_llm_batch wait     --endpoint default --batch-id <batch_id> \
     --poll-interval 5 --timeout 3600
 python -m pg_llm_batch retrieve --endpoint default --batch-id <batch_id>
 ```
+
+`count-tokens` requires the explicit `--stdin` source and accepts at most 1 MiB
+of strict UTF-8 before configuration-store or PostgreSQL acquisition. The
+command preserves the decoded text exactly, including trailing newlines because
+they can affect the authoritative token count. Use `printf '%s'` when a shell
+example should not append a newline. Prompt content is not accepted through an
+argv option and rejected content is not copied into parser/runtime diagnostics.
 
 `wait` returns when the remote status is `completed`, `failed`, `expired`, or
 `cancelled`. It raises a structured gateway error when the configured timeout
@@ -128,6 +155,69 @@ The Docker `HEALTHCHECK` and the compose `postgres` service both gate on the
 same `pg_llm_batch_health_check()` SQL function.
 
 ---
+
+## Durable lifecycle modes
+
+Apply the canonical schema before using package-owned durable lifecycle state:
+
+```python
+from pg_llm_batch import db
+
+db.apply_schema(dsn)
+```
+
+`DurableBatchAPIClient` keeps the original single-tenant facade and records under
+the exact `standalone` scope. Shared-table hosts use
+`TenantDurableBatchAPIClient` with a trusted tenant identity selected by the
+host's authenticated authorization context:
+
+```python
+from pg_llm_batch import TenantDurableBatchAPIClient, get_tenant_remote_batch_state
+
+async with TenantDurableBatchAPIClient(
+    dsn,
+    credentials_provider,
+    tenant_scope="customer-42",
+) as client:
+    created = await client.create_batch_job(
+        input_file_id="file-provider-id",
+        endpoint_alias="default",
+        endpoint="/v1/responses",
+    )
+
+state = get_tenant_remote_batch_state(
+    dsn,
+    "customer-42",
+    "default",
+    created["id"],
+)
+```
+
+The durable identity is `(tenant_scope, endpoint_alias, remote_batch_id)`.
+Package helpers bind tenant scope with parameterized transaction-local PostgreSQL
+context and the schema enables and forces default-deny RLS. Provider metadata,
+resource identifiers, payloads, and headers never select `tenant_scope`.
+
+The custom PostgreSQL setting is **not** a tenant credential. A database role
+that can execute arbitrary SQL can set arbitrary session state, so production
+application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
+a generic SQL surface, and still require normal authentication, authorization,
+and SQL-injection controls. Direct SQL consumers that do not establish an
+authorized tenant scope see no lifecycle rows after RLS is enabled.
+
+See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
+migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
+
+For a caller-owned logical archive, use `restore_postgres_logical_backup()` only
+against an isolated libpq service after you can assert
+`source_superusers_trusted=True`. The service name is not an authorization
+boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited.
+The executor runs `pg_restore --single-transaction --exit-on-error`.
+Custom-format restore seeks through the archive, so success is not required to
+leave the descriptor at end-of-file. If metadata changes after `pg_restore`
+exits zero, treat the target as unsafe and do not retry into the same service.
+See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md)
+for the operator steps.
 
 ## Embed as a git submodule
 
@@ -181,11 +271,15 @@ a reviewed deployment requires a larger bounded payload; oversized or invalid
 UTF-8 responses fail with structured errors that do not echo provider content.
 
 Idempotent provider `GET` operations use up to three total attempts by default
-for transient `408`, `429`, `502`, `503`, and `504` responses and for aiohttp
-transport failures. A bounded RFC `Retry-After` delta or HTTP-date is honored.
-Delta-seconds accept RFC ASCII digits only. Syntactically valid values above the
-configured maximum are refused; malformed values use equal-jitter exponential
-fallback from 0.5 seconds up to 30 seconds. Upload, batch creation, and cancellation `POST`
+for transient `408`, `425`, `429`, `502`, `503`, and `504` responses and for
+retryable aiohttp transport failures. TLS handshake and certificate failures are
+never retried automatically; they fail after the first attempt because repeating
+a request cannot repair peer identity or TLS policy. Certificate fingerprint
+mismatches are never retried automatically for the same peer-identity reason.
+A bounded RFC `Retry-After` delta or HTTP-date is honored. Delta-seconds accept
+RFC ASCII digits only. Syntactically valid values above the configured maximum
+are refused; malformed values use equal-jitter exponential fallback from 0.5
+seconds up to 30 seconds. Upload, batch creation, and cancellation `POST`
 operations are never retried automatically. Operators can override
 `max_retry_attempts`, `retry_base_delay_seconds`, and
 `retry_max_delay_seconds` in the `BatchAPIClient` constructor.
@@ -218,11 +312,25 @@ pytest                       # unit tests (fakes, no DB needed)
 
 docker compose up -d --build postgres
 PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
-    pytest -m integration    # against the real pg_tiktoken + pg_cron container
+    pytest -m integration    # against the real pg_tiktoken PostgreSQL container
 ```
 
 ## Docs
 
+- [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md)
+  — standalone and tenant-scoped durable lifecycle operation, RLS trust boundary,
+  migration, rollback, pooling, and recovery.
+- [`docs/doctoring/tenant-scoped-lifecycle.md`](docs/doctoring/tenant-scoped-lifecycle.md)
+  — tenant identity, RLS authority, compatibility, and APA 7 references.
+- [`docs/doctoring/cli-secret-input.md`](docs/doctoring/cli-secret-input.md)
+  — no-echo interactive secret entry, bounded stdin automation, fail-closed
+  validation, verification, and security references.
+- [`docs/doctoring/count-tokens-stdin-privacy.md`](docs/doctoring/count-tokens-stdin-privacy.md)
+  — bounded UTF-8 prompt ingestion without argv exposure, exact text semantics,
+  failure ordering, verification, and APA 7 references.
+- [`docs/doctoring/legacy-pgsql-http-retrieval.md`](docs/doctoring/legacy-pgsql-http-retrieval.md)
+  — retirement of direct SQL provider networking, existing-volume remediation,
+  rollback, and the validated Python provider boundary.
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.

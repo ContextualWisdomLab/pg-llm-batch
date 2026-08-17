@@ -141,6 +141,7 @@ def test_prepare_batches_rejects_unknown_lookup_key(monkeypatch, fake_pg):
 
 def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     rows = [("r1", "system", "prompt", "gpt-4o")]
+    close_calls = {"config": 0, "counter": 0}
 
     class Cursor:
         def __enter__(self):
@@ -167,14 +168,24 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
         def cursor(self):
             return Cursor()
 
+    class Config:
+        def close(self):
+            close_calls["config"] += 1
+
+    config = Config()
+
     class Counter:
         def __init__(self, dsn, config):
-            assert (dsn, config) == ("postgresql://x", "config")
+            assert (dsn, config) == ("postgresql://x", globals_config)
             self.effective_limit = 100
 
+        def close(self):
+            close_calls["counter"] += 1
+
+    globals_config = config
     orch = PostgresBatchOrchestrator("postgresql://x")
     monkeypatch.setattr(fake_pg, "connect", lambda _dsn: Connection())
-    monkeypatch.setattr(orch_mod, "PostgresConfigStore", lambda _dsn: "config")
+    monkeypatch.setattr(orch_mod, "PostgresConfigStore", lambda _dsn: globals_config)
     monkeypatch.setattr(orch_mod, "TokenCounter", Counter)
     monkeypatch.setattr(orch, "_resolve_batch_uuid", lambda _key: "resolved")
     monkeypatch.setattr(
@@ -198,6 +209,7 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     assert result["ready"] == [BatchPayload("resolved", 1, 50)]
     result = orch.prepare_batches(batch_uuid="source-key")
     assert result["ready"] == [BatchPayload("resolved", 0, 100)]
+    assert close_calls == {"config": 2, "counter": 2}
 
 
 def test_assemble_payloads_handles_empty_model_switch_and_null_user(fake_pg, monkeypatch):
@@ -341,7 +353,7 @@ def test_persist_payloads_separates_ready_and_overflow(monkeypatch, fake_pg):
     assert connection.commits == 1
     assert len(many) == 2
     assert many[0][1][0][0] == "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-    assert "pg_advisory_xact_lock" in executions[0][0]
+    assert any("pg_advisory_xact_lock" in sql for sql, _params in executions)
     assert sum("UPDATE llm_requests" in sql for sql, _params in executions) == 2
     assert any(params[1][0] == "jsonb" for _sql, params in executions if len(params) == 2)
     batch_updates = [item for item in executions if "UPDATE llm_batches" in item[0]]
