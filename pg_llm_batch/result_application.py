@@ -3,11 +3,13 @@
 """Atomic local application of streamed provider results with checkpoints.
 
 The helper in this module deliberately owns no PostgreSQL connection and no
-transaction lifecycle.  A caller supplies a cursor that already belongs to the
+transaction lifecycle. A caller supplies a cursor that already belongs to the
 transaction in which both the local business effect and durable checkpoint
-advance must occur.  This permits atomicity only for effects executed through
-that same PostgreSQL transaction; it does not create a distributed exactly-once
-guarantee for external APIs, queues, object stores, or other databases.
+advance must occur. The business callback receives a package-scoped,
+same-thread cursor capability rather than the raw cursor. This permits atomicity
+only for effects executed synchronously through that capability; it does not
+create a distributed exactly-once guarantee for external APIs, queues, object
+stores, other databases, or independently retained caller resources.
 """
 
 from __future__ import annotations
@@ -16,6 +18,7 @@ import asyncio
 import inspect
 from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass
+from threading import get_ident
 from typing import Any, Callable, Mapping
 
 from .checkpoint_store import CheckpointConflictError
@@ -41,6 +44,62 @@ class ResultApplicationOutcome:
 
     applied: bool
     checkpoint: BatchResultCheckpoint
+
+
+class _ResultApplicationCursor:
+    """Expose a revocable same-thread subset of caller transaction authority.
+
+    The facade intentionally does not expose the underlying connection, commit,
+    rollback, copy, streaming, or arbitrary attribute access. Synchronous record
+    effects may execute statements and consume ordinary cursor results while the
+    callback is active. The capability is revoked as soon as the callback
+    returns or raises, and use from any other thread fails before the raw cursor
+    is touched.
+    """
+
+    __slots__ = ("__active", "__cursor", "__owner_thread_id")
+
+    def __init__(self, cursor: Any) -> None:
+        """Bind one raw cursor to the constructing thread for one callback."""
+        self.__cursor = cursor
+        self.__owner_thread_id = get_ident()
+        self.__active = True
+
+    def _revoke(self) -> None:
+        """Remove package-supplied cursor authority after callback completion."""
+        self.__active = False
+
+    def _assert_usable(self) -> None:
+        """Reject expired or cross-thread use with bounded package evidence."""
+        if not self.__active or get_ident() != self.__owner_thread_id:
+            raise ResultApplicationError("record_effect") from None
+
+    def execute(self, *args: Any, **kwargs: Any) -> _ResultApplicationCursor:
+        """Execute one statement synchronously without returning the raw cursor."""
+        self._assert_usable()
+        self.__cursor.execute(*args, **kwargs)
+        return self
+
+    def executemany(self, *args: Any, **kwargs: Any) -> _ResultApplicationCursor:
+        """Execute one parameter sequence without returning the raw cursor."""
+        self._assert_usable()
+        self.__cursor.executemany(*args, **kwargs)
+        return self
+
+    def fetchone(self, *args: Any, **kwargs: Any) -> Any:
+        """Fetch one result while this callback owns the scoped capability."""
+        self._assert_usable()
+        return self.__cursor.fetchone(*args, **kwargs)
+
+    def fetchmany(self, *args: Any, **kwargs: Any) -> Any:
+        """Fetch a bounded result page while the scoped capability is active."""
+        self._assert_usable()
+        return self.__cursor.fetchmany(*args, **kwargs)
+
+    def fetchall(self, *args: Any, **kwargs: Any) -> Any:
+        """Fetch remaining results while the scoped capability is active."""
+        self._assert_usable()
+        return self.__cursor.fetchall(*args, **kwargs)
 
 
 def _redacted_validation_error(field: str, reason: str) -> ValidationError:
@@ -140,17 +199,25 @@ def apply_checkpointed_result_in_transaction(
     The durable predecessor is loaded and validated before the local effect. An
     exact replay returns without re-running the effect, while a count regression
     is rejected before caller-owned business logic. Fresh work invokes
-    ``apply_record`` using the supplied cursor and advances the checkpoint only
-    after that callback completes synchronously and returns ``None``. Statically
-    visible asynchronous callables, including static-method and class-method
-    descriptors, are rejected before checkpoint-store access. A raw coroutine
-    returned by an otherwise synchronous callable is closed, and returned
-    pending :class:`asyncio.Future` or :class:`concurrent.futures.Future` work is
-    cancelled before the bounded failure is raised. Rejected deferred work
-    therefore cannot keep the cursor or provider record live merely because the
-    caller returned its asynchronous handle. The checkpoint store must then
-    confirm the exact requested checkpoint before success is reported. The
-    caller remains responsible for committing or rolling back the surrounding
+    ``apply_record`` with a package-scoped cursor facade on the supplied
+    transaction and advances the checkpoint only after that callback completes
+    synchronously and returns ``None``. The facade permits ordinary synchronous
+    ``execute``/``executemany`` and ``fetch*`` operations only on the callback's
+    original thread. It is revoked on every callback exit, so deferred work
+    cannot retain package-supplied transaction cursor authority after return.
+    This is an authority boundary, not a claim that Python can forcibly
+    terminate arbitrary already-running Futures, Tasks, threads, or other
+    caller-retained resources.
+
+    Statically visible asynchronous callables, including static-method and
+    class-method descriptors, are rejected before checkpoint-store access. A raw
+    coroutine returned by an otherwise synchronous callable is closed, and
+    returned pending :class:`asyncio.Future` or
+    :class:`concurrent.futures.Future` work receives best-effort cancellation
+    after the scoped cursor has already been revoked. Any non-``None`` return is
+    rejected as a record-effect failure. The checkpoint store must then confirm
+    the exact requested checkpoint before success is reported. The caller
+    remains responsible for committing or rolling back the surrounding
     transaction.
 
     ``CheckpointConflictError`` is intentionally preserved as the stable retry
@@ -202,8 +269,12 @@ def apply_checkpointed_result_in_transaction(
         ) from None
 
     effect_failure: ResultApplicationError | None = None
+    effect_cursor = _ResultApplicationCursor(cursor)
     try:
-        effect_result = apply_record(cursor, candidate.record)
+        try:
+            effect_result = apply_record(effect_cursor, candidate.record)
+        finally:
+            effect_cursor._revoke()
         if inspect.iscoroutine(effect_result):
             effect_result.close()
         elif isinstance(effect_result, (asyncio.Future, ConcurrentFuture)):
