@@ -39,6 +39,21 @@ class _RecordingStore:
         return None
 
 
+class _SuccessfulStore(_RecordingStore):
+    """Confirm the requested checkpoint after one successful local effect."""
+
+    def save_in_transaction(
+        self,
+        _cursor: object,
+        _consumer_name: str,
+        checkpoint: BatchResultCheckpoint,
+        **_kwargs: object,
+    ) -> BatchResultCheckpoint:
+        """Record checkpoint persistence and return exact confirmation."""
+        self.events.append("save")
+        return checkpoint
+
+
 class _AsyncCallableEffect:
     """Represent an ordinary callable object with asynchronous invocation."""
 
@@ -113,14 +128,35 @@ class _ConcurrentFutureReturningEffect:
 
 
 class _ExecutableCursor:
-    """Record whether deferred work reached the caller-owned cursor."""
+    """Record raw database operations performed through the scoped facade."""
 
     def __init__(self) -> None:
-        self.executed_sql: list[str] = []
+        self.calls: list[tuple[Any, ...]] = []
 
-    def execute(self, sql: str) -> None:
-        """Record one SQL operation performed through the raw cursor."""
-        self.executed_sql.append(sql)
+    def execute(self, *args: Any, **kwargs: Any) -> _ExecutableCursor:
+        """Record one statement execution and mimic Psycopg's cursor return."""
+        self.calls.append(("execute", args, kwargs))
+        return self
+
+    def executemany(self, *args: Any, **kwargs: Any) -> _ExecutableCursor:
+        """Record one many-parameter execution and mimic cursor return."""
+        self.calls.append(("executemany", args, kwargs))
+        return self
+
+    def fetchone(self) -> tuple[str]:
+        """Return one deterministic row."""
+        self.calls.append(("fetchone",))
+        return ("one",)
+
+    def fetchmany(self, size: int) -> list[tuple[str]]:
+        """Return one deterministic bounded page."""
+        self.calls.append(("fetchmany", size))
+        return [("many",)]
+
+    def fetchall(self) -> list[tuple[str]]:
+        """Return one deterministic remainder."""
+        self.calls.append(("fetchall",))
+        return [("all",)]
 
 
 class _RunningConcurrentFutureReturningEffect:
@@ -148,6 +184,27 @@ class _RunningConcurrentFutureReturningEffect:
         """Release and join the worker even when the regression assertion fails."""
         self.release.set()
         self.executor.shutdown(wait=True)
+
+
+class _CrossThreadCursorEffect:
+    """Attempt cursor use from another thread before the callback returns."""
+
+    def __init__(self) -> None:
+        self.worker_failure: Exception | None = None
+
+    def __call__(self, cursor: Any, _record: dict[str, Any]) -> None:
+        """Prove the live capability remains restricted to its owner thread."""
+
+        def _worker() -> None:
+            try:
+                cursor.execute("SELECT cross_thread")
+            except Exception as exc:
+                self.worker_failure = exc
+
+        worker = threading.Thread(target=_worker)
+        worker.start()
+        worker.join(timeout=1)
+        assert not worker.is_alive()
 
 
 def _item() -> CheckpointedBatchResultRecord:
@@ -197,6 +254,65 @@ def test_async_callable_object_fails_before_checkpoint_store_access(
     assert caught.value.details["field"] == "apply_record"
     assert caught.value.details["value"] == "<redacted>"
     assert store.events == []
+
+
+def test_scoped_cursor_supports_sync_subset_then_revokes_on_return() -> None:
+    """Synchronous DB-API work must succeed without leaking raw cursor authority."""
+    store = _SuccessfulStore()
+    raw_cursor = _ExecutableCursor()
+    observed: dict[str, Any] = {}
+
+    def effect(cursor: Any, _record: dict[str, Any]) -> None:
+        observed["cursor"] = cursor
+        assert cursor is not raw_cursor
+        assert cursor.execute("SELECT 1", answer=42) is cursor
+        assert cursor.executemany("SELECT %s", [(1,), (2,)]) is cursor
+        assert cursor.fetchone() == ("one",)
+        assert cursor.fetchmany(1) == [("many",)]
+        assert cursor.fetchall() == [("all",)]
+
+    outcome = apply_checkpointed_result_in_transaction(
+        raw_cursor,
+        store,
+        "result-writer",
+        _item(),
+        effect,
+    )
+
+    assert outcome.applied is True
+    assert store.events == ["load", "save"]
+    assert [call[0] for call in raw_cursor.calls] == [
+        "execute",
+        "executemany",
+        "fetchone",
+        "fetchmany",
+        "fetchall",
+    ]
+    with pytest.raises(ResultApplicationError) as revoked:
+        observed["cursor"].execute("SELECT after_return")
+    assert revoked.value.details == {"phase": "record_effect"}
+    assert len(raw_cursor.calls) == 5
+
+
+def test_scoped_cursor_rejects_cross_thread_use_while_callback_is_active() -> None:
+    """A live scoped cursor must reject worker-thread use before raw I/O."""
+    store = _SuccessfulStore()
+    raw_cursor = _ExecutableCursor()
+    effect = _CrossThreadCursorEffect()
+
+    outcome = apply_checkpointed_result_in_transaction(
+        raw_cursor,
+        store,
+        "result-writer",
+        _item(),
+        effect,
+    )
+
+    assert outcome.applied is True
+    assert isinstance(effect.worker_failure, ResultApplicationError)
+    assert effect.worker_failure.details == {"phase": "record_effect"}
+    assert raw_cursor.calls == []
+    assert store.events == ["load", "save"]
 
 
 def test_returned_coroutine_is_closed_before_bounded_failure() -> None:
@@ -279,7 +395,7 @@ def test_running_future_cannot_reuse_transaction_cursor_after_rejection() -> Non
         with pytest.raises(ResultApplicationError) as worker_failure:
             effect.returned_future.result(timeout=2)
         assert worker_failure.value.details == {"phase": "record_effect"}
-        assert cursor.executed_sql == []
+        assert cursor.calls == []
         assert store.events == ["load"]
     finally:
         effect.close()
