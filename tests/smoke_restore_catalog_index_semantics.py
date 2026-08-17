@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Live PostgreSQL decoy proof for isolated restore-catalog index authentication."""
+"""Live PostgreSQL decoy proof for isolated restore-catalog authentication."""
 
 from __future__ import annotations
 
@@ -33,11 +33,11 @@ def _require_incomplete_catalog(connection: object) -> None:
         if str(error) != "PostgreSQL restore catalog is incomplete":
             raise SystemExit("decoy rejection used an unexpected category") from None
         return
-    raise SystemExit("same-name decoy index was accepted")
+    raise SystemExit("same-name decoy catalog object was accepted")
 
 
 def main() -> None:
-    """Prove packaged indexes pass and same-name wrong-shape indexes fail closed."""
+    """Prove packaged indexes and tenant policies while rejecting same-name decoys."""
     with psycopg.connect(DSN) as connection:
         connection.autocommit = True
         _require_complete_catalog(connection)
@@ -85,6 +85,31 @@ def main() -> None:
                 "ALTER TABLE llm_remote_batch_jobs "
                 "ADD CONSTRAINT uq_llm_remote_batch_jobs_tenant_endpoint_id "
                 "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)"
+            )
+        _require_complete_catalog(connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DROP POLICY IF EXISTS plc_llm_remote_batch_jobs_tenant_scope "
+                "ON llm_remote_batch_jobs"
+            )
+            cursor.execute(
+                "CREATE POLICY plc_llm_remote_batch_jobs_tenant_scope "
+                "ON llm_remote_batch_jobs TO PUBLIC "
+                "USING (true) WITH CHECK (true)"
+            )
+        _require_incomplete_catalog(connection)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "DROP POLICY IF EXISTS plc_llm_remote_batch_jobs_tenant_scope "
+                "ON llm_remote_batch_jobs"
+            )
+            cursor.execute(
+                "CREATE POLICY plc_llm_remote_batch_jobs_tenant_scope "
+                "ON llm_remote_batch_jobs TO PUBLIC "
+                "USING (tenant_scope = "
+                "current_setting('pg_llm_batch.tenant_scope', true)) "
+                "WITH CHECK (tenant_scope = "
+                "current_setting('pg_llm_batch.tenant_scope', true))"
             )
         _require_complete_catalog(connection)
 
