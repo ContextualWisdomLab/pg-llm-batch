@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from pg_llm_batch.exceptions import ValidationError
@@ -10,6 +12,14 @@ from pg_llm_batch.orchestrator import (
     PostgresBatchOrchestrator,
     _validate_effective_token_limit,
 )
+
+
+class _HostileInt(int):
+    """Integer subclass that must never gain diagnostic rendering authority."""
+
+    def __str__(self):
+        """Fail if rejected-value validation invokes caller-controlled rendering."""
+        raise AssertionError("rejected numeric subclass was rendered")
 
 
 @pytest.mark.parametrize("value", [1, 128_000, 5_000_000_000])
@@ -23,17 +33,64 @@ def test_missing_token_limit_preserves_configured_default():
     assert _validate_effective_token_limit(None) is None
 
 
-@pytest.mark.parametrize("value", [0, -1, True, False, 1.5, "100", object()])
-def test_invalid_token_limits_raise_structured_validation_errors(value):
-    """Coercive, disabled, fractional, and non-positive values fail closed."""
+@pytest.mark.parametrize(
+    ("value", "expected_evidence"),
+    [
+        (0, "0"),
+        (-1, "-1"),
+        (True, "True"),
+        (False, "False"),
+        (1.5, "1.5"),
+        ("100", "<redacted>"),
+        (object(), "<redacted>"),
+    ],
+)
+def test_invalid_token_limits_raise_structured_validation_errors(
+    value, expected_evidence
+):
+    """Only bounded numeric configuration evidence is explicitly disclosed."""
     with pytest.raises(ValidationError, match="effective_token_limit") as exc_info:
         _validate_effective_token_limit(value)
 
     assert exc_info.value.details == {
         "field": "effective_token_limit",
-        "value": value,
+        "value": expected_evidence,
         "reason": "must be a positive integer when provided",
     }
+
+
+def test_invalid_token_limit_never_renders_numeric_subclasses():
+    """Rejected numeric subclasses stay redacted without invoking their renderer."""
+    with pytest.raises(ValidationError, match="effective_token_limit") as exc_info:
+        _validate_effective_token_limit(_HostileInt(-1))
+
+    assert exc_info.value.details["value"] == "<redacted>"
+
+
+def test_oversized_numeric_evidence_falls_back_to_redaction():
+    """Oversized numeric diagnostics preserve ValidationError instead of widening it."""
+    oversized_negative_integer = -(10**128)
+
+    with pytest.raises(ValidationError, match="effective_token_limit") as exc_info:
+        _validate_effective_token_limit(oversized_negative_integer)
+
+    assert exc_info.value.details["value"] == "<redacted>"
+
+
+def test_integer_render_limit_failure_falls_back_to_redaction():
+    """Interpreter integer-render limits cannot widen a validation failure type."""
+    previous_limit = sys.get_int_max_str_digits()
+    sys.set_int_max_str_digits(640)
+    try:
+        conversion_limited_integer = -(10**1000)
+        with pytest.raises(
+            ValidationError, match="effective_token_limit"
+        ) as exc_info:
+            _validate_effective_token_limit(conversion_limited_integer)
+    finally:
+        sys.set_int_max_str_digits(previous_limit)
+
+    assert exc_info.value.details["value"] == "<redacted>"
 
 
 def test_prepare_rejects_invalid_limit_before_batch_or_database_lookup():

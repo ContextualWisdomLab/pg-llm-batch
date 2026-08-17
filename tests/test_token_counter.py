@@ -115,7 +115,7 @@ def test_batch_accumulator_rejects_oversized_first_record(fake_pg):
         acc.add_entry("request-bytes", "{}", tokens=1, byte_size=11)
     assert byte_error.value.details == {
         "field": "byte_size",
-        "value": 11,
+        "value": "<redacted>",
         "reason": "single JSONL record exceeds max_bytes=10",
     }
     assert acc.entries == []
