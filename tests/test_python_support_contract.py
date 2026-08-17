@@ -10,27 +10,22 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
 _CI_WORKFLOW = _ROOT / ".github" / "workflows" / "ci.yml"
-_BOUNDED_REQUIRES_PYTHON = re.compile(
-    r">=(?P<lower_major>\d+)\.(?P<lower_minor>\d+),<(?P<upper_major>\d+)\.(?P<upper_minor>\d+)\Z"
+_REQUIRES_PYTHON_RE = re.compile(
+    r">=(?P<major>\d+)\.(?P<minor>\d+)\Z"
 )
 _MATRIX_RE = re.compile(r'python-version:\s*\[(?P<versions>[^\]]+)\]')
 _VERSION_RE = re.compile(r'"(?P<major>\d+)\.(?P<minor>\d+)"')
+_QUALITY_VERSION_RE = re.compile(r'python-version:\s*"(?P<major>\d+)\.(?P<minor>\d+)"')
 
 
-def _advertised_minor_versions() -> tuple[str, ...]:
-    """Derive every CPython minor advertised by the bounded package metadata."""
+def _advertised_lower_bound() -> tuple[int, int]:
+    """Return the exact CPython lower bound advertised by project metadata."""
     project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
     requires_python = project["requires-python"]
     assert isinstance(requires_python, str)
-    matched = _BOUNDED_REQUIRES_PYTHON.fullmatch(requires_python)
-    assert matched is not None, "Requires-Python must have explicit lower and upper minor bounds"
-    lower_major = int(matched.group("lower_major"))
-    lower_minor = int(matched.group("lower_minor"))
-    upper_major = int(matched.group("upper_major"))
-    upper_minor = int(matched.group("upper_minor"))
-    assert lower_major == upper_major == 3
-    assert upper_minor > lower_minor
-    return tuple(f"3.{minor}" for minor in range(lower_minor, upper_minor))
+    matched = _REQUIRES_PYTHON_RE.fullmatch(requires_python)
+    assert matched is not None, "Requires-Python must expose one explicit CPython lower bound"
+    return int(matched.group("major")), int(matched.group("minor"))
 
 
 def _permanent_ci_minor_versions() -> tuple[str, ...]:
@@ -44,13 +39,25 @@ def _permanent_ci_minor_versions() -> tuple[str, ...]:
     )
 
 
-def test_requires_python_matches_every_permanent_ci_minor() -> None:
-    """Every installer-advertised CPython minor must have a permanent unit-test lane."""
-    assert _advertised_minor_versions() == (
-        "3.10",
-        "3.11",
-        "3.12",
-        "3.13",
-        "3.14",
+def _quality_gate_python_version() -> tuple[int, int]:
+    """Return the CPython minor that runs coverage, docstring, and package gates."""
+    workflow = _CI_WORKFLOW.read_text(encoding="utf-8")
+    quality_section = workflow.split("  quality-gates:\n", 1)[1].split(
+        "  container-builds:\n", 1
+    )[0]
+    matched = _QUALITY_VERSION_RE.search(quality_section)
+    assert matched is not None, "quality gates must pin an explicit Python minor"
+    return int(matched.group("major")), int(matched.group("minor"))
+
+
+def test_requires_python_has_gapless_permanent_ci_evidence() -> None:
+    """Every currently governed supported minor must have a permanent unit-test lane."""
+    lower_major, lower_minor = _advertised_lower_bound()
+    quality_major, quality_minor = _quality_gate_python_version()
+    assert lower_major == quality_major == 3
+    assert quality_minor >= lower_minor
+    expected = tuple(
+        f"{lower_major}.{minor}" for minor in range(lower_minor, quality_minor + 1)
     )
-    assert _permanent_ci_minor_versions() == _advertised_minor_versions()
+    assert expected == ("3.10", "3.11", "3.12", "3.13", "3.14")
+    assert _permanent_ci_minor_versions() == expected
