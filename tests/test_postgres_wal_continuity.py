@@ -185,6 +185,21 @@ def test_invalid_inputs_use_one_content_free_error(field: str, value: object) ->
         assess_postgres_wal_continuity(**arguments)  # type: ignore[arg-type]
 
 
+def test_reserved_first_wal_segment_cannot_be_positive_continuity_evidence() -> None:
+    """PostgreSQL's deliberately unused segment 0/0 cannot be attested as WAL."""
+    with pytest.raises(
+        PostgresWalContinuityError,
+        match="^invalid PostgreSQL WAL continuity request$",
+    ):
+        assess_postgres_wal_continuity(
+            wal_segment_size_bytes=1 * _MIB,
+            timeline_id=1,
+            start_lsn="0/0",
+            target_lsn="0/000FFFFF",
+            segment_names=("000000010000000000000000",),
+        )
+
+
 def test_target_must_not_precede_start() -> None:
     """A backwards target cannot define one forward archive continuity interval."""
     with pytest.raises(
