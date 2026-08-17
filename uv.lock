@@ -680,6 +680,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "cryptography" },
     { name = "psycopg", extra = ["binary"] },
 ]
 
@@ -707,6 +708,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.14.3" },
+    { name = "cryptography", specifier = ">=50.0.0" },
     { name = "cryptography", marker = "extra == 'secrets'", specifier = ">=50.0.0" },
     { name = "cryptography", marker = "extra == 'test'", specifier = ">=50.0.0" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.44,<2" },

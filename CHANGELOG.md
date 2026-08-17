@@ -133,6 +133,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and refuse extremely long numeric guidance without leaking Python integer
   conversion errors.
 
+### Security
+
+- Separated `com_config` and `com_secrets` provisioning from runtime store
+  construction. Ordinary constructors now issue bounded read-only catalog
+  probes and no longer create tables or seed defaults; `python -m pg_llm_batch
+  init-db` remains the only seeder. `SecretStore` now requires a valid Fernet
+  key and the `cryptography` package before PostgreSQL acquisition, rejects
+  `require_encryption=False`, and no longer Base64-encodes or Base64-decodes
+  secrets. Historical unencrypted rows fail closed until a separately reviewed
+  atomic migration. Rolling back to a Base64-capable package is not a
+  security-equivalent recovery.
+
 ### Changed
 
 - Bound repository CI checkouts to the exact pull-request source head and verify

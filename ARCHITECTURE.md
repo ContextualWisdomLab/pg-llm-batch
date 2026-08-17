@@ -8,6 +8,21 @@ provider lifecycle state. Provider HTTP behavior remains behind
 `BatchAPIClient`, while host services may inject credential, observation-order,
 and lifecycle-persistence seams without changing provider semantics.
 
+Runtime `PostgresConfigStore` and `SecretStore` constructors do not provision
+schema, seed defaults, or acquire schema `CREATE`. Operators apply
+`python -m pg_llm_batch init-db` or `db.apply_schema()` with a provisioning
+identity, then start ordinary processes as `NOSUPERUSER NOBYPASSRLS` roles that
+need only schema `USAGE` plus the table privileges required by their read/write
+path. `com_config` and `com_secrets` remain deployment-global stores; they are
+not tenant-authorization surfaces and must not invent `tenant_scope` from
+provider metadata.
+
+`SecretStore` requires a valid Fernet key and the core `cryptography`
+dependency before PostgreSQL acquisition. `require_encryption=False` is
+rejected. Historical Base64 or `is_encrypted IS NOT TRUE` rows fail closed
+until a separately reviewed atomic migration. Rolling back to a package that
+reopens Base64 persistence is not a security-equivalent recovery.
+
 ## Durable lifecycle tenancy
 
 `DurableBatchAPIClient` is the backward-compatible standalone facade.

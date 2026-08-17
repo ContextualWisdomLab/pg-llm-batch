@@ -16,11 +16,12 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
   there is no drifting Python-side tokenizer.
 - **No secrets in the environment.** All configuration and credentials live in
   Postgres KV tables (`com_config`, `com_secrets`). The environment is only a
-  *bootstrap transport* for the DSN and an optional Fernet key. This replaces
-  the ~75 `os.getenv` reads in the upstream app. CLI secret values are entered
-  through a no-echo prompt or bounded standard input, never as process arguments.
-  Content-bearing `count-tokens` input is likewise accepted only through bounded
-  UTF-8 standard input, so prompt text is not placed in process arguments.
+  *bootstrap transport* for the DSN and the required Fernet key used to
+  construct `SecretStore`. This replaces the ~75 `os.getenv` reads in the
+  upstream app. CLI secret values are entered through a no-echo prompt or
+  bounded standard input, never as process arguments. Content-bearing
+  `count-tokens` input is likewise accepted only through bounded UTF-8 standard
+  input, so prompt text is not placed in process arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 - **Standalone or tenant-scoped lifecycle state.** `DurableBatchAPIClient`
@@ -63,7 +64,9 @@ than a second database-side network authority.
 - PostgreSQL with `pg_tiktoken`. Fresh bundled database initialization does not
   create `pg_cron` or `http`; their image packages are retained temporarily only
   for existing-volume cleanup and rollback compatibility.
-- Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
+- Python 3.10+ with `psycopg[binary]`, `aiohttp`, and `cryptography` (installed
+  via `pip install .`). `cryptography` is required for every `SecretStore`
+  construction, including CLI `config set-secret` and embed paths.
 - Tenant-scoped lifecycle deployments require an application database role with
   `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
 
@@ -99,7 +102,9 @@ explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`).
 URLs containing user information, query parameters, fragments, whitespace, or
 invalid ports are rejected before the API key is read from `com_secrets`.
 
-Encrypt secrets at rest by exporting a Fernet key as bootstrap transport:
+Export a Fernet key before constructing `SecretStore` or running
+`config set-secret`. The key is required; omitting it fails closed before
+PostgreSQL acquisition and does not persist reversible Base64 text:
 
 ```bash
 export PG_LLM_BATCH_SECRET_KEY=$(python -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().decode())")
@@ -236,7 +241,8 @@ from pg_llm_batch.config import PostgresConfigStore, SecretStore
 from pg_llm_batch.batch_api_client import config_credentials_provider
 
 dsn = my_app_dsn()               # your app already owns the DSN
-config, secrets = PostgresConfigStore(dsn), SecretStore(dsn)
+fernet_key = my_app_fernet_key() # required; do not construct SecretStore without it
+config, secrets = PostgresConfigStore(dsn), SecretStore(dsn, fernet_key=fernet_key)
 client = BatchAPIClient(
     dsn,
     config_credentials_provider(config, secrets),
@@ -245,8 +251,9 @@ client = BatchAPIClient(
 )
 ```
 
-Apply just the DDL subset into an existing database (idempotent, all tables are
-2+ word `snake_case` and use `IF NOT EXISTS`):
+Apply the packaged schema into an existing database before constructing the
+runtime stores (idempotent, all tables are 2+ word `snake_case` and use
+`IF NOT EXISTS`). Runtime constructors do not create tables or seed defaults:
 
 ```python
 from pg_llm_batch import db

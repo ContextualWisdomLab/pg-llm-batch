@@ -6,7 +6,7 @@ This module replaces the ~75 ``os.getenv`` reads in the upstream app. All
 tunables and secrets live in Postgres KV tables (``com_config`` for plain
 config, ``com_secrets`` for credentials). The only permitted bootstrap
 transport is the DSN itself (see :func:`pg_llm_batch.bootstrap.resolve_dsn`)
-plus an optional Fernet key used to decrypt secrets at rest.
+plus the Fernet key required to construct an encrypted secret store.
 
 Two-word snake_case table names satisfy the org DB naming rule:
 ``com_config`` and ``com_secrets``.
@@ -14,9 +14,7 @@ Two-word snake_case table names satisfy the org DB naming rule:
 
 from __future__ import annotations
 
-import base64
 import json
-import logging
 from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
@@ -31,8 +29,6 @@ try:  # pragma: no cover - optional dependency
     from cryptography.fernet import Fernet  # type: ignore
 except ImportError:  # pragma: no cover
     Fernet = None  # type: ignore
-
-logger = logging.getLogger(__name__)
 
 # Default configuration tree. Mirrors the upstream batch tunables so behaviour
 # is preserved after extraction. Secrets are NOT stored here.
@@ -60,6 +56,19 @@ DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
         "smart_batching": True,
         "description": "Optimization features",
     },
+}
+
+_CONFIG_SCHEMA_TYPES: Dict[str, str] = {
+    "config_description": "text",
+    "config_key": "text",
+    "config_value": "text",
+    "updated_at": "timestamp with time zone",
+}
+_SECRET_SCHEMA_TYPES: Dict[str, str] = {
+    "is_encrypted": "boolean",
+    "secret_key": "text",
+    "secret_value": "text",
+    "updated_at": "timestamp with time zone",
 }
 
 
@@ -155,6 +164,79 @@ def _split_full_key(full_key: str) -> Tuple[str, str]:
     return "global", full_key
 
 
+def _schema_is_compatible(
+    connection: Any,
+    table_name: str,
+    expected_columns: Dict[str, str],
+    storage_key: str,
+) -> bool:
+    """Return whether runtime reads and keyed writes match the provisioned base table."""
+    column_names = sorted(expected_columns)
+    expected_rows = [
+        ("r", column_name, expected_columns[column_name], True, True)
+        for column_name in column_names
+    ]
+    try:
+        with connection.cursor() as cur:
+            cur.execute(
+                """
+                SELECT cls.relkind,
+                       attr.attname,
+                       pg_catalog.format_type(attr.atttypid, attr.atttypmod),
+                       pg_catalog.has_schema_privilege(cls.relnamespace, 'USAGE'),
+                       pg_catalog.has_table_privilege(cls.oid, 'SELECT')
+                FROM pg_catalog.pg_class AS cls
+                JOIN pg_catalog.pg_attribute AS attr
+                  ON attr.attrelid = cls.oid
+                WHERE cls.oid = pg_catalog.to_regclass(%s)
+                  AND attr.attnum > 0
+                  AND NOT attr.attisdropped
+                  AND attr.attname = ANY(%s::text[])
+                ORDER BY attr.attname
+                """,
+                (table_name, column_names),
+            )
+            if cur.fetchall() != expected_rows:
+                return False
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM pg_catalog.pg_class AS cls
+                    JOIN pg_catalog.pg_attribute AS key_attr
+                      ON key_attr.attrelid = cls.oid
+                    JOIN pg_catalog.pg_index AS idx
+                      ON idx.indrelid = cls.oid
+                     AND idx.indisunique
+                     AND idx.indisvalid
+                     AND idx.indisready
+                     AND idx.indpred IS NULL
+                     AND idx.indexprs IS NULL
+                     AND idx.indnkeyatts = 1
+                     AND NOT EXISTS (
+                         SELECT 1
+                         FROM pg_catalog.pg_constraint AS constraint_def
+                         WHERE constraint_def.conindid = idx.indexrelid
+                           AND constraint_def.condeferrable
+                     )
+                    JOIN LATERAL unnest(idx.indkey::smallint[]) WITH ORDINALITY
+                         AS index_key(attnum, ordinal_position)
+                      ON index_key.ordinal_position <= idx.indnkeyatts
+                     AND index_key.attnum = key_attr.attnum
+                    WHERE cls.oid = pg_catalog.to_regclass(%s)
+                      AND key_attr.attname = %s
+                      AND key_attr.attnum > 0
+                      AND NOT key_attr.attisdropped
+                )
+                """,
+                (table_name, storage_key),
+            )
+            unique_row = cur.fetchone()
+            return unique_row == (True,)
+    except Exception:
+        return False
+
+
 class PostgresConfigStore:
     """PostgreSQL-backed KV configuration store (``com_config`` table)."""
 
@@ -174,53 +256,21 @@ class PostgresConfigStore:
             self._conn.autocommit = True
             self.cache: Dict[str, Dict[str, Any]] = {}
             self._ensure_table()
-            self._ensure_defaults()
-            self._load_cache()
         except BaseException:
             self.close()
             raise
 
     def _ensure_table(self) -> None:
-        """Create the ``com_config`` table if it does not already exist."""
-        with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_config") is interpolated; every value is bound via %s placeholders.
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    config_key TEXT PRIMARY KEY,
-                    config_value TEXT NOT NULL,
-                    config_description TEXT,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                )
-                """
-            )
-
-    def _ensure_defaults(self) -> None:
-        """Insert any missing default config rows without overwriting existing ones."""
-        with self._conn.cursor() as cur:
-            for item in DEFAULT_CONFIG_INDEX.values():
-                cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
-                    f"""
-                    INSERT INTO {self.TABLE_NAME}
-                        (config_key, config_value, config_description)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (config_key) DO NOTHING
-                    """,
-                    (
-                        f"{item['category']}.{item['key']}",
-                        _serialize_value(item["value"]),
-                        item["description"],
-                    ),
-                )
-
-    def _load_cache(self) -> None:
-        """Reload the in-memory cache from every row in the config table."""
-        self.cache.clear()
-        with self._conn.cursor() as cur:
-            cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; no user input reaches the query.
-            for config_key, config_value in cur.fetchall():
-                category, key = _split_full_key(config_key)
-                value = _deserialize_value(config_key, config_value)
-                self.cache.setdefault(category, {})[key] = value
+        """Verify the provisioned config table without acquiring DDL authority."""
+        if not _schema_is_compatible(
+            self._conn,
+            self.TABLE_NAME,
+            _CONFIG_SCHEMA_TYPES,
+            "config_key",
+        ):
+            raise ConfigError(
+                "Configuration schema is unavailable or incompatible"
+            ) from None
 
     def get(self, category: str, key: str, default: Any = None) -> Any:
         """Return a typed value without exposing mutable cache-owned state."""
@@ -285,12 +335,12 @@ class PostgresConfigStore:
 
 
 class SecretStore:
-    """PostgreSQL-backed secret store (``com_secrets`` table).
+    """PostgreSQL-backed encrypted secret store (``com_secrets`` table).
 
-    Values are Fernet-encrypted at rest when a key is supplied (mirrors the
-    naruon Fernet-DB pattern). Without a key, values are base64-obfuscated and
-    a warning is logged — acceptable only for local/dev containers unless the
-    caller explicitly requires encryption.
+    Every durable value is Fernet-encrypted at rest. The historical
+    ``require_encryption`` keyword remains only as a compatibility surface for
+    callers that already pass ``True``; passing ``False`` is rejected before
+    database acquisition and cannot re-enable reversible Base64 persistence.
     """
 
     TABLE_NAME = "com_secrets"
@@ -300,69 +350,108 @@ class SecretStore:
         dsn: str,
         fernet_key: Optional[str] = None,
         *,
-        require_encryption: bool = False,
+        require_encryption: bool = True,
     ) -> None:
-        """Connect using optional Fernet encryption or fail when it is required."""
+        """Validate mandatory encryption policy before acquiring a connection."""
         if psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
-        if require_encryption and not fernet_key:
+        if require_encryption is not True:
+            raise ConfigError("Secret encryption cannot be disabled") from None
+        if not fernet_key:
             raise ConfigError(
                 "Secret encryption is required but no Fernet key is configured"
             )
-        if fernet_key and Fernet is None:
+        if Fernet is None:
             raise ConfigError(
-                "Fernet encryption requires the optional cryptography dependency"
+                "Fernet encryption requires the cryptography package"
             )
+        if type(fernet_key) is not str:
+            raise ConfigError("Secret encryption key is invalid") from None
+
+        self._fernet = None
+        invalid_fernet_key = False
+        try:
+            self._fernet = Fernet(fernet_key.encode("utf-8"))
+        except (TypeError, ValueError):
+            invalid_fernet_key = True
+        if invalid_fernet_key:
+            raise ConfigError("Secret encryption key is invalid") from None
+
         self.dsn = dsn
         self._conn = psycopg.connect(self.dsn)
         try:
             self._conn.autocommit = True
-            self._fernet = None
-            if fernet_key and Fernet is not None:
-                self._fernet = Fernet(fernet_key.encode("utf-8"))
             self._ensure_table()
+            self._ensure_encrypted_rows()
         except BaseException:
             self.close()
             raise
 
     def _ensure_table(self) -> None:
-        """Create the ``com_secrets`` table if it does not already exist."""
-        with self._conn.cursor() as cur:
-            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_secrets") is interpolated; every value is bound via %s placeholders.
-                f"""
-                CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
-                    secret_key TEXT PRIMARY KEY,
-                    secret_value TEXT NOT NULL,
-                    is_encrypted BOOLEAN NOT NULL DEFAULT FALSE,
-                    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        """Verify the provisioned secret table without acquiring DDL authority."""
+        if not _schema_is_compatible(
+            self._conn,
+            self.TABLE_NAME,
+            _SECRET_SCHEMA_TYPES,
+            "secret_key",
+        ):
+            raise ConfigError(
+                "Secret schema is unavailable or incompatible"
+            ) from None
+
+    def _ensure_encrypted_rows(self) -> None:
+        """Refuse startup while any durable row is not explicitly encrypted."""
+        policy_failure = False
+        policy_row: Any = None
+        try:
+            with self._conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT EXISTS (SELECT 1 FROM {self.TABLE_NAME} "
+                    "WHERE is_encrypted IS NOT TRUE)"
                 )
-                """
-            )
+                policy_row = cur.fetchone()
+        except Exception:
+            policy_failure = True
+        if policy_failure:
+            raise ConfigError("Secret encryption policy could not be verified") from None
+        if policy_row != (False,):
+            raise ConfigError(
+                "Secret encryption policy rejected existing unencrypted rows"
+            ) from None
 
     def _encode(self, raw: str) -> Tuple[str, bool]:
-        """Encode a secret for storage, returning the text and whether it is encrypted."""
-        if self._fernet is not None:
-            return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
-        logger.warning(  # nosemgrep -- python-logger-credential-disclosure FP: the message text contains the word "secret", but the only logged argument is the literal mask "***"; no secret value is ever logged.
-            "No Fernet key configured; secret '%s' stored base64-obfuscated only.",
-            "***",
-        )
-        return base64.b64encode(raw.encode("utf-8")).decode("utf-8"), False
+        """Encrypt one secret for storage and return its authenticated ciphertext."""
+        if self._fernet is None:
+            raise ConfigError("Secret encryption key is unavailable") from None
+        return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
 
     def _decode(self, stored: str, is_encrypted: bool) -> str:
-        """Decrypt or de-obfuscate a stored secret back to its plaintext value."""
-        if is_encrypted:
-            if self._fernet is None:
-                raise ConfigError(
-                    "Secret is encrypted but no Fernet key is configured to decrypt it"
-                )
-            return self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
-        return base64.b64decode(stored.encode("utf-8")).decode("utf-8")
+        """Decrypt one encrypted persisted secret or fail closed without content."""
+        if type(stored) is not str or type(is_encrypted) is not bool:
+            raise ConfigError("Stored secret could not be decoded") from None
+        if is_encrypted is not True:
+            raise ConfigError(
+                "Stored secret violates required encryption policy"
+            ) from None
+        if self._fernet is None:
+            raise ConfigError(
+                "Secret is encrypted but no Fernet key is configured to decrypt it"
+            )
+
+        decode_failure = False
+        decoded = ""
+        try:
+            decoded = self._fernet.decrypt(stored.encode("utf-8")).decode("utf-8")
+        except Exception:
+            decode_failure = True
+        if decode_failure:
+            raise ConfigError("Stored secret could not be decoded") from None
+        return decoded
 
     def set_secret(self, key: str, value: str) -> None:
-        """Encrypt or obfuscate and persist a secret value."""
+        """Encrypt and persist a secret value."""
         encoded, is_encrypted = self._encode(value)
         with self._conn.cursor() as cur:
             cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
@@ -378,7 +467,7 @@ class SecretStore:
             )
 
     def get_secret(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Return a decoded secret or the supplied default when absent."""
+        """Return a decrypted secret or the supplied default when absent."""
         with self._conn.cursor() as cur:
             cur.execute(
                 f"SELECT secret_value, is_encrypted FROM {self.TABLE_NAME} "
@@ -388,7 +477,7 @@ class SecretStore:
             row = cur.fetchone()
         if not row:
             return default
-        return self._decode(row[0], bool(row[1]))
+        return self._decode(row[0], row[1])
 
     def require_secret(self, key: str) -> str:
         """Return a decoded secret or raise when the key is absent."""
