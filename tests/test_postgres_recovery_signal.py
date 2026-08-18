@@ -73,6 +73,26 @@ def test_prepare_recovery_signal_rejects_regular_file_descriptor(tmp_path: Path)
         os.close(descriptor)
 
 
+@pytest.mark.parametrize("mode", [0o770, 0o707])
+def test_prepare_recovery_signal_rejects_writable_data_directory(
+    tmp_path: Path,
+    mode: int,
+) -> None:
+    """Reject restore directories writable by another group member or local user."""
+    data_directory = tmp_path / "restore-data"
+    data_directory.mkdir(mode=0o700)
+    data_directory.chmod(mode)
+    directory_descriptor = _directory_descriptor(data_directory)
+    try:
+        with pytest.raises(PostgresRecoverySignalError, match="data directory"):
+            _prepare(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+        data_directory.chmod(0o700)
+
+    assert not (data_directory / "recovery.signal").exists()
+
+
 def test_prepare_recovery_signal_preserves_existing_recovery_signal(tmp_path: Path) -> None:
     """Fail closed instead of adopting or truncating a pre-existing recovery signal."""
     signal_path = tmp_path / "recovery.signal"
