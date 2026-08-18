@@ -92,7 +92,11 @@ def _validate_snapshot(*, data_directory_fd: int, pg_controldata_fd: int) -> Non
 
     if not stat.S_ISDIR(data_stat.st_mode):
         _raise_invalid_input()
+    if data_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        _raise_invalid_input()
     if not stat.S_ISREG(control_stat.st_mode):
+        _raise_invalid_input()
+    if control_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         _raise_invalid_input()
     if control_stat.st_mode & 0o111 == 0:
         _raise_invalid_input()
@@ -172,12 +176,15 @@ def verify_postgres_data_directory_identity(
     identity authority. Exact integer descriptor arguments are duplicated
     before either descriptor is validated, so later replacement of the
     caller-owned descriptor numbers cannot change the capabilities used by
-    this verification call. Package-owned duplicates are released best-effort
-    after verification so close-time operating-system diagnostics cannot
-    replace a verified result or leak host detail. The function does not
-    accept a path, DSN, password, WAL segment, tenant identifier, or business
-    payload. It does not start PostgreSQL, configure recovery, replay WAL, or
-    claim that the directory is otherwise safe to promote.
+    this verification call. Group/other write authority is rejected for both
+    the inspected data directory and executable snapshot before child
+    execution, while read/search sharing remains permitted. Package-owned
+    duplicates are released best-effort after verification so close-time
+    operating-system diagnostics cannot replace a verified result or leak host
+    detail. The function does not accept a path, DSN, password, WAL segment,
+    tenant identifier, or business payload. It does not start PostgreSQL,
+    configure recovery, replay WAL, or claim that the directory is otherwise
+    safe to promote.
     """
     if not _is_plain_descriptor(data_directory_fd):
         _raise_invalid_input()
