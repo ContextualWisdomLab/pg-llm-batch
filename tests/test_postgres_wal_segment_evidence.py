@@ -78,6 +78,21 @@ def test_segment_number_must_be_canonical_for_configured_size(tmp_path: Path) ->
         )
 
 
+def test_reserved_first_wal_segment_fails_closed(tmp_path: Path) -> None:
+    """The never-used segment containing LSN 0/0 cannot become WAL evidence."""
+    artifact = _inspected_artifact(tmp_path)
+
+    with pytest.raises(
+        PostgresWalSegmentEvidenceError,
+        match="^invalid PostgreSQL WAL segment identity$",
+    ):
+        bind_postgres_wal_segment_evidence(
+            segment_name="000000010000000000000000",
+            wal_segment_size_bytes=_MIB,
+            artifact_evidence=artifact,
+        )
+
+
 @pytest.mark.parametrize(
     "segment_name",
     [
