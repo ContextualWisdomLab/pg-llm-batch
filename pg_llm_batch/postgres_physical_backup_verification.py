@@ -234,13 +234,15 @@ def _copy_manifest_to_private_file(
                     manifest_source = archive.extractfile(manifest_member)
                     if manifest_source is None:
                         raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
-                    with manifest_source:
+                    try:
                         _copy_manifest_stream(
                             manifest_source,
                             manifest_file,
                             manifest_size_bytes=manifest_member.size,
                             deadline_monotonic=deadline_monotonic,
                         )
+                    finally:
+                        manifest_source.close()
             except PostgresPhysicalBackupVerificationError:
                 raise
             except (OSError, ValueError, tarfile.TarError):
