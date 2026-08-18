@@ -64,6 +64,14 @@ def _duplicate_descriptor_or_invalid(file_descriptor: int) -> int:
         _raise_invalid_input()
 
 
+def _close_snapshot_descriptor(file_descriptor: int) -> None:
+    """Best-effort close one package-owned descriptor without masking evidence."""
+    try:
+        os.close(file_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
 def _fstat_or_invalid(file_descriptor: int) -> os.stat_result:
     """Inspect one open descriptor or cross the fixed invalid-input boundary."""
     try:
@@ -158,10 +166,13 @@ def verify_postgres_data_directory_identity(
     previously collected from the isolated restore cluster.  Exact integer
     descriptor arguments are duplicated before either descriptor is validated,
     so later replacement of the caller-owned descriptor numbers cannot change
-    the capabilities used by this verification call.  The function does not
-    accept a path, DSN, password, WAL segment, tenant identifier, or business
-    payload.  It does not start PostgreSQL, configure recovery, replay WAL, or
-    claim that the directory is otherwise safe to promote.
+    the capabilities used by this verification call. Package-owned duplicates
+    are released best-effort after verification so close-time operating-system
+    diagnostics cannot replace a verified result or leak host detail. The
+    function does not accept a path, DSN, password, WAL segment, tenant
+    identifier, or business payload. It does not start PostgreSQL, configure
+    recovery, replay WAL, or claim that the directory is otherwise safe to
+    promote.
     """
     if not _is_plain_descriptor(data_directory_fd):
         _raise_invalid_input()
@@ -186,6 +197,6 @@ def verify_postgres_data_directory_identity(
             if observed_identifier != identity.system_identifier:
                 raise PostgresDataDirectoryIdentityError(_IDENTITY_MISMATCH)
         finally:
-            os.close(control_snapshot_fd)
+            _close_snapshot_descriptor(control_snapshot_fd)
     finally:
-        os.close(data_snapshot_fd)
+        _close_snapshot_descriptor(data_snapshot_fd)
