@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import secrets
 import stat
 
 from .postgres_restore_target import (
@@ -15,6 +16,7 @@ from .postgres_restore_target import (
 
 _RECOVERY_SIGNAL = "recovery.signal"
 _STANDBY_SIGNAL = "standby.signal"
+_QUARANTINE_PREFIX = ".pg_llm_batch-unverified-recovery-signal-"
 _SIGNAL_MODE = 0o600
 
 
@@ -216,6 +218,23 @@ def _cleanup_created_signal(
         pass
 
 
+def _quarantine_unverified_signal(directory_descriptor: int) -> None:
+    """Atomically move an unverified trigger to an inert content-free quarantine name."""
+    quarantine_name = f"{_QUARANTINE_PREFIX}{secrets.token_hex(32)}"
+    try:
+        os.rename(
+            _RECOVERY_SIGNAL,
+            quarantine_name,
+            src_dir_fd=directory_descriptor,
+            dst_dir_fd=directory_descriptor,
+        )
+        os.fsync(directory_descriptor)
+    except (OSError, ValueError):
+        raise PostgresRecoverySignalError(
+            "PostgreSQL recovery trigger could not be quarantined after inspection failure"
+        ) from None
+
+
 def _close_signal_descriptor(signal_descriptor: int) -> None:
     """Best-effort close the package-owned signal descriptor after final evidence."""
     try:
@@ -248,15 +267,16 @@ def prepare_postgres_recovery_signal(
     when both files exist. The new signal is created relative to the private directory
     capability with exclusive/no-follow semantics. Its descriptor identity is captured
     before permission hardening so a later failure can remove only that exact inode.
-    The signal is forced to owner read/write mode, re-verified as the same empty
-    one-link regular inode, synchronized, rechecked against a standby race, and
-    followed by a directory synchronization.
+    If initial descriptor inspection fails before ownership can be proved, the package
+    atomically renames the trigger to a high-entropy package-reserved quarantine name
+    and synchronizes the directory instead of deleting unverified bytes or leaving
+    PostgreSQL's magic recovery trigger published. A quarantine failure is surfaced as
+    an explicit content-free error so callers know not to start the restore cluster.
 
-    If the initial signal descriptor identity itself cannot be captured, the package
-    closes the signal descriptor but deliberately does not blindly unlink a relative
-    pathname whose ownership it cannot prove. Once identity is captured, any later
-    failure attempts cleanup only when that relative path still names the exact created
-    inode.
+    After identity capture, the signal is forced to owner read/write mode, re-verified
+    as the same empty one-link regular inode, synchronized, rechecked against a standby
+    race, and followed by a directory synchronization. Any later failure attempts
+    cleanup only when the relative path still names the exact created inode.
 
     This seam does not prove that the supplied directory descriptor belongs to the
     restore cluster represented by ``restore_target_identity``; that mapping remains
@@ -278,6 +298,7 @@ def prepare_postgres_recovery_signal(
             created_identity = _capture_created_signal_identity(signal_descriptor)
         except BaseException:
             _close_signal_descriptor(signal_descriptor)
+            _quarantine_unverified_signal(directory_descriptor)
             raise
         try:
             _harden_created_signal(signal_descriptor, created_identity)
