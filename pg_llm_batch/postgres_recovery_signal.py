@@ -43,23 +43,39 @@ def _verify_restore_isolation(
         ) from None
 
 
-def _require_directory_descriptor(data_directory_descriptor: object) -> int:
-    """Return one exact caller-owned descriptor that currently identifies a directory."""
+def _close_directory_descriptor(directory_descriptor: int) -> None:
+    """Best-effort close one package-owned data-directory snapshot."""
+    try:
+        os.close(directory_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
+def _snapshot_directory_descriptor(data_directory_descriptor: object) -> int:
+    """Privately snapshot and validate one caller-owned directory capability."""
     if type(data_directory_descriptor) is not int or data_directory_descriptor < 0:
         raise PostgresRecoverySignalError(
             "invalid PostgreSQL recovery signal parameters"
         )
     try:
-        status = os.fstat(data_directory_descriptor)
+        directory_descriptor = os.dup(data_directory_descriptor)
     except (OSError, ValueError):
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery data directory could not be inspected"
         ) from None
+    try:
+        status = os.fstat(directory_descriptor)
+    except (OSError, ValueError):
+        _close_directory_descriptor(directory_descriptor)
+        raise PostgresRecoverySignalError(
+            "PostgreSQL recovery data directory could not be inspected"
+        ) from None
     if not stat.S_ISDIR(status.st_mode):
+        _close_directory_descriptor(directory_descriptor)
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery data directory descriptor is not a directory"
         )
-    return data_directory_descriptor
+    return directory_descriptor
 
 
 def _entry_status(directory_descriptor: int, entry_name: str) -> os.stat_result | None:
@@ -221,22 +237,26 @@ def prepare_postgres_recovery_signal(
     The caller supplies an already-open PostgreSQL data-directory descriptor and the
     same live/restore service names and cluster identities used by the protected
     restore-target isolation contract. Isolation is checked before package filesystem
-    mutation. The package receives no directory path, DSN, password, restore command,
-    WAL content, tenant scope, or business content.
+    mutation. The package duplicates the caller's directory descriptor before it is
+    validated or used, so later replacement of the caller-owned descriptor number
+    cannot redirect this invocation's relative filesystem operations. The private
+    snapshot is closed before return. The package receives no directory path, DSN,
+    password, restore command, WAL content, tenant scope, or business content.
 
     A pre-existing ``recovery.signal`` is never adopted or truncated. A present
     ``standby.signal`` is rejected because PostgreSQL gives standby mode precedence
-    when both files exist. The new signal is created relative to the caller-owned
-    directory with exclusive/no-follow semantics. Its descriptor identity is captured
+    when both files exist. The new signal is created relative to the private directory
+    capability with exclusive/no-follow semantics. Its descriptor identity is captured
     before permission hardening so a later failure can remove only that exact inode.
     The signal is forced to owner read/write mode, re-verified as the same empty
     one-link regular inode, synchronized, rechecked against a standby race, and
     followed by a directory synchronization.
 
-    If the initial descriptor identity itself cannot be captured, the package closes
-    its descriptor but deliberately does not blindly unlink a relative pathname whose
-    ownership it cannot prove. Once identity is captured, any later failure attempts
-    cleanup only when that relative path still names the exact created inode.
+    If the initial signal descriptor identity itself cannot be captured, the package
+    closes the signal descriptor but deliberately does not blindly unlink a relative
+    pathname whose ownership it cannot prove. Once identity is captured, any later
+    failure attempts cleanup only when that relative path still names the exact created
+    inode.
 
     This seam does not prove that the supplied directory descriptor belongs to the
     restore cluster represented by ``restore_target_identity``; that mapping remains
@@ -250,26 +270,29 @@ def prepare_postgres_recovery_signal(
         live_target_identity=live_target_identity,
         restore_target_identity=restore_target_identity,
     )
-    directory_descriptor = _require_directory_descriptor(data_directory_descriptor)
-    _require_signal_state_absent(directory_descriptor)
-    signal_descriptor = _open_recovery_signal(directory_descriptor)
+    directory_descriptor = _snapshot_directory_descriptor(data_directory_descriptor)
     try:
-        created_identity = _capture_created_signal_identity(signal_descriptor)
-    except BaseException:
-        _close_signal_descriptor(signal_descriptor)
-        raise
-    try:
-        _harden_created_signal(signal_descriptor, created_identity)
-        _require_created_path_identity(directory_descriptor, created_identity)
-        _sync_descriptor(signal_descriptor)
-        if _entry_status(directory_descriptor, _STANDBY_SIGNAL) is not None:
-            raise PostgresRecoverySignalError(
-                "PostgreSQL standby signal prevents isolated recovery preparation"
-            )
-        _require_created_path_identity(directory_descriptor, created_identity)
-        _sync_descriptor(directory_descriptor)
-    except BaseException:
-        _cleanup_created_signal(directory_descriptor, created_identity)
-        raise
+        _require_signal_state_absent(directory_descriptor)
+        signal_descriptor = _open_recovery_signal(directory_descriptor)
+        try:
+            created_identity = _capture_created_signal_identity(signal_descriptor)
+        except BaseException:
+            _close_signal_descriptor(signal_descriptor)
+            raise
+        try:
+            _harden_created_signal(signal_descriptor, created_identity)
+            _require_created_path_identity(directory_descriptor, created_identity)
+            _sync_descriptor(signal_descriptor)
+            if _entry_status(directory_descriptor, _STANDBY_SIGNAL) is not None:
+                raise PostgresRecoverySignalError(
+                    "PostgreSQL standby signal prevents isolated recovery preparation"
+                )
+            _require_created_path_identity(directory_descriptor, created_identity)
+            _sync_descriptor(directory_descriptor)
+        except BaseException:
+            _cleanup_created_signal(directory_descriptor, created_identity)
+            raise
+        finally:
+            _close_signal_descriptor(signal_descriptor)
     finally:
-        _close_signal_descriptor(signal_descriptor)
+        _close_directory_descriptor(directory_descriptor)
