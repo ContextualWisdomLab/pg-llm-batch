@@ -74,7 +74,7 @@ class PostgresArchiveRestoreCommand:
         validated_helper = _validate_helper_executable(self.helper_executable)
         return (
             "restore_command",
-            f"{validated_helper} %f %p",
+            f'{validated_helper} "%f" "%p"',
         )
 
 
