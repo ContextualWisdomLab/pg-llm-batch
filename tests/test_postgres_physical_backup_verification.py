@@ -117,8 +117,9 @@ def test_success_verifies_stdout_tar_with_descriptor_backed_authority(
         assert captured["timeout"] == 1800
         inherited = captured["pass_fds"]
         assert type(inherited) is tuple
-        assert len(inherited) == 3
+        assert len(inherited) == 4
         assert int(arguments[0].rsplit("/", 1)[-1]) in inherited
+        assert int(arguments[-1].rsplit("/", 1)[-1]) in inherited
     finally:
         os.close(directory_descriptor)
 
