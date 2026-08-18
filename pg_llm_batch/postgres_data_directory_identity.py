@@ -56,6 +56,14 @@ def _is_expected_identity(value: object) -> bool:
     )
 
 
+def _fstat_or_invalid(file_descriptor: int) -> os.stat_result:
+    """Inspect one open descriptor or cross the fixed invalid-input boundary."""
+    try:
+        return os.fstat(file_descriptor)
+    except OSError:
+        _raise_invalid_input()
+
+
 def _validate_capabilities(
     *,
     data_directory_fd: object,
@@ -70,11 +78,8 @@ def _validate_capabilities(
     if not _is_expected_identity(expected_identity):
         _raise_invalid_input()
 
-    try:
-        data_stat = os.fstat(data_directory_fd)
-        control_stat = os.fstat(pg_controldata_fd)
-    except OSError:
-        _raise_invalid_input()
+    data_stat = _fstat_or_invalid(data_directory_fd)
+    control_stat = _fstat_or_invalid(pg_controldata_fd)
 
     if not stat.S_ISDIR(data_stat.st_mode):
         _raise_invalid_input()
