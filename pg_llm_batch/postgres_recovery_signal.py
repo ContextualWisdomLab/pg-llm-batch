@@ -67,7 +67,8 @@ def _snapshot_directory_descriptor(data_directory_descriptor: object) -> int:
         ) from None
     try:
         status = os.fstat(directory_descriptor)
-    except (OSError, ValueError):
+        effective_user_id = os.geteuid()
+    except (AttributeError, OSError, ValueError):
         _close_directory_descriptor(directory_descriptor)
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery data directory could not be inspected"
@@ -77,7 +78,10 @@ def _snapshot_directory_descriptor(data_directory_descriptor: object) -> int:
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery data directory descriptor is not a directory"
         )
-    if status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    if (
+        status.st_uid != effective_user_id
+        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
         _close_directory_descriptor(directory_descriptor)
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery data directory has unsafe write permissions"
@@ -263,9 +267,12 @@ def prepare_postgres_recovery_signal(
     restore-target isolation contract. Isolation is checked before package filesystem
     mutation. The package duplicates the caller's directory descriptor before it is
     validated or used, so later replacement of the caller-owned descriptor number
-    cannot redirect this invocation's relative filesystem operations. The private
-    snapshot is closed before return. The package receives no directory path, DSN,
-    password, restore command, WAL content, tenant scope, or business content.
+    cannot redirect this invocation's relative filesystem operations. The retained
+    directory must be owned by the effective process user and cannot grant group or
+    other write authority, preventing a different local owner from restoring mutation
+    authority with ``chmod`` after validation. The private snapshot is closed before
+    return. The package receives no directory path, DSN, password, restore command,
+    WAL content, tenant scope, or business content.
 
     A pre-existing ``recovery.signal`` is never adopted or truncated. A present
     ``standby.signal`` is rejected because PostgreSQL gives standby mode precedence
