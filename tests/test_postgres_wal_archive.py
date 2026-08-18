@@ -28,7 +28,7 @@ def test_success_uses_slot_end_lsn_synchronous_flush_and_restricted_environment(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A bounded receiver pins one private archive directory through an inherited fd."""
+    """A bounded receiver snapshots one private archive directory into a private fd."""
     _path, descriptor = _open_private_directory(tmp_path)
     monkeypatch.setenv("PGPASSWORD", "secret-password")
     monkeypatch.setenv("PGPASSFILE", "/run/secrets/pgpass")
@@ -57,9 +57,14 @@ def test_success_uses_slot_end_lsn_synchronous_flush_and_restricted_environment(
             connect_timeout_seconds=17,
         )
         assert result == PostgresWalArchiveResult(end_lsn="16/B374D848")
+        pass_fds = captured["pass_fds"]
+        assert isinstance(pass_fds, tuple) and len(pass_fds) == 1
+        private_descriptor = pass_fds[0]
+        assert isinstance(private_descriptor, int)
+        assert private_descriptor != descriptor
         assert captured["arguments"] == [
             "/usr/lib/postgresql/18/bin/pg_receivewal",
-            f"--directory=/proc/self/fd/{descriptor}",
+            f"--directory=/proc/self/fd/{private_descriptor}",
             "--endpos=16/B374D848",
             "--slot=pg_llm_batch_archive",
             "--synchronous",
@@ -72,7 +77,6 @@ def test_success_uses_slot_end_lsn_synchronous_flush_and_restricted_environment(
         assert captured["timeout"] == 3600
         assert captured["check"] is False
         assert captured["close_fds"] is True
-        assert captured["pass_fds"] == (descriptor,)
         assert captured["env"] == {
             "PGPASSWORD": "secret-password",
             "PGPASSFILE": "/run/secrets/pgpass",
@@ -144,6 +148,67 @@ def test_invalid_authority_is_rejected_before_subprocess(
             receive_postgres_wal_archive(**arguments)  # type: ignore[arg-type]
     finally:
         os.close(descriptor)
+
+
+def test_archive_directory_retention_failure_is_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Descriptor snapshot failures disclose no OS diagnostics and execute no receiver."""
+    _path, descriptor = _open_private_directory(tmp_path)
+
+    def broken_dup(_descriptor: int) -> int:
+        raise OSError("sensitive descriptor diagnostic")
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("unretained directory authority must not execute pg_receivewal")
+
+    monkeypatch.setattr(os, "dup", broken_dup)
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    try:
+        with pytest.raises(PostgresWalArchiveError, match="could not be retained") as caught:
+            receive_postgres_wal_archive(
+                "physical_replication_source",
+                "pg_llm_batch_archive",
+                "16/B374D848",
+                descriptor,
+                pg_receivewal_executable="/usr/bin/pg_receivewal",
+            )
+        assert "sensitive" not in str(caught.value)
+    finally:
+        os.close(descriptor)
+
+
+def test_private_descriptor_close_failure_does_not_replace_success(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Best-effort private-fd cleanup cannot replace completed receive evidence."""
+    _path, descriptor = _open_private_directory(tmp_path)
+    real_close = os.close
+
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda arguments, **_kwargs: subprocess.CompletedProcess(arguments, 0),
+    )
+
+    def fail_private_close(fd: int) -> None:
+        if fd != descriptor:
+            raise OSError("sensitive private close diagnostic")
+        real_close(fd)
+
+    monkeypatch.setattr(os, "close", fail_private_close)
+    try:
+        assert receive_postgres_wal_archive(
+            "physical_replication_source",
+            "pg_llm_batch_archive",
+            "16/B374D848",
+            descriptor,
+            pg_receivewal_executable="/usr/bin/pg_receivewal",
+        ) == PostgresWalArchiveResult(end_lsn="16/B374D848")
+    finally:
+        real_close(descriptor)
 
 
 def test_archive_directory_must_be_private_process_owned_directory(
@@ -366,19 +431,18 @@ def test_finalization_rejects_permission_owner_or_identity_drift(
 
     _path, descriptor = _open_private_directory(tmp_path, "identity-drift")
     real_fstat = os.fstat
-    initial = real_fstat(descriptor)
-    calls = 0
+    private_calls = 0
 
     def changed_identity(fd: int) -> os.stat_result:
-        nonlocal calls
+        nonlocal private_calls
         status = real_fstat(fd)
-        if fd != descriptor:
+        if fd == descriptor:
             return status
-        calls += 1
-        if calls == 1:
+        private_calls += 1
+        if private_calls == 1:
             return status
         fields = list(status)
-        fields[1] = initial.st_ino + 1
+        fields[1] = status.st_ino + 1
         return os.stat_result(fields)
 
     monkeypatch.setattr(os, "fstat", changed_identity)
