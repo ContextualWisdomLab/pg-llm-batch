@@ -14,6 +14,8 @@ from typing import BinaryIO
 
 
 _MAX_TIMEOUT_SECONDS = 86_400
+_MAX_ARCHIVE_MEMBERS = 4_194_304
+_MAX_MANIFEST_BYTES = 1_073_741_824
 _NONBLOCKING_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _INVALID_PARAMETERS = "invalid PostgreSQL physical-backup verification parameters"
 _MANIFEST_ERROR = "PostgreSQL physical backup must contain one regular backup manifest"
@@ -146,24 +148,39 @@ def _retain_base_tar(base_tar_descriptor: int) -> int:
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
 
 
+def _find_manifest_member(archive: tarfile.TarFile) -> tarfile.TarInfo:
+    """Find one bounded regular manifest without materializing every tar member."""
+    manifest_member: tarfile.TarInfo | None = None
+    for member_count, member in enumerate(archive, start=1):
+        if member_count > _MAX_ARCHIVE_MEMBERS:
+            raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
+        if member.name != "backup_manifest":
+            continue
+        if (
+            manifest_member is not None
+            or not member.isreg()
+            or member.size < 0
+            or member.size > _MAX_MANIFEST_BYTES
+        ):
+            raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
+        manifest_member = member
+    if manifest_member is None:
+        raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
+    return manifest_member
+
+
 def _copy_manifest_to_private_file(
     base_tar_descriptor: int,
     manifest_file: BinaryIO,
 ) -> int:
-    """Copy exactly one regular injected manifest to anonymous descriptor authority."""
+    """Copy one bounded regular injected manifest to anonymous descriptor authority."""
     base_tar_snapshot = _retain_base_tar(base_tar_descriptor)
     try:
         with os.fdopen(base_tar_snapshot, "rb", closefd=False) as base_tar_file:
             try:
-                with tarfile.open(fileobj=base_tar_file, mode="r:*") as archive:
-                    manifest_members = [
-                        member
-                        for member in archive.getmembers()
-                        if member.name == "backup_manifest"
-                    ]
-                    if len(manifest_members) != 1 or not manifest_members[0].isreg():
-                        raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
-                    manifest_source = archive.extractfile(manifest_members[0])
+                with tarfile.open(fileobj=base_tar_file, mode="r:") as archive:
+                    manifest_member = _find_manifest_member(archive)
+                    manifest_source = archive.extractfile(manifest_member)
                     if manifest_source is None:
                         raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
                     with manifest_source:
@@ -247,16 +264,18 @@ def verify_postgres_physical_backup_tar(
     ``base.tar`` to be owned by the effective process user so another local file
     owner cannot retain mutation authority to the accepted backup bytes. It
     opens ``base.tar`` non-blocking relative to the pinned directory without
-    following a final symlink and copies exactly one regular injected
-    ``backup_manifest`` into anonymous temporary-file authority. No backup
-    member is extracted to a caller-visible path. The absolute trusted
-    ``pg_verifybackup`` path is likewise opened non-blocking before regular-file
-    validation and without following its final symlink, rejected unless its
-    owner is root or the effective process user and it is executable without
-    group/other write authority, and executed only through the retained
-    descriptor so a later pathname swap cannot replace the accepted verifier
-    inode. Descriptor-retention and local staging failures cross fixed
-    content-free package boundaries rather than exposing host diagnostics.
+    following a final symlink. Pre-verifier staging accepts only the uncompressed
+    stdout-tar contract, enumerates no more than 4,194,304 archive members, and
+    stages at most 1 GiB from exactly one regular ``backup_manifest`` into
+    anonymous temporary-file authority. No backup member is extracted to a
+    caller-visible path. The absolute trusted ``pg_verifybackup`` path is
+    likewise opened non-blocking before regular-file validation and without
+    following its final symlink, rejected unless its owner is root or the
+    effective process user and it is executable without group/other write
+    authority, and executed only through the retained descriptor so a later
+    pathname swap cannot replace the accepted verifier inode. Descriptor
+    retention and local staging failures cross fixed content-free package
+    boundaries rather than exposing host diagnostics.
 
     PostgreSQL 18 cannot parse WAL directly from tar-format backups, so the
     verifier runs ``pg_verifybackup --format=tar --no-parse-wal`` and supplies
