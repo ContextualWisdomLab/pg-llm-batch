@@ -161,3 +161,22 @@ def test_missing_manifest_stream_fails_before_staging(
     finally:
         os.close(base_tar_descriptor)
         os.close(directory_descriptor)
+
+
+def test_regular_manifest_stream_is_copied_to_private_staging_file(
+    tmp_path: Path,
+) -> None:
+    """A valid regular manifest must cross the real streaming copy path."""
+    directory_descriptor, base_tar_descriptor = _private_stdout_tar(tmp_path)
+    expected_manifest = b'{"PostgreSQL-Backup-Manifest-Version":2,"Files":[]}\n'
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as manifest_file:
+            manifest_descriptor = _copy_manifest_to_private_file(
+                base_tar_descriptor,
+                manifest_file,
+            )
+            assert manifest_descriptor == manifest_file.fileno()
+            assert manifest_file.read() == expected_manifest
+    finally:
+        os.close(base_tar_descriptor)
+        os.close(directory_descriptor)
