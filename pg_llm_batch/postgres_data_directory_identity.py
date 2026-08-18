@@ -3,11 +3,11 @@
 
 This module deliberately accepts file descriptors rather than filesystem paths.
 The caller owns both the data-directory descriptor and the trusted
-``pg_controldata`` executable descriptor.  The verifier gives the child process
-only those two capabilities, suppresses diagnostics that could contain host
-information, bounds execution time and captured output, and compares the one
-reported PostgreSQL system identifier with an independently collected restore
-identity.
+``pg_controldata`` executable descriptor.  The verifier snapshots those
+capabilities onto private descriptors before validation and child-process use,
+suppresses diagnostics that could contain host information, bounds execution
+time and captured output, and compares the one reported PostgreSQL system
+identifier with an independently collected restore identity.
 """
 
 from __future__ import annotations
@@ -56,6 +56,14 @@ def _is_expected_identity(value: object) -> bool:
     )
 
 
+def _duplicate_descriptor_or_invalid(file_descriptor: int) -> int:
+    """Snapshot one caller descriptor or cross the fixed invalid-input boundary."""
+    try:
+        return os.dup(file_descriptor)
+    except OSError:
+        _raise_invalid_input()
+
+
 def _fstat_or_invalid(file_descriptor: int) -> os.stat_result:
     """Inspect one open descriptor or cross the fixed invalid-input boundary."""
     try:
@@ -64,20 +72,13 @@ def _fstat_or_invalid(file_descriptor: int) -> os.stat_result:
         _raise_invalid_input()
 
 
-def _validate_capabilities(
+def _validate_snapshot(
     *,
-    data_directory_fd: object,
-    pg_controldata_fd: object,
-    expected_identity: object,
-) -> tuple[int, int, PostgresRestoreTargetIdentity]:
-    """Validate descriptor kinds and the independently collected identity."""
-    if not _is_plain_descriptor(data_directory_fd):
-        _raise_invalid_input()
-    if not _is_plain_descriptor(pg_controldata_fd):
-        _raise_invalid_input()
-    if not _is_expected_identity(expected_identity):
-        _raise_invalid_input()
-
+    data_directory_fd: int,
+    pg_controldata_fd: int,
+    expected_identity: PostgresRestoreTargetIdentity,
+) -> PostgresRestoreTargetIdentity:
+    """Validate privately owned descriptor snapshots and the expected identity."""
     data_stat = _fstat_or_invalid(data_directory_fd)
     control_stat = _fstat_or_invalid(pg_controldata_fd)
 
@@ -88,7 +89,7 @@ def _validate_capabilities(
     if control_stat.st_mode & 0o111 == 0:
         _raise_invalid_input()
 
-    return data_directory_fd, pg_controldata_fd, expected_identity
+    return expected_identity
 
 
 def _inspect_system_identifier(*, data_directory_fd: int, pg_controldata_fd: int) -> int:
@@ -154,19 +155,37 @@ def verify_postgres_data_directory_identity(
 
     ``expected_identity`` must be the exact protected
     :class:`~pg_llm_batch.postgres_restore_target.PostgresRestoreTargetIdentity`
-    previously collected from the isolated restore cluster.  The function does
-    not accept a path, DSN, password, WAL segment, tenant identifier, or
-    business payload.  It does not start PostgreSQL, configure recovery, replay
-    WAL, or claim that the directory is otherwise safe to promote.
+    previously collected from the isolated restore cluster.  Exact integer
+    descriptor arguments are duplicated before either descriptor is validated,
+    so later replacement of the caller-owned descriptor numbers cannot change
+    the capabilities used by this verification call.  The function does not
+    accept a path, DSN, password, WAL segment, tenant identifier, or business
+    payload.  It does not start PostgreSQL, configure recovery, replay WAL, or
+    claim that the directory is otherwise safe to promote.
     """
-    data_fd, control_fd, identity = _validate_capabilities(
-        data_directory_fd=data_directory_fd,
-        pg_controldata_fd=pg_controldata_fd,
-        expected_identity=expected_identity,
-    )
-    observed_identifier = _inspect_system_identifier(
-        data_directory_fd=data_fd,
-        pg_controldata_fd=control_fd,
-    )
-    if observed_identifier != identity.system_identifier:
-        raise PostgresDataDirectoryIdentityError(_IDENTITY_MISMATCH)
+    if not _is_plain_descriptor(data_directory_fd):
+        _raise_invalid_input()
+    if not _is_plain_descriptor(pg_controldata_fd):
+        _raise_invalid_input()
+    if not _is_expected_identity(expected_identity):
+        _raise_invalid_input()
+
+    data_snapshot_fd = _duplicate_descriptor_or_invalid(data_directory_fd)
+    try:
+        control_snapshot_fd = _duplicate_descriptor_or_invalid(pg_controldata_fd)
+        try:
+            identity = _validate_snapshot(
+                data_directory_fd=data_snapshot_fd,
+                pg_controldata_fd=control_snapshot_fd,
+                expected_identity=expected_identity,
+            )
+            observed_identifier = _inspect_system_identifier(
+                data_directory_fd=data_snapshot_fd,
+                pg_controldata_fd=control_snapshot_fd,
+            )
+            if observed_identifier != identity.system_identifier:
+                raise PostgresDataDirectoryIdentityError(_IDENTITY_MISMATCH)
+        finally:
+            os.close(control_snapshot_fd)
+    finally:
+        os.close(data_snapshot_fd)
