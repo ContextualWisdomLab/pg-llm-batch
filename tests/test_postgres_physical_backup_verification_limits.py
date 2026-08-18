@@ -21,6 +21,7 @@ from pg_llm_batch.postgres_physical_backup_verification import (
 
 _TEST_MAX_ARCHIVE_MEMBERS = 3
 _TEST_MAX_MANIFEST_BYTES = 8
+_INVALID_PARAMETERS = "^invalid PostgreSQL physical-backup verification parameters$"
 _MANIFEST_ERROR = "^PostgreSQL physical backup must contain one regular backup manifest$"
 _VERIFICATION_FAILED = "^PostgreSQL physical backup verification failed$"
 
@@ -100,12 +101,24 @@ def _forbidden_listdir(*_args: object, **_kwargs: object) -> NoReturn:
     raise AssertionError("directory validation must use bounded streaming enumeration")
 
 
+def _raise_scandir_error(*_args: object, **_kwargs: object) -> NoReturn:
+    """Model a local directory-enumeration failure with sensitive diagnostics."""
+    raise OSError("sensitive scandir diagnostic")
+
+
 def _open_placeholder_tar(tmp_path: Path) -> int:
     """Return one harmless descriptor because tar parsing is synthetic in these tests."""
     archive_path = tmp_path / "base.tar"
     archive_path.write_bytes(b"placeholder")
     archive_path.chmod(0o600)
     return os.open(archive_path, os.O_RDONLY)
+
+
+def _open_private_directory(tmp_path: Path, name: str) -> tuple[Path, int]:
+    """Return one process-owned private directory and retained descriptor."""
+    directory = tmp_path / name
+    directory.mkdir(mode=0o700)
+    return directory, os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
 
 
 def test_archive_member_enumeration_is_bounded_before_manifest_staging(
@@ -172,5 +185,50 @@ def test_directory_entry_enumeration_stops_after_second_entry(
             match=_VERIFICATION_FAILED,
         ):
             verification_module._inspect_backup_directory(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
+def test_empty_backup_directory_fails_closed(tmp_path: Path) -> None:
+    """A private backup directory with no base tar must cross the fixed boundary."""
+    _directory, directory_descriptor = _open_private_directory(tmp_path, "empty")
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_VERIFICATION_FAILED,
+        ):
+            verification_module._inspect_backup_directory(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
+def test_wrong_first_directory_entry_fails_closed(tmp_path: Path) -> None:
+    """A private directory whose only entry is not base.tar must be rejected."""
+    directory, directory_descriptor = _open_private_directory(tmp_path, "wrong-entry")
+    (directory / "unexpected.tar").write_bytes(b"not a physical base backup")
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_VERIFICATION_FAILED,
+        ):
+            verification_module._inspect_backup_directory(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+
+def test_directory_scandir_failure_is_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A local scandir failure must not expose host diagnostics to callers."""
+    _directory, directory_descriptor = _open_private_directory(tmp_path, "scandir-failure")
+    monkeypatch.setattr(os, "scandir", _raise_scandir_error)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_INVALID_PARAMETERS,
+        ) as caught:
+            verification_module._inspect_backup_directory(directory_descriptor)
+        assert "scandir diagnostic" not in str(caught.value)
     finally:
         os.close(directory_descriptor)
