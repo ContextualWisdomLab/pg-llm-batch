@@ -20,7 +20,7 @@ from pg_llm_batch.postgres_wal_segment_evidence import (
 )
 
 _MIB = 1024 * 1024
-_SEGMENT_NAME = "000000010000000000000000"
+_SEGMENT_NAME = "000000010000000000000001"
 
 
 def _inspected_artifact(
