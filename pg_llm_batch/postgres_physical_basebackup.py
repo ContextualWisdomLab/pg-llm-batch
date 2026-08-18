@@ -115,6 +115,46 @@ def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
         pass
 
 
+def _validate_pg_basebackup_executable(pg_basebackup_executable: str) -> None:
+    """Reject an observable executable writable by a different local principal.
+
+    A missing executable remains the subprocess layer's ``unavailable`` case so the
+    public error contract stays stable. When a path is present, validate the opened
+    inode rather than path metadata so a foreign owner or group/other writer cannot
+    retain mutation authority over the executable selected for backup work.
+    """
+    try:
+        executable_descriptor = os.open(
+            pg_basebackup_executable,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+    except FileNotFoundError:
+        return
+    except (OSError, ValueError):
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base-backup executable is unsafe"
+        ) from None
+
+    try:
+        try:
+            status = os.fstat(executable_descriptor)
+            effective_user_id = os.geteuid()
+        except (OSError, ValueError):
+            raise PostgresPhysicalBaseBackupError(
+                "PostgreSQL physical base-backup executable is unsafe"
+            ) from None
+        if (
+            not stat.S_ISREG(status.st_mode)
+            or status.st_uid not in {0, effective_user_id}
+            or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise PostgresPhysicalBaseBackupError(
+                "PostgreSQL physical base-backup executable is unsafe"
+            )
+    finally:
+        _close_cleanup_descriptor(executable_descriptor)
+
+
 def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[str, str]:
     """Return allowlisted libpq credential sources plus package-owned connection authority."""
     environment = {
@@ -287,6 +327,7 @@ def create_postgres_physical_basebackup(
     cleanup_descriptor = _duplicate_output_for_cleanup(output_descriptor)
     try:
         initial_status = _inspect_initial_output(cleanup_descriptor)
+        _validate_pg_basebackup_executable(pg_basebackup_executable)
         execution_descriptor = _duplicate_output_for_cleanup(cleanup_descriptor)
         try:
             _run_pg_basebackup(
