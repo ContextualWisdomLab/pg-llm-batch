@@ -151,7 +151,7 @@ def test_logical_recovery_drill_composes_isolation_restore_and_catalog(
         "schema_sha256": _SCHEMA_SHA,
         "backup_sha256": receipt.backup_sha256,
         "backup_size_bytes": len(payload),
-        "restore_system_identifier": 22,
+        "caller_asserted_restore_system_identifier": 22,
         "required_table_count": 11,
         "required_index_count": 2,
         "lifecycle_rls_forced": True,
