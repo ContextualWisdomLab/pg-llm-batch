@@ -22,11 +22,12 @@ class PostgresWalSegmentEvidenceError(ValueError):
 
 
 def _valid_segment_name(value: object) -> bool:
-    """Return whether ``value`` is one lexical nonzero-timeline WAL filename."""
+    """Return whether ``value`` is one lexical WAL filename PostgreSQL can use."""
     return (
         type(value) is str
         and _SEGMENT_NAME_PATTERN.fullmatch(value) is not None
         and value[:8] != "00000000"
+        and value[8:] != "0000000000000000"
     )
 
 
@@ -137,10 +138,10 @@ def bind_postgres_wal_segment_evidence(
 
     PostgreSQL WAL segment sizes are constrained here to the supported
     power-of-two 1 MiB through 1 GiB range. The filename must also be one that
-    PostgreSQL's segment-size-dependent filename geometry can emit.
-    ``artifact_evidence`` must be the exact live object returned by the protected
-    backup-artifact inspector, and its observed byte count must equal the reviewed
-    WAL segment size.
+    PostgreSQL's segment-size-dependent filename geometry can emit, excluding the
+    bootstrap-skipped segment containing invalid LSN zero. ``artifact_evidence``
+    must be the exact live object returned by the protected backup-artifact
+    inspector, and its observed byte count must equal the reviewed WAL segment size.
 
     This function intentionally does not inspect a WAL header or record stream,
     infer cluster identity/timeline history, validate archive ordering, or run
