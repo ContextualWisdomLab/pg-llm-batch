@@ -75,7 +75,9 @@ def test_success_uses_single_tablespace_tar_fetch_and_restricted_environment(
         ]
         assert captured["stdin"] is subprocess.DEVNULL
         assert captured["stderr"] is subprocess.DEVNULL
-        assert captured["stdout"] == descriptor
+        private_stdout = captured["stdout"]
+        assert type(private_stdout) is int
+        assert private_stdout != descriptor
         assert captured["timeout"] == 7200
         assert captured["check"] is False
         assert captured["close_fds"] is True
@@ -217,10 +219,8 @@ def test_output_inspection_and_retention_failures_are_content_free(
     _path, descriptor = _open_private_output(tmp_path)
     real_fstat = os.fstat
 
-    def broken_fstat(fd: int) -> os.stat_result:
-        if fd == descriptor:
-            raise OSError("secret inspection path")
-        return real_fstat(fd)
+    def broken_fstat(_fd: int) -> os.stat_result:
+        raise OSError("secret inspection path")
 
     monkeypatch.setattr(os, "fstat", broken_fstat)
     try:
@@ -417,10 +417,11 @@ def test_success_requires_nonempty_same_private_single_link_file(
         arguments: list[str], **kwargs: object
     ) -> subprocess.CompletedProcess[bytes]:
         output_descriptor = kwargs["stdout"]
-        assert output_descriptor == descriptor
-        os.write(descriptor, b"original-sensitive-bytes")
-        os.dup2(replacement_descriptor, descriptor)
-        os.write(descriptor, b"replacement-bytes")
+        assert type(output_descriptor) is int
+        assert output_descriptor != descriptor
+        os.write(output_descriptor, b"original-sensitive-bytes")
+        os.dup2(replacement_descriptor, output_descriptor)
+        os.write(output_descriptor, b"replacement-bytes")
         return subprocess.CompletedProcess(arguments, 0)
 
     monkeypatch.setattr(subprocess, "run", descriptor_substitution)
