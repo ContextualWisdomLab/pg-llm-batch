@@ -109,6 +109,29 @@ def test_create_race_maps_file_exists_to_bounded_error(
     assert str(caught.value) == "PostgreSQL recovery signal already exists"
 
 
+def test_directory_snapshot_dup_failure_is_content_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Map failure to duplicate the caller capability without leaking diagnostics."""
+    directory_descriptor = _directory_descriptor(tmp_path)
+
+    def fail_dup(descriptor: int) -> int:
+        assert descriptor == directory_descriptor
+        raise OSError("sensitive descriptor duplication diagnostic")
+
+    monkeypatch.setattr(recovery_signal.os, "dup", fail_dup)
+    try:
+        with pytest.raises(PostgresRecoverySignalError) as caught:
+            _prepare(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+    assert str(caught.value) == (
+        "PostgreSQL recovery data directory could not be inspected"
+    )
+    assert not (tmp_path / "recovery.signal").exists()
+
+
 def test_initial_signal_identity_inspection_failure_closes_without_blind_unlink(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -353,6 +376,11 @@ def test_cleanup_tolerates_directory_sync_failure(
 
     with pytest.raises(FileNotFoundError):
         signal_path.lstat()
+
+
+def test_close_directory_descriptor_is_best_effort() -> None:
+    """Ignore close failure while releasing the package-owned directory snapshot."""
+    recovery_signal._close_directory_descriptor(-1)
 
 
 def test_close_signal_descriptor_is_best_effort() -> None:
