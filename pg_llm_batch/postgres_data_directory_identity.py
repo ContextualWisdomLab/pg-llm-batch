@@ -48,13 +48,17 @@ def _is_plain_descriptor(value: object) -> bool:
     return type(value) is int and value >= 0
 
 
-def _is_expected_identity(value: object) -> bool:
-    """Return whether ``value`` is an exact valid restore-target identity."""
-    return (
-        type(value) is PostgresRestoreTargetIdentity
-        and type(value.system_identifier) is int
-        and 1 <= value.system_identifier <= _MAX_SYSTEM_IDENTIFIER
-    )
+def _snapshot_expected_identity_or_invalid(value: object) -> int:
+    """Snapshot one exact valid restore-target identifier or fail closed."""
+    if type(value) is not PostgresRestoreTargetIdentity:
+        _raise_invalid_input()
+    system_identifier = value.system_identifier
+    if (
+        type(system_identifier) is not int
+        or not 1 <= system_identifier <= _MAX_SYSTEM_IDENTIFIER
+    ):
+        _raise_invalid_input()
+    return system_identifier
 
 
 def _duplicate_descriptor_or_invalid(file_descriptor: int) -> int:
@@ -81,13 +85,8 @@ def _fstat_or_invalid(file_descriptor: int) -> os.stat_result:
         _raise_invalid_input()
 
 
-def _validate_snapshot(
-    *,
-    data_directory_fd: int,
-    pg_controldata_fd: int,
-    expected_identity: PostgresRestoreTargetIdentity,
-) -> PostgresRestoreTargetIdentity:
-    """Validate privately owned descriptor snapshots and the expected identity."""
+def _validate_snapshot(*, data_directory_fd: int, pg_controldata_fd: int) -> None:
+    """Validate privately owned descriptor snapshots."""
     data_stat = _fstat_or_invalid(data_directory_fd)
     control_stat = _fstat_or_invalid(pg_controldata_fd)
 
@@ -97,8 +96,6 @@ def _validate_snapshot(
         _raise_invalid_input()
     if control_stat.st_mode & 0o111 == 0:
         _raise_invalid_input()
-
-    return expected_identity
 
 
 def _inspect_system_identifier(*, data_directory_fd: int, pg_controldata_fd: int) -> int:
@@ -169,38 +166,40 @@ def verify_postgres_data_directory_identity(
 
     ``expected_identity`` must be the exact protected
     :class:`~pg_llm_batch.postgres_restore_target.PostgresRestoreTargetIdentity`
-    previously collected from the isolated restore cluster.  Exact integer
-    descriptor arguments are duplicated before either descriptor is validated,
-    so later replacement of the caller-owned descriptor numbers cannot change
-    the capabilities used by this verification call. Package-owned duplicates
-    are released best-effort after verification so close-time operating-system
-    diagnostics cannot replace a verified result or leak host detail. The
-    function does not accept a path, DSN, password, WAL segment, tenant
-    identifier, or business payload. It does not start PostgreSQL, configure
-    recovery, replay WAL, or claim that the directory is otherwise safe to
-    promote.
+    previously collected from the isolated restore cluster. The verifier
+    snapshots its bounded system identifier before invoking child-process or
+    operating-system work, so later caller mutation cannot rewrite accepted
+    identity authority. Exact integer descriptor arguments are duplicated
+    before either descriptor is validated, so later replacement of the
+    caller-owned descriptor numbers cannot change the capabilities used by
+    this verification call. Package-owned duplicates are released best-effort
+    after verification so close-time operating-system diagnostics cannot
+    replace a verified result or leak host detail. The function does not
+    accept a path, DSN, password, WAL segment, tenant identifier, or business
+    payload. It does not start PostgreSQL, configure recovery, replay WAL, or
+    claim that the directory is otherwise safe to promote.
     """
     if not _is_plain_descriptor(data_directory_fd):
         _raise_invalid_input()
     if not _is_plain_descriptor(pg_controldata_fd):
         _raise_invalid_input()
-    if not _is_expected_identity(expected_identity):
-        _raise_invalid_input()
+    expected_system_identifier = _snapshot_expected_identity_or_invalid(
+        expected_identity
+    )
 
     data_snapshot_fd = _duplicate_descriptor_or_invalid(data_directory_fd)
     try:
         control_snapshot_fd = _duplicate_descriptor_or_invalid(pg_controldata_fd)
         try:
-            identity = _validate_snapshot(
+            _validate_snapshot(
                 data_directory_fd=data_snapshot_fd,
                 pg_controldata_fd=control_snapshot_fd,
-                expected_identity=expected_identity,
             )
             observed_identifier = _inspect_system_identifier(
                 data_directory_fd=data_snapshot_fd,
                 pg_controldata_fd=control_snapshot_fd,
             )
-            if observed_identifier != identity.system_identifier:
+            if observed_identifier != expected_system_identifier:
                 raise PostgresDataDirectoryIdentityError(_IDENTITY_MISMATCH)
         finally:
             _close_snapshot_descriptor(control_snapshot_fd)
