@@ -117,8 +117,9 @@ def test_initial_signal_identity_inspection_failure_closes_without_blind_unlink(
     real_fstat = recovery_signal.os.fstat
 
     def fail_signal_fstat(descriptor: int) -> os.stat_result:
-        if descriptor == directory_descriptor:
-            return real_fstat(descriptor)
+        status = real_fstat(descriptor)
+        if stat.S_ISDIR(status.st_mode):
+            return status
         raise OSError("sensitive created-inode diagnostic")
 
     monkeypatch.setattr(recovery_signal.os, "fstat", fail_signal_fstat)
@@ -142,9 +143,9 @@ def test_initial_signal_identity_rejects_nonempty_created_file_state(
     real_fstat = recovery_signal.os.fstat
 
     def nonempty_signal_fstat(descriptor: int) -> os.stat_result | SimpleNamespace:
-        if descriptor == directory_descriptor:
-            return real_fstat(descriptor)
         status = real_fstat(descriptor)
+        if stat.S_ISDIR(status.st_mode):
+            return status
         return SimpleNamespace(
             st_mode=status.st_mode,
             st_size=1,
@@ -176,10 +177,10 @@ def test_post_hardening_state_mismatch_removes_exact_created_signal(
 
     def changed_signal_fstat(descriptor: int) -> os.stat_result | SimpleNamespace:
         nonlocal signal_inspections
-        if descriptor == directory_descriptor:
-            return real_fstat(descriptor)
-        signal_inspections += 1
         status = real_fstat(descriptor)
+        if stat.S_ISDIR(status.st_mode):
+            return status
+        signal_inspections += 1
         if signal_inspections == 1:
             return status
         return SimpleNamespace(
