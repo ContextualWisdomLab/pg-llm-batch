@@ -98,10 +98,10 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
 
 
 def _duplicate_output_for_cleanup(output_descriptor: int) -> int:
-    """Retain the inspected file for safe invalidation if caller fd identity changes."""
+    """Retain a private descriptor to the selected backup file."""
     try:
         return os.dup(output_descriptor)
-    except (OSError, ValueError):
+    except (OSError, OverflowError, ValueError):
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup output could not be retained"
         ) from None
@@ -264,6 +264,10 @@ def create_postgres_physical_basebackup(
     A SHA-256 backup manifest is requested and pg_basebackup's normal durable-sync
     behavior is retained; this function additionally fsyncs the caller-owned stream.
 
+    The output descriptor is privately snapshotted before inspection and subprocess
+    execution. Replacing or closing the caller-owned descriptor after that snapshot
+    therefore cannot redirect backup bytes or final validation to another file.
+
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency. It does not establish a
     continuous WAL archive, perform WAL replay/PITR, prove restore usability, recover
@@ -280,23 +284,27 @@ def create_postgres_physical_basebackup(
             "invalid PostgreSQL physical base-backup parameters"
         )
 
-    initial_status = _inspect_initial_output(output_descriptor)
     cleanup_descriptor = _duplicate_output_for_cleanup(output_descriptor)
     try:
-        _run_pg_basebackup(
-            service_name=service_name,
-            output_descriptor=output_descriptor,
-            cleanup_descriptor=cleanup_descriptor,
-            pg_basebackup_executable=pg_basebackup_executable,
-            timeout_seconds=timeout_seconds,
-            connect_timeout_seconds=connect_timeout_seconds,
-        )
-        return PostgresPhysicalBaseBackupResult(
-            size_bytes=_finalize_output(
-                output_descriptor,
-                cleanup_descriptor,
-                initial_status,
+        initial_status = _inspect_initial_output(cleanup_descriptor)
+        execution_descriptor = _duplicate_output_for_cleanup(cleanup_descriptor)
+        try:
+            _run_pg_basebackup(
+                service_name=service_name,
+                output_descriptor=execution_descriptor,
+                cleanup_descriptor=cleanup_descriptor,
+                pg_basebackup_executable=pg_basebackup_executable,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
             )
-        )
+            return PostgresPhysicalBaseBackupResult(
+                size_bytes=_finalize_output(
+                    execution_descriptor,
+                    cleanup_descriptor,
+                    initial_status,
+                )
+            )
+        finally:
+            _close_cleanup_descriptor(execution_descriptor)
     finally:
         _close_cleanup_descriptor(cleanup_descriptor)
