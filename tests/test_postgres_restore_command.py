@@ -112,6 +112,20 @@ def test_direct_construction_cannot_inject_a_free_form_restore_command() -> None
         )
 
 
+def test_mutated_bound_helper_is_revalidated_before_server_setting() -> None:
+    """Do not let post-construction dataclass mutation bypass shell-token validation."""
+    command = bind_postgres_archive_restore_command(
+        "/usr/local/libexec/pg-llm-batch-restore-wal"
+    )
+    object.__setattr__(command, "helper_executable", "/bin/restore;true")
+
+    with pytest.raises(
+        PostgresRestoreCommandError,
+        match="^invalid PostgreSQL restore helper executable$",
+    ):
+        command.server_setting()
+
+
 def test_setting_contains_no_archive_path_or_credentials() -> None:
     """The bounded setting carries only reviewed executable authority and server placeholders."""
     value = bind_postgres_archive_restore_command(
