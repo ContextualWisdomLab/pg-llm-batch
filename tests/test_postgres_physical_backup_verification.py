@@ -19,7 +19,18 @@ from pg_llm_batch.postgres_physical_backup_verification import (
 )
 
 
-def _write_stdout_style_base_tar(directory: Path, *, duplicate_manifest: bool = False) -> int:
+_INVALID_PARAMETERS = "^invalid PostgreSQL physical-backup verification parameters$"
+_MANIFEST_ERROR = "^PostgreSQL physical backup must contain one regular backup manifest$"
+_VERIFICATION_FAILED = "^PostgreSQL physical backup verification failed$"
+
+
+def _write_stdout_style_base_tar(
+    directory: Path,
+    *,
+    duplicate_manifest: bool = False,
+    include_manifest: bool = True,
+    manifest_is_regular: bool = True,
+) -> int:
     """Create the single-tablespace tar shape emitted by pg_basebackup -D -."""
     archive_path = directory / "base.tar"
     manifest = (
@@ -31,10 +42,15 @@ def _write_stdout_style_base_tar(directory: Path, *, duplicate_manifest: bool = 
         version = tarfile.TarInfo("PG_VERSION")
         version.size = len(payload)
         archive.addfile(version, io.BytesIO(payload))
-        for _ in range(2 if duplicate_manifest else 1):
-            member = tarfile.TarInfo("backup_manifest")
-            member.size = len(manifest)
-            archive.addfile(member, io.BytesIO(manifest))
+        if include_manifest:
+            for _ in range(2 if duplicate_manifest else 1):
+                member = tarfile.TarInfo("backup_manifest")
+                if manifest_is_regular:
+                    member.size = len(manifest)
+                    archive.addfile(member, io.BytesIO(manifest))
+                else:
+                    member.type = tarfile.DIRTYPE
+                    archive.addfile(member)
     os.chmod(archive_path, 0o600)
     return os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
 
@@ -129,33 +145,47 @@ def test_invalid_authority_fails_before_subprocess(
     try:
         with pytest.raises(
             PostgresPhysicalBackupVerificationError,
-            match="^invalid PostgreSQL physical-backup verification parameters$",
+            match=_INVALID_PARAMETERS,
         ):
             verify_postgres_physical_backup_tar(**arguments)  # type: ignore[arg-type]
     finally:
         os.close(descriptor)
 
 
-def test_duplicate_injected_manifest_is_rejected_before_subprocess(
+def test_closed_directory_descriptor_is_content_free_invalid_authority(
+    tmp_path: Path,
+) -> None:
+    """Descriptor-retention failure must not leak an operating-system diagnostic."""
+    backup_directory = tmp_path / "backup-closed"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+    os.close(descriptor)
+    with pytest.raises(
+        PostgresPhysicalBackupVerificationError,
+        match=_INVALID_PARAMETERS,
+    ):
+        verify_postgres_physical_backup_tar(
+            descriptor,
+            pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+        )
+
+
+def test_writable_backup_directory_is_rejected_before_subprocess(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Ambiguous manifest authority in an archive fails closed."""
-    backup_directory = tmp_path / "backup-duplicate"
+    """Group-writable backup authority cannot be trusted for verification."""
+    backup_directory = tmp_path / "backup-writable"
     backup_directory.mkdir(mode=0o700)
-    descriptor = _write_stdout_style_base_tar(
-        backup_directory, duplicate_manifest=True
-    )
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+    os.chmod(backup_directory, 0o770)
 
     def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
-        raise AssertionError("ambiguous manifest must not execute pg_verifybackup")
+        raise AssertionError("unsafe directory must fail before pg_verifybackup")
 
     monkeypatch.setattr(subprocess, "run", forbidden)
     try:
-        with pytest.raises(
-            PostgresPhysicalBackupVerificationError,
-            match="^PostgreSQL physical backup must contain one regular backup manifest$",
-        ):
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_INVALID_PARAMETERS):
             verify_postgres_physical_backup_tar(
                 descriptor,
                 pg_verifybackup_executable="/usr/bin/pg_verifybackup",
@@ -164,25 +194,201 @@ def test_duplicate_injected_manifest_is_rejected_before_subprocess(
         os.close(descriptor)
 
 
-def test_verifier_failure_is_content_free(
+@pytest.mark.parametrize(
+    ("include_manifest", "manifest_is_regular", "duplicate_manifest"),
+    [
+        (False, True, False),
+        (True, False, False),
+        (True, True, True),
+    ],
+)
+def test_ambiguous_or_nonregular_manifest_is_rejected_before_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    include_manifest: bool,
+    manifest_is_regular: bool,
+    duplicate_manifest: bool,
+) -> None:
+    """Exactly one regular injected manifest is required before child execution."""
+    backup_directory = tmp_path / "backup-manifest"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(
+        backup_directory,
+        include_manifest=include_manifest,
+        manifest_is_regular=manifest_is_regular,
+        duplicate_manifest=duplicate_manifest,
+    )
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("invalid manifest must not execute pg_verifybackup")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    try:
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_MANIFEST_ERROR):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+    finally:
+        os.close(descriptor)
+
+
+def test_manifest_extraction_failure_is_content_free(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """pg_verifybackup diagnostics never cross the package boundary."""
-    backup_directory = tmp_path / "backup-failed"
+    """Unexpected absence of a regular member stream fails closed."""
+    backup_directory = tmp_path / "backup-extract"
     backup_directory.mkdir(mode=0o700)
     descriptor = _write_stdout_style_base_tar(backup_directory)
+    monkeypatch.setattr(tarfile.TarFile, "extractfile", lambda *_args, **_kwargs: None)
+    try:
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_MANIFEST_ERROR):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+    finally:
+        os.close(descriptor)
 
-    def failed_run(
-        arguments: list[str], **_kwargs: object
-    ) -> subprocess.CompletedProcess[bytes]:
-        return subprocess.CompletedProcess(arguments, 1)
 
-    monkeypatch.setattr(subprocess, "run", failed_run)
+@pytest.mark.parametrize("base_tar_shape", ["missing", "directory", "symlink", "corrupt"])
+def test_invalid_base_tar_fails_content_free(
+    tmp_path: Path,
+    base_tar_shape: str,
+) -> None:
+    """Missing, redirected, nonregular, or malformed backup bytes fail closed."""
+    backup_directory = tmp_path / f"backup-{base_tar_shape}"
+    backup_directory.mkdir(mode=0o700)
+    base_tar = backup_directory / "base.tar"
+    if base_tar_shape == "directory":
+        base_tar.mkdir()
+    elif base_tar_shape == "symlink":
+        target = tmp_path / "outside.tar"
+        target.write_bytes(b"outside")
+        base_tar.symlink_to(target)
+    elif base_tar_shape == "corrupt":
+        base_tar.write_bytes(b"not a tar archive")
+    descriptor = os.open(backup_directory, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_VERIFICATION_FAILED):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+    finally:
+        os.close(descriptor)
+
+
+def test_manifest_descriptor_retention_failure_is_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """FD exhaustion after base-tar open must not leak host diagnostics."""
+    backup_directory = tmp_path / "backup-fd-exhausted"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+    real_dup = os.dup
+    calls = 0
+
+    def fail_second_dup(file_descriptor: int) -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise OSError("sensitive descriptor-table diagnostic")
+        return real_dup(file_descriptor)
+
+    monkeypatch.setattr(os, "dup", fail_second_dup)
     try:
         with pytest.raises(
             PostgresPhysicalBackupVerificationError,
-            match="^PostgreSQL physical backup verification failed$",
+            match=_VERIFICATION_FAILED,
+        ) as caught:
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+        assert "descriptor-table" not in str(caught.value)
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    "effect",
+    [
+        subprocess.TimeoutExpired(["pg_verifybackup"], 1800),
+        OSError("sensitive executable diagnostic"),
+        RuntimeError("sensitive adapter diagnostic"),
+    ],
+)
+def test_verifier_execution_failure_is_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    effect: BaseException,
+) -> None:
+    """Timeout, OS, and ordinary adapter failures cross one fixed boundary."""
+    backup_directory = tmp_path / "backup-execution-failed"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+
+    def failed_run(*_args: object, **_kwargs: object) -> NoReturn:
+        raise effect
+
+    monkeypatch.setattr(subprocess, "run", failed_run)
+    try:
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_VERIFICATION_FAILED):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+    finally:
+        os.close(descriptor)
+
+
+def test_keyboard_interrupt_remains_primary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Process-level interruption is not rewritten as a package verification error."""
+    backup_directory = tmp_path / "backup-interrupt"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+
+    def interrupted(*_args: object, **_kwargs: object) -> NoReturn:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess, "run", interrupted)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+    finally:
+        os.close(descriptor)
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        subprocess.CompletedProcess(["pg_verifybackup"], 1),
+        object(),
+    ],
+)
+def test_verifier_failure_is_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    result: object,
+) -> None:
+    """Non-success and malformed subprocess results never expose backup details."""
+    backup_directory = tmp_path / "backup-failed"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+    monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: result)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_VERIFICATION_FAILED,
         ) as caught:
             verify_postgres_physical_backup_tar(
                 descriptor,
