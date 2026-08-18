@@ -377,3 +377,55 @@ def test_verifier_uses_only_fd_capabilities_and_bounded_child_contract(
     assert observed["cwd"] == "/"
     assert observed["env"] == {"LANG": "C", "LC_ALL": "C", "PG_COLOR": "never"}
     assert observed["close_fds"] is True
+
+
+def test_verifier_rejects_closed_control_descriptor(tmp_path: Path) -> None:
+    """Fail closed when the trusted executable capability is no longer open."""
+    control_fd = _open_control_script(tmp_path, "exit 0\n")
+    os.close(control_fd)
+    data_directory = tmp_path / "restore-data"
+    data_directory.mkdir()
+    data_directory_fd = _open_directory(data_directory)
+    try:
+        with pytest.raises(
+            PostgresDataDirectoryIdentityError,
+            match="^invalid PostgreSQL data-directory identity inputs$",
+        ):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_directory_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=_expected_identity(),
+            )
+    finally:
+        os.close(data_directory_fd)
+
+
+@pytest.mark.parametrize("stdout", [None, "Database system identifier: 1\n"])
+def test_verifier_rejects_non_bytes_control_stdout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stdout: object,
+) -> None:
+    """Reject malformed child-process objects without leaking their content."""
+    control_fd = _open_control_script(tmp_path, "exit 0\n")
+    data_directory = tmp_path / "restore-data"
+    data_directory.mkdir()
+    data_directory_fd = _open_directory(data_directory)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, stdout=stdout),
+    )
+    try:
+        with pytest.raises(
+            PostgresDataDirectoryIdentityError,
+            match="^could not inspect PostgreSQL data-directory identity$",
+        ):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_directory_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=_expected_identity(),
+            )
+    finally:
+        os.close(data_directory_fd)
+        os.close(control_fd)
