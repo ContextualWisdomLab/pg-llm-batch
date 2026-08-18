@@ -47,7 +47,7 @@ class PostgresLogicalRecoveryDrillEvidence:
     schema_sha256: str
     backup_sha256: str
     backup_size_bytes: int
-    restore_system_identifier: int
+    caller_asserted_restore_system_identifier: int
     required_table_count: int
     required_index_count: int
     lifecycle_rls_forced: bool
@@ -63,7 +63,7 @@ class PostgresLogicalRecoveryDrillEvidence:
             "schema_sha256": self.schema_sha256,
             "backup_sha256": self.backup_sha256,
             "backup_size_bytes": self.backup_size_bytes,
-            "restore_system_identifier": self.restore_system_identifier,
+            "caller_asserted_restore_system_identifier": self.caller_asserted_restore_system_identifier,
             "required_table_count": self.required_table_count,
             "required_index_count": self.required_index_count,
             "lifecycle_rls_forced": self.lifecycle_rls_forced,
@@ -239,7 +239,7 @@ def run_postgres_logical_recovery_drill(
         schema_sha256=receipt.schema_sha256,
         backup_sha256=receipt.backup_sha256,
         backup_size_bytes=receipt.backup_size_bytes,
-        restore_system_identifier=restore_target_identity.system_identifier,
+        caller_asserted_restore_system_identifier=restore_target_identity.system_identifier,
         required_table_count=catalog.required_table_count,
         required_index_count=catalog.required_index_count,
         lifecycle_rls_forced=catalog.lifecycle_rls_forced,
