@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+import pg_llm_batch.postgres_physical_backup_verification as physical_backup_verification
 from pg_llm_batch.postgres_physical_backup_verification import (
     PostgresPhysicalBackupVerificationError,
     _copy_manifest_to_private_file,
@@ -179,4 +180,42 @@ def test_regular_manifest_stream_is_copied_to_private_staging_file(
             assert manifest_file.read() == expected_manifest
     finally:
         os.close(base_tar_descriptor)
+        os.close(directory_descriptor)
+
+
+def test_total_timeout_expires_during_manifest_staging_before_verifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The public timeout must bound pre-verifier tar work as well as subprocess work."""
+    directory_descriptor, base_tar_descriptor = _private_stdout_tar(tmp_path)
+    os.close(base_tar_descriptor)
+    monotonic_values = iter((100.0, 102.0))
+    monkeypatch.setattr(
+        physical_backup_verification,
+        "_monotonic",
+        lambda: next(monotonic_values),
+        raising=False,
+    )
+
+    def forbidden_verifier(**_kwargs: object) -> None:
+        """Fail if expired pre-verifier work reaches PostgreSQL execution."""
+        pytest.fail("pg_verifybackup must not run after the total timeout expires")
+
+    monkeypatch.setattr(
+        physical_backup_verification,
+        "_run_pg_verifybackup",
+        forbidden_verifier,
+    )
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_VERIFICATION_FAILED,
+        ):
+            physical_backup_verification.verify_postgres_physical_backup_tar(
+                directory_descriptor,
+                pg_verifybackup_executable=str(tmp_path / "pg_verifybackup"),
+                timeout_seconds=1,
+            )
+    finally:
         os.close(directory_descriptor)
