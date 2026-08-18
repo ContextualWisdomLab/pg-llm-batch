@@ -70,6 +70,24 @@ def _directory_is_owner_only(mode: int) -> bool:
     return mode & (stat.S_IRWXG | stat.S_IRWXO) == 0
 
 
+def _retain_archive_directory(archive_directory_descriptor: int) -> int:
+    """Snapshot caller directory authority into one package-owned descriptor."""
+    try:
+        return os.dup(archive_directory_descriptor)
+    except (OSError, OverflowError, ValueError):
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive directory could not be retained"
+        ) from None
+
+
+def _close_archive_directory(archive_directory_descriptor: int) -> None:
+    """Best-effort close package-owned directory authority without replacing evidence."""
+    try:
+        os.close(archive_directory_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
 def _inspect_archive_directory(
     archive_directory_descriptor: int,
 ) -> os.stat_result:
@@ -218,12 +236,15 @@ def receive_postgres_wal_archive(
     """Receive a finite PostgreSQL WAL stream through an existing replication slot.
 
     The caller owns an already-open private archive directory descriptor and the
-    lifecycle of its WAL files. The directory must be empty at invocation start so
-    pre-existing local WAL state cannot choose ``pg_receivewal``'s starting position.
-    The subprocess sees that pinned directory only as ``/proc/self/fd/<fd>``; no caller
-    filesystem path or connection secret is placed in argv. The selected replication
-    slot must already exist and remain an operator-governed server resource. The
-    package never creates or drops slots.
+    lifecycle of its WAL files. The package snapshots that descriptor into private
+    authority before inspection and subprocess execution, so later caller-side close or
+    descriptor-number replacement cannot redirect this invocation. The directory must
+    be empty at invocation start so pre-existing local WAL state cannot choose
+    ``pg_receivewal``'s starting position. The subprocess sees only the package-owned
+    pinned directory as ``/proc/self/fd/<fd>``; no caller filesystem path or connection
+    secret is placed in argv. The selected replication slot must already exist and
+    remain an operator-governed server resource. The package never creates or drops
+    slots.
 
     ``pg_receivewal`` is invoked with ``--synchronous`` so received WAL is flushed in
     real time, ``--no-loop`` so connection loss is returned to the caller rather than
@@ -250,15 +271,20 @@ def receive_postgres_wal_archive(
         raise PostgresWalArchiveError(
             "invalid PostgreSQL WAL archive parameters"
         )
-    initial_status = _inspect_archive_directory(archive_directory_descriptor)
-    _run_pg_receivewal(
-        service_name=service_name,
-        slot_name=slot_name,
-        end_lsn=end_lsn,
-        archive_directory_descriptor=archive_directory_descriptor,
-        pg_receivewal_executable=pg_receivewal_executable,
-        timeout_seconds=timeout_seconds,
-        connect_timeout_seconds=connect_timeout_seconds,
-    )
-    _finalize_archive_directory(archive_directory_descriptor, initial_status)
-    return PostgresWalArchiveResult(end_lsn=end_lsn)
+
+    private_archive_descriptor = _retain_archive_directory(archive_directory_descriptor)
+    try:
+        initial_status = _inspect_archive_directory(private_archive_descriptor)
+        _run_pg_receivewal(
+            service_name=service_name,
+            slot_name=slot_name,
+            end_lsn=end_lsn,
+            archive_directory_descriptor=private_archive_descriptor,
+            pg_receivewal_executable=pg_receivewal_executable,
+            timeout_seconds=timeout_seconds,
+            connect_timeout_seconds=connect_timeout_seconds,
+        )
+        _finalize_archive_directory(private_archive_descriptor, initial_status)
+        return PostgresWalArchiveResult(end_lsn=end_lsn)
+    finally:
+        _close_archive_directory(private_archive_descriptor)
