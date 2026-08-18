@@ -70,10 +70,11 @@ class PostgresArchiveRestoreCommand:
         _validate_helper_executable(self.helper_executable)
 
     def server_setting(self) -> tuple[str, str]:
-        """Return PostgreSQL's restore-command setting with fixed server placeholders."""
+        """Return PostgreSQL's restore-command setting after revalidating authority."""
+        validated_helper = _validate_helper_executable(self.helper_executable)
         return (
             "restore_command",
-            f"{self.helper_executable} %f %p",
+            f"{validated_helper} %f %p",
         )
 
 
