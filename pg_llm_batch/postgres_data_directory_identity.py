@@ -20,6 +20,7 @@ from .postgres_restore_target import PostgresRestoreTargetIdentity
 
 
 _MAX_SYSTEM_IDENTIFIER = (1 << 64) - 1
+_MAX_SYSTEM_IDENTIFIER_DIGITS = 20
 _MAX_CONTROL_OUTPUT_BYTES = 16_384
 _CONTROL_TIMEOUT_SECONDS = 5.0
 _INVALID_INPUT = "invalid PostgreSQL data-directory identity inputs"
@@ -144,7 +145,12 @@ def _inspect_system_identifier(*, data_directory_fd: int, pg_controldata_fd: int
         _raise_inspection_failed()
 
     raw_identifier = identifiers[0]
-    if not raw_identifier or not raw_identifier.isascii() or not raw_identifier.isdecimal():
+    if (
+        not raw_identifier
+        or not raw_identifier.isascii()
+        or not raw_identifier.isdecimal()
+        or len(raw_identifier) > _MAX_SYSTEM_IDENTIFIER_DIGITS
+    ):
         _raise_inspection_failed()
 
     identifier = int(raw_identifier, 10)
