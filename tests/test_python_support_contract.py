@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import re
-import tomllib
 from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
@@ -13,6 +12,9 @@ _CI_WORKFLOW = _ROOT / ".github" / "workflows" / "ci.yml"
 _REQUIRES_PYTHON_RE = re.compile(
     r">=(?P<major>\d+)\.(?P<minor>\d+)\Z"
 )
+_REQUIRES_PYTHON_SETTING_RE = re.compile(
+    r'^requires-python\s*=\s*"(?P<specifier>[^"]+)"\s*$', re.MULTILINE
+)
 _MATRIX_RE = re.compile(r'python-version:\s*\[(?P<versions>[^\]]+)\]')
 _VERSION_RE = re.compile(r'"(?P<major>\d+)\.(?P<minor>\d+)"')
 _QUALITY_VERSION_RE = re.compile(r'python-version:\s*"(?P<major>\d+)\.(?P<minor>\d+)"')
@@ -20,9 +22,11 @@ _QUALITY_VERSION_RE = re.compile(r'python-version:\s*"(?P<major>\d+)\.(?P<minor>
 
 def _advertised_lower_bound() -> tuple[int, int]:
     """Return the exact CPython lower bound advertised by project metadata."""
-    project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
-    requires_python = project["requires-python"]
-    assert isinstance(requires_python, str)
+    pyproject = _PYPROJECT.read_text(encoding="utf-8")
+    project_section = pyproject.split("[project]\n", 1)[1].split("\n[", 1)[0]
+    setting = _REQUIRES_PYTHON_SETTING_RE.search(project_section)
+    assert setting is not None, "project metadata must declare Requires-Python"
+    requires_python = setting.group("specifier")
     matched = _REQUIRES_PYTHON_RE.fullmatch(requires_python)
     assert matched is not None, "Requires-Python must expose one explicit CPython lower bound"
     return int(matched.group("major")), int(matched.group("minor"))
