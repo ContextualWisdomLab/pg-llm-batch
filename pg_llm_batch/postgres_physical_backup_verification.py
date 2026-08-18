@@ -106,11 +106,16 @@ def _inspect_backup_directory(backup_directory_descriptor: int) -> None:
     ):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS)
     try:
-        entries = os.listdir(backup_directory_descriptor)
+        with os.scandir(backup_directory_descriptor) as entries:
+            first_entry = next(entries, None)
+            if first_entry is None or first_entry.name != "base.tar":
+                raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
+            if next(entries, None) is not None:
+                raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
+    except PostgresPhysicalBackupVerificationError:
+        raise
     except (OSError, ValueError):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS) from None
-    if entries != ["base.tar"]:
-        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
 
 
 def _open_base_tar(backup_directory_descriptor: int) -> int:
@@ -263,6 +268,8 @@ def verify_postgres_physical_backup_tar(
     directory before inspection and requires both the retained directory and
     ``base.tar`` to be owned by the effective process user so another local file
     owner cannot retain mutation authority to the accepted backup bytes. It
+    enumerates at most two directory entries to reject malformed or unexpectedly
+    large backup directories without materializing their complete name set, then
     opens ``base.tar`` non-blocking relative to the pinned directory without
     following a final symlink. Pre-verifier staging accepts only the uncompressed
     stdout-tar contract, enumerates no more than 4,194,304 archive members, and
