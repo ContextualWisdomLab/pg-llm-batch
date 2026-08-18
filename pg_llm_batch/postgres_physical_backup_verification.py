@@ -14,6 +14,7 @@ from typing import BinaryIO
 
 
 _MAX_TIMEOUT_SECONDS = 86_400
+_NONBLOCKING_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _INVALID_PARAMETERS = "invalid PostgreSQL physical-backup verification parameters"
 _MANIFEST_ERROR = "PostgreSQL physical backup must contain one regular backup manifest"
 _VERIFICATION_FAILED = "PostgreSQL physical backup verification failed"
@@ -68,7 +69,7 @@ def _retain_pg_verifybackup_executable(pg_verifybackup_executable: str) -> int:
     try:
         executable_descriptor = os.open(
             pg_verifybackup_executable,
-            os.O_RDONLY | os.O_NOFOLLOW,
+            _NONBLOCKING_READ_FLAGS,
         )
     except (OSError, ValueError):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS) from None
@@ -107,7 +108,7 @@ def _open_base_tar(backup_directory_descriptor: int) -> int:
     try:
         base_tar_descriptor = os.open(
             "base.tar",
-            os.O_RDONLY | os.O_NOFOLLOW,
+            _NONBLOCKING_READ_FLAGS,
             dir_fd=backup_directory_descriptor,
         )
         status = os.fstat(base_tar_descriptor)
@@ -228,11 +229,12 @@ def verify_postgres_physical_backup_tar(
     The caller owns an already-open private backup-directory descriptor whose
     only entry is the owner-only, single-link ``base.tar`` emitted by
     ``pg_basebackup --pgdata=- --format=tar``. The package snapshots that
-    directory before inspection, opens ``base.tar`` relative to the pinned
-    directory without following a final symlink, and copies exactly one regular
-    injected ``backup_manifest`` into anonymous temporary-file authority. No
-    backup member is extracted to a caller-visible path. The absolute trusted
-    ``pg_verifybackup`` path is also opened without following its final symlink,
+    directory before inspection, opens ``base.tar`` non-blocking relative to the
+    pinned directory without following a final symlink, and copies exactly one
+    regular injected ``backup_manifest`` into anonymous temporary-file
+    authority. No backup member is extracted to a caller-visible path. The
+    absolute trusted ``pg_verifybackup`` path is likewise opened non-blocking
+    before regular-file validation and without following its final symlink,
     rejected if it is nonregular, non-executable, or group/other writable, and
     executed only through the retained descriptor so a later pathname swap
     cannot replace the accepted verifier inode. Descriptor-retention and local
