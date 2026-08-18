@@ -3,12 +3,13 @@
 
 from __future__ import annotations
 
+import math
 import os
-import shutil
 import stat
 import subprocess
 import tarfile
 import tempfile
+import time
 from dataclasses import dataclass
 from typing import BinaryIO
 
@@ -16,10 +17,12 @@ from typing import BinaryIO
 _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_ARCHIVE_MEMBERS = 4_194_304
 _MAX_MANIFEST_BYTES = 1_073_741_824
+_MAX_MANIFEST_COPY_CHUNK_BYTES = 1_048_576
 _NONBLOCKING_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _INVALID_PARAMETERS = "invalid PostgreSQL physical-backup verification parameters"
 _MANIFEST_ERROR = "PostgreSQL physical backup must contain one regular backup manifest"
 _VERIFICATION_FAILED = "PostgreSQL physical backup verification failed"
+_monotonic = time.monotonic
 
 
 class PostgresPhysicalBackupVerificationError(RuntimeError):
@@ -48,6 +51,16 @@ def _parameters_are_valid(
         and type(timeout_seconds) is int
         and 1 <= timeout_seconds <= _MAX_TIMEOUT_SECONDS
     )
+
+
+def _remaining_timeout_seconds(deadline_monotonic: float | None) -> int:
+    """Return the rounded finite execution budget or fail after its deadline."""
+    if deadline_monotonic is None:
+        return _MAX_TIMEOUT_SECONDS
+    remaining_seconds = deadline_monotonic - _monotonic()
+    if remaining_seconds <= 0:
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
+    return min(_MAX_TIMEOUT_SECONDS, max(1, math.ceil(remaining_seconds)))
 
 
 def _retain_backup_directory(backup_directory_descriptor: int) -> int:
@@ -153,10 +166,15 @@ def _retain_base_tar(base_tar_descriptor: int) -> int:
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
 
 
-def _find_manifest_member(archive: tarfile.TarFile) -> tarfile.TarInfo:
+def _find_manifest_member(
+    archive: tarfile.TarFile,
+    *,
+    deadline_monotonic: float | None = None,
+) -> tarfile.TarInfo:
     """Find one bounded regular manifest without materializing every tar member."""
     manifest_member: tarfile.TarInfo | None = None
     for member_count, member in enumerate(archive, start=1):
+        _remaining_timeout_seconds(deadline_monotonic)
         if member_count > _MAX_ARCHIVE_MEMBERS:
             raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
         if member.name != "backup_manifest":
@@ -169,27 +187,60 @@ def _find_manifest_member(archive: tarfile.TarFile) -> tarfile.TarInfo:
         ):
             raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
         manifest_member = member
+    _remaining_timeout_seconds(deadline_monotonic)
     if manifest_member is None:
         raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
     return manifest_member
 
 
+def _copy_manifest_stream(
+    manifest_source: BinaryIO,
+    manifest_file: BinaryIO,
+    *,
+    manifest_size_bytes: int,
+    deadline_monotonic: float | None,
+) -> None:
+    """Copy the declared manifest bytes while checking the shared time budget."""
+    bytes_remaining = manifest_size_bytes
+    while bytes_remaining:
+        _remaining_timeout_seconds(deadline_monotonic)
+        chunk = manifest_source.read(
+            min(_MAX_MANIFEST_COPY_CHUNK_BYTES, bytes_remaining)
+        )
+        if not chunk:
+            raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
+        manifest_file.write(chunk)
+        bytes_remaining -= len(chunk)
+    _remaining_timeout_seconds(deadline_monotonic)
+
+
 def _copy_manifest_to_private_file(
     base_tar_descriptor: int,
     manifest_file: BinaryIO,
+    *,
+    deadline_monotonic: float | None = None,
 ) -> int:
     """Copy one bounded regular injected manifest to anonymous descriptor authority."""
     base_tar_snapshot = _retain_base_tar(base_tar_descriptor)
     try:
+        _remaining_timeout_seconds(deadline_monotonic)
         with os.fdopen(base_tar_snapshot, "rb", closefd=False) as base_tar_file:
             try:
                 with tarfile.open(fileobj=base_tar_file, mode="r:") as archive:
-                    manifest_member = _find_manifest_member(archive)
+                    manifest_member = _find_manifest_member(
+                        archive,
+                        deadline_monotonic=deadline_monotonic,
+                    )
                     manifest_source = archive.extractfile(manifest_member)
                     if manifest_source is None:
                         raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
                     with manifest_source:
-                        shutil.copyfileobj(manifest_source, manifest_file)
+                        _copy_manifest_stream(
+                            manifest_source,
+                            manifest_file,
+                            manifest_size_bytes=manifest_member.size,
+                            deadline_monotonic=deadline_monotonic,
+                        )
             except PostgresPhysicalBackupVerificationError:
                 raise
             except (OSError, ValueError, tarfile.TarError):
@@ -199,6 +250,7 @@ def _copy_manifest_to_private_file(
     finally:
         _close_descriptor(base_tar_snapshot)
     try:
+        _remaining_timeout_seconds(deadline_monotonic)
         manifest_file.flush()
         manifest_file.seek(0)
         return manifest_file.fileno()
@@ -274,15 +326,18 @@ def verify_postgres_physical_backup_tar(
     following a final symlink. Pre-verifier staging accepts only the uncompressed
     stdout-tar contract, enumerates no more than 4,194,304 archive members, and
     stages at most 1 GiB from exactly one regular ``backup_manifest`` into
-    anonymous temporary-file authority. No backup member is extracted to a
-    caller-visible path. The absolute trusted ``pg_verifybackup`` path is
-    likewise opened non-blocking before regular-file validation and without
-    following its final symlink, rejected unless its owner is root or the
-    effective process user and it is executable without group/other write
-    authority, and executed only through the retained descriptor so a later
-    pathname swap cannot replace the accepted verifier inode. Descriptor
-    retention and local staging failures cross fixed content-free package
-    boundaries rather than exposing host diagnostics.
+    anonymous temporary-file authority. The public ``timeout_seconds`` budget is
+    shared by tar-member scanning, chunked manifest staging, and the remaining
+    PostgreSQL verifier subprocess; deadline checks occur between bounded local
+    reads, so expired pre-verifier work fails before PostgreSQL execution. No
+    backup member is extracted to a caller-visible path. The absolute trusted
+    ``pg_verifybackup`` path is likewise opened non-blocking before regular-file
+    validation and without following its final symlink, rejected unless its
+    owner is root or the effective process user and it is executable without
+    group/other write authority, and executed only through the retained
+    descriptor so a later pathname swap cannot replace the accepted verifier
+    inode. Descriptor retention and local staging failures cross fixed
+    content-free package boundaries rather than exposing host diagnostics.
 
     PostgreSQL 18 cannot parse WAL directly from tar-format backups, so the
     verifier runs ``pg_verifybackup --format=tar --no-parse-wal`` and supplies
@@ -298,23 +353,27 @@ def verify_postgres_physical_backup_tar(
     ):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS)
 
+    deadline_monotonic = _monotonic() + timeout_seconds
     private_directory_descriptor = _retain_backup_directory(
         backup_directory_descriptor
     )
     try:
+        _remaining_timeout_seconds(deadline_monotonic)
         _inspect_backup_directory(private_directory_descriptor)
+        _remaining_timeout_seconds(deadline_monotonic)
         base_tar_descriptor = _open_base_tar(private_directory_descriptor)
         try:
             with tempfile.TemporaryFile(mode="w+b") as manifest_file:
                 manifest_descriptor = _copy_manifest_to_private_file(
                     base_tar_descriptor,
                     manifest_file,
+                    deadline_monotonic=deadline_monotonic,
                 )
                 _run_pg_verifybackup(
                     backup_directory_descriptor=private_directory_descriptor,
                     manifest_descriptor=manifest_descriptor,
                     pg_verifybackup_executable=pg_verifybackup_executable,
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=_remaining_timeout_seconds(deadline_monotonic),
                 )
         finally:
             _close_descriptor(base_tar_descriptor)
