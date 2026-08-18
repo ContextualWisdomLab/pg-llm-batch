@@ -164,6 +164,32 @@ def test_missing_manifest_stream_fails_before_staging(
         os.close(directory_descriptor)
 
 
+def test_truncated_manifest_stream_fails_content_free(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A declared manifest whose stream ends early must fail before verification."""
+    directory_descriptor, base_tar_descriptor = _private_stdout_tar(tmp_path)
+    monkeypatch.setattr(
+        tarfile.TarFile,
+        "extractfile",
+        lambda *_args, **_kwargs: io.BytesIO(),
+    )
+    try:
+        with tempfile.TemporaryFile(mode="w+b") as manifest_file:
+            with pytest.raises(
+                PostgresPhysicalBackupVerificationError,
+                match=_VERIFICATION_FAILED,
+            ):
+                _copy_manifest_to_private_file(
+                    base_tar_descriptor,
+                    manifest_file,
+                )
+    finally:
+        os.close(base_tar_descriptor)
+        os.close(directory_descriptor)
+
+
 def test_regular_manifest_stream_is_copied_to_private_staging_file(
     tmp_path: Path,
 ) -> None:
@@ -190,7 +216,7 @@ def test_total_timeout_expires_during_manifest_staging_before_verifier(
     """The public timeout must bound pre-verifier tar work as well as subprocess work."""
     directory_descriptor, base_tar_descriptor = _private_stdout_tar(tmp_path)
     os.close(base_tar_descriptor)
-    monotonic_values = iter((100.0, 102.0))
+    monotonic_values = iter((100.0, 100.1, 100.2, 100.3, 100.4, 100.5, 101.1))
     monkeypatch.setattr(
         physical_backup_verification,
         "_monotonic",
