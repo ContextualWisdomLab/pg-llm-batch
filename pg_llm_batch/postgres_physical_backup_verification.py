@@ -309,8 +309,6 @@ def _run_pg_verifybackup(
                 )
             finally:
                 _close_descriptor(verification_directory_descriptor)
-    except PostgresPhysicalBackupVerificationError:
-        raise
     except (OSError, subprocess.TimeoutExpired, ValueError):
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
     except Exception:
