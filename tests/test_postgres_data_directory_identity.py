@@ -363,12 +363,19 @@ def test_verifier_uses_only_fd_capabilities_and_bounded_child_contract(
         os.close(data_directory_fd)
         os.close(control_fd)
 
+    pass_fds = observed["pass_fds"]
+    assert isinstance(pass_fds, tuple)
+    assert len(pass_fds) == 2
+    control_snapshot_fd, data_snapshot_fd = pass_fds
+    assert type(control_snapshot_fd) is int
+    assert type(data_snapshot_fd) is int
+    assert control_snapshot_fd != control_fd
+    assert data_snapshot_fd != data_directory_fd
     assert observed["args"] == (
-        f"/proc/self/fd/{control_fd}",
+        f"/proc/self/fd/{control_snapshot_fd}",
         "-D",
-        f"/proc/self/fd/{data_directory_fd}",
+        f"/proc/self/fd/{data_snapshot_fd}",
     )
-    assert observed["pass_fds"] == (control_fd, data_directory_fd)
     assert observed["stdin"] is subprocess.DEVNULL
     assert observed["stdout"] is subprocess.PIPE
     assert observed["stderr"] is subprocess.DEVNULL
@@ -377,6 +384,10 @@ def test_verifier_uses_only_fd_capabilities_and_bounded_child_contract(
     assert observed["cwd"] == "/"
     assert observed["env"] == {"LANG": "C", "LC_ALL": "C", "PG_COLOR": "never"}
     assert observed["close_fds"] is True
+    with pytest.raises(OSError):
+        os.fstat(control_snapshot_fd)
+    with pytest.raises(OSError):
+        os.fstat(data_snapshot_fd)
 
 
 def test_verifier_rejects_closed_control_descriptor(tmp_path: Path) -> None:
