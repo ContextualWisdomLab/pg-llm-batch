@@ -118,12 +118,14 @@ def test_validated_pg_basebackup_inode_is_retained_through_execution(
         executable.write_text("#!/bin/sh\nexit 73\n", encoding="utf-8")
         executable.chmod(0o750)
 
-        execution_path = arguments[0]
+        execution_path = kwargs["executable"]
+        assert type(execution_path) is str
         assert execution_path.startswith("/proc/self/fd/")
         retained_status = os.stat(execution_path)
         assert (retained_status.st_dev, retained_status.st_ino) == original_identity
         retained_descriptor = int(execution_path.rsplit("/", 1)[1])
         assert kwargs["pass_fds"] == (retained_descriptor,)
+        assert arguments[0] == str(executable)
 
         child_output = kwargs["stdout"]
         assert type(child_output) is int
