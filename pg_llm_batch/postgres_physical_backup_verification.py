@@ -64,19 +64,22 @@ def _close_descriptor(file_descriptor: int) -> None:
 
 
 def _inspect_backup_directory(backup_directory_descriptor: int) -> None:
-    """Require a directory that cannot be rewritten by group or other principals."""
+    """Require private single-tar directory authority for stdout backup mode."""
     try:
         status = os.fstat(backup_directory_descriptor)
+        entries = os.listdir(backup_directory_descriptor)
     except (OSError, ValueError):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS) from None
     if not stat.S_ISDIR(status.st_mode) or status.st_mode & (
         stat.S_IWGRP | stat.S_IWOTH
     ):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS)
+    if entries != ["base.tar"]:
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
 
 
 def _open_base_tar(backup_directory_descriptor: int) -> int:
-    """Open the exact stdout-mode base tar relative to pinned directory authority."""
+    """Open the exact private stdout-mode tar relative to pinned directory authority."""
     try:
         base_tar_descriptor = os.open(
             "base.tar",
@@ -86,7 +89,11 @@ def _open_base_tar(backup_directory_descriptor: int) -> int:
         status = os.fstat(base_tar_descriptor)
     except (OSError, ValueError):
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
-    if not stat.S_ISREG(status.st_mode):
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_nlink != 1
+        or status.st_mode & (stat.S_IRWXG | stat.S_IRWXO)
+    ):
         _close_descriptor(base_tar_descriptor)
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
     return base_tar_descriptor
@@ -184,14 +191,15 @@ def verify_postgres_physical_backup_tar(
 ) -> PostgresPhysicalBackupVerificationResult:
     """Verify one single-tablespace PostgreSQL stdout-format base-backup tar.
 
-    The caller owns an already-open backup-directory descriptor containing the
-    ``base.tar`` emitted by ``pg_basebackup --pgdata=- --format=tar``. The
-    package snapshots that descriptor before inspection, opens ``base.tar``
-    relative to the pinned directory without following a final symlink, and
-    copies exactly one regular injected ``backup_manifest`` into anonymous
-    temporary-file authority. No backup member is extracted to a caller-visible
-    path. Descriptor-retention and local manifest-staging failures cross fixed
-    content-free package boundaries rather than exposing host diagnostics.
+    The caller owns an already-open private backup-directory descriptor whose
+    only entry is the owner-only, single-link ``base.tar`` emitted by
+    ``pg_basebackup --pgdata=- --format=tar``. The package snapshots that
+    directory before inspection, opens ``base.tar`` relative to the pinned
+    directory without following a final symlink, and copies exactly one regular
+    injected ``backup_manifest`` into anonymous temporary-file authority. No
+    backup member is extracted to a caller-visible path. Descriptor-retention
+    and local manifest-staging failures cross fixed content-free package
+    boundaries rather than exposing host diagnostics.
 
     PostgreSQL 18 cannot parse WAL directly from tar-format backups, so the
     verifier runs ``pg_verifybackup --format=tar --no-parse-wal`` and supplies
