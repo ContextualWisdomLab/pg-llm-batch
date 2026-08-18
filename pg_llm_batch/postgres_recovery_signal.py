@@ -77,6 +77,11 @@ def _snapshot_directory_descriptor(data_directory_descriptor: object) -> int:
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery data directory descriptor is not a directory"
         )
+    if status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        _close_directory_descriptor(directory_descriptor)
+        raise PostgresRecoverySignalError(
+            "PostgreSQL recovery data directory has unsafe write permissions"
+        )
     return directory_descriptor
 
 
