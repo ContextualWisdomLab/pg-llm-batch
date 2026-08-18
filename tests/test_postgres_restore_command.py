@@ -13,7 +13,7 @@ from pg_llm_batch.postgres_restore_command import (
 
 
 def test_binder_emits_fixed_postgresql_restore_placeholders() -> None:
-    """Bind one absolute helper token to PostgreSQL's exact file/destination placeholders."""
+    """Bind one helper token to shell-quoted PostgreSQL file/destination placeholders."""
     command = bind_postgres_archive_restore_command(
         "/usr/local/libexec/pg-llm-batch-restore-wal"
     )
@@ -21,7 +21,7 @@ def test_binder_emits_fixed_postgresql_restore_placeholders() -> None:
     assert command.helper_executable == "/usr/local/libexec/pg-llm-batch-restore-wal"
     assert command.server_setting() == (
         "restore_command",
-        "/usr/local/libexec/pg-llm-batch-restore-wal %f %p",
+        '/usr/local/libexec/pg-llm-batch-restore-wal "%f" "%p"',
     )
 
 
@@ -31,7 +31,7 @@ def test_direct_canonical_construction_is_equivalent() -> None:
         helper_executable="/opt/pg-llm-batch/bin/restore-wal"
     )
 
-    assert command.server_setting()[1].endswith(" %f %p")
+    assert command.server_setting()[1].endswith(' "%f" "%p"')
 
 
 @pytest.mark.parametrize(
