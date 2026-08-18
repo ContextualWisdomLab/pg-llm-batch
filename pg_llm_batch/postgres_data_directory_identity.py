@@ -61,7 +61,7 @@ def _duplicate_descriptor_or_invalid(file_descriptor: int) -> int:
     """Snapshot one caller descriptor or cross the fixed invalid-input boundary."""
     try:
         return os.dup(file_descriptor)
-    except OSError:
+    except (OSError, OverflowError):
         _raise_invalid_input()
 
 
