@@ -272,6 +272,8 @@ def prepare_postgres_recovery_signal(
     and synchronizes the directory instead of deleting unverified bytes or leaving
     PostgreSQL's magic recovery trigger published. A quarantine failure is surfaced as
     an explicit content-free error so callers know not to start the restore cluster.
+    If process control interrupts initial identity capture, that signal remains primary
+    even when the quarantine attempt also fails; the bounded cleanup error is chained.
 
     After identity capture, the signal is forced to owner read/write mode, re-verified
     as the same empty one-link regular inode, synchronized, rechecked against a standby
@@ -296,9 +298,14 @@ def prepare_postgres_recovery_signal(
         signal_descriptor = _open_recovery_signal(directory_descriptor)
         try:
             created_identity = _capture_created_signal_identity(signal_descriptor)
-        except BaseException:
+        except BaseException as primary_error:
             _close_signal_descriptor(signal_descriptor)
-            _quarantine_unverified_signal(directory_descriptor)
+            try:
+                _quarantine_unverified_signal(directory_descriptor)
+            except BaseException as cleanup_error:
+                if isinstance(primary_error, (KeyboardInterrupt, SystemExit)):
+                    raise primary_error from cleanup_error
+                raise
             raise
         try:
             _harden_created_signal(signal_descriptor, created_identity)
