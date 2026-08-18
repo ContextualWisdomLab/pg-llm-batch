@@ -58,7 +58,10 @@ def test_output_owner_must_not_change_during_backup(
     def drifting_fstat(fd: int) -> os.stat_result:
         nonlocal fstat_calls
         status = real_fstat(fd)
-        if fd != descriptor:
+        if (status.st_dev, status.st_ino) != (
+            inspected_status.st_dev,
+            inspected_status.st_ino,
+        ):
             return status
         fstat_calls += 1
         if fstat_calls == 1:
