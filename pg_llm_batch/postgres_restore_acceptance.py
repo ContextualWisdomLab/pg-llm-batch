@@ -35,27 +35,29 @@ SELECT
     c.relkind,
     c.relrowsecurity,
     CASE
-        WHEN c.relkind = 'r'
-             AND c.relname IN (
-                 'llm_remote_batch_jobs',
-                 'llm_result_stream_checkpoints'
+        WHEN c.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'r'
+             AND c.relname::pg_catalog.text OPERATOR(pg_catalog.=) ANY(
+                 ARRAY[
+                     'llm_remote_batch_jobs',
+                     'llm_result_stream_checkpoints'
+                 ]::pg_catalog.text[]
              )
         THEN c.relforcerowsecurity AND EXISTS (
             SELECT 1
             FROM pg_catalog.pg_policy AS policy_row
-            WHERE policy_row.polrelid = c.oid
-              AND policy_row.polname::text = CASE c.relname
+            WHERE policy_row.polrelid OPERATOR(pg_catalog.=) c.oid
+              AND policy_row.polname::pg_catalog.text OPERATOR(pg_catalog.=) CASE c.relname
                   WHEN 'llm_remote_batch_jobs'
                       THEN 'plc_llm_remote_batch_jobs_tenant_scope'
                   WHEN 'llm_result_stream_checkpoints'
                       THEN 'plc_llm_result_stream_checkpoints_tenant_scope'
                   ELSE NULL
               END
-              AND policy_row.polcmd = '*'
+              AND policy_row.polcmd::pg_catalog.text OPERATOR(pg_catalog.=) '*'
               AND policy_row.polpermissive IS TRUE
-              AND policy_row.polroles = ARRAY[0::oid]
-              AND replace(
-                  regexp_replace(
+              AND policy_row.polroles OPERATOR(pg_catalog.=) ARRAY[0::pg_catalog.oid]
+              AND pg_catalog.replace(
+                  pg_catalog.regexp_replace(
                       pg_catalog.pg_get_expr(
                           policy_row.polqual,
                           policy_row.polrelid,
@@ -67,12 +69,14 @@ SELECT
                   ),
                   '''pg_llm_batch.tenant_scope''::text',
                   '''pg_llm_batch.tenant_scope'''
-              ) IN (
-                  '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
-                  'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+              ) OPERATOR(pg_catalog.=) ANY(
+                  ARRAY[
+                      '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
+                      'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+                  ]::pg_catalog.text[]
               )
-              AND replace(
-                  regexp_replace(
+              AND pg_catalog.replace(
+                  pg_catalog.regexp_replace(
                       pg_catalog.pg_get_expr(
                           policy_row.polwithcheck,
                           policy_row.polrelid,
@@ -84,64 +88,110 @@ SELECT
                   ),
                   '''pg_llm_batch.tenant_scope''::text',
                   '''pg_llm_batch.tenant_scope'''
-              ) IN (
-                  '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
-                  'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+              ) OPERATOR(pg_catalog.=) ANY(
+                  ARRAY[
+                      '(tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true))',
+                      'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
+                  ]::pg_catalog.text[]
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.pg_depend AS function_dependency
+                  WHERE function_dependency.classid OPERATOR(pg_catalog.=)
+                        'pg_catalog.pg_policy'::pg_catalog.regclass
+                    AND function_dependency.objid OPERATOR(pg_catalog.=) policy_row.oid
+                    AND function_dependency.objsubid OPERATOR(pg_catalog.=) 0
+                    AND function_dependency.refclassid OPERATOR(pg_catalog.=)
+                        'pg_catalog.pg_proc'::pg_catalog.regclass
+                    AND function_dependency.refobjid OPERATOR(pg_catalog.=)
+                        'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure
+                    AND function_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
+                    AND function_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
+              )
+              AND EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.pg_depend AS operator_dependency
+                  WHERE operator_dependency.classid OPERATOR(pg_catalog.=)
+                        'pg_catalog.pg_policy'::pg_catalog.regclass
+                    AND operator_dependency.objid OPERATOR(pg_catalog.=) policy_row.oid
+                    AND operator_dependency.objsubid OPERATOR(pg_catalog.=) 0
+                    AND operator_dependency.refclassid OPERATOR(pg_catalog.=)
+                        'pg_catalog.pg_operator'::pg_catalog.regclass
+                    AND operator_dependency.refobjid OPERATOR(pg_catalog.=)
+                        'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator
+                    AND operator_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
+                    AND operator_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
               )
               AND NOT EXISTS (
                   SELECT 1
                   FROM pg_catalog.pg_policy AS extra_policy
-                  WHERE extra_policy.polrelid = c.oid
-                    AND extra_policy.oid <> policy_row.oid
+                  WHERE extra_policy.polrelid OPERATOR(pg_catalog.=) c.oid
+                    AND extra_policy.oid OPERATOR(pg_catalog.<>) policy_row.oid
               )
         )
         ELSE c.relforcerowsecurity
     END AS authenticated_force_row_security
 FROM pg_catalog.pg_class AS c
-INNER JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
-LEFT JOIN pg_catalog.pg_index AS idx ON idx.indexrelid = c.oid
-LEFT JOIN pg_catalog.pg_class AS indexed_table ON indexed_table.oid = idx.indrelid
-WHERE n.nspname = current_schema()
-  AND c.relkind = ANY(%s)
-  AND c.relname = ANY(%s)
+INNER JOIN pg_catalog.pg_namespace AS n
+    ON n.oid OPERATOR(pg_catalog.=) c.relnamespace
+LEFT JOIN pg_catalog.pg_index AS idx
+    ON idx.indexrelid OPERATOR(pg_catalog.=) c.oid
+LEFT JOIN pg_catalog.pg_class AS indexed_table
+    ON indexed_table.oid OPERATOR(pg_catalog.=) idx.indrelid
+WHERE n.nspname::pg_catalog.text OPERATOR(pg_catalog.=)
+      pg_catalog.current_schema()::pg_catalog.text
+  AND c.relkind::pg_catalog.text OPERATOR(pg_catalog.=) ANY(%s)
+  AND c.relname::pg_catalog.text OPERATOR(pg_catalog.=) ANY(%s)
   AND (
-      c.relkind = 'r'
+      c.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'r'
       OR (
-          c.relkind = 'i'
-          AND indexed_table.relname = 'llm_remote_batch_jobs'
-          AND indexed_table.relnamespace = n.oid
+          c.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'i'
+          AND indexed_table.relname::pg_catalog.text OPERATOR(pg_catalog.=)
+              'llm_remote_batch_jobs'
+          AND indexed_table.relnamespace OPERATOR(pg_catalog.=) n.oid
           AND idx.indisvalid
           AND idx.indisready
           AND idx.indpred IS NULL
           AND idx.indexprs IS NULL
-          AND idx.indnkeyatts = 3
-          AND idx.indnatts = 3
-          AND idx.indoption = '0 0 0'::pg_catalog.int2vector
+          AND idx.indnkeyatts OPERATOR(pg_catalog.=) 3
+          AND idx.indnatts OPERATOR(pg_catalog.=) 3
+          AND idx.indoption OPERATOR(pg_catalog.=)
+              '0 0 0'::pg_catalog.int2vector
           AND EXISTS (
               SELECT 1
               FROM pg_catalog.pg_am AS access_method
-              WHERE access_method.oid = c.relam
-                AND access_method.amname = 'btree'
+              WHERE access_method.oid OPERATOR(pg_catalog.=) c.relam
+                AND access_method.amname::pg_catalog.text OPERATOR(pg_catalog.=)
+                    'btree'
           )
-          AND pg_catalog.pg_get_indexdef(c.oid, 1, TRUE) = 'tenant_scope'
+          AND pg_catalog.pg_get_indexdef(c.oid, 1, TRUE)
+              OPERATOR(pg_catalog.=) 'tenant_scope'
           AND (
               (
-                  c.relname = 'idx_llm_remote_batch_jobs_tenant_status_observed'
+                  c.relname::pg_catalog.text OPERATOR(pg_catalog.=)
+                      'idx_llm_remote_batch_jobs_tenant_status_observed'
                   AND NOT idx.indisunique
-                  AND pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'batch_status'
-                  AND pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'last_observed_at'
+                  AND pg_catalog.pg_get_indexdef(c.oid, 2, TRUE)
+                      OPERATOR(pg_catalog.=) 'batch_status'
+                  AND pg_catalog.pg_get_indexdef(c.oid, 3, TRUE)
+                      OPERATOR(pg_catalog.=) 'last_observed_at'
               )
               OR (
-                  c.relname = 'uq_llm_remote_batch_jobs_tenant_endpoint_id'
+                  c.relname::pg_catalog.text OPERATOR(pg_catalog.=)
+                      'uq_llm_remote_batch_jobs_tenant_endpoint_id'
                   AND idx.indisunique
-                  AND pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'endpoint_alias'
-                  AND pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'remote_batch_id'
+                  AND pg_catalog.pg_get_indexdef(c.oid, 2, TRUE)
+                      OPERATOR(pg_catalog.=) 'endpoint_alias'
+                  AND pg_catalog.pg_get_indexdef(c.oid, 3, TRUE)
+                      OPERATOR(pg_catalog.=) 'remote_batch_id'
                   AND EXISTS (
                       SELECT 1
                       FROM pg_catalog.pg_constraint AS constraint_row
-                      WHERE constraint_row.conindid = c.oid
-                        AND constraint_row.conrelid = indexed_table.oid
-                        AND constraint_row.contype = 'u'
+                      WHERE constraint_row.conindid OPERATOR(pg_catalog.=) c.oid
+                        AND constraint_row.conrelid OPERATOR(pg_catalog.=)
+                            indexed_table.oid
+                        AND constraint_row.contype::pg_catalog.text
+                            OPERATOR(pg_catalog.=) 'u'
                         AND NOT constraint_row.condeferrable
                   )
               )
@@ -255,19 +305,23 @@ def inspect_postgres_restore_catalog(
 ) -> PostgresRestoreCatalogEvidence:
     """Prove required package catalog objects on a caller-owned restore target.
 
-    The callable inspects ``pg_class`` and ``pg_policy`` through the caller-owned
-    connection. It does not execute ``pg_dump`` or ``pg_restore``, open a
-    package-owned connection, or claim that a backup artifact is restorable.
-    Missing required tables or tenant-status indexes fail closed. Lifecycle
-    row-level security must be enabled and forced, with exactly the packaged
-    permissive ``PUBLIC`` all-command policy whose ``USING`` and ``WITH CHECK``
-    predicates bind ``tenant_scope`` to the transaction-local package setting.
-    A present checkpoint store must carry the same authenticated policy shape
-    and forced RLS. Invalid policy state is represented as failed forced-RLS
-    evidence rather than being mistaken for an absent optional checkpoint table.
-    Required lifecycle indexes must belong to that lifecycle table and match the
-    packaged key order, uniqueness, validity, readiness, btree access method,
-    default key options, and plain-index shape.
+    The callable inspects ``pg_class``, ``pg_policy``, and ``pg_depend`` through
+    the caller-owned connection. It does not execute ``pg_dump`` or
+    ``pg_restore``, open a package-owned connection, or claim that a backup
+    artifact is restorable. Missing required tables or tenant-status indexes fail
+    closed. Lifecycle row-level security must be enabled and forced, with exactly
+    the packaged permissive ``PUBLIC`` all-command policy whose ``USING`` and
+    ``WITH CHECK`` predicates bind ``tenant_scope`` to the transaction-local
+    package setting. Policy acceptance additionally authenticates the stored
+    expression dependencies against PostgreSQL's built-in ``current_setting``
+    function and text equality operator, while catalog-query functions/operators
+    are schema-qualified to resist a restored hostile ``search_path``. A present
+    checkpoint store must carry the same authenticated policy shape and forced
+    RLS. Invalid policy state is represented as failed forced-RLS evidence rather
+    than being mistaken for an absent optional checkpoint table. Required
+    lifecycle indexes must belong to that lifecycle table and match the packaged
+    key order, uniqueness, validity, readiness, btree access method, default key
+    options, and plain-index shape.
     """
     relation_names = list(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,))
     try:
