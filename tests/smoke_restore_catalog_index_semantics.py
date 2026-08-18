@@ -87,6 +87,50 @@ def _install_permissive_decoy(
     )
 
 
+def _install_shadowed_equality_decoy(
+    cursor: object,
+    *,
+    table_name: str,
+    policy_name: str,
+) -> None:
+    """Create a text-identical policy whose visible equality operator always passes."""
+    cursor.execute(
+        "CREATE OR REPLACE FUNCTION public.pg_llm_batch_always_equal(text, text) "
+        "RETURNS boolean LANGUAGE sql IMMUTABLE AS 'SELECT TRUE'"
+    )
+    cursor.execute("DROP OPERATOR IF EXISTS public.= (text, text)")
+    cursor.execute(
+        "CREATE OPERATOR public.= ("
+        "FUNCTION = public.pg_llm_batch_always_equal, "
+        "LEFTARG = text, RIGHTARG = text)"
+    )
+    cursor.execute("SET search_path TO public, pg_catalog")
+    _restore_tenant_policy(
+        cursor,
+        table_name=table_name,
+        policy_name=policy_name,
+    )
+
+
+def _remove_shadowed_equality_decoy(
+    cursor: object,
+    *,
+    table_name: str,
+    policy_name: str,
+) -> None:
+    """Remove the shadow operator and restore a built-in-bound package policy."""
+    cursor.execute("SET search_path TO pg_catalog, public")
+    cursor.execute(f"DROP POLICY IF EXISTS {policy_name} ON {table_name}")
+    cursor.execute("DROP OPERATOR IF EXISTS public.= (text, text)")
+    cursor.execute("DROP FUNCTION IF EXISTS public.pg_llm_batch_always_equal(text, text)")
+    _restore_tenant_policy(
+        cursor,
+        table_name=table_name,
+        policy_name=policy_name,
+    )
+    cursor.execute("SET search_path TO DEFAULT")
+
+
 def main() -> None:
     """Prove packaged indexes and tenant policies while rejecting same-name decoys."""
     with psycopg.connect(DSN) as connection:
@@ -165,6 +209,22 @@ def main() -> None:
                 table_name="llm_result_stream_checkpoints",
                 policy_name="plc_llm_result_stream_checkpoints_tenant_scope",
             )
+        _require_complete_catalog(connection)
+        try:
+            with connection.cursor() as cursor:
+                _install_shadowed_equality_decoy(
+                    cursor,
+                    table_name="llm_remote_batch_jobs",
+                    policy_name="plc_llm_remote_batch_jobs_tenant_scope",
+                )
+            _require_tenant_isolation_rejection(connection)
+        finally:
+            with connection.cursor() as cursor:
+                _remove_shadowed_equality_decoy(
+                    cursor,
+                    table_name="llm_remote_batch_jobs",
+                    policy_name="plc_llm_remote_batch_jobs_tenant_scope",
+                )
         _require_complete_catalog(connection)
 
 
