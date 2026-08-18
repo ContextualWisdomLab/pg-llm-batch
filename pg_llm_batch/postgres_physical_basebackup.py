@@ -115,13 +115,13 @@ def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
         pass
 
 
-def _validate_pg_basebackup_executable(pg_basebackup_executable: str) -> None:
-    """Reject an observable executable writable by a different local principal.
+def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int | None:
+    """Validate and retain exact executable inode authority when the path exists.
 
-    A missing executable remains the subprocess layer's ``unavailable`` case so the
-    public error contract stays stable. When a path is present, validate the opened
-    inode rather than path metadata so a foreign owner or group/other writer cannot
-    retain mutation authority over the executable selected for backup work.
+    Existing executables are held open across child-process creation so replacing the
+    caller-selected path cannot redirect execution after validation. A path that is
+    absent at inspection remains the subprocess layer's ``unavailable`` case, which
+    preserves the public error contract without manufacturing executable authority.
     """
     try:
         executable_descriptor = os.open(
@@ -129,7 +129,7 @@ def _validate_pg_basebackup_executable(pg_basebackup_executable: str) -> None:
             os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
         )
     except FileNotFoundError:
-        return
+        return None
     except (OSError, ValueError):
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup executable is unsafe"
@@ -151,8 +151,10 @@ def _validate_pg_basebackup_executable(pg_basebackup_executable: str) -> None:
             raise PostgresPhysicalBaseBackupError(
                 "PostgreSQL physical base-backup executable is unsafe"
             )
-    finally:
+    except BaseException:
         _close_cleanup_descriptor(executable_descriptor)
+        raise
+    return executable_descriptor
 
 
 def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[str, str]:
@@ -185,6 +187,7 @@ def _run_pg_basebackup(
     output_descriptor: int,
     cleanup_descriptor: int,
     pg_basebackup_executable: str,
+    executable_descriptor: int | None,
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> subprocess.CompletedProcess[bytes]:
@@ -199,6 +202,12 @@ def _run_pg_basebackup(
         "--no-password",
     ]
     environment = _libpq_environment(service_name, connect_timeout_seconds)
+    executable_kwargs: dict[str, object] = {}
+    if executable_descriptor is not None:
+        executable_kwargs = {
+            "executable": f"/proc/self/fd/{executable_descriptor}",
+            "pass_fds": (executable_descriptor,),
+        }
     try:
         completed = subprocess.run(
             arguments,
@@ -209,6 +218,7 @@ def _run_pg_basebackup(
             check=False,
             close_fds=True,
             env=environment,
+            **executable_kwargs,
         )
     except FileNotFoundError:
         _invalidate_output(cleanup_descriptor)
@@ -306,7 +316,10 @@ def create_postgres_physical_basebackup(
 
     The output descriptor is privately snapshotted before inspection and subprocess
     execution. Replacing or closing the caller-owned descriptor after that snapshot
-    therefore cannot redirect backup bytes or final validation to another file.
+    therefore cannot redirect backup bytes or final validation to another file. When
+    the selected ``pg_basebackup`` exists, its validated inode is likewise retained
+    through subprocess creation so path replacement cannot redirect executable
+    authority to a different local file.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency. It does not establish a
@@ -327,25 +340,30 @@ def create_postgres_physical_basebackup(
     cleanup_descriptor = _duplicate_output_for_cleanup(output_descriptor)
     try:
         initial_status = _inspect_initial_output(cleanup_descriptor)
-        _validate_pg_basebackup_executable(pg_basebackup_executable)
-        execution_descriptor = _duplicate_output_for_cleanup(cleanup_descriptor)
+        executable_descriptor = _retain_pg_basebackup_executable(pg_basebackup_executable)
         try:
-            _run_pg_basebackup(
-                service_name=service_name,
-                output_descriptor=execution_descriptor,
-                cleanup_descriptor=cleanup_descriptor,
-                pg_basebackup_executable=pg_basebackup_executable,
-                timeout_seconds=timeout_seconds,
-                connect_timeout_seconds=connect_timeout_seconds,
-            )
-            return PostgresPhysicalBaseBackupResult(
-                size_bytes=_finalize_output(
-                    execution_descriptor,
-                    cleanup_descriptor,
-                    initial_status,
+            execution_descriptor = _duplicate_output_for_cleanup(cleanup_descriptor)
+            try:
+                _run_pg_basebackup(
+                    service_name=service_name,
+                    output_descriptor=execution_descriptor,
+                    cleanup_descriptor=cleanup_descriptor,
+                    pg_basebackup_executable=pg_basebackup_executable,
+                    executable_descriptor=executable_descriptor,
+                    timeout_seconds=timeout_seconds,
+                    connect_timeout_seconds=connect_timeout_seconds,
                 )
-            )
+                return PostgresPhysicalBaseBackupResult(
+                    size_bytes=_finalize_output(
+                        execution_descriptor,
+                        cleanup_descriptor,
+                        initial_status,
+                    )
+                )
+            finally:
+                _close_cleanup_descriptor(execution_descriptor)
         finally:
-            _close_cleanup_descriptor(execution_descriptor)
+            if executable_descriptor is not None:
+                _close_cleanup_descriptor(executable_descriptor)
     finally:
         _close_cleanup_descriptor(cleanup_descriptor)
