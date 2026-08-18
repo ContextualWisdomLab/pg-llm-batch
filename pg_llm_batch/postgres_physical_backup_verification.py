@@ -10,6 +10,7 @@ import subprocess
 import tarfile
 import tempfile
 from dataclasses import dataclass
+from typing import BinaryIO
 
 
 _MAX_TIMEOUT_SECONDS = 86_400
@@ -91,33 +92,50 @@ def _open_base_tar(backup_directory_descriptor: int) -> int:
     return base_tar_descriptor
 
 
+def _retain_base_tar(base_tar_descriptor: int) -> int:
+    """Retain private tar authority or cross the content-free verification boundary."""
+    try:
+        return os.dup(base_tar_descriptor)
+    except (OSError, OverflowError, ValueError):
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
+
+
 def _copy_manifest_to_private_file(
     base_tar_descriptor: int,
-    manifest_file: tempfile._TemporaryFileWrapper | object,
+    manifest_file: BinaryIO,
 ) -> int:
     """Copy exactly one regular injected manifest to anonymous descriptor authority."""
-    with os.fdopen(os.dup(base_tar_descriptor), "rb") as base_tar_file:
-        try:
-            with tarfile.open(fileobj=base_tar_file, mode="r:*") as archive:
-                manifest_members = [
-                    member
-                    for member in archive.getmembers()
-                    if member.name == "backup_manifest"
-                ]
-                if len(manifest_members) != 1 or not manifest_members[0].isreg():
-                    raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
-                manifest_source = archive.extractfile(manifest_members[0])
-                if manifest_source is None:
-                    raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
-                with manifest_source:
-                    shutil.copyfileobj(manifest_source, manifest_file)
-        except PostgresPhysicalBackupVerificationError:
-            raise
-        except (OSError, tarfile.TarError):
-            raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
-    manifest_file.flush()
-    manifest_file.seek(0)
-    return manifest_file.fileno()
+    base_tar_snapshot = _retain_base_tar(base_tar_descriptor)
+    try:
+        with os.fdopen(base_tar_snapshot, "rb", closefd=False) as base_tar_file:
+            try:
+                with tarfile.open(fileobj=base_tar_file, mode="r:*") as archive:
+                    manifest_members = [
+                        member
+                        for member in archive.getmembers()
+                        if member.name == "backup_manifest"
+                    ]
+                    if len(manifest_members) != 1 or not manifest_members[0].isreg():
+                        raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
+                    manifest_source = archive.extractfile(manifest_members[0])
+                    if manifest_source is None:
+                        raise PostgresPhysicalBackupVerificationError(_MANIFEST_ERROR)
+                    with manifest_source:
+                        shutil.copyfileobj(manifest_source, manifest_file)
+            except PostgresPhysicalBackupVerificationError:
+                raise
+            except (OSError, ValueError, tarfile.TarError):
+                raise PostgresPhysicalBackupVerificationError(
+                    _VERIFICATION_FAILED
+                ) from None
+    finally:
+        _close_descriptor(base_tar_snapshot)
+    try:
+        manifest_file.flush()
+        manifest_file.seek(0)
+        return manifest_file.fileno()
+    except (OSError, ValueError):
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
 
 
 def _run_pg_verifybackup(
@@ -172,7 +190,8 @@ def verify_postgres_physical_backup_tar(
     relative to the pinned directory without following a final symlink, and
     copies exactly one regular injected ``backup_manifest`` into anonymous
     temporary-file authority. No backup member is extracted to a caller-visible
-    path.
+    path. Descriptor-retention and local manifest-staging failures cross fixed
+    content-free package boundaries rather than exposing host diagnostics.
 
     PostgreSQL 18 cannot parse WAL directly from tar-format backups, so the
     verifier runs ``pg_verifybackup --format=tar --no-parse-wal`` and supplies
