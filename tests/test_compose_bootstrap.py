@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import runpy
 import sys
+import warnings
 from pathlib import Path
 
 import pytest
@@ -164,8 +165,11 @@ def test_module_execution_invokes_health_without_secret_in_argv(
         "argv",
         ["compose_bootstrap", "--password-file", str(password_file)],
     )
+    monkeypatch.delitem(sys.modules, "pg_llm_batch.compose_bootstrap")
 
-    runpy.run_module("pg_llm_batch.compose_bootstrap", run_name="__main__")
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", RuntimeWarning)
+        runpy.run_module("pg_llm_batch.compose_bootstrap", run_name="__main__")
 
     parsed = conninfo_to_dict(str(captured["dsn"]))
     assert parsed["password"] == "module-special:pass\\word"
