@@ -50,6 +50,18 @@ def _forbidden_subprocess(*_args: object, **_kwargs: object) -> NoReturn:
     raise AssertionError("unsafe recovery authority must fail before pg_controldata")
 
 
+def _foreign_owner(status: os.stat_result) -> os.stat_result:
+    """Return equivalent stat metadata whose owner is another local principal."""
+    fields = list(status)
+    effective_user_id = os.geteuid()
+    fields[4] = (
+        effective_user_id + 1
+        if effective_user_id < 2**31 - 1
+        else effective_user_id - 1
+    )
+    return os.stat_result(fields)
+
+
 @pytest.mark.parametrize("mode", [0o770, 0o707])
 def test_verifier_rejects_group_or_other_writable_data_directory(
     tmp_path: Path,
@@ -81,6 +93,68 @@ def test_verifier_rejects_group_or_other_writable_control_executable(
     """A mutable trusted executable capability must fail before child execution."""
     data_fd = _open_directory(tmp_path / f"restore-data-{mode:o}", 0o750)
     control_fd = _open_control_script(tmp_path, mode)
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=_expected_identity(),
+            )
+    finally:
+        os.close(control_fd)
+        os.close(data_fd)
+
+
+def test_verifier_rejects_foreign_owned_data_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foreign owner must not retain chmod or rename authority to cluster state."""
+    data_fd = _open_directory(tmp_path / "restore-data-foreign-owner", 0o750)
+    control_fd = _open_control_script(tmp_path, 0o755)
+    real_fstat = os.fstat
+    data_status = real_fstat(data_fd)
+    data_identity = (data_status.st_dev, data_status.st_ino)
+
+    def foreign_data_owner(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == data_identity:
+            return _foreign_owner(observed)
+        return observed
+
+    monkeypatch.setattr(os, "fstat", foreign_data_owner)
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=_expected_identity(),
+            )
+    finally:
+        os.close(control_fd)
+        os.close(data_fd)
+
+
+def test_verifier_rejects_foreign_owned_control_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A foreign executable owner must not retain chmod or in-place rewrite authority."""
+    data_fd = _open_directory(tmp_path / "restore-data-local-owner", 0o750)
+    control_fd = _open_control_script(tmp_path, 0o755)
+    real_fstat = os.fstat
+    control_status = real_fstat(control_fd)
+    control_identity = (control_status.st_dev, control_status.st_ino)
+
+    def foreign_control_owner(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == control_identity:
+            return _foreign_owner(observed)
+        return observed
+
+    monkeypatch.setattr(os, "fstat", foreign_control_owner)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
     try:
         with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
