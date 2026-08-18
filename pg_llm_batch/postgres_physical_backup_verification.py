@@ -89,33 +89,45 @@ def _retain_pg_verifybackup_executable(pg_verifybackup_executable: str) -> int:
 
 
 def _inspect_backup_directory(backup_directory_descriptor: int) -> None:
-    """Require private single-tar directory authority for stdout backup mode."""
+    """Require process-owned private single-tar directory authority."""
     try:
         status = os.fstat(backup_directory_descriptor)
+        effective_user_id = os.geteuid()
+    except (AttributeError, OSError, ValueError):
+        raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS) from None
+    if (
+        not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != effective_user_id
+        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    ):
+        raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS)
+    try:
         entries = os.listdir(backup_directory_descriptor)
     except (OSError, ValueError):
         raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS) from None
-    if not stat.S_ISDIR(status.st_mode) or status.st_mode & (
-        stat.S_IWGRP | stat.S_IWOTH
-    ):
-        raise PostgresPhysicalBackupVerificationError(_INVALID_PARAMETERS)
     if entries != ["base.tar"]:
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
 
 
 def _open_base_tar(backup_directory_descriptor: int) -> int:
-    """Open the exact private stdout-mode tar relative to pinned directory authority."""
+    """Open the exact process-owned stdout tar relative to pinned directory authority."""
     try:
         base_tar_descriptor = os.open(
             "base.tar",
             _NONBLOCKING_READ_FLAGS,
             dir_fd=backup_directory_descriptor,
         )
-        status = os.fstat(base_tar_descriptor)
     except (OSError, ValueError):
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
+    try:
+        status = os.fstat(base_tar_descriptor)
+        effective_user_id = os.geteuid()
+    except (AttributeError, OSError, ValueError):
+        _close_descriptor(base_tar_descriptor)
         raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
     if (
         not stat.S_ISREG(status.st_mode)
+        or status.st_uid != effective_user_id
         or status.st_nlink != 1
         or status.st_mode & (stat.S_IRWXG | stat.S_IRWXO)
     ):
@@ -229,17 +241,20 @@ def verify_postgres_physical_backup_tar(
     The caller owns an already-open private backup-directory descriptor whose
     only entry is the owner-only, single-link ``base.tar`` emitted by
     ``pg_basebackup --pgdata=- --format=tar``. The package snapshots that
-    directory before inspection, opens ``base.tar`` non-blocking relative to the
-    pinned directory without following a final symlink, and copies exactly one
-    regular injected ``backup_manifest`` into anonymous temporary-file
-    authority. No backup member is extracted to a caller-visible path. The
-    absolute trusted ``pg_verifybackup`` path is likewise opened non-blocking
-    before regular-file validation and without following its final symlink,
-    rejected if it is nonregular, non-executable, or group/other writable, and
-    executed only through the retained descriptor so a later pathname swap
-    cannot replace the accepted verifier inode. Descriptor-retention and local
-    staging failures cross fixed content-free package boundaries rather than
-    exposing host diagnostics.
+    directory before inspection and requires both the retained directory and
+    ``base.tar`` to be owned by the effective process user so another local file
+    owner cannot retain mutation authority to the accepted backup bytes. It
+    opens ``base.tar`` non-blocking relative to the pinned directory without
+    following a final symlink and copies exactly one regular injected
+    ``backup_manifest`` into anonymous temporary-file authority. No backup
+    member is extracted to a caller-visible path. The absolute trusted
+    ``pg_verifybackup`` path is likewise opened non-blocking before regular-file
+    validation and without following its final symlink, rejected if it is
+    nonregular, non-executable, or group/other writable, and executed only
+    through the retained descriptor so a later pathname swap cannot replace the
+    accepted verifier inode. Descriptor-retention and local staging failures
+    cross fixed content-free package boundaries rather than exposing host
+    diagnostics.
 
     PostgreSQL 18 cannot parse WAL directly from tar-format backups, so the
     verifier runs ``pg_verifybackup --format=tar --no-parse-wal`` and supplies
