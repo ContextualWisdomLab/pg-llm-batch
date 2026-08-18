@@ -22,6 +22,7 @@ from pg_llm_batch.postgres_physical_backup_verification import (
 _INVALID_PARAMETERS = "^invalid PostgreSQL physical-backup verification parameters$"
 _MANIFEST_ERROR = "^PostgreSQL physical backup must contain one regular backup manifest$"
 _VERIFICATION_FAILED = "^PostgreSQL physical backup verification failed$"
+_TRUSTED_EXECUTABLE_BYTES = b"trusted pg_verifybackup binary\n"
 
 
 def _write_stdout_style_base_tar(
@@ -55,14 +56,23 @@ def _write_stdout_style_base_tar(
     return os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
 
 
-def test_success_verifies_stdout_tar_with_separate_memfd_manifest(
+def _write_private_pg_verifybackup(tmp_path: Path) -> Path:
+    """Create one owner-controlled executable token for subprocess-boundary tests."""
+    executable = tmp_path / "pg_verifybackup"
+    executable.write_bytes(_TRUSTED_EXECUTABLE_BYTES)
+    executable.chmod(0o500)
+    return executable
+
+
+def test_success_verifies_stdout_tar_with_descriptor_backed_authority(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The verifier adapts the injected stdout manifest without filesystem extraction."""
+    """The verifier adapts manifest and executable authority to retained descriptors."""
     backup_directory = tmp_path / "backup"
     backup_directory.mkdir(mode=0o700)
     directory_descriptor = _write_stdout_style_base_tar(backup_directory)
+    executable_path = _write_private_pg_verifybackup(tmp_path)
     captured: dict[str, object] = {}
 
     def successful_run(
@@ -70,6 +80,10 @@ def test_success_verifies_stdout_tar_with_separate_memfd_manifest(
     ) -> subprocess.CompletedProcess[bytes]:
         captured["arguments"] = arguments
         captured.update(kwargs)
+        executable_fd = int(arguments[0].rsplit("/", 1)[-1])
+        assert os.pread(executable_fd, len(_TRUSTED_EXECUTABLE_BYTES), 0) == (
+            _TRUSTED_EXECUTABLE_BYTES
+        )
         manifest_argument = next(
             argument for argument in arguments if argument.startswith("--manifest-path=")
         )
@@ -83,13 +97,13 @@ def test_success_verifies_stdout_tar_with_separate_memfd_manifest(
     try:
         result = verify_postgres_physical_backup_tar(
             directory_descriptor,
-            pg_verifybackup_executable="/usr/lib/postgresql/18/bin/pg_verifybackup",
+            pg_verifybackup_executable=str(executable_path),
             timeout_seconds=1800,
         )
         assert result == PostgresPhysicalBackupVerificationResult(verified=True)
         arguments = captured["arguments"]
         assert type(arguments) is list
-        assert arguments[0] == "/usr/lib/postgresql/18/bin/pg_verifybackup"
+        assert arguments[0].startswith("/proc/self/fd/")
         assert "--format=tar" in arguments
         assert "--no-parse-wal" in arguments
         assert "--quiet" in arguments
@@ -103,7 +117,41 @@ def test_success_verifies_stdout_tar_with_separate_memfd_manifest(
         assert captured["timeout"] == 1800
         inherited = captured["pass_fds"]
         assert type(inherited) is tuple
-        assert len(inherited) == 2
+        assert len(inherited) == 3
+        assert int(arguments[0].rsplit("/", 1)[-1]) in inherited
+    finally:
+        os.close(directory_descriptor)
+
+
+def test_executable_path_replacement_cannot_change_retained_child_authority(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Late pathname replacement cannot swap the executable inode given to PostgreSQL."""
+    backup_directory = tmp_path / "backup-executable-race"
+    backup_directory.mkdir(mode=0o700)
+    directory_descriptor = _write_stdout_style_base_tar(backup_directory)
+    executable_path = _write_private_pg_verifybackup(tmp_path)
+
+    def replace_path_then_run(
+        arguments: list[str], **_kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        retained_path = tmp_path / "retained-pg_verifybackup"
+        executable_path.rename(retained_path)
+        executable_path.write_bytes(b"attacker replacement\n")
+        executable_path.chmod(0o500)
+        executable_fd = int(arguments[0].rsplit("/", 1)[-1])
+        assert os.pread(executable_fd, len(_TRUSTED_EXECUTABLE_BYTES), 0) == (
+            _TRUSTED_EXECUTABLE_BYTES
+        )
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(subprocess, "run", replace_path_then_run)
+    try:
+        assert verify_postgres_physical_backup_tar(
+            directory_descriptor,
+            pg_verifybackup_executable=str(executable_path),
+        ).verified
     finally:
         os.close(directory_descriptor)
 
@@ -189,6 +237,59 @@ def test_writable_backup_directory_is_rejected_before_subprocess(
             verify_postgres_physical_backup_tar(
                 descriptor,
                 pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+            )
+    finally:
+        os.close(descriptor)
+
+
+def test_group_writable_verifier_is_rejected_before_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another local principal must not retain write authority to verifier bytes."""
+    backup_directory = tmp_path / "backup-writable-verifier"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+    executable_path = _write_private_pg_verifybackup(tmp_path)
+    executable_path.chmod(0o570)
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("unsafe executable must fail before subprocess execution")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    try:
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_INVALID_PARAMETERS):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable=str(executable_path),
+            )
+    finally:
+        os.close(descriptor)
+
+
+def test_symlinked_verifier_is_rejected_before_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verifier authority must not be redirected through a caller-controlled symlink."""
+    backup_directory = tmp_path / "backup-symlinked-verifier"
+    backup_directory.mkdir(mode=0o700)
+    descriptor = _write_stdout_style_base_tar(backup_directory)
+    target = tmp_path / "trusted-verifier-target"
+    target.write_bytes(_TRUSTED_EXECUTABLE_BYTES)
+    target.chmod(0o500)
+    executable_path = tmp_path / "pg_verifybackup"
+    executable_path.symlink_to(target)
+
+    def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("symlinked executable must fail before subprocess execution")
+
+    monkeypatch.setattr(subprocess, "run", forbidden)
+    try:
+        with pytest.raises(PostgresPhysicalBackupVerificationError, match=_INVALID_PARAMETERS):
+            verify_postgres_physical_backup_tar(
+                descriptor,
+                pg_verifybackup_executable=str(executable_path),
             )
     finally:
         os.close(descriptor)
@@ -330,6 +431,7 @@ def test_verifier_execution_failure_is_content_free(
     backup_directory = tmp_path / "backup-execution-failed"
     backup_directory.mkdir(mode=0o700)
     descriptor = _write_stdout_style_base_tar(backup_directory)
+    executable_path = _write_private_pg_verifybackup(tmp_path)
 
     def failed_run(*_args: object, **_kwargs: object) -> NoReturn:
         raise effect
@@ -339,7 +441,7 @@ def test_verifier_execution_failure_is_content_free(
         with pytest.raises(PostgresPhysicalBackupVerificationError, match=_VERIFICATION_FAILED):
             verify_postgres_physical_backup_tar(
                 descriptor,
-                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+                pg_verifybackup_executable=str(executable_path),
             )
     finally:
         os.close(descriptor)
@@ -353,6 +455,7 @@ def test_keyboard_interrupt_remains_primary(
     backup_directory = tmp_path / "backup-interrupt"
     backup_directory.mkdir(mode=0o700)
     descriptor = _write_stdout_style_base_tar(backup_directory)
+    executable_path = _write_private_pg_verifybackup(tmp_path)
 
     def interrupted(*_args: object, **_kwargs: object) -> NoReturn:
         raise KeyboardInterrupt
@@ -362,7 +465,7 @@ def test_keyboard_interrupt_remains_primary(
         with pytest.raises(KeyboardInterrupt):
             verify_postgres_physical_backup_tar(
                 descriptor,
-                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+                pg_verifybackup_executable=str(executable_path),
             )
     finally:
         os.close(descriptor)
@@ -384,6 +487,7 @@ def test_verifier_failure_is_content_free(
     backup_directory = tmp_path / "backup-failed"
     backup_directory.mkdir(mode=0o700)
     descriptor = _write_stdout_style_base_tar(backup_directory)
+    executable_path = _write_private_pg_verifybackup(tmp_path)
     monkeypatch.setattr(subprocess, "run", lambda *_args, **_kwargs: result)
     try:
         with pytest.raises(
@@ -392,7 +496,7 @@ def test_verifier_failure_is_content_free(
         ) as caught:
             verify_postgres_physical_backup_tar(
                 descriptor,
-                pg_verifybackup_executable="/usr/bin/pg_verifybackup",
+                pg_verifybackup_executable=str(executable_path),
             )
         assert "backup-failed" not in str(caught.value)
     finally:
