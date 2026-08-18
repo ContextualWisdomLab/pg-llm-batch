@@ -18,6 +18,7 @@ from pg_llm_batch.postgres_restore_target import PostgresRestoreTargetIdentity
 
 
 _SYSTEM_IDENTIFIER = 7_394_886_517_812_345_678
+_OVERSIZED_DESCRIPTOR = 1 << 128
 
 
 def _open_directory(path: Path) -> int:
@@ -152,7 +153,9 @@ def test_verifier_rejects_oversized_control_output(
         os.close(control_fd)
 
 
-@pytest.mark.parametrize("value", [-1, True, False, 1.0, "1", None])
+@pytest.mark.parametrize(
+    "value", [-1, True, False, 1.0, "1", None, _OVERSIZED_DESCRIPTOR]
+)
 def test_verifier_rejects_invalid_directory_descriptor(
     tmp_path: Path, value: Any
 ) -> None:
@@ -171,7 +174,9 @@ def test_verifier_rejects_invalid_directory_descriptor(
         os.close(control_fd)
 
 
-@pytest.mark.parametrize("value", [-1, True, False, 1.0, "1", None])
+@pytest.mark.parametrize(
+    "value", [-1, True, False, 1.0, "1", None, _OVERSIZED_DESCRIPTOR]
+)
 def test_verifier_rejects_invalid_control_descriptor(
     tmp_path: Path, value: Any
 ) -> None:
