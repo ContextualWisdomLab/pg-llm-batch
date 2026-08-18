@@ -110,8 +110,30 @@ def _open_recovery_signal(directory_descriptor: int) -> int:
         ) from None
 
 
-def _inspect_created_signal(signal_descriptor: int) -> tuple[int, int]:
-    """Return the identity of one empty private regular signal file."""
+def _capture_created_signal_identity(signal_descriptor: int) -> tuple[int, int]:
+    """Capture identity before any later hardening step can fail."""
+    try:
+        status = os.fstat(signal_descriptor)
+    except (OSError, ValueError):
+        raise PostgresRecoverySignalError(
+            "PostgreSQL recovery signal identity could not be captured"
+        ) from None
+    if not (
+        stat.S_ISREG(status.st_mode)
+        and status.st_size == 0
+        and status.st_nlink == 1
+    ):
+        raise PostgresRecoverySignalError(
+            "PostgreSQL recovery signal is not an empty regular file"
+        )
+    return status.st_dev, status.st_ino
+
+
+def _harden_created_signal(
+    signal_descriptor: int,
+    created_identity: tuple[int, int],
+) -> None:
+    """Force private mode and re-verify the exact created descriptor identity."""
     try:
         os.fchmod(signal_descriptor, _SIGNAL_MODE)
         status = os.fstat(signal_descriptor)
@@ -124,11 +146,11 @@ def _inspect_created_signal(signal_descriptor: int) -> tuple[int, int]:
         and status.st_size == 0
         and stat.S_IMODE(status.st_mode) == _SIGNAL_MODE
         and status.st_nlink == 1
+        and (status.st_dev, status.st_ino) == created_identity
     ):
         raise PostgresRecoverySignalError(
             "PostgreSQL recovery signal is not a private empty regular file"
         )
-    return status.st_dev, status.st_ino
 
 
 def _require_created_path_identity(
@@ -205,11 +227,16 @@ def prepare_postgres_recovery_signal(
     A pre-existing ``recovery.signal`` is never adopted or truncated. A present
     ``standby.signal`` is rejected because PostgreSQL gives standby mode precedence
     when both files exist. The new signal is created relative to the caller-owned
-    directory with exclusive/no-follow semantics, forced to owner read/write mode,
-    verified as the same empty one-link regular inode, synchronized, rechecked against
-    a standby race, and followed by a directory synchronization. If a post-create
-    check fails, cleanup removes only that exact inode when it can still prove path
-    identity.
+    directory with exclusive/no-follow semantics. Its descriptor identity is captured
+    before permission hardening so a later failure can remove only that exact inode.
+    The signal is forced to owner read/write mode, re-verified as the same empty
+    one-link regular inode, synchronized, rechecked against a standby race, and
+    followed by a directory synchronization.
+
+    If the initial descriptor identity itself cannot be captured, the package closes
+    its descriptor but deliberately does not blindly unlink a relative pathname whose
+    ownership it cannot prove. Once identity is captured, any later failure attempts
+    cleanup only when that relative path still names the exact created inode.
 
     This seam does not prove that the supplied directory descriptor belongs to the
     restore cluster represented by ``restore_target_identity``; that mapping remains
@@ -226,9 +253,13 @@ def prepare_postgres_recovery_signal(
     directory_descriptor = _require_directory_descriptor(data_directory_descriptor)
     _require_signal_state_absent(directory_descriptor)
     signal_descriptor = _open_recovery_signal(directory_descriptor)
-    created_identity: tuple[int, int] | None = None
     try:
-        created_identity = _inspect_created_signal(signal_descriptor)
+        created_identity = _capture_created_signal_identity(signal_descriptor)
+    except BaseException:
+        _close_signal_descriptor(signal_descriptor)
+        raise
+    try:
+        _harden_created_signal(signal_descriptor, created_identity)
         _require_created_path_identity(directory_descriptor, created_identity)
         _sync_descriptor(signal_descriptor)
         if _entry_status(directory_descriptor, _STANDBY_SIGNAL) is not None:
@@ -238,8 +269,7 @@ def prepare_postgres_recovery_signal(
         _require_created_path_identity(directory_descriptor, created_identity)
         _sync_descriptor(directory_descriptor)
     except BaseException:
-        if created_identity is not None:
-            _cleanup_created_signal(directory_descriptor, created_identity)
+        _cleanup_created_signal(directory_descriptor, created_identity)
         raise
     finally:
         _close_signal_descriptor(signal_descriptor)
