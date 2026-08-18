@@ -98,3 +98,46 @@ def test_foreign_owned_pg_basebackup_is_rejected_before_execution(
             )
     finally:
         os.close(output_descriptor)
+
+
+def test_validated_pg_basebackup_inode_is_retained_through_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replacing the validated path must not redirect child executable authority."""
+    output_descriptor = _open_private_output(tmp_path)
+    executable = _write_executable(tmp_path, 0o750)
+    original_status = os.stat(executable)
+    original_identity = (original_status.st_dev, original_status.st_ino)
+    moved_executable = tmp_path / "validated-pg_basebackup"
+
+    def replace_path_then_run(
+        arguments: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        executable.rename(moved_executable)
+        executable.write_text("#!/bin/sh\nexit 73\n", encoding="utf-8")
+        executable.chmod(0o750)
+
+        execution_path = arguments[0]
+        assert execution_path.startswith("/proc/self/fd/")
+        retained_status = os.stat(execution_path)
+        assert (retained_status.st_dev, retained_status.st_ino) == original_identity
+        retained_descriptor = int(execution_path.rsplit("/", 1)[1])
+        assert kwargs["pass_fds"] == (retained_descriptor,)
+
+        child_output = kwargs["stdout"]
+        assert type(child_output) is int
+        os.write(child_output, b"validated-executable-backup")
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(subprocess, "run", replace_path_then_run)
+    try:
+        result = physical_basebackup.create_postgres_physical_basebackup(
+            "physical_backup_source",
+            output_descriptor,
+            pg_basebackup_executable=str(executable),
+        )
+    finally:
+        os.close(output_descriptor)
+
+    assert result.size_bytes == len(b"validated-executable-backup")
