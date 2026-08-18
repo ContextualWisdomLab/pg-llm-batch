@@ -29,6 +29,43 @@ def _prepare(directory_descriptor: int) -> None:
     )
 
 
+def _foreign_owner(status: os.stat_result) -> os.stat_result:
+    """Return equivalent metadata whose inode owner is another local principal."""
+    fields = list(status)
+    effective_user_id = os.geteuid()
+    fields[4] = (
+        effective_user_id + 1
+        if effective_user_id < 2**31 - 1
+        else effective_user_id - 1
+    )
+    return os.stat_result(fields)
+
+
+def test_foreign_owned_data_directory_is_rejected_before_signal_creation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A foreign owner must not retain chmod authority over the recovery trigger path."""
+    directory_descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    real_fstat = os.fstat
+    directory_status = real_fstat(directory_descriptor)
+    directory_identity = (directory_status.st_dev, directory_status.st_ino)
+
+    def foreign_directory_owner(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == directory_identity:
+            return _foreign_owner(observed)
+        return observed
+
+    monkeypatch.setattr(recovery_signal.os, "fstat", foreign_directory_owner)
+    try:
+        with pytest.raises(PostgresRecoverySignalError, match="unsafe write permissions"):
+            _prepare(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+    assert not (tmp_path / "recovery.signal").exists()
+
+
 def test_permission_hardening_failure_removes_exact_created_signal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
