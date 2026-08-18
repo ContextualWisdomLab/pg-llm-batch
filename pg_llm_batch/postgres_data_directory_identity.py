@@ -89,12 +89,17 @@ def _validate_snapshot(*, data_directory_fd: int, pg_controldata_fd: int) -> Non
     """Validate privately owned descriptor snapshots."""
     data_stat = _fstat_or_invalid(data_directory_fd)
     control_stat = _fstat_or_invalid(pg_controldata_fd)
+    effective_user_id = os.geteuid()
 
     if not stat.S_ISDIR(data_stat.st_mode):
+        _raise_invalid_input()
+    if data_stat.st_uid != effective_user_id:
         _raise_invalid_input()
     if data_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         _raise_invalid_input()
     if not stat.S_ISREG(control_stat.st_mode):
+        _raise_invalid_input()
+    if control_stat.st_uid not in (0, effective_user_id):
         _raise_invalid_input()
     if control_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
         _raise_invalid_input()
@@ -176,15 +181,18 @@ def verify_postgres_data_directory_identity(
     identity authority. Exact integer descriptor arguments are duplicated
     before either descriptor is validated, so later replacement of the
     caller-owned descriptor numbers cannot change the capabilities used by
-    this verification call. Group/other write authority is rejected for both
-    the inspected data directory and executable snapshot before child
-    execution, while read/search sharing remains permitted. Package-owned
-    duplicates are released best-effort after verification so close-time
-    operating-system diagnostics cannot replace a verified result or leak host
-    detail. The function does not accept a path, DSN, password, WAL segment,
-    tenant identifier, or business payload. It does not start PostgreSQL,
-    configure recovery, replay WAL, or claim that the directory is otherwise
-    safe to promote.
+    this verification call. The retained data directory must be owned by the
+    effective process user; the retained ``pg_controldata`` executable must be
+    owned by root or that effective user. Group/other write authority is also
+    rejected for both snapshots before child execution, while read/search
+    sharing remains permitted. These ownership checks prevent a different
+    local file owner from restoring write authority with ``chmod`` after the
+    package accepts the inode. Package-owned duplicates are released
+    best-effort after verification so close-time operating-system diagnostics
+    cannot replace a verified result or leak host detail. The function does not
+    accept a path, DSN, password, WAL segment, tenant identifier, or business
+    payload. It does not start PostgreSQL, configure recovery, replay WAL, or
+    claim that the directory is otherwise safe to promote.
     """
     if not _is_plain_descriptor(data_directory_fd):
         _raise_invalid_input()
