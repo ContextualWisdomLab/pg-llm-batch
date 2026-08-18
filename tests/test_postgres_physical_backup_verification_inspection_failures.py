@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-import pg_llm_batch.postgres_physical_backup_verification as verification_module
 from pg_llm_batch.postgres_physical_backup_verification import (
     PostgresPhysicalBackupVerificationError,
     _copy_manifest_to_private_file,
@@ -64,7 +63,12 @@ def test_verifier_inode_inspection_failure_is_content_free_and_closes_open(
     opened_descriptors: list[int] = []
     original_open = os.open
 
-    def capturing_open(path: str | os.PathLike[str], flags: int, *args: object, **kwargs: object) -> int:
+    def capturing_open(
+        path: str | os.PathLike[str],
+        flags: int,
+        *args: object,
+        **kwargs: object,
+    ) -> int:
         """Capture the descriptor opened by the verifier-retention helper."""
         descriptor = original_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
         opened_descriptors.append(descriptor)
@@ -104,7 +108,12 @@ def test_base_tar_inode_inspection_failure_is_content_free_and_closes_open(
     opened_descriptors: list[int] = []
     original_open = os.open
 
-    def capturing_open(path: str | os.PathLike[str], flags: int, *args: object, **kwargs: object) -> int:
+    def capturing_open(
+        path: str | os.PathLike[str],
+        flags: int,
+        *args: object,
+        **kwargs: object,
+    ) -> int:
         """Capture only the descriptor opened relative to retained directory authority."""
         descriptor = original_open(path, flags, *args, **kwargs)  # type: ignore[arg-type]
         opened_descriptors.append(descriptor)
