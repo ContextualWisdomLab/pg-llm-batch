@@ -81,6 +81,46 @@ def test_verifier_rejects_directory_identity_mismatch(tmp_path: Path) -> None:
         os.close(control_fd)
 
 
+def test_verifier_snapshots_expected_identity_before_child_inspection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Caller mutation cannot rewrite the authority already accepted for this call."""
+    expected_identity = _expected_identity(_SYSTEM_IDENTIFIER - 1)
+    control_fd = _open_control_script(tmp_path, "exit 0\n")
+    directory = tmp_path / "restore-data"
+    directory.mkdir()
+    directory_fd = _open_directory(directory)
+
+    def mutate_identity_during_inspection(
+        args: object, **kwargs: object
+    ) -> subprocess.CompletedProcess[bytes]:
+        object.__setattr__(
+            expected_identity,
+            "system_identifier",
+            _SYSTEM_IDENTIFIER,
+        )
+        return subprocess.CompletedProcess(
+            args,
+            0,
+            stdout=f"Database system identifier: {_SYSTEM_IDENTIFIER}\n".encode("ascii"),
+        )
+
+    monkeypatch.setattr(subprocess, "run", mutate_identity_during_inspection)
+    try:
+        with pytest.raises(
+            PostgresDataDirectoryIdentityError,
+            match="^PostgreSQL data directory does not match restore target identity$",
+        ):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=directory_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=expected_identity,
+            )
+    finally:
+        os.close(directory_fd)
+        os.close(control_fd)
+
+
 @pytest.mark.parametrize(
     "output",
     [
