@@ -286,6 +286,7 @@ def test_cleanup_ignores_uninspectable_path(
     finally:
         os.close(directory_descriptor)
 
+    monkeypatch.undo()
     assert stat.S_ISREG(signal_path.lstat().st_mode)
 
 
