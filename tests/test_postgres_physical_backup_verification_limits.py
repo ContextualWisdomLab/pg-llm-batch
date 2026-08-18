@@ -7,8 +7,8 @@ import os
 import tarfile
 import tempfile
 from pathlib import Path
-from types import TracebackType
-from typing import BinaryIO
+from types import SimpleNamespace, TracebackType
+from typing import BinaryIO, NoReturn
 
 import pytest
 
@@ -61,6 +61,43 @@ class _SyntheticArchive:
     def extractfile(self, _member: tarfile.TarInfo) -> BinaryIO:
         """Prove oversized manifest metadata is rejected before stream extraction."""
         raise AssertionError("oversized manifest must be rejected before extraction")
+
+
+class _BoundedDirectoryEntries:
+    """Model a huge directory while permitting inspection of at most two entries."""
+
+    def __init__(self) -> None:
+        self._index = 0
+
+    def __enter__(self) -> _BoundedDirectoryEntries:
+        """Return this synthetic directory iterator."""
+        return self
+
+    def __exit__(
+        self,
+        _exc_type: type[BaseException] | None,
+        _exc_value: BaseException | None,
+        _traceback: TracebackType | None,
+    ) -> None:
+        """Leave the synthetic directory iterator without side effects."""
+
+    def __iter__(self) -> _BoundedDirectoryEntries:
+        """Return the bounded iterator itself."""
+        return self
+
+    def __next__(self) -> SimpleNamespace:
+        """Yield two entries, then prove the implementation did not scan farther."""
+        self._index += 1
+        if self._index == 1:
+            return SimpleNamespace(name="base.tar")
+        if self._index == 2:
+            return SimpleNamespace(name="unexpected-entry")
+        raise AssertionError("directory enumeration exceeded the second entry")
+
+
+def _forbidden_listdir(*_args: object, **_kwargs: object) -> NoReturn:
+    """Prove directory validation never materializes the complete entry list."""
+    raise AssertionError("directory validation must use bounded streaming enumeration")
 
 
 def _open_placeholder_tar(tmp_path: Path) -> int:
@@ -119,3 +156,21 @@ def test_declared_manifest_size_is_bounded_before_copy(
                 _copy_manifest_to_private_file(base_tar_descriptor, manifest_file)
     finally:
         os.close(base_tar_descriptor)
+
+
+def test_directory_entry_enumeration_stops_after_second_entry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A huge malformed backup directory must fail without materializing all names."""
+    directory_descriptor = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
+    monkeypatch.setattr(os, "listdir", _forbidden_listdir)
+    monkeypatch.setattr(os, "scandir", lambda _descriptor: _BoundedDirectoryEntries())
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_VERIFICATION_FAILED,
+        ):
+            verification_module._inspect_backup_directory(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
