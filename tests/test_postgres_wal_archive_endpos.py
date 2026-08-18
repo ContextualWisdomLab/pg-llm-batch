@@ -16,17 +16,19 @@ from pg_llm_batch.postgres_wal_archive import (
 )
 
 
+@pytest.mark.parametrize("zero_lsn", ("0/0", "00000000/00000000"))
 def test_zero_lsn_is_rejected_before_pg_receivewal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    zero_lsn: str,
 ) -> None:
-    """PostgreSQL's InvalidXLogRecPtr sentinel cannot disable the finite stop boundary."""
+    """Every textual zero LSN must fail before the finite receive process executes."""
     archive_path = tmp_path / "wal-archive-zero-lsn"
     archive_path.mkdir(mode=0o700)
     descriptor = os.open(archive_path, os.O_RDONLY | os.O_DIRECTORY)
 
     def forbidden(*_args: object, **_kwargs: object) -> NoReturn:
-        raise AssertionError("0/0 must fail before pg_receivewal executes")
+        raise AssertionError("zero LSN must fail before pg_receivewal executes")
 
     monkeypatch.setattr(subprocess, "run", forbidden)
     try:
@@ -37,7 +39,7 @@ def test_zero_lsn_is_rejected_before_pg_receivewal(
             receive_postgres_wal_archive(
                 "physical_replication_source",
                 "pg_llm_batch_archive",
-                "0/0",
+                zero_lsn,
                 descriptor,
                 pg_receivewal_executable="/usr/bin/pg_receivewal",
             )
