@@ -12,14 +12,15 @@ from typing import BinaryIO
 
 import pytest
 
+import pg_llm_batch.postgres_physical_backup_verification as verification_module
 from pg_llm_batch.postgres_physical_backup_verification import (
     PostgresPhysicalBackupVerificationError,
     _copy_manifest_to_private_file,
 )
 
 
-_MAX_ARCHIVE_MEMBERS = 65_536
-_MAX_MANIFEST_BYTES = 64 * 1024 * 1024
+_TEST_MAX_ARCHIVE_MEMBERS = 3
+_TEST_MAX_MANIFEST_BYTES = 8
 _MANIFEST_ERROR = "^PostgreSQL physical backup must contain one regular backup manifest$"
 _VERIFICATION_FAILED = "^PostgreSQL physical backup verification failed$"
 
@@ -46,10 +47,10 @@ class _SyntheticArchive:
         """Yield adversarial metadata and fail if enumeration is not bounded."""
         if self._oversized_manifest:
             manifest = tarfile.TarInfo("backup_manifest")
-            manifest.size = _MAX_MANIFEST_BYTES + 1
+            manifest.size = _TEST_MAX_MANIFEST_BYTES + 1
             yield manifest
             return
-        for index in range(_MAX_ARCHIVE_MEMBERS + 1):
+        for index in range(_TEST_MAX_ARCHIVE_MEMBERS + 1):
             yield tarfile.TarInfo(f"member-{index}")
         raise AssertionError("archive enumeration exceeded the reviewed member budget")
 
@@ -78,6 +79,12 @@ def test_archive_member_enumeration_is_bounded_before_manifest_staging(
     base_tar_descriptor = _open_placeholder_tar(tmp_path)
     archive = _SyntheticArchive(oversized_manifest=False)
     monkeypatch.setattr(tarfile, "open", lambda **_kwargs: archive)
+    monkeypatch.setattr(
+        verification_module,
+        "_MAX_ARCHIVE_MEMBERS",
+        _TEST_MAX_ARCHIVE_MEMBERS,
+        raising=False,
+    )
     try:
         with tempfile.TemporaryFile(mode="w+b") as manifest_file:
             with pytest.raises(
@@ -97,6 +104,12 @@ def test_declared_manifest_size_is_bounded_before_copy(
     base_tar_descriptor = _open_placeholder_tar(tmp_path)
     archive = _SyntheticArchive(oversized_manifest=True)
     monkeypatch.setattr(tarfile, "open", lambda **_kwargs: archive)
+    monkeypatch.setattr(
+        verification_module,
+        "_MAX_MANIFEST_BYTES",
+        _TEST_MAX_MANIFEST_BYTES,
+        raising=False,
+    )
     try:
         with tempfile.TemporaryFile(mode="w+b") as manifest_file:
             with pytest.raises(
