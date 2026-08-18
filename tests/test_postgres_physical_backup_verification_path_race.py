@@ -69,7 +69,7 @@ def test_base_tar_path_replacement_cannot_change_child_backup_authority(
         verification_directory_fd = int(arguments[-1].rsplit("/", 1)[-1])
         child_tar_fd = os.open(
             "base.tar",
-            os.O_RDONLY | os.O_NOFOLLOW,
+            os.O_RDONLY,
             dir_fd=verification_directory_fd,
         )
         try:
