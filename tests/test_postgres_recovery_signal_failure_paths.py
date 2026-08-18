@@ -36,6 +36,11 @@ def _prepare(directory_descriptor: int) -> None:
     )
 
 
+def _quarantined_signals(path: Path) -> list[Path]:
+    """Return package-reserved inert recovery-signal quarantine entries."""
+    return list(path.glob(".pg_llm_batch-unverified-recovery-signal-*"))
+
+
 def test_directory_descriptor_inspection_failure_is_content_free(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -132,10 +137,10 @@ def test_directory_snapshot_dup_failure_is_content_free(
     assert not (tmp_path / "recovery.signal").exists()
 
 
-def test_initial_signal_identity_inspection_failure_closes_without_blind_unlink(
+def test_initial_signal_identity_inspection_failure_quarantines_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Preserve an unproven path when the just-opened inode cannot be inspected."""
+    """Move an unproven inode away from PostgreSQL's magic trigger pathname."""
     directory_descriptor = _directory_descriptor(tmp_path)
     real_fstat = recovery_signal.os.fstat
 
@@ -155,13 +160,16 @@ def test_initial_signal_identity_inspection_failure_closes_without_blind_unlink(
     assert str(caught.value) == (
         "PostgreSQL recovery signal identity could not be captured"
     )
-    assert (tmp_path / "recovery.signal").exists()
+    assert not (tmp_path / "recovery.signal").exists()
+    quarantined = _quarantined_signals(tmp_path)
+    assert len(quarantined) == 1
+    assert quarantined[0].is_file()
 
 
-def test_initial_signal_identity_rejects_nonempty_created_file_state(
+def test_initial_signal_identity_rejects_nonempty_state_and_quarantines_trigger(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reject an untrusted initial descriptor state before claiming cleanup ownership."""
+    """Quarantine an untrusted initial descriptor state instead of publishing it."""
     directory_descriptor = _directory_descriptor(tmp_path)
     real_fstat = recovery_signal.os.fstat
 
@@ -187,6 +195,41 @@ def test_initial_signal_identity_rejects_nonempty_created_file_state(
     assert str(caught.value) == (
         "PostgreSQL recovery signal is not an empty regular file"
     )
+    assert not (tmp_path / "recovery.signal").exists()
+    quarantined = _quarantined_signals(tmp_path)
+    assert len(quarantined) == 1
+    assert quarantined[0].is_file()
+
+
+def test_quarantine_failure_is_explicit_and_content_free(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Surface a failed trigger quarantine without leaking host diagnostics."""
+    directory_descriptor = _directory_descriptor(tmp_path)
+    real_fstat = recovery_signal.os.fstat
+
+    def fail_signal_fstat(descriptor: int) -> os.stat_result:
+        status = real_fstat(descriptor)
+        if stat.S_ISDIR(status.st_mode):
+            return status
+        raise OSError("sensitive created-inode diagnostic")
+
+    def fail_rename(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise OSError("sensitive quarantine diagnostic")
+
+    monkeypatch.setattr(recovery_signal.os, "fstat", fail_signal_fstat)
+    monkeypatch.setattr(recovery_signal.os, "rename", fail_rename)
+    try:
+        with pytest.raises(PostgresRecoverySignalError) as caught:
+            _prepare(directory_descriptor)
+    finally:
+        os.close(directory_descriptor)
+
+    assert str(caught.value) == (
+        "PostgreSQL recovery trigger could not be quarantined after inspection failure"
+    )
+    assert "sensitive" not in str(caught.value)
     assert (tmp_path / "recovery.signal").exists()
 
 
