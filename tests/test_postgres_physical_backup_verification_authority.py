@@ -161,9 +161,9 @@ def test_manifest_stream_interrupt_remains_primary(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Process-level interruption while entering a member stream is not rewritten."""
+    """Process-level interruption while reading a member stream is not rewritten."""
     class InterruptingManifestStream(io.BytesIO):
-        def __enter__(self) -> InterruptingManifestStream:
+        def read(self, *_args: object, **_kwargs: object) -> bytes:
             raise KeyboardInterrupt
 
     _directory, directory_descriptor = _private_backup_directory(
