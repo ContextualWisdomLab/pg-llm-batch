@@ -163,14 +163,14 @@ def test_catalog_query_authenticates_tenant_policy_semantics() -> None:
         "pg_catalog.replace(",
         "pg_catalog.regexp_replace(",
         "pg_llm_batch.tenant_scope",
-        "pg_catalog.pg_depend",
+        "pg_catalog.pg_depend AS unexpected_dependency",
         "'pg_catalog.pg_policy'::pg_catalog.regclass",
         "'pg_catalog.pg_proc'::pg_catalog.regclass",
         "'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure",
         "'pg_catalog.pg_operator'::pg_catalog.regclass",
         "'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator",
-        "function_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'",
-        "operator_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'",
+        "unexpected_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'",
+        "unexpected_dependency.refobjid OPERATOR(pg_catalog.<>)",
         "extra_policy.polrelid OPERATOR(pg_catalog.=) c.oid",
         "extra_policy.oid OPERATOR(pg_catalog.<>) policy_row.oid",
         "pg_catalog.current_schema()",
@@ -178,6 +178,7 @@ def test_catalog_query_authenticates_tenant_policy_semantics() -> None:
     for fragment in required_fragments:
         assert fragment in sql
 
+    assert "AND EXISTS (\n                  SELECT 1\n                  FROM pg_catalog.pg_depend" not in sql
     assert "policy_row.polrelid = c.oid" not in sql
     assert "extra_policy.oid <> policy_row.oid" not in sql
 
