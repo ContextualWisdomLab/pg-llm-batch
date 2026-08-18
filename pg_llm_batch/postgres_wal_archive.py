@@ -53,6 +53,7 @@ def _parameters_are_valid(
         and _SLOT_NAME_RE.fullmatch(slot_name) is not None
         and type(end_lsn) is str
         and _LSN_RE.fullmatch(end_lsn) is not None
+        and int(end_lsn.replace("/", ""), 16) != 0
         and type(archive_directory_descriptor) is int
         and archive_directory_descriptor >= 0
         and type(pg_receivewal_executable) is str
