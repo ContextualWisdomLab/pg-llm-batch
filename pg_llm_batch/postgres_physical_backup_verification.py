@@ -262,50 +262,65 @@ def _copy_manifest_to_private_file(
 
 def _run_pg_verifybackup(
     *,
-    backup_directory_descriptor: int,
+    base_tar_descriptor: int,
     manifest_descriptor: int,
     pg_verifybackup_executable: str,
     timeout_seconds: int,
 ) -> None:
-    """Run PostgreSQL's tar verifier through inherited descriptor authority."""
+    """Run PostgreSQL's tar verifier against one retained base-tar inode."""
     executable_descriptor = _retain_pg_verifybackup_executable(
         pg_verifybackup_executable
     )
     try:
-        arguments = [
-            f"/proc/self/fd/{executable_descriptor}",
-            "--format=tar",
-            "--no-parse-wal",
-            "--quiet",
-            "--exit-on-error",
-            f"--manifest-path=/proc/self/fd/{manifest_descriptor}",
-            f"/proc/self/fd/{backup_directory_descriptor}",
-        ]
-        try:
-            completed = subprocess.run(
-                arguments,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-                close_fds=True,
-                pass_fds=(
-                    executable_descriptor,
-                    backup_directory_descriptor,
-                    manifest_descriptor,
-                ),
-                timeout=timeout_seconds,
+        with tempfile.TemporaryDirectory(prefix="pg-llm-batch-verify-") as directory:
+            verification_directory_descriptor = os.open(
+                directory,
+                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
             )
-        except (OSError, subprocess.TimeoutExpired):
-            raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
-        except Exception:
-            raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
-        except BaseException:
-            raise
-        if type(completed) is not subprocess.CompletedProcess or completed.returncode != 0:
-            raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
+            try:
+                os.symlink(
+                    f"/proc/self/fd/{base_tar_descriptor}",
+                    "base.tar",
+                    dir_fd=verification_directory_descriptor,
+                )
+                arguments = [
+                    f"/proc/self/fd/{executable_descriptor}",
+                    "--format=tar",
+                    "--no-parse-wal",
+                    "--quiet",
+                    "--exit-on-error",
+                    f"--manifest-path=/proc/self/fd/{manifest_descriptor}",
+                    f"/proc/self/fd/{verification_directory_descriptor}",
+                ]
+                completed = subprocess.run(
+                    arguments,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    close_fds=True,
+                    pass_fds=(
+                        executable_descriptor,
+                        base_tar_descriptor,
+                        manifest_descriptor,
+                        verification_directory_descriptor,
+                    ),
+                    timeout=timeout_seconds,
+                )
+            finally:
+                _close_descriptor(verification_directory_descriptor)
+    except PostgresPhysicalBackupVerificationError:
+        raise
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
+    except Exception:
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED) from None
+    except BaseException:
+        raise
     finally:
         _close_descriptor(executable_descriptor)
+    if type(completed) is not subprocess.CompletedProcess or completed.returncode != 0:
+        raise PostgresPhysicalBackupVerificationError(_VERIFICATION_FAILED)
 
 
 def verify_postgres_physical_backup_tar(
@@ -328,7 +343,11 @@ def verify_postgres_physical_backup_tar(
     following a final symlink. Pre-verifier staging accepts only the uncompressed
     stdout-tar contract, enumerates no more than 4,194,304 archive members, and
     stages at most 1 GiB from exactly one regular ``backup_manifest`` into
-    anonymous temporary-file authority. The public ``timeout_seconds`` budget is
+    anonymous temporary-file authority. The exact accepted ``base.tar`` inode is
+    retained across verification and exposed to ``pg_verifybackup`` only through
+    a package-owned private directory whose ``base.tar`` entry resolves to that
+    inherited descriptor, so replacing the caller's original pathname cannot
+    swap the bytes seen by the child. The public ``timeout_seconds`` budget is
     shared by tar-member scanning, chunked manifest staging, and the remaining
     PostgreSQL verifier subprocess; deadline checks occur between bounded local
     reads, so expired pre-verifier work fails before PostgreSQL execution. No
@@ -372,7 +391,7 @@ def verify_postgres_physical_backup_tar(
                     deadline_monotonic=deadline_monotonic,
                 )
                 _run_pg_verifybackup(
-                    backup_directory_descriptor=private_directory_descriptor,
+                    base_tar_descriptor=base_tar_descriptor,
                     manifest_descriptor=manifest_descriptor,
                     pg_verifybackup_executable=pg_verifybackup_executable,
                     timeout_seconds=_remaining_timeout_seconds(deadline_monotonic),
