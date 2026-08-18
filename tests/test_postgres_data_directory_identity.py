@@ -121,6 +121,29 @@ def test_verifier_snapshots_expected_identity_before_child_inspection(
         os.close(control_fd)
 
 
+def test_verifier_rejects_mutated_invalid_expected_identity(tmp_path: Path) -> None:
+    """An exact identity object mutated after construction still fails closed."""
+    expected_identity = _expected_identity()
+    object.__setattr__(expected_identity, "system_identifier", 0)
+    control_fd = _open_control_script(tmp_path, "exit 0\n")
+    directory = tmp_path / "restore-data"
+    directory.mkdir()
+    directory_fd = _open_directory(directory)
+    try:
+        with pytest.raises(
+            PostgresDataDirectoryIdentityError,
+            match="^invalid PostgreSQL data-directory identity inputs$",
+        ):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=directory_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=expected_identity,
+            )
+    finally:
+        os.close(directory_fd)
+        os.close(control_fd)
+
+
 @pytest.mark.parametrize(
     "output",
     [
