@@ -14,6 +14,7 @@ from pg_llm_batch.postgres_physical_backup_verification import (
     PostgresPhysicalBackupVerificationError,
     _inspect_backup_directory,
     _open_base_tar,
+    _retain_pg_verifybackup_executable,
 )
 
 
@@ -43,7 +44,11 @@ def _foreign_owner(status: os.stat_result) -> os.stat_result:
     """Return equivalent stat metadata whose owner is another local principal."""
     fields = list(status)
     effective_user_id = os.geteuid()
-    fields[4] = effective_user_id + 1 if effective_user_id < 2**31 - 1 else effective_user_id - 1
+    fields[4] = (
+        effective_user_id + 1
+        if effective_user_id < 2**31 - 1
+        else effective_user_id - 1
+    )
     return os.stat_result(fields)
 
 
@@ -102,6 +107,37 @@ def test_base_tar_must_be_owned_by_effective_process_user(
         if returned_descriptor is not None:
             os.close(returned_descriptor)
         os.close(descriptor)
+
+
+def test_verifier_must_be_owned_by_root_or_effective_process_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unrelated executable owner must not retain in-place mutation authority."""
+    executable = tmp_path / "pg_verifybackup"
+    executable.write_bytes(b"trusted verifier\n")
+    executable.chmod(0o500)
+    real_fstat = os.fstat
+    executable_status = os.stat(executable, follow_symlinks=False)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+    retained_descriptor: int | None = None
+
+    def foreign_executable_owner(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == executable_identity:
+            return _foreign_owner(observed)
+        return observed
+
+    monkeypatch.setattr(os, "fstat", foreign_executable_owner)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_INVALID_PARAMETERS,
+        ):
+            retained_descriptor = _retain_pg_verifybackup_executable(str(executable))
+    finally:
+        if retained_descriptor is not None:
+            os.close(retained_descriptor)
 
 
 def test_base_tar_descriptor_is_closed_when_initial_fstat_fails(
