@@ -94,33 +94,29 @@ SELECT
                       'tenant_scope=current_setting(''pg_llm_batch.tenant_scope'',true)'
                   ]::pg_catalog.text[]
               )
-              AND EXISTS (
+              AND NOT EXISTS (
                   SELECT 1
-                  FROM pg_catalog.pg_depend AS function_dependency
-                  WHERE function_dependency.classid OPERATOR(pg_catalog.=)
+                  FROM pg_catalog.pg_depend AS unexpected_dependency
+                  WHERE unexpected_dependency.classid OPERATOR(pg_catalog.=)
                         'pg_catalog.pg_policy'::pg_catalog.regclass
-                    AND function_dependency.objid OPERATOR(pg_catalog.=) policy_row.oid
-                    AND function_dependency.objsubid OPERATOR(pg_catalog.=) 0
-                    AND function_dependency.refclassid OPERATOR(pg_catalog.=)
-                        'pg_catalog.pg_proc'::pg_catalog.regclass
-                    AND function_dependency.refobjid OPERATOR(pg_catalog.=)
-                        'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure
-                    AND function_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
-                    AND function_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
-              )
-              AND EXISTS (
-                  SELECT 1
-                  FROM pg_catalog.pg_depend AS operator_dependency
-                  WHERE operator_dependency.classid OPERATOR(pg_catalog.=)
-                        'pg_catalog.pg_policy'::pg_catalog.regclass
-                    AND operator_dependency.objid OPERATOR(pg_catalog.=) policy_row.oid
-                    AND operator_dependency.objsubid OPERATOR(pg_catalog.=) 0
-                    AND operator_dependency.refclassid OPERATOR(pg_catalog.=)
-                        'pg_catalog.pg_operator'::pg_catalog.regclass
-                    AND operator_dependency.refobjid OPERATOR(pg_catalog.=)
-                        'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator
-                    AND operator_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
-                    AND operator_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
+                    AND unexpected_dependency.objid OPERATOR(pg_catalog.=) policy_row.oid
+                    AND unexpected_dependency.objsubid OPERATOR(pg_catalog.=) 0
+                    AND unexpected_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
+                    AND unexpected_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
+                    AND (
+                        (
+                            unexpected_dependency.refclassid OPERATOR(pg_catalog.=)
+                                'pg_catalog.pg_proc'::pg_catalog.regclass
+                            AND unexpected_dependency.refobjid OPERATOR(pg_catalog.<>)
+                                'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure
+                        )
+                        OR (
+                            unexpected_dependency.refclassid OPERATOR(pg_catalog.=)
+                                'pg_catalog.pg_operator'::pg_catalog.regclass
+                            AND unexpected_dependency.refobjid OPERATOR(pg_catalog.<>)
+                                'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator
+                        )
+                    )
               )
               AND NOT EXISTS (
                   SELECT 1
@@ -312,16 +308,18 @@ def inspect_postgres_restore_catalog(
     closed. Lifecycle row-level security must be enabled and forced, with exactly
     the packaged permissive ``PUBLIC`` all-command policy whose ``USING`` and
     ``WITH CHECK`` predicates bind ``tenant_scope`` to the transaction-local
-    package setting. Policy acceptance additionally authenticates the stored
-    expression dependencies against PostgreSQL's built-in ``current_setting``
-    function and text equality operator, while catalog-query functions/operators
-    are schema-qualified to resist a restored hostile ``search_path``. A present
-    checkpoint store must carry the same authenticated policy shape and forced
-    RLS. Invalid policy state is represented as failed forced-RLS evidence rather
-    than being mistaken for an absent optional checkpoint table. Required
-    lifecycle indexes must belong to that lifecycle table and match the packaged
-    key order, uniqueness, validity, readiness, btree access method, default key
-    options, and plain-index shape.
+    package setting. Policy acceptance rejects stored expression dependencies on
+    any function or operator other than PostgreSQL's built-in ``current_setting``
+    function and text equality operator. This fail-closed negative check is used
+    because PostgreSQL may omit ``pg_depend`` rows for pinned system objects,
+    while a restored user-defined shadow function or operator is dependency-
+    tracked. Catalog-query functions/operators are schema-qualified to resist a
+    hostile restored ``search_path``. A present checkpoint store must carry the
+    same authenticated policy shape and forced RLS. Invalid policy state is
+    represented as failed forced-RLS evidence rather than being mistaken for an
+    absent optional checkpoint table. Required lifecycle indexes must belong to
+    that lifecycle table and match the packaged key order, uniqueness, validity,
+    readiness, btree access method, default key options, and plain-index shape.
     """
     relation_names = list(_REQUIRED_TABLES + _REQUIRED_INDEXES + (_CHECKPOINT_TABLE,))
     try:
