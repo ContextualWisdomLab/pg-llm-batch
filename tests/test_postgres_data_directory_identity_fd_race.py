@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regression test for descriptor-number replacement during identity inspection."""
+"""Regressions for descriptor replacement during PostgreSQL identity inspection."""
 
 from __future__ import annotations
 
@@ -73,3 +73,52 @@ def test_verifier_snapshots_control_fd_before_subprocess_use(
         os.close(data_directory_fd)
         os.close(replacement_fd)
         os.close(trusted_fd)
+
+
+@pytest.mark.parametrize("failed_duplication", [1, 2])
+def test_verifier_fails_closed_and_cleans_snapshots_when_duplication_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failed_duplication: int,
+) -> None:
+    """Map descriptor-snapshot failures to fixed diagnostics without leaking FDs."""
+    control_fd = _open_control_script(
+        tmp_path / "pg-controldata", _SYSTEM_IDENTIFIER
+    )
+    data_directory = tmp_path / "restore-data"
+    data_directory.mkdir()
+    data_directory_fd = _open_directory(data_directory)
+    real_dup = os.dup
+    duplication_count = 0
+    snapshots: list[int] = []
+
+    def controlled_dup(file_descriptor: int) -> int:
+        nonlocal duplication_count
+        duplication_count += 1
+        if duplication_count == failed_duplication:
+            raise OSError("sensitive descriptor duplication diagnostic")
+        snapshot = real_dup(file_descriptor)
+        snapshots.append(snapshot)
+        return snapshot
+
+    monkeypatch.setattr(os, "dup", controlled_dup)
+    try:
+        with pytest.raises(
+            PostgresDataDirectoryIdentityError,
+            match="^invalid PostgreSQL data-directory identity inputs$",
+        ):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_directory_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=PostgresRestoreTargetIdentity(
+                    system_identifier=_SYSTEM_IDENTIFIER
+                ),
+            )
+    finally:
+        os.close(data_directory_fd)
+        os.close(control_fd)
+
+    assert duplication_count == failed_duplication
+    for snapshot in snapshots:
+        with pytest.raises(OSError):
+            os.fstat(snapshot)
