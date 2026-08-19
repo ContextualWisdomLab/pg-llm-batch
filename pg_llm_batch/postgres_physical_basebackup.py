@@ -175,15 +175,20 @@ def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[
 
 
 def _invalidate_output(cleanup_descriptor: int) -> None:
-    """Best-effort empty and rewind only the originally inspected backup file."""
+    """Empty and rewind retained output or report content-free cleanup failure."""
+    invalidation_failed = False
     try:
         os.ftruncate(cleanup_descriptor, 0)
     except (OSError, ValueError):
-        pass
+        invalidation_failed = True
     try:
         os.lseek(cleanup_descriptor, 0, os.SEEK_SET)
     except (OSError, ValueError):
-        pass
+        invalidation_failed = True
+    if invalidation_failed:
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base-backup output could not be invalidated"
+        ) from None
 
 
 def _run_pg_basebackup(
@@ -236,7 +241,10 @@ def _run_pg_basebackup(
             "PostgreSQL physical base-backup execution failed"
         ) from None
     except BaseException:
-        _invalidate_output(cleanup_descriptor)
+        try:
+            _invalidate_output(cleanup_descriptor)
+        except PostgresPhysicalBaseBackupError:
+            pass
         raise
 
     if type(completed) is not subprocess.CompletedProcess:
