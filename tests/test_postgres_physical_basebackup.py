@@ -458,14 +458,20 @@ def test_finalize_sync_failure_invalidates_output_without_leaking_os_error(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Durability/fstat failures invalidate the original tar before returning failure."""
+    """A final sync failure reports finalization only after durable invalidation succeeds."""
     path, descriptor = _open_private_output(tmp_path)
     monkeypatch.setattr(subprocess, "run", _successful_run)
+    real_fsync = os.fsync
+    fsync_calls = 0
 
-    def broken_fsync(_fd: int) -> None:
-        raise OSError("secret filesystem path")
+    def fail_first_fsync(fd: int) -> None:
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise OSError("secret filesystem path")
+        real_fsync(fd)
 
-    monkeypatch.setattr(os, "fsync", broken_fsync)
+    monkeypatch.setattr(os, "fsync", fail_first_fsync)
     try:
         with pytest.raises(PostgresPhysicalBaseBackupError, match="could not be finalized") as caught:
             create_postgres_physical_basebackup(
@@ -475,15 +481,43 @@ def test_finalize_sync_failure_invalidates_output_without_leaking_os_error(
             )
         assert "secret" not in str(caught.value)
         assert path.read_bytes() == b""
+        assert fsync_calls == 2
     finally:
         os.close(descriptor)
 
 
-def test_cleanup_helpers_are_best_effort(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Cleanup failures never replace the primary backup outcome."""
-    monkeypatch.setattr(os, "ftruncate", lambda *_args: (_ for _ in ()).throw(OSError()))
-    monkeypatch.setattr(os, "lseek", lambda *_args: (_ for _ in ()).throw(OSError()))
-    _invalidate_output(99)
+@pytest.mark.parametrize("failed_operation", ["truncate", "rewind", "sync"])
+def test_invalidation_failures_are_content_free(
+    monkeypatch: pytest.MonkeyPatch,
+    failed_operation: str,
+) -> None:
+    """Invalidation must fail closed when emptying, rewinding, or syncing is unproven."""
 
+    def fail(*_args: object) -> NoReturn:
+        raise OSError("secret cleanup path")
+
+    monkeypatch.setattr(
+        os,
+        "ftruncate",
+        fail if failed_operation == "truncate" else lambda *_args: None,
+    )
+    monkeypatch.setattr(
+        os,
+        "lseek",
+        fail if failed_operation == "rewind" else lambda *_args: 0,
+    )
+    monkeypatch.setattr(
+        os,
+        "fsync",
+        fail if failed_operation == "sync" else lambda *_args: None,
+    )
+
+    with pytest.raises(PostgresPhysicalBaseBackupError, match="could not be invalidated") as caught:
+        _invalidate_output(99)
+    assert "secret" not in str(caught.value)
+
+
+def test_close_cleanup_descriptor_is_best_effort(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Closing retained cleanup authority never replaces an established primary outcome."""
     monkeypatch.setattr(os, "close", lambda *_args: (_ for _ in ()).throw(OSError()))
     _close_cleanup_descriptor(99)
