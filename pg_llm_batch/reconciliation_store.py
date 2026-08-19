@@ -137,10 +137,11 @@ def load_reconciliation_candidates_in_transaction(
     delivery semantics.
 
     Args:
-        cursor: Caller-owned PostgreSQL cursor in an active transaction. It must
-            yield exact built-in tuple or list rows; dictionary, named-tuple,
-            subclass, or other behavior-bearing row-factory results are rejected
-            as invalid persisted evidence.
+        cursor: Caller-owned PostgreSQL cursor in an active transaction. Its
+            ``fetchall()`` result must be an exact built-in list no longer than
+            ``max_candidates``; each row must be an exact built-in tuple or list.
+            Dictionary, named-tuple, subclass, oversized, or other
+            behavior-bearing results are rejected at the database boundary.
         tenant_scope: Trusted host-authorized tenant identity.
         max_candidates: Maximum rows to return, from 1 through the package scan
             ceiling.
@@ -151,8 +152,9 @@ def load_reconciliation_candidates_in_transaction(
     Raises:
         ValidationError: If tenant authority, query budget, or persisted identity
             evidence is invalid.
-        ReconciliationStoreError: If tenant binding, candidate querying, or row
-            retrieval fails at the database boundary.
+        ReconciliationStoreError: If tenant binding, candidate querying, row
+            retrieval, result-container validation, or row iteration fails at
+            the database boundary.
     """
     budget = _validate_candidate_budget(max_candidates)
     normalized_tenant = _validate_candidate_tenant(tenant_scope)
@@ -173,6 +175,9 @@ def load_reconciliation_candidates_in_transaction(
         rows = cursor.fetchall()
     except Exception:
         raise ReconciliationStoreError() from None
+
+    if type(rows) is not list or len(rows) > budget:
+        raise ReconciliationStoreError()
 
     try:
         return tuple(_candidate_from_persisted_row(row) for row in rows)
