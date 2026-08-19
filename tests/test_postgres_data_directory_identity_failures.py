@@ -54,10 +54,12 @@ def test_package_owned_snapshot_close_failure_is_best_effort(
     )
 
     def fake_fstat(file_descriptor: int) -> object:
-        owner_id = data_directory_identity.os.geteuid()
         if file_descriptor == 100:
-            return SimpleNamespace(st_mode=stat.S_IFDIR | 0o700, st_uid=owner_id)
-        return SimpleNamespace(st_mode=stat.S_IFREG | 0o700, st_uid=owner_id)
+            return SimpleNamespace(
+                st_mode=stat.S_IFDIR | 0o700,
+                st_uid=data_directory_identity.os.geteuid(),
+            )
+        return SimpleNamespace(st_mode=stat.S_IFREG | 0o700, st_uid=0)
 
     monkeypatch.setattr(data_directory_identity.os, "fstat", fake_fstat)
     monkeypatch.setattr(
