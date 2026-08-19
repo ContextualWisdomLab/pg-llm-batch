@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 from pathlib import Path
 from typing import NoReturn
@@ -39,6 +40,13 @@ def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
     """Return equivalent stat metadata with one explicit owner identity."""
     fields = list(status)
     fields[4] = user_id
+    return os.stat_result(fields)
+
+
+def _with_mode(status: os.stat_result, mode: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit mode."""
+    fields = list(status)
+    fields[0] = mode
     return os.stat_result(fields)
 
 
@@ -125,6 +133,45 @@ def test_logical_backup_rejects_effective_user_owned_pg_dump(
 
     monkeypatch.setattr(os, "geteuid", lambda: simulated_effective_user_id)
     monkeypatch.setattr(os, "fstat", service_owned_capabilities)
+    monkeypatch.setattr(subprocess, "run", forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresLogicalBackupError, match=_INVALID_PARAMETERS):
+            create_postgres_logical_backup(
+                "safe_service",
+                output_descriptor,
+                pg_dump_executable=str(executable),
+            )
+    finally:
+        os.close(output_descriptor)
+
+
+@pytest.mark.parametrize("privilege_bit", [stat.S_ISUID, stat.S_ISGID])
+def test_logical_backup_rejects_setid_root_owned_pg_dump(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    privilege_bit: int,
+) -> None:
+    """A retained pg_dump must not gain user or group identity through set-id bits."""
+    _output_path, output_descriptor = _open_private_output(
+        tmp_path,
+        "setid-executable.dump",
+    )
+    executable = _write_pg_dump(tmp_path)
+    real_fstat = os.fstat
+    executable_status = os.stat(executable, follow_symlinks=False)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+
+    def setid_root_owned_executable(file_descriptor: int) -> os.stat_result:
+        status = real_fstat(file_descriptor)
+        if (status.st_dev, status.st_ino) == executable_identity:
+            status = _with_owner(status, 0)
+            return _with_mode(status, status.st_mode | privilege_bit)
+        return status
+
+    def forbidden_subprocess(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("set-id pg_dump must fail before execution")
+
+    monkeypatch.setattr(os, "fstat", setid_root_owned_executable)
     monkeypatch.setattr(subprocess, "run", forbidden_subprocess)
     try:
         with pytest.raises(PostgresLogicalBackupError, match=_INVALID_PARAMETERS):
