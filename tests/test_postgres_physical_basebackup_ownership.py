@@ -10,6 +10,7 @@ from typing import NoReturn
 
 import pytest
 
+from pg_llm_batch import postgres_physical_basebackup
 from pg_llm_batch.postgres_physical_basebackup import (
     PostgresPhysicalBaseBackupError,
     create_postgres_physical_basebackup,
@@ -79,6 +80,11 @@ def test_output_owner_must_not_change_during_backup(
         os.write(output_descriptor, b"sensitive-physical-backup")
         return subprocess.CompletedProcess(arguments, 0)
 
+    monkeypatch.setattr(
+        postgres_physical_basebackup,
+        "_retain_pg_basebackup_executable",
+        lambda _path: os.open(os.devnull, os.O_RDONLY),
+    )
     monkeypatch.setattr(os, "fstat", drifting_fstat)
     monkeypatch.setattr(subprocess, "run", successful_run)
     try:
