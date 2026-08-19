@@ -50,16 +50,22 @@ def _forbidden_subprocess(*_args: object, **_kwargs: object) -> NoReturn:
     raise AssertionError("unsafe recovery authority must fail before pg_controldata")
 
 
+def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit owner identity."""
+    fields = list(status)
+    fields[4] = user_id
+    return os.stat_result(fields)
+
+
 def _foreign_owner(status: os.stat_result) -> os.stat_result:
     """Return equivalent stat metadata whose owner is another local principal."""
-    fields = list(status)
     effective_user_id = os.geteuid()
-    fields[4] = (
+    foreign_user_id = (
         effective_user_id + 1
         if effective_user_id < 2**31 - 1
         else effective_user_id - 1
     )
-    return os.stat_result(fields)
+    return _with_owner(status, foreign_user_id)
 
 
 @pytest.mark.parametrize("mode", [0o770, 0o707])
@@ -93,6 +99,42 @@ def test_verifier_rejects_group_or_other_writable_control_executable(
     """A mutable trusted executable capability must fail before child execution."""
     data_fd = _open_directory(tmp_path / f"restore-data-{mode:o}", 0o750)
     control_fd = _open_control_script(tmp_path, mode)
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=_expected_identity(),
+            )
+    finally:
+        os.close(control_fd)
+        os.close(data_fd)
+
+
+def test_verifier_rejects_effective_user_owned_control_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service account must not retain rewrite authority to validated tool bytes."""
+    data_fd = _open_directory(tmp_path / "restore-data-service-owner", 0o750)
+    control_fd = _open_control_script(tmp_path, 0o755)
+    real_fstat = os.fstat
+    data_status = real_fstat(data_fd)
+    control_status = real_fstat(control_fd)
+    data_identity = (data_status.st_dev, data_status.st_ino)
+    control_identity = (control_status.st_dev, control_status.st_ino)
+    simulated_effective_user_id = 4242
+
+    def service_owned_snapshots(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        identity = (observed.st_dev, observed.st_ino)
+        if identity in (data_identity, control_identity):
+            return _with_owner(observed, simulated_effective_user_id)
+        return observed
+
+    monkeypatch.setattr(os, "geteuid", lambda: simulated_effective_user_id)
+    monkeypatch.setattr(os, "fstat", service_owned_snapshots)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
     try:
         with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
