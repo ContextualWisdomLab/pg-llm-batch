@@ -149,6 +149,43 @@ def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
         os.close(descriptor)
 
 
+def test_logical_backup_normalizes_independent_output_open_failure(
+    tmp_path, monkeypatch
+):
+    """Fail closed if an independent child-output description cannot be opened."""
+    original_path = tmp_path / "open-failure.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    real_open = os.open
+    subprocess_called = False
+
+    def fail_process_descriptor_open(path, flags, *args, **kwargs):
+        if type(path) is str and path.startswith("/proc/self/fd/"):
+            raise OSError("secret process descriptor failure")
+        return real_open(path, flags, *args, **kwargs)
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run")
+
+    monkeypatch.setattr(logical_backup.os, "open", fail_process_descriptor_open)
+    monkeypatch.setattr(logical_backup.subprocess, "run", forbidden_run)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match=r"^PostgreSQL logical backup output could not be isolated$",
+        ) as caught:
+            create_postgres_logical_backup(
+                "safe_service",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+        assert "secret" not in str(caught.value)
+        assert subprocess_called is False
+    finally:
+        os.close(descriptor)
+
+
 def test_logical_backup_normalizes_oversized_output_descriptor(monkeypatch):
     """Bound platform integer-conversion failure before any child process runs."""
     subprocess_called = False
@@ -198,7 +235,7 @@ def test_logical_backup_cleanup_close_failure_preserves_success(
             descriptor,
             pg_dump_executable="/usr/bin/pg_dump",
         ) == PostgresLogicalBackupResult(size_bytes=10)
-        assert len(leaked_cleanup_descriptors) == 1
+        assert len(leaked_cleanup_descriptors) == 2
     finally:
         monkeypatch.setattr(logical_backup.os, "close", real_close)
         for cleanup_descriptor in leaked_cleanup_descriptors:
