@@ -12,6 +12,7 @@ import pytest
 import pg_llm_batch.postgres_logical_backup as logical_backup
 
 
+@pytest.fixture
 def install_retained_pg_dump_stub(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -22,9 +23,10 @@ def install_retained_pg_dump_stub(
     executable.chmod(0o500)
     base_descriptor = os.open(executable, os.O_RDONLY)
     real_close = os.close
+    real_dup = os.dup
 
     def retain_test_executable(_pg_dump_executable: str) -> int:
-        return os.dup(base_descriptor)
+        return real_dup(base_descriptor)
 
     monkeypatch.setattr(
         logical_backup,
