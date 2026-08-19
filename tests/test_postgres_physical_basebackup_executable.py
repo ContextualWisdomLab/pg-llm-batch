@@ -39,16 +39,22 @@ def _forbidden_subprocess(*_args: object, **_kwargs: object) -> NoReturn:
     raise AssertionError("unsafe pg_basebackup must fail before subprocess execution")
 
 
+def _with_owner(status: os.stat_result, owner_user_id: int) -> os.stat_result:
+    """Return equivalent metadata with the requested executable owner."""
+    fields = list(status)
+    fields[4] = owner_user_id
+    return os.stat_result(fields)
+
+
 def _foreign_owner(status: os.stat_result) -> os.stat_result:
     """Return equivalent metadata whose executable owner is another principal."""
-    fields = list(status)
     effective_user_id = os.geteuid()
-    fields[4] = (
+    foreign_user_id = (
         effective_user_id + 1
         if effective_user_id < 2**31 - 1
         else effective_user_id - 1
     )
-    return os.stat_result(fields)
+    return _with_owner(status, foreign_user_id)
 
 
 def test_missing_pg_basebackup_is_rejected_before_execution(
@@ -148,6 +154,37 @@ def test_foreign_owned_pg_basebackup_is_rejected_before_execution(
             )
     finally:
         os.close(output_descriptor)
+
+
+def test_effective_user_owned_pg_basebackup_is_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service-owned executable must not retain rewrite authority after validation."""
+    executable = _write_executable(tmp_path, 0o750)
+    real_fstat = os.fstat
+    executable_status = os.stat(executable)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+    simulated_effective_user_id = 4242
+
+    def effective_user_owned_executable(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == executable_identity:
+            return _with_owner(observed, simulated_effective_user_id)
+        return observed
+
+    monkeypatch.setattr(physical_basebackup.os, "geteuid", lambda: simulated_effective_user_id)
+    monkeypatch.setattr(
+        physical_basebackup.os,
+        "fstat",
+        effective_user_owned_executable,
+    )
+
+    with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR):
+        retained_descriptor = physical_basebackup._retain_pg_basebackup_executable(
+            str(executable)
+        )
+        os.close(retained_descriptor)
 
 
 def test_validated_pg_basebackup_inode_is_retained_through_execution(
