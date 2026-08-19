@@ -75,6 +75,46 @@ def test_failed_command_reports_failed_output_invalidation(
         os.close(descriptor)
 
 
+def test_failed_command_reports_failed_output_rewind(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rewind failure after truncation must remain explicit and content-free."""
+    path, descriptor = _open_private_output(tmp_path)
+    real_lseek = os.lseek
+
+    def failed_run(
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        output_descriptor = kwargs["stdout"]
+        assert type(output_descriptor) is int
+        os.write(output_descriptor, b"partial-sensitive-backup")
+        return subprocess.CompletedProcess(arguments, 3)
+
+    def failed_rewind(target_descriptor: int, offset: int, whence: int) -> int:
+        if offset == 0 and whence == os.SEEK_SET:
+            raise OSError("secret rewind path")
+        return real_lseek(target_descriptor, offset, whence)
+
+    monkeypatch.setattr(subprocess, "run", failed_run)
+    monkeypatch.setattr(os, "lseek", failed_rewind)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBaseBackupError,
+            match="^PostgreSQL physical base-backup output could not be invalidated$",
+        ) as caught:
+            create_postgres_physical_basebackup(
+                "physical_backup_source",
+                descriptor,
+                pg_basebackup_executable="/usr/bin/pg_basebackup",
+            )
+        assert "secret" not in str(caught.value)
+        assert path.read_bytes() == b""
+    finally:
+        os.close(descriptor)
+
+
 def test_cleanup_failure_preserves_process_control_signal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
