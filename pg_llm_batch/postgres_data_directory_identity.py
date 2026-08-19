@@ -101,7 +101,9 @@ def _validate_snapshot(*, data_directory_fd: int, pg_controldata_fd: int) -> Non
         _raise_invalid_input()
     if control_stat.st_uid != 0:
         _raise_invalid_input()
-    if control_stat.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+    if control_stat.st_mode & (
+        stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID
+    ):
         _raise_invalid_input()
     if control_stat.st_mode & 0o111 == 0:
         _raise_invalid_input()
@@ -183,17 +185,18 @@ def verify_postgres_data_directory_identity(
     caller-owned descriptor numbers cannot change the capabilities used by
     this verification call. The retained data directory must be owned by the
     effective process user; the retained ``pg_controldata`` executable must be
-    a root-owned regular executable with no group/other write authority. This
-    Linux system-package boundary prevents a non-root service account from
-    retaining chmod or in-place rewrite authority to the validated executable
-    inode. The data directory also rejects group/other write authority while
-    permitting PostgreSQL-compatible read/search sharing. Package-owned
-    duplicates are released best-effort after verification so close-time
-    operating-system diagnostics cannot replace a verified result or leak host
-    detail. The function does not accept a path, DSN, password, WAL segment,
-    tenant identifier, or business payload. It does not start PostgreSQL,
-    configure recovery, replay WAL, or claim that the directory is otherwise
-    safe to promote.
+    a root-owned regular executable with no group/other write or
+    set-user-ID/set-group-ID authority. This Linux system-package boundary
+    prevents a non-root service account from retaining chmod, in-place rewrite,
+    or executable set-id authority to the validated executable inode. The data
+    directory also rejects group/other write authority while permitting
+    PostgreSQL-compatible read/search sharing. Package-owned duplicates are
+    released best-effort after verification so close-time operating-system
+    diagnostics cannot replace a verified result or leak host detail. The
+    function does not accept a path, DSN, password, WAL segment, tenant
+    identifier, or business payload. It does not start PostgreSQL, configure
+    recovery, replay WAL, or claim that the directory is otherwise safe to
+    promote.
     """
     if not _is_plain_descriptor(data_directory_fd):
         _raise_invalid_input()
