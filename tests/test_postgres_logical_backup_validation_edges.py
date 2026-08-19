@@ -14,6 +14,10 @@ from pg_llm_batch.postgres_logical_backup import (
     PostgresLogicalBackupError,
     create_postgres_logical_backup,
 )
+from tests.logical_backup_test_support import install_retained_pg_dump_stub
+
+
+pytestmark = pytest.mark.usefixtures(install_retained_pg_dump_stub.__name__)
 
 
 def _open_private_output(tmp_path):
