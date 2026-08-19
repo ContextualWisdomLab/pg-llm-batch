@@ -139,11 +139,10 @@ def load_reconciliation_candidates_in_transaction(
     Args:
         cursor: Caller-owned PostgreSQL cursor in an active transaction. Its
             ``fetchall()`` result must be an exact built-in list. The package
-            snapshots that page and every exact mutable list row before row
-            conversion, then rejects a page longer than ``max_candidates``.
-            Each row must be an exact built-in tuple or list. Dictionary,
-            named-tuple, subclass, oversized, or other behavior-bearing results
-            are rejected at the database boundary.
+            takes a bounded page snapshot and snapshots every exact mutable list
+            row before row conversion. Each row must be an exact built-in tuple
+            or list. Dictionary, named-tuple, subclass, oversized, or other
+            behavior-bearing results are rejected at the database boundary.
         tenant_scope: Trusted host-authorized tenant identity.
         max_candidates: Maximum rows to return, from 1 through the package scan
             ceiling.
@@ -180,7 +179,7 @@ def load_reconciliation_candidates_in_transaction(
 
     if type(rows) is not list:
         raise ReconciliationStoreError()
-    fetched_page = tuple(rows)
+    fetched_page = rows[: budget + 1]
     if len(fetched_page) > budget:
         raise ReconciliationStoreError()
 
