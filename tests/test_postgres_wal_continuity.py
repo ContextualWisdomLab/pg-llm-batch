@@ -173,8 +173,8 @@ def test_invalid_inputs_use_one_content_free_error(field: str, value: object) ->
     arguments: dict[str, object] = {
         "wal_segment_size_bytes": 16 * _MIB,
         "timeline_id": 1,
-        "start_lsn": "0/0",
-        "target_lsn": "0/0",
+        "start_lsn": "0/00000000",
+        "target_lsn": "0/00000000",
         "segment_names": ("000000010000000000000000",),
     }
     arguments[field] = value
@@ -212,7 +212,7 @@ def test_reserved_first_wal_segment_cannot_be_positive_continuity_evidence() -> 
         assess_postgres_wal_continuity(
             wal_segment_size_bytes=1 * _MIB,
             timeline_id=1,
-            start_lsn="0/0",
+            start_lsn="0/00000000",
             target_lsn="0/000FFFFF",
             segment_names=("000000010000000000000000",),
         )
@@ -242,7 +242,7 @@ def test_manifest_work_is_bounded_before_expected_names_are_built() -> None:
         assess_postgres_wal_continuity(
             wal_segment_size_bytes=1 * _MIB,
             timeline_id=1,
-            start_lsn="0/0",
+            start_lsn="0/00000000",
             target_lsn="1/00000000",
             segment_names=(),
         )
@@ -257,8 +257,8 @@ def test_supplied_manifest_length_is_bounded_before_member_validation() -> None:
         assess_postgres_wal_continuity(
             wal_segment_size_bytes=16 * _MIB,
             timeline_id=1,
-            start_lsn="0/0",
-            target_lsn="0/0",
+            start_lsn="0/00000000",
+            target_lsn="0/00000000",
             segment_names=("not-inspected",) * 4097,
         )
 
