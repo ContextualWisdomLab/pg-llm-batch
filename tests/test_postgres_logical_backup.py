@@ -16,6 +16,10 @@ from pg_llm_batch.postgres_logical_backup import (
     PostgresLogicalBackupResult,
     create_postgres_logical_backup,
 )
+from tests.logical_backup_test_support import install_retained_pg_dump_stub
+
+
+pytestmark = pytest.mark.usefixtures(install_retained_pg_dump_stub.__name__)
 
 
 def _open_private_output(tmp_path):
@@ -66,11 +70,14 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
             connect_timeout_seconds=7,
         )
         assert result == PostgresLogicalBackupResult(size_bytes=8)
-        assert observed["argv"] == [
-            "/usr/lib/postgresql/18/bin/pg_dump",
+        retained_executable = observed["argv"][0]
+        assert retained_executable.startswith("/proc/self/fd/")
+        retained_descriptor = int(retained_executable.rsplit("/", 1)[-1])
+        assert observed["argv"][1:] == [
             "--format=custom",
             "--no-password",
         ]
+        assert observed["kwargs"]["pass_fds"] == (retained_descriptor,)
         assert observed["kwargs"]["stdout"] != descriptor
         assert (
             observed["stdout_status"].st_dev,
@@ -89,6 +96,7 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
             "PGCONNECT_TIMEOUT": "7",
         }
         assert str(path) not in " ".join(observed["argv"])
+        assert "/usr/lib/postgresql/18/bin/pg_dump" not in observed["argv"]
         assert "tenant_backup" not in " ".join(observed["argv"])
         assert _read_descriptor(descriptor) == b"PGDMP\x01\x02\x03"
         os.fstat(descriptor)
