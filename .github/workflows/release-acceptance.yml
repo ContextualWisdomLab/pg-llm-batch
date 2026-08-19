@@ -63,6 +63,8 @@ jobs:
               fi
               live_main="$(
                 curl --fail --silent --show-error \
+                  --connect-timeout 10 \
+                  --max-time 30 \
                   --header "Accept: application/vnd.github+json" \
                   --header "Authorization: Bearer ${GH_TOKEN}" \
                   --header "X-GitHub-Api-Version: 2022-11-28" \
@@ -188,6 +190,29 @@ jobs:
           )
           write_release_manifest(manifest, "release-evidence/release-manifest.json")
           PY
+
+      - name: Reconfirm protected main remained exact
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ needs.resolve-source.outputs.source_commit }}
+        run: |
+          set -euo pipefail
+          live_main="$(
+            curl --fail --silent --show-error \
+              --connect-timeout 10 \
+              --max-time 30 \
+              --header "Accept: application/vnd.github+json" \
+              --header "Authorization: Bearer ${GH_TOKEN}" \
+              --header "X-GitHub-Api-Version: 2022-11-28" \
+              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" |
+              python -c 'import json, sys; print(json.load(sys.stdin).get("object", {}).get("sha", ""))'
+          )"
+          if [[ "$live_main" != "$SOURCE_COMMIT" ]]; then
+            echo "protected main moved during release acceptance" >&2
+            exit 1
+          fi
 
       - name: Preserve bounded release evidence
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

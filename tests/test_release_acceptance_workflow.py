@@ -114,3 +114,15 @@ def test_release_acceptance_manual_preflight_is_fail_closed_and_read_only() -> N
     assert "contents: write" not in text
     assert "packages: write" not in text
     assert "id-token: write" not in text
+
+
+def test_release_acceptance_manual_evidence_requires_unchanged_protected_main() -> None:
+    """Manual evidence must not survive a protected-main move during the build."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert text.count("/git/ref/heads/main") >= 2
+    assert "Reconfirm protected main remained exact" in text
+    assert "protected main moved during release acceptance" in text
+    assert text.index("Reconfirm protected main remained exact") < text.index(
+        "Preserve bounded release evidence"
+    )
