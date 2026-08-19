@@ -102,6 +102,19 @@ def _duplicate_output_for_cleanup(output_descriptor: int) -> int:
         ) from None
 
 
+def _open_independent_output(cleanup_descriptor: int) -> int:
+    """Open the retained file with an independent offset for child execution."""
+    try:
+        return os.open(
+            f"/proc/self/fd/{cleanup_descriptor}",
+            os.O_WRONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalBackupError(
+            "PostgreSQL logical backup output could not be isolated"
+        ) from None
+
+
 def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
     """Best-effort close package-owned output authority without replacing evidence."""
     try:
@@ -239,10 +252,12 @@ def create_postgres_logical_backup(
     package never receives an output path or places connection material in process
     arguments. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
     inherited; the package owns ``PGSERVICE`` and the bounded ``PGCONNECT_TIMEOUT``.
-    Before any output inspection, the package duplicates the caller descriptor once and
-    uses only that package-owned descriptor for inspection, child stdout, finalization,
-    failure cleanup, and close. Replacing the caller descriptor number after that
-    snapshot therefore cannot redirect logical-backup bytes to an unrelated file.
+    Before output inspection, the package duplicates the caller descriptor for stable
+    cleanup authority. It then reopens that retained file through ``/proc/self/fd`` so
+    the child receives an independent open-file description and file offset. Replacing
+    the caller descriptor number or seeking it after the snapshot therefore cannot
+    redirect backup bytes or move the child's output position. Environments without
+    this process-descriptor reopening boundary fail closed before ``pg_dump`` runs.
     """
     if not _parameters_are_valid(
         service_name,
@@ -258,20 +273,24 @@ def create_postgres_logical_backup(
     cleanup_descriptor = _duplicate_output_for_cleanup(output_descriptor)
     try:
         initial_status = _inspect_initial_output(cleanup_descriptor)
-        _run_pg_dump(
-            service_name=service_name,
-            output_descriptor=cleanup_descriptor,
-            cleanup_descriptor=cleanup_descriptor,
-            pg_dump_executable=pg_dump_executable,
-            timeout_seconds=timeout_seconds,
-            connect_timeout_seconds=connect_timeout_seconds,
-        )
-        return PostgresLogicalBackupResult(
-            size_bytes=_finalize_output(
-                cleanup_descriptor,
-                cleanup_descriptor,
-                initial_status,
+        execution_descriptor = _open_independent_output(cleanup_descriptor)
+        try:
+            _run_pg_dump(
+                service_name=service_name,
+                output_descriptor=execution_descriptor,
+                cleanup_descriptor=cleanup_descriptor,
+                pg_dump_executable=pg_dump_executable,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
             )
-        )
+            return PostgresLogicalBackupResult(
+                size_bytes=_finalize_output(
+                    execution_descriptor,
+                    cleanup_descriptor,
+                    initial_status,
+                )
+            )
+        finally:
+            _close_cleanup_descriptor(execution_descriptor)
     finally:
         _close_cleanup_descriptor(cleanup_descriptor)
