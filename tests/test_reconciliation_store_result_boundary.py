@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+import pg_llm_batch.reconciliation_store as reconciliation_store
 from pg_llm_batch.reconciliation_store import (
     ReconciliationStoreError,
     load_reconciliation_candidates_in_transaction,
@@ -69,3 +70,34 @@ def test_fetchall_result_cannot_exceed_validated_candidate_budget() -> None:
             "tenant-a",
             max_candidates=1,
         )
+
+
+def test_fetchall_rows_are_snapshotted_before_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller mutation during conversion must not widen the validated row page."""
+    rows = [("gateway-a", "batch-1")]
+    converted_rows: list[Any] = []
+    original_converter = reconciliation_store._candidate_from_persisted_row
+
+    def _append_during_conversion(row: Any) -> Any:
+        converted_rows.append(row)
+        if len(converted_rows) == 1:
+            rows.append(("gateway-b", "batch-2"))
+        return original_converter(row)
+
+    monkeypatch.setattr(
+        reconciliation_store,
+        "_candidate_from_persisted_row",
+        _append_during_conversion,
+    )
+
+    candidates = load_reconciliation_candidates_in_transaction(
+        _Cursor(rows),
+        "tenant-a",
+        max_candidates=1,
+    )
+
+    assert len(candidates) == 1
+    assert len(converted_rows) == 1
+    assert len(rows) == 2
