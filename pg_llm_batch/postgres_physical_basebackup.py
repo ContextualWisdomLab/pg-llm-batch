@@ -262,7 +262,16 @@ def _run_pg_basebackup(
     environment = _libpq_environment(service_name, connect_timeout_seconds)
     try:
         read_descriptor, write_descriptor = os.pipe()
+        pipe_status = os.fstat(write_descriptor)
+        pipe_identity = (
+            pipe_status.st_dev,
+            pipe_status.st_ino,
+            stat.S_IFMT(pipe_status.st_mode),
+        )
     except (OSError, ValueError):
+        for descriptor in locals().get("read_descriptor"), locals().get("write_descriptor"):
+            if type(descriptor) is int:
+                _close_cleanup_descriptor(descriptor)
         _invalidate_output(cleanup_descriptor)
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup execution failed"
@@ -292,6 +301,7 @@ def _run_pg_basebackup(
 
     completed: object = None
     execution_error: BaseException | None = None
+    pipe_changed = False
     try:
         completed = subprocess.run(
             arguments,
@@ -308,6 +318,16 @@ def _run_pg_basebackup(
     except BaseException as error:
         execution_error = error
     finally:
+        if execution_error is None:
+            try:
+                current_pipe_status = os.fstat(write_descriptor)
+                pipe_changed = (
+                    current_pipe_status.st_dev,
+                    current_pipe_status.st_ino,
+                    stat.S_IFMT(current_pipe_status.st_mode),
+                ) != pipe_identity
+            except (OSError, ValueError):
+                pipe_changed = True
         _close_cleanup_descriptor(write_descriptor)
         try:
             pump_thread.join()
@@ -325,6 +345,12 @@ def _run_pg_basebackup(
         except PostgresPhysicalBaseBackupError:
             pass
         raise execution_error
+
+    if pipe_changed:
+        _invalidate_output(cleanup_descriptor)
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base-backup output changed during execution"
+        ) from None
 
     if pump_failures:
         pump_failure = pump_failures[0]
