@@ -101,6 +101,42 @@ def test_physical_backup_rejects_one_byte_over_budget_and_invalidates_output(
         os.close(descriptor)
 
 
+def test_final_output_cannot_exceed_budget_through_caller_fd_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Concurrent caller writes cannot make a successful result exceed the ceiling."""
+    path, descriptor = _open_private_output(tmp_path, "caller-expanded.tar")
+    provider_payload = b"provider"
+    maximum_output_bytes = len(provider_payload)
+
+    def caller_expands_output(
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        stdout = kwargs["stdout"]
+        assert type(stdout) is int
+        os.write(stdout, provider_payload)
+        os.pwrite(descriptor, b"x", maximum_output_bytes + 1)
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(subprocess, "run", caller_expands_output)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBaseBackupError,
+            match="^PostgreSQL physical base backup exceeded output byte budget$",
+        ):
+            create_postgres_physical_basebackup(
+                "physical_backup_source",
+                descriptor,
+                pg_basebackup_executable="/usr/bin/pg_basebackup",
+                maximum_output_bytes=maximum_output_bytes,
+            )
+        assert path.read_bytes() == b""
+    finally:
+        os.close(descriptor)
+
+
 @pytest.mark.parametrize("invalid_budget", [True, 0, -1, 1 << 63])
 def test_invalid_output_budget_is_rejected_before_subprocess(
     tmp_path: Path,
