@@ -10,7 +10,10 @@ from pathlib import Path
 import pytest
 
 from pg_llm_batch import postgres_physical_basebackup
-from pg_llm_batch.postgres_physical_basebackup import create_postgres_physical_basebackup
+from pg_llm_batch.postgres_physical_basebackup import (
+    PostgresPhysicalBaseBackupError,
+    create_postgres_physical_basebackup,
+)
 
 
 def _open_private_output(path: Path) -> int:
@@ -56,3 +59,20 @@ def test_physical_backup_child_offset_is_independent_from_caller_seek(
 
     assert result.size_bytes == len(payload)
     assert output_path.read_bytes() == payload
+
+
+def test_physical_backup_fails_closed_when_independent_output_cannot_open(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Failure to obtain an independent output offset must remain content-free."""
+
+    def fail_open(*_args: object, **_kwargs: object) -> int:
+        raise OSError("host-specific /proc detail")
+
+    monkeypatch.setattr(postgres_physical_basebackup.os, "open", fail_open)
+
+    with pytest.raises(
+        PostgresPhysicalBaseBackupError,
+        match="^PostgreSQL physical base-backup output could not be isolated$",
+    ):
+        postgres_physical_basebackup._open_independent_output(7)
