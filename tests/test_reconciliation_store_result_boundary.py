@@ -201,3 +201,57 @@ def test_oversized_exact_row_is_rejected_before_snapshot_copy(
         )
 
     assert copied_oversized_row is False
+
+
+def test_overlong_persisted_endpoint_alias_is_rejected_before_normalization(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overlong durable aliases must fail before any allocating normalization."""
+    validator_called = False
+
+    def _unexpected_validator(_value: Any) -> str:
+        nonlocal validator_called
+        validator_called = True
+        raise AssertionError("overlong endpoint alias reached canonical normalization")
+
+    monkeypatch.setattr(
+        reconciliation_store,
+        "validate_endpoint_alias",
+        _unexpected_validator,
+    )
+
+    with pytest.raises(ValidationError):
+        load_reconciliation_candidates_in_transaction(
+            _Cursor([("a" * 129, "batch-1")]),
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert validator_called is False
+
+
+def test_overlong_persisted_remote_batch_id_is_rejected_before_regex_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Overlong durable IDs must fail before the regex validation boundary."""
+    validator_called = False
+
+    def _unexpected_validator(_value: Any, _field: str) -> str:
+        nonlocal validator_called
+        validator_called = True
+        raise AssertionError("overlong remote batch ID reached regex validation")
+
+    monkeypatch.setattr(
+        reconciliation_store,
+        "validate_remote_resource_id",
+        _unexpected_validator,
+    )
+
+    with pytest.raises(ValidationError):
+        load_reconciliation_candidates_in_transaction(
+            _Cursor([("gateway-a", "b" * 257)]),
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert validator_called is False
