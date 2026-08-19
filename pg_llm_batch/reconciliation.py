@@ -94,6 +94,13 @@ def _validate_work_budget(max_jobs: Any) -> int:
 
 def _validate_candidate(candidate: ReconciliationCandidate) -> ReconciliationCandidate:
     """Validate one selected provider identity without reflecting rejected content."""
+    if type(candidate) is not ReconciliationCandidate:
+        raise ValidationError(
+            field="reconciliation_candidate",
+            value="<redacted>",
+            reason="must contain a valid endpoint alias and remote batch identifier",
+            message="Reconciliation candidate identity is invalid",
+        )
     try:
         endpoint_alias = validate_endpoint_alias(candidate.endpoint_alias)
         remote_batch_id = validate_remote_resource_id(
