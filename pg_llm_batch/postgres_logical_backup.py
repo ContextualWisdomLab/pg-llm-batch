@@ -13,6 +13,7 @@ from dataclasses import dataclass
 _SERVICE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}\Z")
 _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_CONNECT_TIMEOUT_SECONDS = 60
+_NONBLOCKING_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _INHERITED_LIBPQ_VARIABLES = frozenset(
     {
         "PGPASSWORD",
@@ -119,12 +120,49 @@ def _open_independent_output(cleanup_descriptor: int) -> int:
         ) from None
 
 
-def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
-    """Best-effort close package-owned output authority without replacing evidence."""
+def _close_descriptor(file_descriptor: int) -> None:
+    """Best-effort close package-owned descriptor authority without replacing evidence."""
     try:
-        os.close(cleanup_descriptor)
+        os.close(file_descriptor)
     except (OSError, ValueError):
         pass
+
+
+def _retain_pg_dump_executable(pg_dump_executable: str) -> int:
+    """Snapshot one root-owned pg_dump executable inode before child use."""
+    try:
+        executable_descriptor = os.open(
+            pg_dump_executable,
+            _NONBLOCKING_READ_FLAGS,
+        )
+    except FileNotFoundError:
+        raise PostgresLogicalBackupError(
+            "PostgreSQL logical backup executable unavailable"
+        ) from None
+    except (OSError, ValueError):
+        raise PostgresLogicalBackupError(
+            "invalid PostgreSQL logical backup parameters"
+        ) from None
+
+    try:
+        status = os.fstat(executable_descriptor)
+    except (AttributeError, OSError, ValueError):
+        _close_descriptor(executable_descriptor)
+        raise PostgresLogicalBackupError(
+            "invalid PostgreSQL logical backup parameters"
+        ) from None
+
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_uid != 0
+        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or status.st_mode & 0o111 == 0
+    ):
+        _close_descriptor(executable_descriptor)
+        raise PostgresLogicalBackupError(
+            "invalid PostgreSQL logical backup parameters"
+        )
+    return executable_descriptor
 
 
 def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[str, str]:
@@ -161,13 +199,13 @@ def _run_pg_dump(
     service_name: str,
     output_descriptor: int,
     cleanup_descriptor: int,
-    pg_dump_executable: str,
+    pg_dump_descriptor: int,
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> subprocess.CompletedProcess[bytes]:
-    """Run one shell-free pg_dump process with content-free diagnostics."""
+    """Run one retained shell-free pg_dump process with content-free diagnostics."""
     arguments = [
-        pg_dump_executable,
+        f"/proc/self/fd/{pg_dump_descriptor}",
         "--format=custom",
         "--no-password",
     ]
@@ -181,6 +219,7 @@ def _run_pg_dump(
             timeout=timeout_seconds,
             check=False,
             close_fds=True,
+            pass_fds=(pg_dump_descriptor,),
             env=environment,
         )
     except FileNotFoundError:
@@ -272,8 +311,13 @@ def create_postgres_logical_backup(
     cleanup authority. It then reopens that retained file through ``/proc/self/fd`` so
     the child receives an independent open-file description and file offset. Replacing
     the caller descriptor number or seeking it after the snapshot therefore cannot
-    redirect backup bytes or move the child's output position. Environments without
-    this process-descriptor reopening boundary fail closed before ``pg_dump`` runs.
+    redirect backup bytes or move the child's output position. The absolute
+    ``pg_dump`` token is opened non-blocking without following its final symlink,
+    rejected unless it is a root-owned regular executable without group/other write
+    authority, and executed only through the retained descriptor. This Linux
+    system-package boundary prevents a non-root service account from retaining chmod
+    or in-place rewrite authority to the validated executable bytes. Environments
+    without these process-descriptor boundaries fail closed before ``pg_dump`` runs.
     """
     if not _parameters_are_valid(
         service_name,
@@ -291,22 +335,26 @@ def create_postgres_logical_backup(
         initial_status = _inspect_initial_output(cleanup_descriptor)
         execution_descriptor = _open_independent_output(cleanup_descriptor)
         try:
-            _run_pg_dump(
-                service_name=service_name,
-                output_descriptor=execution_descriptor,
-                cleanup_descriptor=cleanup_descriptor,
-                pg_dump_executable=pg_dump_executable,
-                timeout_seconds=timeout_seconds,
-                connect_timeout_seconds=connect_timeout_seconds,
-            )
-            return PostgresLogicalBackupResult(
-                size_bytes=_finalize_output(
-                    execution_descriptor,
-                    cleanup_descriptor,
-                    initial_status,
+            pg_dump_descriptor = _retain_pg_dump_executable(pg_dump_executable)
+            try:
+                _run_pg_dump(
+                    service_name=service_name,
+                    output_descriptor=execution_descriptor,
+                    cleanup_descriptor=cleanup_descriptor,
+                    pg_dump_descriptor=pg_dump_descriptor,
+                    timeout_seconds=timeout_seconds,
+                    connect_timeout_seconds=connect_timeout_seconds,
                 )
-            )
+                return PostgresLogicalBackupResult(
+                    size_bytes=_finalize_output(
+                        execution_descriptor,
+                        cleanup_descriptor,
+                        initial_status,
+                    )
+                )
+            finally:
+                _close_descriptor(pg_dump_descriptor)
         finally:
-            _close_cleanup_descriptor(execution_descriptor)
+            _close_descriptor(execution_descriptor)
     finally:
-        _close_cleanup_descriptor(cleanup_descriptor)
+        _close_descriptor(cleanup_descriptor)
