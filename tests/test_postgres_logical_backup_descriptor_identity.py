@@ -50,45 +50,10 @@ def test_logical_backup_child_uses_snapshotted_output_authority(
         os.close(descriptor)
 
 
-def test_logical_backup_rejects_output_descriptor_substitution(
+def test_logical_backup_failure_cleans_snapshotted_output_after_caller_substitution(
     tmp_path, monkeypatch
 ):
-    """Reject same-number descriptor replacement without destroying replacement data."""
-    original_path = tmp_path / "original.dump"
-    replacement_path = tmp_path / "replacement.dump"
-    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
-    replacement_descriptor = os.open(
-        replacement_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600
-    )
-
-    def substitute_output(argv, **kwargs):
-        os.dup2(replacement_descriptor, kwargs["stdout"])
-        os.write(kwargs["stdout"], b"PGDMP-replacement")
-        return subprocess.CompletedProcess(argv, 0)
-
-    monkeypatch.setattr(logical_backup.subprocess, "run", substitute_output)
-    try:
-        with pytest.raises(
-            PostgresLogicalBackupError,
-            match=r"^PostgreSQL logical backup output changed during execution$",
-        ):
-            create_postgres_logical_backup(
-                "safe_service",
-                descriptor,
-                pg_dump_executable="/usr/bin/pg_dump",
-            )
-
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        assert os.read(descriptor, 1024) == b"PGDMP-replacement"
-    finally:
-        os.close(replacement_descriptor)
-        os.close(descriptor)
-
-
-def test_logical_backup_failure_does_not_invalidate_substituted_descriptor(
-    tmp_path, monkeypatch
-):
-    """Preserve an unrelated replacement file when pg_dump fails after substitution."""
+    """Clean only original output when pg_dump fails after caller-fd substitution."""
     original_path = tmp_path / "original-failure.dump"
     replacement_path = tmp_path / "replacement-failure.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
@@ -97,8 +62,9 @@ def test_logical_backup_failure_does_not_invalidate_substituted_descriptor(
     )
 
     def substitute_then_fail(argv, **kwargs):
-        os.dup2(replacement_descriptor, kwargs["stdout"])
-        os.write(kwargs["stdout"], b"operator-owned-replacement")
+        assert kwargs["stdout"] != descriptor
+        os.dup2(replacement_descriptor, descriptor)
+        os.write(kwargs["stdout"], b"partial-sensitive-backup")
         return subprocess.CompletedProcess(argv, 1)
 
     monkeypatch.setattr(logical_backup.subprocess, "run", substitute_then_fail)
@@ -113,8 +79,10 @@ def test_logical_backup_failure_does_not_invalidate_substituted_descriptor(
                 pg_dump_executable="/usr/bin/pg_dump",
             )
 
-        os.lseek(descriptor, 0, os.SEEK_SET)
-        assert os.read(descriptor, 1024) == b"operator-owned-replacement"
+        with original_path.open("rb") as original_file:
+            assert original_file.read() == b""
+        with replacement_path.open("rb") as replacement_file:
+            assert replacement_file.read() == b""
     finally:
         os.close(replacement_descriptor)
         os.close(descriptor)
@@ -123,7 +91,7 @@ def test_logical_backup_failure_does_not_invalidate_substituted_descriptor(
 def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
     tmp_path, monkeypatch
 ):
-    """Fail with bounded evidence if the original descriptor cannot be retained."""
+    """Fail with bounded evidence if output authority cannot be snapshotted."""
     original_path = tmp_path / "dup-failure.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     subprocess_called = False
@@ -157,7 +125,7 @@ def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
 def test_logical_backup_cleanup_close_failure_preserves_success(
     tmp_path, monkeypatch
 ):
-    """Do not replace valid backup evidence with a duplicate-close diagnostic."""
+    """Do not replace valid backup evidence with an authority-close diagnostic."""
     original_path = tmp_path / "close-failure.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     real_close = os.close
