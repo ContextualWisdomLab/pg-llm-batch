@@ -14,6 +14,10 @@ from pg_llm_batch.postgres_logical_backup import (
     PostgresLogicalBackupResult,
     create_postgres_logical_backup,
 )
+from tests.logical_backup_test_support import install_retained_pg_dump_stub
+
+
+pytestmark = pytest.mark.usefixtures(install_retained_pg_dump_stub.__name__)
 
 
 def test_logical_backup_child_uses_snapshotted_output_authority(
@@ -235,7 +239,7 @@ def test_logical_backup_cleanup_close_failure_preserves_success(
             descriptor,
             pg_dump_executable="/usr/bin/pg_dump",
         ) == PostgresLogicalBackupResult(size_bytes=10)
-        assert len(leaked_cleanup_descriptors) == 2
+        assert len(leaked_cleanup_descriptors) == 3
     finally:
         monkeypatch.setattr(logical_backup.os, "close", real_close)
         for cleanup_descriptor in leaked_cleanup_descriptors:
