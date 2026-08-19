@@ -61,16 +61,22 @@ jobs:
                 echo "manual release acceptance requires refs/heads/main" >&2
                 exit 1
               fi
+              live_ref_json="$(mktemp "${RUNNER_TEMP}/pg-llm-batch-live-main.XXXXXX.json")"
+              trap 'rm -f "$live_ref_json"' EXIT
+              curl --fail --silent --show-error \
+                --connect-timeout 10 \
+                --max-time 30 \
+                --header "Accept: application/vnd.github+json" \
+                --header "Authorization: Bearer ${GH_TOKEN}" \
+                --header "X-GitHub-Api-Version: 2022-11-28" \
+                --output "$live_ref_json" \
+                "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
               live_main="$(
-                curl --fail --silent --show-error \
-                  --connect-timeout 10 \
-                  --max-time 30 \
-                  --header "Accept: application/vnd.github+json" \
-                  --header "Authorization: Bearer ${GH_TOKEN}" \
-                  --header "X-GitHub-Api-Version: 2022-11-28" \
-                  "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" |
-                  python -c 'import json, sys; print(json.load(sys.stdin).get("object", {}).get("sha", ""))'
+                python -c 'import json, sys; print(json.load(sys.stdin).get("object", {}).get("sha", ""))' \
+                  < "$live_ref_json"
               )"
+              rm -f "$live_ref_json"
+              trap - EXIT
               if [[ "$live_main" != "$GITHUB_SHA" ]]; then
                 echo "protected main moved before release acceptance" >&2
                 exit 1
@@ -199,16 +205,22 @@ jobs:
           SOURCE_COMMIT: ${{ needs.resolve-source.outputs.source_commit }}
         run: |
           set -euo pipefail
+          live_ref_json="$(mktemp "${RUNNER_TEMP}/pg-llm-batch-live-main.XXXXXX.json")"
+          trap 'rm -f "$live_ref_json"' EXIT
+          curl --fail --silent --show-error \
+            --connect-timeout 10 \
+            --max-time 30 \
+            --header "Accept: application/vnd.github+json" \
+            --header "Authorization: Bearer ${GH_TOKEN}" \
+            --header "X-GitHub-Api-Version: 2022-11-28" \
+            --output "$live_ref_json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main"
           live_main="$(
-            curl --fail --silent --show-error \
-              --connect-timeout 10 \
-              --max-time 30 \
-              --header "Accept: application/vnd.github+json" \
-              --header "Authorization: Bearer ${GH_TOKEN}" \
-              --header "X-GitHub-Api-Version: 2022-11-28" \
-              "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" |
-              python -c 'import json, sys; print(json.load(sys.stdin).get("object", {}).get("sha", ""))'
+            python -c 'import json, sys; print(json.load(sys.stdin).get("object", {}).get("sha", ""))' \
+              < "$live_ref_json"
           )"
+          rm -f "$live_ref_json"
+          trap - EXIT
           if [[ "$live_main" != "$SOURCE_COMMIT" ]]; then
             echo "protected main moved during release acceptance" >&2
             exit 1
