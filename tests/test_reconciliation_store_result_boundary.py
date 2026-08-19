@@ -16,22 +16,22 @@ from pg_llm_batch.reconciliation_store import (
 
 
 class _Cursor:
-    """Minimal cursor double returning caller-controlled fetchall evidence."""
+    """Minimal cursor double returning caller-controlled bounded page evidence."""
 
     def __init__(self, rows: Any) -> None:
-        """Store the configured fetchall result."""
+        """Store the configured fetch result."""
         self.rows = rows
 
     def execute(self, _sql: str, _params: tuple[Any, ...]) -> None:
         """Accept the package's parameterized tenant binding and candidate query."""
 
-    def fetchall(self) -> Any:
+    def fetchmany(self, _size: int) -> Any:
         """Return the configured database-boundary result unchanged."""
         return self.rows
 
 
 class _HostileRows(list[Any]):
-    """Expose whether a behavior-bearing fetchall container is iterated."""
+    """Expose whether a behavior-bearing fetchmany container is iterated."""
 
     def __init__(self, rows: list[Any]) -> None:
         """Initialize rows and an untouched iteration sentinel."""
@@ -41,11 +41,11 @@ class _HostileRows(list[Any]):
     def __iter__(self):
         """Mark behavior execution before raising a content-bearing failure."""
         self.iterated = True
-        raise RuntimeError("SECRET fetchall container behavior")
+        raise RuntimeError("SECRET fetchmany container behavior")
 
 
-def test_fetchall_container_subclass_is_rejected_before_iteration() -> None:
-    """Behavior-bearing fetchall containers must fail before their methods execute."""
+def test_fetchmany_container_subclass_is_rejected_before_iteration() -> None:
+    """Behavior-bearing fetchmany containers must fail before their methods execute."""
     rows = _HostileRows([("gateway-a", "batch-1")])
 
     with pytest.raises(ReconciliationStoreError):
@@ -58,7 +58,7 @@ def test_fetchall_container_subclass_is_rejected_before_iteration() -> None:
     assert rows.iterated is False
 
 
-def test_fetchall_result_cannot_exceed_validated_candidate_budget() -> None:
+def test_fetchmany_result_cannot_exceed_validated_candidate_budget() -> None:
     """A cursor that violates SQL LIMIT must not widen the package work budget."""
     rows = [
         ("gateway-a", "batch-1"),
@@ -73,7 +73,7 @@ def test_fetchall_result_cannot_exceed_validated_candidate_budget() -> None:
         )
 
 
-def test_oversized_fetchall_page_is_rejected_before_full_snapshot_copy(
+def test_oversized_fetchmany_page_is_rejected_before_full_snapshot_copy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An oversized exact result page must not be duplicated before budget rejection."""
@@ -88,7 +88,7 @@ def test_oversized_fetchall_page_is_rejected_before_full_snapshot_copy(
         nonlocal copied_oversized_page
         if value is rows:
             copied_oversized_page = True
-            raise AssertionError("oversized fetchall page was copied")
+            raise AssertionError("oversized fetchmany page was copied")
         return real_tuple(value)
 
     monkeypatch.setattr(
@@ -108,7 +108,7 @@ def test_oversized_fetchall_page_is_rejected_before_full_snapshot_copy(
     assert copied_oversized_page is False
 
 
-def test_fetchall_rows_are_snapshotted_before_conversion(
+def test_fetchmany_rows_are_snapshotted_before_conversion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Caller mutation during conversion must not widen the validated row page."""
