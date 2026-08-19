@@ -70,6 +70,37 @@ def test_missing_pg_basebackup_is_rejected_before_execution(
         os.close(output_descriptor)
 
 
+def test_pg_basebackup_metadata_failure_is_rejected_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unreadable retained executable metadata must fail closed without OS diagnostics."""
+    output_descriptor = _open_private_output(tmp_path)
+    executable = _write_executable(tmp_path, 0o750)
+    real_fstat = os.fstat
+    executable_status = os.stat(executable)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+
+    def fail_executable_fstat(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == executable_identity:
+            raise OSError("secret executable metadata failure")
+        return observed
+
+    monkeypatch.setattr(physical_basebackup.os, "fstat", fail_executable_fstat)
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR) as caught:
+            physical_basebackup.create_postgres_physical_basebackup(
+                "physical_backup_source",
+                output_descriptor,
+                pg_basebackup_executable=str(executable),
+            )
+        assert "secret" not in str(caught.value)
+    finally:
+        os.close(output_descriptor)
+
+
 def test_group_writable_pg_basebackup_is_rejected_before_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
