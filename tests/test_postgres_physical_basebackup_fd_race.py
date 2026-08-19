@@ -38,6 +38,11 @@ def test_physical_backup_snapshots_output_fd_before_subprocess_write(
         return subprocess.CompletedProcess(args, 0, stdout=b"")
 
     monkeypatch.setattr(
+        postgres_physical_basebackup,
+        "_retain_pg_basebackup_executable",
+        lambda _path: os.open(os.devnull, os.O_RDONLY),
+    )
+    monkeypatch.setattr(
         postgres_physical_basebackup.subprocess,
         "run",
         replace_caller_fd_then_write,
