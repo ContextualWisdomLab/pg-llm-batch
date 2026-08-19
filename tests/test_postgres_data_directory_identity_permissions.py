@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from typing import NoReturn
 
@@ -19,6 +20,7 @@ from pg_llm_batch.postgres_restore_target import PostgresRestoreTargetIdentity
 
 _SYSTEM_IDENTIFIER = 7_394_886_517_812_345_678
 _INVALID_INPUT = "^invalid PostgreSQL data-directory identity inputs$"
+_CONTROL_IDENTITIES: set[tuple[int, int]] = set()
 
 
 def _open_directory(path: Path, mode: int) -> int:
@@ -29,7 +31,7 @@ def _open_directory(path: Path, mode: int) -> int:
 
 
 def _open_control_script(tmp_path: Path, mode: int) -> int:
-    """Create and open one executable pg_controldata fixture."""
+    """Create and register one root-owned control-tool fixture capability."""
     script = tmp_path / f"pg_controldata-{mode:o}"
     script.write_text(
         "#!/bin/sh\nprintf 'Database system identifier: "
@@ -37,7 +39,10 @@ def _open_control_script(tmp_path: Path, mode: int) -> int:
         encoding="utf-8",
     )
     os.chmod(script, mode)
-    return os.open(script, os.O_RDONLY)
+    file_descriptor = os.open(script, os.O_RDONLY)
+    status = os.fstat(file_descriptor)
+    _CONTROL_IDENTITIES.add((status.st_dev, status.st_ino))
+    return file_descriptor
 
 
 def _expected_identity() -> PostgresRestoreTargetIdentity:
@@ -55,6 +60,25 @@ def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
     fields = list(status)
     fields[4] = user_id
     return os.stat_result(fields)
+
+
+@pytest.fixture(autouse=True)
+def _model_root_owned_control_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Model temporary control scripts as trusted root-owned system tools."""
+    _CONTROL_IDENTITIES.clear()
+    real_fstat = os.fstat
+
+    def root_owned_control_metadata(file_descriptor: int) -> os.stat_result:
+        status = real_fstat(file_descriptor)
+        if (status.st_dev, status.st_ino) in _CONTROL_IDENTITIES:
+            return _with_owner(status, 0)
+        return status
+
+    monkeypatch.setattr(os, "fstat", root_owned_control_metadata)
+    yield
+    _CONTROL_IDENTITIES.clear()
 
 
 def _foreign_owner(status: os.stat_result) -> os.stat_result:
