@@ -10,6 +10,7 @@ from typing import NoReturn
 
 import pytest
 
+import pg_llm_batch.postgres_physical_basebackup as physical_basebackup
 from pg_llm_batch.postgres_physical_basebackup import (
     PostgresPhysicalBaseBackupError,
     PostgresPhysicalBaseBackupResult,
@@ -17,6 +18,20 @@ from pg_llm_batch.postgres_physical_basebackup import (
     _invalidate_output,
     create_postgres_physical_basebackup,
 )
+
+
+@pytest.fixture(autouse=True)
+def _retain_hermetic_test_executable(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep execution-contract tests independent of host PostgreSQL packaging."""
+
+    def retain_test_executable(_path: str) -> int:
+        return os.open(os.devnull, os.O_RDONLY)
+
+    monkeypatch.setattr(
+        physical_basebackup,
+        "_retain_pg_basebackup_executable",
+        retain_test_executable,
+    )
 
 
 def _open_private_output(tmp_path: Path, name: str = "basebackup.tar") -> tuple[Path, int]:
