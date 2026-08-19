@@ -89,6 +89,10 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output must have one link"
         )
+    if status.st_uid != os.geteuid():
+        raise PostgresLogicalBackupError(
+            "PostgreSQL logical backup output must be owned by the effective process user"
+        )
     return status
 
 
@@ -232,7 +236,11 @@ def _finalize_output(
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output is incomplete"
         )
-    if status.st_nlink != 1 or not _output_is_owner_only(status.st_mode):
+    if (
+        status.st_nlink != 1
+        or not _output_is_owner_only(status.st_mode)
+        or status.st_uid != initial_status.st_uid
+    ):
         _invalidate_output(cleanup_descriptor)
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output became unsafe"
