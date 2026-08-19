@@ -73,6 +73,7 @@ def test_logical_backup_rejects_final_output_identity_drift(tmp_path, monkeypatc
             st_size=status.st_size,
             st_dev=status.st_dev,
             st_ino=status.st_ino + 1,
+            st_uid=status.st_uid,
         )
 
     def write_successfully(argv, **kwargs):
