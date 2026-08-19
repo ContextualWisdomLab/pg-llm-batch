@@ -46,6 +46,25 @@ def _with_owner(status: os.stat_result, owner_user_id: int) -> os.stat_result:
     return os.stat_result(fields)
 
 
+def _mock_executable_owner(
+    monkeypatch: pytest.MonkeyPatch,
+    executable: Path,
+    owner_user_id: int,
+) -> None:
+    """Report one executable inode as owned by the requested principal."""
+    real_fstat = os.fstat
+    executable_status = os.stat(executable)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+
+    def owned_executable(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == executable_identity:
+            return _with_owner(observed, owner_user_id)
+        return observed
+
+    monkeypatch.setattr(physical_basebackup.os, "fstat", owned_executable)
+
+
 def _foreign_owner(status: os.stat_result) -> os.stat_result:
     """Return equivalent metadata whose executable owner is another principal."""
     effective_user_id = os.geteuid()
@@ -114,6 +133,7 @@ def test_group_writable_pg_basebackup_is_rejected_before_execution(
     """A mutable executable must not gain physical-backup process authority."""
     output_descriptor = _open_private_output(tmp_path)
     executable = _write_executable(tmp_path, 0o770)
+    _mock_executable_owner(monkeypatch, executable, 0)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
     try:
         with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR):
@@ -162,23 +182,9 @@ def test_effective_user_owned_pg_basebackup_is_rejected(
 ) -> None:
     """A service-owned executable must not retain rewrite authority after validation."""
     executable = _write_executable(tmp_path, 0o750)
-    real_fstat = os.fstat
-    executable_status = os.stat(executable)
-    executable_identity = (executable_status.st_dev, executable_status.st_ino)
     simulated_effective_user_id = 4242
-
-    def effective_user_owned_executable(file_descriptor: int) -> os.stat_result:
-        observed = real_fstat(file_descriptor)
-        if (observed.st_dev, observed.st_ino) == executable_identity:
-            return _with_owner(observed, simulated_effective_user_id)
-        return observed
-
+    _mock_executable_owner(monkeypatch, executable, simulated_effective_user_id)
     monkeypatch.setattr(physical_basebackup.os, "geteuid", lambda: simulated_effective_user_id)
-    monkeypatch.setattr(
-        physical_basebackup.os,
-        "fstat",
-        effective_user_owned_executable,
-    )
 
     with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR):
         retained_descriptor = physical_basebackup._retain_pg_basebackup_executable(
@@ -197,6 +203,7 @@ def test_validated_pg_basebackup_inode_is_retained_through_execution(
     original_status = os.stat(executable)
     original_identity = (original_status.st_dev, original_status.st_ino)
     moved_executable = tmp_path / "validated-pg_basebackup"
+    _mock_executable_owner(monkeypatch, executable, 0)
 
     def replace_path_then_run(
         arguments: list[str], **kwargs: object
