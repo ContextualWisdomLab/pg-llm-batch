@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
@@ -59,6 +60,13 @@ def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
     """Return equivalent stat metadata with one explicit owner identity."""
     fields = list(status)
     fields[4] = user_id
+    return os.stat_result(fields)
+
+
+def _with_mode(status: os.stat_result, mode: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit mode."""
+    fields = list(status)
+    fields[0] = mode
     return os.stat_result(fields)
 
 
@@ -159,6 +167,40 @@ def test_verifier_rejects_effective_user_owned_control_executable(
 
     monkeypatch.setattr(os, "geteuid", lambda: simulated_effective_user_id)
     monkeypatch.setattr(os, "fstat", service_owned_snapshots)
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
+            verify_postgres_data_directory_identity(
+                data_directory_fd=data_fd,
+                pg_controldata_fd=control_fd,
+                expected_identity=_expected_identity(),
+            )
+    finally:
+        os.close(control_fd)
+        os.close(data_fd)
+
+
+@pytest.mark.parametrize("privilege_bit", [stat.S_ISUID, stat.S_ISGID])
+def test_verifier_rejects_setid_root_owned_control_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    privilege_bit: int,
+) -> None:
+    """A trusted control tool must not gain user or group identity via set-id bits."""
+    data_fd = _open_directory(tmp_path / f"restore-data-setid-{privilege_bit:o}", 0o750)
+    control_fd = _open_control_script(tmp_path, 0o755)
+    real_fstat = os.fstat
+    control_status = real_fstat(control_fd)
+    control_identity = (control_status.st_dev, control_status.st_ino)
+
+    def setid_control_metadata(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == control_identity:
+            observed = _with_owner(observed, 0)
+            return _with_mode(observed, observed.st_mode | privilege_bit)
+        return observed
+
+    monkeypatch.setattr(os, "fstat", setid_control_metadata)
     monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
     try:
         with pytest.raises(PostgresDataDirectoryIdentityError, match=_INVALID_INPUT):
