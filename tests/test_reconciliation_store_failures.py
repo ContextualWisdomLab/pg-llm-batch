@@ -39,7 +39,7 @@ class _FailingCursor:
         if self.fail_on == phase:
             raise RuntimeError(f"{_SECRET} {phase}")
 
-    def fetchall(self) -> Any:
+    def fetchmany(self, _size: int) -> Any:
         if self.fail_on == "fetch":
             raise RuntimeError(f"{_SECRET} fetch")
         if self.fail_on == "container":
