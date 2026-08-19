@@ -136,15 +136,20 @@ def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[
 
 
 def _invalidate_output(cleanup_descriptor: int) -> None:
-    """Best-effort empty and rewind the snapshotted backup output."""
+    """Empty and rewind retained output or report content-free cleanup failure."""
+    invalidation_failed = False
     try:
         os.ftruncate(cleanup_descriptor, 0)
     except (OSError, ValueError):
-        pass
+        invalidation_failed = True
     try:
         os.lseek(cleanup_descriptor, 0, os.SEEK_SET)
     except (OSError, ValueError):
-        pass
+        invalidation_failed = True
+    if invalidation_failed:
+        raise PostgresLogicalBackupError(
+            "PostgreSQL logical backup output could not be invalidated"
+        ) from None
 
 
 def _run_pg_dump(
@@ -188,7 +193,10 @@ def _run_pg_dump(
             "PostgreSQL logical backup execution failed"
         ) from None
     except BaseException:
-        _invalidate_output(cleanup_descriptor)
+        try:
+            _invalidate_output(cleanup_descriptor)
+        except PostgresLogicalBackupError:
+            pass
         raise
 
     if type(completed) is not subprocess.CompletedProcess:
