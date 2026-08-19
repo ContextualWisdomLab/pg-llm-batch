@@ -50,6 +50,33 @@ def test_logical_backup_child_uses_snapshotted_output_authority(
         os.close(descriptor)
 
 
+def test_logical_backup_child_offset_is_independent_from_caller_descriptor(
+    tmp_path, monkeypatch
+):
+    """Keep caller seek authority from moving the pg_dump output position."""
+    original_path = tmp_path / "independent-offset.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+
+    def shift_caller_offset_then_write(argv, **kwargs):
+        assert kwargs["stdout"] != descriptor
+        os.lseek(descriptor, 4096, os.SEEK_SET)
+        assert os.lseek(kwargs["stdout"], 0, os.SEEK_CUR) == 0
+        os.write(kwargs["stdout"], b"PGDMP-safe")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", shift_caller_offset_then_write)
+    try:
+        assert create_postgres_logical_backup(
+            "safe_service",
+            descriptor,
+            pg_dump_executable="/usr/bin/pg_dump",
+        ) == PostgresLogicalBackupResult(size_bytes=10)
+        with original_path.open("rb") as original_file:
+            assert original_file.read() == b"PGDMP-safe"
+    finally:
+        os.close(descriptor)
+
+
 def test_logical_backup_failure_cleans_snapshotted_output_after_caller_substitution(
     tmp_path, monkeypatch
 ):
