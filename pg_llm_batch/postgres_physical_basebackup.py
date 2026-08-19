@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Create bounded PostgreSQL physical base backups through a private tar stream."""
+"""Create time-bounded PostgreSQL physical base backups through a private tar stream."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ class PostgresPhysicalBaseBackupError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class PostgresPhysicalBaseBackupResult:
-    """Describe the bounded bytes produced by one successful physical base backup."""
+    """Describe the byte size produced by one successful physical base backup."""
 
     size_bytes: int
 
@@ -311,7 +311,7 @@ def create_postgres_physical_basebackup(
     timeout_seconds: int = 7200,
     connect_timeout_seconds: int = 15,
 ) -> PostgresPhysicalBaseBackupResult:
-    """Create one bounded full-cluster tar base backup with required WAL included.
+    """Create one time-bounded full-cluster tar base backup with required WAL included.
 
     The output is the tar stream emitted by ``pg_basebackup --pgdata=- --format=tar``
     with ``--wal-method=fetch``. PostgreSQL therefore fails this narrow mode when the
@@ -319,7 +319,9 @@ def create_postgres_physical_basebackup(
     tablespace mappings or server-side output paths. The caller owns filesystem
     placement and descriptor lifetime and must treat the bytes as highly sensitive
     cluster material. The package never receives an output path and never places
-    connection material in process arguments.
+    connection material in process arguments. The package does not impose an output-
+    byte or filesystem-capacity ceiling; callers must provision and enforce destination
+    capacity. The command timeout bounds elapsed execution time, not bytes written.
 
     ``service_name`` is a libpq service selector, not a tenant authorization boundary.
     Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be inherited; the
