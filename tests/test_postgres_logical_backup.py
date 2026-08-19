@@ -454,6 +454,7 @@ def test_logical_backup_rejects_unsafe_final_output_state(
             "st_size": status.st_size,
             "st_dev": status.st_dev,
             "st_ino": status.st_ino,
+            "st_uid": status.st_uid,
         }
         values.update(final_override)
         return SimpleNamespace(**values)
@@ -474,7 +475,9 @@ def test_logical_backup_rejects_unsafe_final_output_state(
         os.close(descriptor)
 
 
-def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, monkeypatch):
+def test_logical_backup_reports_invalidation_failure_after_command_error(
+    tmp_path, monkeypatch
+):
     _path, descriptor = _open_private_output(tmp_path)
 
     def failed_run(argv, **kwargs):
@@ -490,7 +493,7 @@ def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, mo
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
-            match="^PostgreSQL logical backup command failed$",
+            match="^PostgreSQL logical backup output could not be invalidated$",
         ) as caught:
             create_postgres_logical_backup(
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
@@ -501,7 +504,9 @@ def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, mo
         os.close(descriptor)
 
 
-def test_logical_backup_primary_error_survives_offset_reset_failure(tmp_path, monkeypatch):
+def test_logical_backup_reports_rewind_failure_after_command_error(
+    tmp_path, monkeypatch
+):
     _path, descriptor = _open_private_output(tmp_path)
     real_lseek = os.lseek
     offset_reset_failed = False
@@ -522,7 +527,7 @@ def test_logical_backup_primary_error_survives_offset_reset_failure(tmp_path, mo
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
-            match="^PostgreSQL logical backup command failed$",
+            match="^PostgreSQL logical backup output could not be invalidated$",
         ) as caught:
             create_postgres_logical_backup(
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
