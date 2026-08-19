@@ -7,6 +7,8 @@ from __future__ import annotations
 from typing import Any
 
 from .db import (
+    MAX_ENDPOINT_ALIAS_CHARACTERS,
+    MAX_REMOTE_RESOURCE_ID_CHARACTERS,
     _set_transaction_tenant_scope,
     validate_endpoint_alias,
     validate_remote_resource_id,
@@ -70,9 +72,10 @@ def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
     """Convert exact database primitives into redaction-safe worker input.
 
     PostgreSQL row and text evidence must use exact built-in tuple/list and string
-    types. Subclasses are rejected before shape, normalization, regex, equality,
-    or model construction so caller-controlled row factories cannot execute
-    overridden methods or preserve forged identity objects in worker input.
+    types. Subclasses are rejected before shape, length-bounded normalization,
+    regex, equality, or model construction so caller-controlled row factories
+    cannot execute overridden methods or preserve forged identity objects in
+    worker input.
     """
     if type(row) not in (tuple, list) or len(row) != 2:
         raise ValidationError(
@@ -91,6 +94,16 @@ def _candidate_from_persisted_row(row: Any) -> ReconciliationCandidate:
             field="reconciliation_candidate",
             value="<redacted>",
             reason="durable candidate identity has invalid primitive types",
+            message="Persisted reconciliation candidate is invalid",
+        )
+    if (
+        len(persisted_endpoint_alias) > MAX_ENDPOINT_ALIAS_CHARACTERS
+        or len(persisted_remote_batch_id) > MAX_REMOTE_RESOURCE_ID_CHARACTERS
+    ):
+        raise ValidationError(
+            field="reconciliation_candidate",
+            value="<redacted>",
+            reason="durable candidate identity exceeds supported length",
             message="Persisted reconciliation candidate is invalid",
         )
     try:
