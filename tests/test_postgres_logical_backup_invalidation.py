@@ -67,6 +67,56 @@ def test_logical_backup_rejects_foreign_owned_output_before_subprocess(
         os.close(descriptor)
 
 
+def test_logical_backup_invalidates_output_if_owner_changes_during_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ownership drift on the selected inode must invalidate generated backup bytes."""
+    path, descriptor = _open_private_output(tmp_path)
+    real_fstat = os.fstat
+    fstat_calls = 0
+
+    def owner_drift_fstat(target_descriptor: int) -> os.stat_result | SimpleNamespace:
+        nonlocal fstat_calls
+        status = real_fstat(target_descriptor)
+        fstat_calls += 1
+        if fstat_calls == 1:
+            return status
+        return SimpleNamespace(
+            st_mode=status.st_mode,
+            st_size=status.st_size,
+            st_nlink=status.st_nlink,
+            st_dev=status.st_dev,
+            st_ino=status.st_ino,
+            st_uid=status.st_uid + 1,
+        )
+
+    def successful_run(
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        output_descriptor = kwargs["stdout"]
+        assert type(output_descriptor) is int
+        os.write(output_descriptor, b"sensitive-logical-backup")
+        return subprocess.CompletedProcess(arguments, 0)
+
+    monkeypatch.setattr(logical_backup.os, "fstat", owner_drift_fstat)
+    monkeypatch.setattr(logical_backup.subprocess, "run", successful_run)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match="^PostgreSQL logical backup output became unsafe$",
+        ):
+            create_postgres_logical_backup(
+                "logical_backup_source",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+        assert path.read_bytes() == b""
+    finally:
+        os.close(descriptor)
+
+
 def test_failed_command_reports_failed_output_invalidation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
