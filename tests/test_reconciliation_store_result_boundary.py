@@ -255,3 +255,36 @@ def test_overlong_persisted_remote_batch_id_is_rejected_before_regex_validation(
         )
 
     assert validator_called is False
+
+
+def test_candidate_retrieval_requests_a_bounded_cursor_page() -> None:
+    """Candidate loading must request finite cursor materialization, never fetchall."""
+
+    class _BoundedCursor:
+        def __init__(self) -> None:
+            self.fetchmany_sizes: list[int] = []
+            self.fetchall_called = False
+
+        def execute(self, _sql: str, _params: tuple[Any, ...]) -> None:
+            return None
+
+        def fetchmany(self, size: int) -> list[tuple[str, str]]:
+            self.fetchmany_sizes.append(size)
+            return [("gateway-a", "batch-1")]
+
+        def fetchall(self) -> Any:
+            self.fetchall_called = True
+            raise AssertionError("unbounded fetchall must not be used")
+
+    cursor = _BoundedCursor()
+    candidates = load_reconciliation_candidates_in_transaction(
+        cursor,
+        "tenant-a",
+        max_candidates=1,
+    )
+
+    assert [(candidate.endpoint_alias, candidate.remote_batch_id) for candidate in candidates] == [
+        ("gateway-a", "batch-1")
+    ]
+    assert cursor.fetchmany_sizes == [2]
+    assert cursor.fetchall_called is False
