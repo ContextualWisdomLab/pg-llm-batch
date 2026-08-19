@@ -129,7 +129,7 @@ def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
 
 
 def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int:
-    """Fail closed unless exact trusted executable inode authority can be retained."""
+    """Fail closed unless root-owned executable inode authority can be retained."""
     try:
         executable_descriptor = os.open(
             pg_basebackup_executable,
@@ -143,14 +143,13 @@ def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int:
     try:
         try:
             status = os.fstat(executable_descriptor)
-            effective_user_id = os.geteuid()
         except (OSError, ValueError):
             raise PostgresPhysicalBaseBackupError(
                 "PostgreSQL physical base-backup executable is unsafe"
             ) from None
         if (
             not stat.S_ISREG(status.st_mode)
-            or status.st_uid not in {0, effective_user_id}
+            or status.st_uid != 0
             or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
         ):
             raise PostgresPhysicalBaseBackupError(
@@ -335,8 +334,9 @@ def create_postgres_physical_basebackup(
     the caller-owned descriptor after the snapshot therefore cannot redirect backup
     bytes, move the child stream offset, or redirect final validation. Environments
     unable to establish that process-descriptor reopening boundary fail closed before
-    ``pg_basebackup`` runs. The selected executable inode must also satisfy the local
-    trust policy and remain retained through subprocess creation.
+    ``pg_basebackup`` runs. The selected executable inode must be a root-owned regular
+    file with no group/other write authority and remains retained through subprocess
+    creation, so a non-root service account cannot rewrite the validated inode.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency. It does not establish a
