@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import os
+import stat
 import tarfile
 from pathlib import Path
 
@@ -44,6 +45,13 @@ def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
     """Return equivalent stat metadata with one explicit owner identity."""
     fields = list(status)
     fields[4] = user_id
+    return os.stat_result(fields)
+
+
+def _with_mode(status: os.stat_result, mode: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit mode."""
+    fields = list(status)
+    fields[0] = mode
     return os.stat_result(fields)
 
 
@@ -168,6 +176,40 @@ def test_verifier_must_be_owned_by_root(
         return observed
 
     monkeypatch.setattr(os, "fstat", foreign_executable_owner)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_INVALID_PARAMETERS,
+        ):
+            retained_descriptor = _retain_pg_verifybackup_executable(str(executable))
+    finally:
+        if retained_descriptor is not None:
+            os.close(retained_descriptor)
+
+
+@pytest.mark.parametrize("privilege_bit", [stat.S_ISUID, stat.S_ISGID])
+def test_verifier_rejects_setid_root_owned_executable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    privilege_bit: int,
+) -> None:
+    """A trusted verifier must not gain user or group identity through set-id bits."""
+    executable = tmp_path / "pg_verifybackup"
+    executable.write_bytes(b"set-id verifier\n")
+    executable.chmod(0o500)
+    real_fstat = os.fstat
+    executable_status = os.stat(executable, follow_symlinks=False)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+    retained_descriptor: int | None = None
+
+    def setid_root_owned_executable(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == executable_identity:
+            observed = _with_owner(observed, 0)
+            return _with_mode(observed, observed.st_mode | privilege_bit)
+        return observed
+
+    monkeypatch.setattr(os, "fstat", setid_root_owned_executable)
     try:
         with pytest.raises(
             PostgresPhysicalBackupVerificationError,
