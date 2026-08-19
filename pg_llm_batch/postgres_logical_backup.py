@@ -129,7 +129,7 @@ def _close_descriptor(file_descriptor: int) -> None:
 
 
 def _retain_pg_dump_executable(pg_dump_executable: str) -> int:
-    """Snapshot one root-owned pg_dump executable inode before child use."""
+    """Snapshot one root-owned non-set-id pg_dump executable inode before child use."""
     try:
         executable_descriptor = os.open(
             pg_dump_executable,
@@ -155,7 +155,7 @@ def _retain_pg_dump_executable(pg_dump_executable: str) -> int:
     if (
         not stat.S_ISREG(status.st_mode)
         or status.st_uid != 0
-        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID)
         or status.st_mode & 0o111 == 0
     ):
         _close_descriptor(executable_descriptor)
@@ -313,11 +313,12 @@ def create_postgres_logical_backup(
     the caller descriptor number or seeking it after the snapshot therefore cannot
     redirect backup bytes or move the child's output position. The absolute
     ``pg_dump`` token is opened non-blocking without following its final symlink,
-    rejected unless it is a root-owned regular executable without group/other write
-    authority, and executed only through the retained descriptor. This Linux
-    system-package boundary prevents a non-root service account from retaining chmod
-    or in-place rewrite authority to the validated executable bytes. Environments
-    without these process-descriptor boundaries fail closed before ``pg_dump`` runs.
+    rejected unless it is a root-owned regular executable without group/other write or
+    set-user-ID/set-group-ID authority, and executed only through the retained
+    descriptor. This Linux system-package boundary prevents a non-root service account
+    from retaining chmod, in-place rewrite, or executable set-id authority to the
+    validated bytes. Environments without these process-descriptor boundaries fail
+    closed before ``pg_dump`` runs.
     """
     if not _parameters_are_valid(
         service_name,
