@@ -80,7 +80,7 @@ def _close_descriptor(file_descriptor: int) -> None:
 
 
 def _retain_pg_verifybackup_executable(pg_verifybackup_executable: str) -> int:
-    """Snapshot one root-owned executable inode before child-process use."""
+    """Snapshot one root-owned non-set-id executable inode before child-process use."""
     try:
         executable_descriptor = os.open(
             pg_verifybackup_executable,
@@ -96,7 +96,7 @@ def _retain_pg_verifybackup_executable(pg_verifybackup_executable: str) -> int:
     if (
         not stat.S_ISREG(status.st_mode)
         or status.st_uid != 0
-        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID)
         or status.st_mode & 0o111 == 0
     ):
         _close_descriptor(executable_descriptor)
@@ -351,13 +351,13 @@ def verify_postgres_physical_backup_tar(
     backup member is extracted to a caller-visible path. The absolute trusted
     ``pg_verifybackup`` path is likewise opened non-blocking before regular-file
     validation and without following its final symlink, rejected unless it is a
-    root-owned executable without group/other write authority, and executed only
-    through the retained descriptor so a later pathname swap cannot replace the
-    accepted verifier inode. This Linux system-package boundary prevents a
-    non-root service account from retaining chmod or in-place rewrite authority
-    to the validated verifier bytes. Descriptor retention and local staging
-    failures cross fixed content-free package boundaries rather than exposing
-    host diagnostics.
+    root-owned executable without group/other write or set-user-ID/set-group-ID
+    authority, and executed only through the retained descriptor so a later
+    pathname swap cannot replace the accepted verifier inode. This Linux
+    system-package boundary prevents a non-root service account from retaining
+    chmod, in-place rewrite, or executable set-id authority to the validated
+    verifier bytes. Descriptor retention and local staging failures cross fixed
+    content-free package boundaries rather than exposing host diagnostics.
 
     PostgreSQL 18 cannot parse WAL directly from tar-format backups, so the
     verifier runs ``pg_verifybackup --format=tar --no-parse-wal`` and supplies
