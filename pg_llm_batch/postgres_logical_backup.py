@@ -96,7 +96,7 @@ def _duplicate_output_for_cleanup(output_descriptor: int) -> int:
     """Snapshot caller output authority before inspection, execution, and cleanup."""
     try:
         return os.dup(output_descriptor)
-    except (OSError, ValueError):
+    except (OSError, ValueError, OverflowError):
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output could not be retained"
         ) from None
