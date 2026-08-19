@@ -107,6 +107,19 @@ def _duplicate_output_for_cleanup(output_descriptor: int) -> int:
         ) from None
 
 
+def _open_independent_output(cleanup_descriptor: int) -> int:
+    """Open retained output with an independent open-file description and offset."""
+    try:
+        return os.open(
+            f"/proc/self/fd/{cleanup_descriptor}",
+            os.O_WRONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+    except (OSError, OverflowError, ValueError):
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base-backup output could not be isolated"
+        ) from None
+
+
 def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
     """Best-effort close a package-owned duplicate without replacing primary evidence."""
     try:
@@ -301,12 +314,14 @@ def create_postgres_physical_basebackup(
     A SHA-256 backup manifest is requested and pg_basebackup's normal durable-sync
     behavior is retained; this function additionally fsyncs the caller-owned stream.
 
-    The output descriptor is privately snapshotted before inspection and subprocess
-    execution. Replacing or closing the caller-owned descriptor after that snapshot
-    therefore cannot redirect backup bytes or final validation to another file. The
-    selected ``pg_basebackup`` inode must exist, satisfy the local trust policy, and be
-    retained through subprocess creation; an absent or mutable path never gains child
-    process authority after validation.
+    The output descriptor is privately snapshotted before inspection. The selected
+    file is then reopened through ``/proc/self/fd`` so subprocess output has an
+    independent open-file description and file offset. Replacing, closing, or seeking
+    the caller-owned descriptor after the snapshot therefore cannot redirect backup
+    bytes, move the child stream offset, or redirect final validation. Environments
+    unable to establish that process-descriptor reopening boundary fail closed before
+    ``pg_basebackup`` runs. The selected executable inode must also satisfy the local
+    trust policy and remain retained through subprocess creation.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency. It does not establish a
@@ -329,7 +344,7 @@ def create_postgres_physical_basebackup(
         initial_status = _inspect_initial_output(cleanup_descriptor)
         executable_descriptor = _retain_pg_basebackup_executable(pg_basebackup_executable)
         try:
-            execution_descriptor = _duplicate_output_for_cleanup(cleanup_descriptor)
+            execution_descriptor = _open_independent_output(cleanup_descriptor)
             try:
                 _run_pg_basebackup(
                     service_name=service_name,
