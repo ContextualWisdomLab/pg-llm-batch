@@ -26,7 +26,11 @@ def _parse_lsn(value: object) -> int | None:
     if _LSN_PATTERN.fullmatch(value) is None:
         return None
     high_text, low_text = value.split("/", 1)
-    return (int(high_text, 16) << 32) | int(low_text, 16)
+    high = int(high_text, 16)
+    low = int(low_text, 16)
+    if value != f"{high:X}/{low:08X}":
+        return None
+    return (high << 32) | low
 
 
 def _valid_wal_segment_size(value: object) -> bool:
