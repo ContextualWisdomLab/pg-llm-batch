@@ -62,7 +62,7 @@ def _output_is_owner_only(mode: int) -> bool:
 
 
 def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
-    """Require a caller-owned descriptor for one private empty regular file."""
+    """Require one private empty regular file through snapshotted descriptor authority."""
     try:
         status = os.fstat(output_descriptor)
         if not stat.S_ISREG(status.st_mode) or status.st_size != 0:
@@ -93,7 +93,7 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
 
 
 def _duplicate_output_for_cleanup(output_descriptor: int) -> int:
-    """Retain a stable descriptor for safe invalidation if the caller fd is replaced."""
+    """Snapshot caller output authority before inspection, execution, and cleanup."""
     try:
         return os.dup(output_descriptor)
     except (OSError, ValueError):
@@ -103,7 +103,7 @@ def _duplicate_output_for_cleanup(output_descriptor: int) -> int:
 
 
 def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
-    """Best-effort close the package-owned duplicate without replacing primary evidence."""
+    """Best-effort close package-owned output authority without replacing evidence."""
     try:
         os.close(cleanup_descriptor)
     except (OSError, ValueError):
@@ -123,7 +123,7 @@ def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[
 
 
 def _invalidate_output(cleanup_descriptor: int) -> None:
-    """Best-effort empty and rewind the originally inspected backup output."""
+    """Best-effort empty and rewind the snapshotted backup output."""
     try:
         os.ftruncate(cleanup_descriptor, 0)
     except (OSError, ValueError):
@@ -196,7 +196,7 @@ def _finalize_output(
     cleanup_descriptor: int,
     initial_status: os.stat_result,
 ) -> int:
-    """Synchronize and validate the same caller-owned backup file after pg_dump exits."""
+    """Synchronize and validate the snapshotted backup file after pg_dump exits."""
     try:
         os.fsync(cleanup_descriptor)
         status = os.fstat(output_descriptor)
@@ -239,10 +239,10 @@ def create_postgres_logical_backup(
     package never receives an output path or places connection material in process
     arguments. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
     inherited; the package owns ``PGSERVICE`` and the bounded ``PGCONNECT_TIMEOUT``.
-    The package retains one private duplicate of the initially inspected descriptor so
-    failure cleanup can empty and rewind only that original file even if another actor
-    replaces the caller descriptor number. Descriptor substitution fails closed without
-    mutating the unrelated replacement file.
+    Before any output inspection, the package duplicates the caller descriptor once and
+    uses only that package-owned descriptor for inspection, child stdout, finalization,
+    failure cleanup, and close. Replacing the caller descriptor number after that
+    snapshot therefore cannot redirect logical-backup bytes to an unrelated file.
     """
     if not _parameters_are_valid(
         service_name,
@@ -255,12 +255,12 @@ def create_postgres_logical_backup(
             "invalid PostgreSQL logical backup parameters"
         )
 
-    initial_status = _inspect_initial_output(output_descriptor)
     cleanup_descriptor = _duplicate_output_for_cleanup(output_descriptor)
     try:
+        initial_status = _inspect_initial_output(cleanup_descriptor)
         _run_pg_dump(
             service_name=service_name,
-            output_descriptor=output_descriptor,
+            output_descriptor=cleanup_descriptor,
             cleanup_descriptor=cleanup_descriptor,
             pg_dump_executable=pg_dump_executable,
             timeout_seconds=timeout_seconds,
@@ -268,7 +268,7 @@ def create_postgres_logical_backup(
         )
         return PostgresLogicalBackupResult(
             size_bytes=_finalize_output(
-                output_descriptor,
+                cleanup_descriptor,
                 cleanup_descriptor,
                 initial_status,
             )
