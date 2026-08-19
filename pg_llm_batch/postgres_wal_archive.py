@@ -113,12 +113,13 @@ def _inspect_archive_directory(
             "PostgreSQL WAL archive directory must be owner-only"
         )
     try:
-        directory_entries = os.listdir(archive_directory_descriptor)
+        with os.scandir(archive_directory_descriptor) as directory_entries:
+            has_entry = next(directory_entries, None) is not None
     except (OSError, ValueError):
         raise PostgresWalArchiveError(
             "PostgreSQL WAL archive directory could not be inspected"
         ) from None
-    if directory_entries:
+    if has_entry:
         raise PostgresWalArchiveError(
             "PostgreSQL WAL archive directory must start empty"
         )
@@ -241,11 +242,12 @@ def receive_postgres_wal_archive(
     authority before inspection and subprocess execution, so later caller-side close or
     descriptor-number replacement cannot redirect this invocation. The directory must
     be empty at invocation start so pre-existing local WAL state cannot choose
-    ``pg_receivewal``'s starting position. The subprocess sees only the package-owned
-    pinned directory as ``/proc/self/fd/<fd>``; no caller filesystem path or connection
-    secret is placed in argv. The selected replication slot must already exist and
-    remain an operator-governed server resource. The package never creates or drops
-    slots.
+    ``pg_receivewal``'s starting position. Emptiness inspection consumes at most one
+    directory entry rather than materializing attacker-influenced directory contents.
+    The subprocess sees only the package-owned pinned directory as
+    ``/proc/self/fd/<fd>``; no caller filesystem path or connection secret is placed in
+    argv. The selected replication slot must already exist and remain an
+    operator-governed server resource. The package never creates or drops slots.
 
     ``pg_receivewal`` is invoked with ``--synchronous`` so received WAL is flushed in
     real time, ``--no-loop`` so connection loss is returned to the caller rather than
