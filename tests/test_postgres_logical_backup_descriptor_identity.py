@@ -16,6 +16,40 @@ from pg_llm_batch.postgres_logical_backup import (
 )
 
 
+def test_logical_backup_child_uses_snapshotted_output_authority(
+    tmp_path, monkeypatch
+):
+    """Keep pg_dump bound to the inspected file after caller-fd substitution."""
+    original_path = tmp_path / "snapshotted.dump"
+    replacement_path = tmp_path / "replacement.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    replacement_descriptor = os.open(
+        replacement_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600
+    )
+
+    def substitute_caller_descriptor(argv, **kwargs):
+        assert kwargs["stdout"] != descriptor
+        os.dup2(replacement_descriptor, descriptor)
+        os.write(kwargs["stdout"], b"PGDMP-safe")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", substitute_caller_descriptor)
+    try:
+        assert create_postgres_logical_backup(
+            "safe_service",
+            descriptor,
+            pg_dump_executable="/usr/bin/pg_dump",
+        ) == PostgresLogicalBackupResult(size_bytes=10)
+
+        with original_path.open("rb") as original_file:
+            assert original_file.read() == b"PGDMP-safe"
+        with replacement_path.open("rb") as replacement_file:
+            assert replacement_file.read() == b""
+    finally:
+        os.close(replacement_descriptor)
+        os.close(descriptor)
+
+
 def test_logical_backup_rejects_output_descriptor_substitution(
     tmp_path, monkeypatch
 ):
