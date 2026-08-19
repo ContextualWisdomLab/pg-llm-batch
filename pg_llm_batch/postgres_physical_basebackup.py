@@ -115,21 +115,13 @@ def _close_cleanup_descriptor(cleanup_descriptor: int) -> None:
         pass
 
 
-def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int | None:
-    """Validate and retain exact executable inode authority when the path exists.
-
-    Existing executables are held open across child-process creation so replacing the
-    caller-selected path cannot redirect execution after validation. A path that is
-    absent at inspection remains the subprocess layer's ``unavailable`` case, which
-    preserves the public error contract without manufacturing executable authority.
-    """
+def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int:
+    """Fail closed unless exact trusted executable inode authority can be retained."""
     try:
         executable_descriptor = os.open(
             pg_basebackup_executable,
             os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
         )
-    except FileNotFoundError:
-        return None
     except (OSError, ValueError):
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup executable is unsafe"
@@ -187,7 +179,7 @@ def _run_pg_basebackup(
     output_descriptor: int,
     cleanup_descriptor: int,
     pg_basebackup_executable: str,
-    executable_descriptor: int | None,
+    executable_descriptor: int,
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> subprocess.CompletedProcess[bytes]:
@@ -202,12 +194,6 @@ def _run_pg_basebackup(
         "--no-password",
     ]
     environment = _libpq_environment(service_name, connect_timeout_seconds)
-    executable_kwargs: dict[str, object] = {}
-    if executable_descriptor is not None:
-        executable_kwargs = {
-            "executable": f"/proc/self/fd/{executable_descriptor}",
-            "pass_fds": (executable_descriptor,),
-        }
     try:
         completed = subprocess.run(
             arguments,
@@ -218,7 +204,8 @@ def _run_pg_basebackup(
             check=False,
             close_fds=True,
             env=environment,
-            **executable_kwargs,
+            executable=f"/proc/self/fd/{executable_descriptor}",
+            pass_fds=(executable_descriptor,),
         )
     except FileNotFoundError:
         _invalidate_output(cleanup_descriptor)
@@ -316,10 +303,10 @@ def create_postgres_physical_basebackup(
 
     The output descriptor is privately snapshotted before inspection and subprocess
     execution. Replacing or closing the caller-owned descriptor after that snapshot
-    therefore cannot redirect backup bytes or final validation to another file. When
-    the selected ``pg_basebackup`` exists, its validated inode is likewise retained
-    through subprocess creation so path replacement cannot redirect executable
-    authority to a different local file.
+    therefore cannot redirect backup bytes or final validation to another file. The
+    selected ``pg_basebackup`` inode must exist, satisfy the local trust policy, and be
+    retained through subprocess creation; an absent or mutable path never gains child
+    process authority after validation.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency. It does not establish a
@@ -363,7 +350,6 @@ def create_postgres_physical_basebackup(
             finally:
                 _close_cleanup_descriptor(execution_descriptor)
         finally:
-            if executable_descriptor is not None:
-                _close_cleanup_descriptor(executable_descriptor)
+            _close_cleanup_descriptor(executable_descriptor)
     finally:
         _close_cleanup_descriptor(cleanup_descriptor)
