@@ -40,16 +40,22 @@ def _private_backup_directory(tmp_path: Path, name: str) -> tuple[Path, int]:
     return directory, os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
 
 
+def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit owner identity."""
+    fields = list(status)
+    fields[4] = user_id
+    return os.stat_result(fields)
+
+
 def _foreign_owner(status: os.stat_result) -> os.stat_result:
     """Return equivalent stat metadata whose owner is another local principal."""
-    fields = list(status)
     effective_user_id = os.geteuid()
-    fields[4] = (
+    foreign_user_id = (
         effective_user_id + 1
         if effective_user_id < 2**31 - 1
         else effective_user_id - 1
     )
-    return os.stat_result(fields)
+    return _with_owner(status, foreign_user_id)
 
 
 def test_backup_directory_must_be_owned_by_effective_process_user(
@@ -109,7 +115,40 @@ def test_base_tar_must_be_owned_by_effective_process_user(
         os.close(descriptor)
 
 
-def test_verifier_must_be_owned_by_root_or_effective_process_user(
+def test_verifier_must_not_be_owned_by_effective_service_user(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A service account must not retain chmod or rewrite authority to verifier bytes."""
+    executable = tmp_path / "pg_verifybackup"
+    executable.write_bytes(b"service-owned verifier\n")
+    executable.chmod(0o500)
+    real_fstat = os.fstat
+    executable_status = os.stat(executable, follow_symlinks=False)
+    executable_identity = (executable_status.st_dev, executable_status.st_ino)
+    simulated_effective_user_id = 4242
+    retained_descriptor: int | None = None
+
+    def service_owned_executable(file_descriptor: int) -> os.stat_result:
+        observed = real_fstat(file_descriptor)
+        if (observed.st_dev, observed.st_ino) == executable_identity:
+            return _with_owner(observed, simulated_effective_user_id)
+        return observed
+
+    monkeypatch.setattr(os, "geteuid", lambda: simulated_effective_user_id)
+    monkeypatch.setattr(os, "fstat", service_owned_executable)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBackupVerificationError,
+            match=_INVALID_PARAMETERS,
+        ):
+            retained_descriptor = _retain_pg_verifybackup_executable(str(executable))
+    finally:
+        if retained_descriptor is not None:
+            os.close(retained_descriptor)
+
+
+def test_verifier_must_be_owned_by_root(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
