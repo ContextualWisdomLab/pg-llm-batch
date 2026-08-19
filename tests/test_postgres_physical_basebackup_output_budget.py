@@ -101,6 +101,46 @@ def test_physical_backup_rejects_one_byte_over_budget_and_invalidates_output(
         os.close(descriptor)
 
 
+def test_over_budget_stream_stops_a_continuing_producer_and_reaps_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Closing the bounded pipe must release a producer that keeps writing."""
+    path, descriptor = _open_private_output(tmp_path, "continuing-producer.tar")
+    producer_stopped = False
+
+    def continuing_run(
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        nonlocal producer_stopped
+        stdout = kwargs["stdout"]
+        assert type(stdout) is int
+        try:
+            while True:
+                os.write(stdout, b"x" * 65_536)
+        except BrokenPipeError:
+            producer_stopped = True
+            return subprocess.CompletedProcess(arguments, 1)
+
+    monkeypatch.setattr(subprocess, "run", continuing_run)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBaseBackupError,
+            match="^PostgreSQL physical base backup exceeded output byte budget$",
+        ):
+            create_postgres_physical_basebackup(
+                "physical_backup_source",
+                descriptor,
+                pg_basebackup_executable="/usr/bin/pg_basebackup",
+                maximum_output_bytes=1024,
+            )
+        assert producer_stopped is True
+        assert path.read_bytes() == b""
+    finally:
+        os.close(descriptor)
+
+
 def test_final_output_cannot_exceed_budget_through_caller_fd_writes(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
