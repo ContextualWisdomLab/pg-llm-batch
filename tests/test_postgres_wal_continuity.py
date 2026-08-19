@@ -185,6 +185,24 @@ def test_invalid_inputs_use_one_content_free_error(field: str, value: object) ->
         assess_postgres_wal_continuity(**arguments)  # type: ignore[arg-type]
 
 
+def test_noncanonical_zero_padded_lsn_fails_closed() -> None:
+    """Equivalent padded LSN spellings cannot create ambiguous continuity evidence."""
+    for field in ("start_lsn", "target_lsn"):
+        arguments: dict[str, object] = {
+            "wal_segment_size_bytes": 16 * _MIB,
+            "timeline_id": 1,
+            "start_lsn": "0/01000000",
+            "target_lsn": "0/01000000",
+            "segment_names": ("000000010000000000000001",),
+        }
+        arguments[field] = "00000000/01000000"
+        with pytest.raises(
+            PostgresWalContinuityError,
+            match="^invalid PostgreSQL WAL continuity request$",
+        ):
+            assess_postgres_wal_continuity(**arguments)  # type: ignore[arg-type]
+
+
 def test_reserved_first_wal_segment_cannot_be_positive_continuity_evidence() -> None:
     """PostgreSQL's deliberately unused segment 0/0 cannot be attested as WAL."""
     with pytest.raises(
