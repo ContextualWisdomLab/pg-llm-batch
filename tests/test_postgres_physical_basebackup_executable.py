@@ -51,6 +51,25 @@ def _foreign_owner(status: os.stat_result) -> os.stat_result:
     return os.stat_result(fields)
 
 
+def test_missing_pg_basebackup_is_rejected_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An absent executable path must not become mutable authority after validation."""
+    output_descriptor = _open_private_output(tmp_path)
+    executable = tmp_path / "pg_basebackup"
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR):
+            physical_basebackup.create_postgres_physical_basebackup(
+                "physical_backup_source",
+                output_descriptor,
+                pg_basebackup_executable=str(executable),
+            )
+    finally:
+        os.close(output_descriptor)
+
+
 def test_group_writable_pg_basebackup_is_rejected_before_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
