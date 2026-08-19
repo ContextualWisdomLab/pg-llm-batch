@@ -73,6 +73,41 @@ def test_fetchall_result_cannot_exceed_validated_candidate_budget() -> None:
         )
 
 
+def test_oversized_fetchall_page_is_rejected_before_full_snapshot_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An oversized exact result page must not be duplicated before budget rejection."""
+    rows = [
+        ("gateway-a", "batch-1"),
+        ("gateway-b", "batch-2"),
+    ]
+    real_tuple = tuple
+    copied_oversized_page = False
+
+    def _bounded_tuple(value: Any) -> tuple[Any, ...]:
+        nonlocal copied_oversized_page
+        if value is rows:
+            copied_oversized_page = True
+            raise AssertionError("oversized fetchall page was copied")
+        return real_tuple(value)
+
+    monkeypatch.setattr(
+        reconciliation_store,
+        "tuple",
+        _bounded_tuple,
+        raising=False,
+    )
+
+    with pytest.raises(ReconciliationStoreError):
+        load_reconciliation_candidates_in_transaction(
+            _Cursor(rows),
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert copied_oversized_page is False
+
+
 def test_fetchall_rows_are_snapshotted_before_conversion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
