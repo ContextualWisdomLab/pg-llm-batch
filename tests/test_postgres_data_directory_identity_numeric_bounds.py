@@ -28,7 +28,19 @@ def test_oversized_decimal_identifier_uses_content_free_package_error(
     control_script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
     control_script.chmod(0o700)
     control_fd = os.open(control_script, os.O_RDONLY)
+    real_fstat = os.fstat
+    control_status = real_fstat(control_fd)
+    control_identity = (control_status.st_dev, control_status.st_ino)
 
+    def root_owned_control_metadata(file_descriptor: int) -> os.stat_result:
+        status = real_fstat(file_descriptor)
+        if (status.st_dev, status.st_ino) == control_identity:
+            fields = list(status)
+            fields[4] = 0
+            return os.stat_result(fields)
+        return status
+
+    monkeypatch.setattr(os, "fstat", root_owned_control_metadata)
     output = b"Database system identifier: " + (b"9" * 5_000) + b"\n"
     monkeypatch.setattr(
         subprocess,
