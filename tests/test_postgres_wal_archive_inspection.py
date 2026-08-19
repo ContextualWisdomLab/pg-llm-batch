@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import os
+import subprocess
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 
@@ -23,10 +25,14 @@ def test_archive_directory_listing_failure_is_content_free(
     path.mkdir(mode=0o700)
     descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
 
-    def broken_listdir(_descriptor: int) -> list[str]:
+    def broken_scandir(_descriptor: int) -> NoReturn:
         raise OSError("sensitive archive directory diagnostic")
 
-    monkeypatch.setattr(os, "listdir", broken_listdir)
+    def forbidden_run(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("failed directory inspection must precede pg_receivewal")
+
+    monkeypatch.setattr(os, "scandir", broken_scandir)
+    monkeypatch.setattr(subprocess, "run", forbidden_run)
     try:
         with pytest.raises(PostgresWalArchiveError, match="could not be inspected") as caught:
             receive_postgres_wal_archive(
@@ -37,5 +43,35 @@ def test_archive_directory_listing_failure_is_content_free(
                 pg_receivewal_executable="/usr/bin/pg_receivewal",
             )
         assert "sensitive" not in str(caught.value)
+    finally:
+        os.close(descriptor)
+
+
+def test_archive_directory_emptiness_check_does_not_materialize_listing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Empty-directory proof must inspect at most one entry instead of building a list."""
+    path = tmp_path / "bounded-empty-wal-archive"
+    path.mkdir(mode=0o700)
+    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+
+    def forbidden_listdir(_descriptor: int) -> NoReturn:
+        raise AssertionError("archive emptiness must not materialize every directory entry")
+
+    monkeypatch.setattr(os, "listdir", forbidden_listdir)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda arguments, **_kwargs: subprocess.CompletedProcess(arguments, 0),
+    )
+    try:
+        receive_postgres_wal_archive(
+            "physical_replication_source",
+            "pg_llm_batch_archive",
+            "16/B374D848",
+            descriptor,
+            pg_receivewal_executable="/usr/bin/pg_receivewal",
+        )
     finally:
         os.close(descriptor)
