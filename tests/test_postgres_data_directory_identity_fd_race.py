@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from pg_llm_batch.postgres_restore_target import PostgresRestoreTargetIdentity
 
 
 _SYSTEM_IDENTIFIER = 7_394_886_517_812_345_678
+_CONTROL_IDENTITIES: set[tuple[int, int]] = set()
 
 
 def _open_directory(path: Path) -> int:
@@ -24,15 +26,44 @@ def _open_directory(path: Path) -> int:
     return os.open(path, os.O_RDONLY | os.O_DIRECTORY)
 
 
+def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit owner identity."""
+    fields = list(status)
+    fields[4] = user_id
+    return os.stat_result(fields)
+
+
+@pytest.fixture(autouse=True)
+def _model_root_owned_control_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Model temporary control scripts as trusted root-owned system tools."""
+    _CONTROL_IDENTITIES.clear()
+    real_fstat = os.fstat
+
+    def root_owned_control_metadata(file_descriptor: int) -> os.stat_result:
+        status = real_fstat(file_descriptor)
+        if (status.st_dev, status.st_ino) in _CONTROL_IDENTITIES:
+            return _with_owner(status, 0)
+        return status
+
+    monkeypatch.setattr(os, "fstat", root_owned_control_metadata)
+    yield
+    _CONTROL_IDENTITIES.clear()
+
+
 def _open_control_script(path: Path, system_identifier: int) -> int:
-    """Open one executable control-tool fixture capability."""
+    """Open and register one root-owned control-tool fixture capability."""
     path.write_text(
         "#!/bin/sh\n"
         f"printf 'Database system identifier:           {system_identifier}\\n'\n",
         encoding="utf-8",
     )
     path.chmod(0o700)
-    return os.open(path, os.O_RDONLY)
+    file_descriptor = os.open(path, os.O_RDONLY)
+    status = os.fstat(file_descriptor)
+    _CONTROL_IDENTITIES.add((status.st_dev, status.st_ino))
+    return file_descriptor
 
 
 def test_verifier_snapshots_control_fd_before_subprocess_use(
