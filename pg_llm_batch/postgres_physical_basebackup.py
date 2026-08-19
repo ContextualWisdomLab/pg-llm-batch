@@ -400,8 +400,9 @@ def _finalize_output(
     output_descriptor: int,
     cleanup_descriptor: int,
     initial_status: os.stat_result,
+    maximum_output_bytes: int,
 ) -> int:
-    """Synchronize and validate the same private backup file after pg_basebackup exits."""
+    """Synchronize and validate the same bounded private file after pg_basebackup exits."""
     try:
         os.fsync(cleanup_descriptor)
         status = os.fstat(output_descriptor)
@@ -411,6 +412,11 @@ def _finalize_output(
             "PostgreSQL physical base-backup output could not be finalized"
         ) from None
 
+    if status.st_size > maximum_output_bytes:
+        _invalidate_output(cleanup_descriptor)
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base backup exceeded output byte budget"
+        ) from None
     if status.st_size <= 0:
         _invalidate_output(cleanup_descriptor)
         raise PostgresPhysicalBaseBackupError(
@@ -452,16 +458,18 @@ def create_postgres_physical_basebackup(
     cluster material. The package never receives an output path and never places
     connection material in process arguments.
 
-    ``maximum_output_bytes`` is a strict finite ceiling for the selected output file.
-    It defaults to 64 GiB and may be raised through an exact positive integer up to
-    signed-bigint range when the caller has provisioned a larger private destination.
-    Provider stdout is drained through a package-owned pipe in bounded-memory chunks;
-    the copier reads at most one byte beyond the remaining allowance to detect an
-    overrun, never publishes that extra byte, closes the provider pipe on overrun, and
-    durably invalidates partial output. A provider that continues after the pipe is
-    closed remains subject to the existing command timeout and ``subprocess.run``
-    termination/reaping behavior. This is an output-stream byte ceiling, not a claim
-    about unrelated child-process filesystem use or host capacity.
+    ``maximum_output_bytes`` is a strict finite ceiling for provider bytes accepted by
+    the package and for the selected output size observed at finalization. It defaults
+    to 64 GiB and may be raised through an exact positive integer up to signed-bigint
+    range when the caller has provisioned a larger private destination. Provider stdout
+    is drained through a package-owned pipe in bounded-memory chunks; the copier reads
+    at most one byte beyond the remaining allowance to detect an overrun, never
+    publishes that extra byte, closes the provider pipe on overrun, and durably
+    invalidates partial output. A provider that continues after the pipe is closed
+    remains subject to the existing command timeout and ``subprocess.run``
+    termination/reaping behavior. The caller retains its own file authority, so this
+    boundary does not prevent caller mutation after successful return or claim host
+    filesystem capacity/quota enforcement.
 
     ``service_name`` is a libpq service selector, not a tenant authorization boundary.
     Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be inherited; the
@@ -521,6 +529,7 @@ def create_postgres_physical_basebackup(
                         execution_descriptor,
                         cleanup_descriptor,
                         initial_status,
+                        maximum_output_bytes,
                     )
                 )
             finally:
