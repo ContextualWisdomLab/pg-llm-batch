@@ -7,6 +7,7 @@ import io
 import os
 import subprocess
 import tarfile
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,35 @@ import pytest
 from pg_llm_batch.postgres_physical_backup_verification import (
     verify_postgres_physical_backup_tar,
 )
+
+
+_VERIFIER_IDENTITIES: set[tuple[int, int]] = set()
+
+
+def _with_owner(status: os.stat_result, user_id: int) -> os.stat_result:
+    """Return equivalent stat metadata with one explicit owner identity."""
+    fields = list(status)
+    fields[4] = user_id
+    return os.stat_result(fields)
+
+
+@pytest.fixture(autouse=True)
+def _model_root_owned_verifiers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[None]:
+    """Model temporary verifier fixtures as root-owned system executables."""
+    _VERIFIER_IDENTITIES.clear()
+    real_fstat = os.fstat
+
+    def root_owned_verifier_metadata(file_descriptor: int) -> os.stat_result:
+        status = real_fstat(file_descriptor)
+        if (status.st_dev, status.st_ino) in _VERIFIER_IDENTITIES:
+            return _with_owner(status, 0)
+        return status
+
+    monkeypatch.setattr(os, "fstat", root_owned_verifier_metadata)
+    yield
+    _VERIFIER_IDENTITIES.clear()
 
 
 def _write_backup(directory: Path) -> int:
@@ -37,10 +67,12 @@ def _write_backup(directory: Path) -> int:
 
 
 def _write_verifier(tmp_path: Path) -> Path:
-    """Create one private regular executable token for child-boundary tests."""
+    """Create and register one root-owned verifier fixture token."""
     executable = tmp_path / "pg_verifybackup"
     executable.write_bytes(b"trusted verifier\n")
     executable.chmod(0o500)
+    status = os.stat(executable, follow_symlinks=False)
+    _VERIFIER_IDENTITIES.add((status.st_dev, status.st_ino))
     return executable
 
 
