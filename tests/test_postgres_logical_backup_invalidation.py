@@ -6,10 +6,12 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NoReturn
 
 import pytest
 
+import pg_llm_batch.postgres_logical_backup as logical_backup
 from pg_llm_batch.postgres_logical_backup import (
     PostgresLogicalBackupError,
     create_postgres_logical_backup,
@@ -21,6 +23,48 @@ def _open_private_output(tmp_path: Path) -> tuple[Path, int]:
     path = tmp_path / "logical-backup.dump"
     descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
     return path, descriptor
+
+
+def test_logical_backup_rejects_foreign_owned_output_before_subprocess(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An inherited private FD owned by another principal must not receive backup bytes."""
+    _path, descriptor = _open_private_output(tmp_path)
+    real_fstat = os.fstat
+    subprocess_called = False
+
+    def foreign_owned_fstat(target_descriptor: int) -> SimpleNamespace:
+        status = real_fstat(target_descriptor)
+        return SimpleNamespace(
+            st_mode=status.st_mode,
+            st_size=status.st_size,
+            st_nlink=status.st_nlink,
+            st_dev=status.st_dev,
+            st_ino=status.st_ino,
+            st_uid=os.geteuid() + 1,
+        )
+
+    def forbidden_run(*_args: object, **_kwargs: object) -> NoReturn:
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("pg_dump must not run for foreign-owned output")
+
+    monkeypatch.setattr(logical_backup.os, "fstat", foreign_owned_fstat)
+    monkeypatch.setattr(logical_backup.subprocess, "run", forbidden_run)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match="^PostgreSQL logical backup output must be owned by the effective process user$",
+        ):
+            create_postgres_logical_backup(
+                "logical_backup_source",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+        assert not subprocess_called
+    finally:
+        os.close(descriptor)
 
 
 def test_failed_command_reports_failed_output_invalidation(
