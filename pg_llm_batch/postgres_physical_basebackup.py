@@ -162,6 +162,7 @@ def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int:
             not stat.S_ISREG(status.st_mode)
             or status.st_uid != 0
             or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or status.st_mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) == 0
         ):
             raise PostgresPhysicalBaseBackupError(
                 "PostgreSQL physical base-backup executable is unsafe"
@@ -485,9 +486,9 @@ def create_postgres_physical_basebackup(
     backup bytes, move the private output offset, or redirect final validation.
     Environments unable to establish that process-descriptor reopening boundary fail
     closed before ``pg_basebackup`` runs. The selected executable inode must be a
-    root-owned regular file with no group/other write authority and remains retained
-    through subprocess creation, so a non-root service account cannot rewrite the
-    validated inode.
+    root-owned regular file with at least one execute bit and no group/other write
+    authority and remains retained through subprocess creation, so a non-root service
+    account cannot rewrite the validated inode.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency within the configured time and
