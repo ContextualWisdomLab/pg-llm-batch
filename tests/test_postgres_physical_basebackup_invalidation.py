@@ -115,6 +115,43 @@ def test_failed_command_reports_failed_output_rewind(
         os.close(descriptor)
 
 
+def test_failed_command_requires_durable_output_invalidation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed backup must not claim invalidation when truncation cannot be synced."""
+    path, descriptor = _open_private_output(tmp_path)
+
+    def failed_run(
+        arguments: list[str],
+        **kwargs: object,
+    ) -> subprocess.CompletedProcess[bytes]:
+        output_descriptor = kwargs["stdout"]
+        assert type(output_descriptor) is int
+        os.write(output_descriptor, b"partial-sensitive-backup")
+        return subprocess.CompletedProcess(arguments, 3)
+
+    def failed_sync(_descriptor: int) -> NoReturn:
+        raise OSError("secret sync path")
+
+    monkeypatch.setattr(subprocess, "run", failed_run)
+    monkeypatch.setattr(os, "fsync", failed_sync)
+    try:
+        with pytest.raises(
+            PostgresPhysicalBaseBackupError,
+            match="^PostgreSQL physical base-backup output could not be invalidated$",
+        ) as caught:
+            create_postgres_physical_basebackup(
+                "physical_backup_source",
+                descriptor,
+                pg_basebackup_executable="/usr/bin/pg_basebackup",
+            )
+        assert "secret" not in str(caught.value)
+        assert path.read_bytes() == b""
+    finally:
+        os.close(descriptor)
+
+
 def test_cleanup_failure_preserves_process_control_signal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
