@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 import pg_llm_batch.reconciliation_store as reconciliation_store
+from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.reconciliation_store import (
     ReconciliationStoreError,
     load_reconciliation_candidates_in_transaction,
@@ -133,3 +134,35 @@ def test_mutable_row_is_snapshotted_before_conversion(
     assert candidates[0].endpoint_alias == "gateway-a"
     assert candidates[0].remote_batch_id == "batch-1"
     assert fetched_row == ["gateway-b", "batch-2"]
+
+
+def test_oversized_exact_row_is_rejected_before_snapshot_copy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invalid row cardinality must fail before copying unbounded row members."""
+    oversized_row = ["gateway-a", "batch-1", "unexpected"]
+    real_tuple = tuple
+    copied_oversized_row = False
+
+    def _bounded_tuple(value: Any) -> tuple[Any, ...]:
+        nonlocal copied_oversized_row
+        if value is oversized_row:
+            copied_oversized_row = True
+            raise AssertionError("oversized persisted row was copied")
+        return real_tuple(value)
+
+    monkeypatch.setattr(
+        reconciliation_store,
+        "tuple",
+        _bounded_tuple,
+        raising=False,
+    )
+
+    with pytest.raises(ValidationError):
+        load_reconciliation_candidates_in_transaction(
+            _Cursor([oversized_row]),
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert copied_oversized_row is False
