@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Regression contract for the reproducible release acceptance workflow."""
 
+import re
 from pathlib import Path
 
 try:
@@ -114,6 +115,13 @@ def test_release_acceptance_manual_preflight_is_fail_closed_and_read_only() -> N
     assert "contents: write" not in text
     assert "packages: write" not in text
     assert "id-token: write" not in text
+
+
+def test_release_acceptance_manual_ref_reads_are_data_only() -> None:
+    """Remote API bytes must be parsed as data, never fed directly into Python."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert re.search(r"curl\b[\s\S]{0,1000}\|\s*python\s+-c", text) is None
 
 
 def test_release_acceptance_manual_evidence_requires_unchanged_protected_main() -> None:
