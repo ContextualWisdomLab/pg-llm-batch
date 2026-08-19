@@ -101,3 +101,35 @@ def test_fetchall_rows_are_snapshotted_before_conversion(
     assert len(candidates) == 1
     assert len(converted_rows) == 1
     assert len(rows) == 2
+
+
+def test_mutable_row_is_snapshotted_before_conversion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Caller mutation must not rewrite a fetched candidate before validation."""
+    fetched_row = ["gateway-a", "batch-1"]
+    rows = [fetched_row]
+    converted_rows: list[Any] = []
+    original_converter = reconciliation_store._candidate_from_persisted_row
+
+    def _mutate_before_conversion(row: Any) -> Any:
+        fetched_row[:] = ["gateway-b", "batch-2"]
+        converted_rows.append(row)
+        return original_converter(row)
+
+    monkeypatch.setattr(
+        reconciliation_store,
+        "_candidate_from_persisted_row",
+        _mutate_before_conversion,
+    )
+
+    candidates = load_reconciliation_candidates_in_transaction(
+        _Cursor(rows),
+        "tenant-a",
+        max_candidates=1,
+    )
+
+    assert converted_rows == [("gateway-a", "batch-1")]
+    assert candidates[0].endpoint_alias == "gateway-a"
+    assert candidates[0].remote_batch_id == "batch-1"
+    assert fetched_row == ["gateway-b", "batch-2"]
