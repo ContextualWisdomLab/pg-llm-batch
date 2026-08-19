@@ -39,6 +39,7 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
 ):
     path, descriptor = _open_private_output(tmp_path)
     observed = {}
+    caller_status = os.fstat(descriptor)
 
     monkeypatch.setenv("PGSERVICEFILE", "/run/secrets/pg_service.conf")
     monkeypatch.setenv("PGPASSWORD", "credential-value")
@@ -52,6 +53,7 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
     def fake_run(argv, **kwargs):
         observed["argv"] = argv
         observed["kwargs"] = kwargs
+        observed["stdout_status"] = os.fstat(kwargs["stdout"])
         return _write_successfully(argv, **kwargs)
 
     monkeypatch.setattr(logical_backup.subprocess, "run", fake_run)
@@ -69,7 +71,11 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
             "--format=custom",
             "--no-password",
         ]
-        assert observed["kwargs"]["stdout"] == descriptor
+        assert observed["kwargs"]["stdout"] != descriptor
+        assert (
+            observed["stdout_status"].st_dev,
+            observed["stdout_status"].st_ino,
+        ) == (caller_status.st_dev, caller_status.st_ino)
         assert observed["kwargs"]["stderr"] is subprocess.DEVNULL
         assert observed["kwargs"]["stdin"] is subprocess.DEVNULL
         assert observed["kwargs"]["timeout"] == 31
@@ -147,7 +153,7 @@ def test_logical_backup_rejects_closed_descriptor_before_subprocess(tmp_path, mo
     )
     with pytest.raises(
         PostgresLogicalBackupError,
-        match="^PostgreSQL logical backup output could not be inspected$",
+        match="^PostgreSQL logical backup output could not be retained$",
     ):
         create_postgres_logical_backup(
             "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
@@ -396,15 +402,13 @@ def test_logical_backup_normalizes_success_path_fsync_failure(tmp_path, monkeypa
 def test_logical_backup_normalizes_final_fstat_failure(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
     real_fstat = os.fstat
-    target_seen = False
+    fstat_calls = 0
 
     def flaky_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal fstat_calls
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
-            return status
-        if not target_seen:
-            target_seen = True
+        fstat_calls += 1
+        if fstat_calls == 1:
             return status
         raise OSError("secret final stat detail")
 
@@ -436,20 +440,20 @@ def test_logical_backup_rejects_unsafe_final_output_state(
 ):
     _path, descriptor = _open_private_output(tmp_path)
     real_fstat = os.fstat
-    target_seen = False
+    fstat_calls = 0
 
     def changed_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal fstat_calls
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
-            return status
-        if not target_seen:
-            target_seen = True
+        fstat_calls += 1
+        if fstat_calls == 1:
             return status
         values = {
             "st_mode": status.st_mode,
             "st_nlink": status.st_nlink,
             "st_size": status.st_size,
+            "st_dev": status.st_dev,
+            "st_ino": status.st_ino,
         }
         values.update(final_override)
         return SimpleNamespace(**values)
