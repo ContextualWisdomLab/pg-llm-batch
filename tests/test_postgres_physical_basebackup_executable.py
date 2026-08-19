@@ -146,6 +146,26 @@ def test_group_writable_pg_basebackup_is_rejected_before_execution(
         os.close(output_descriptor)
 
 
+def test_non_executable_pg_basebackup_is_rejected_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-executable retained inode must fail before child-process execution."""
+    output_descriptor = _open_private_output(tmp_path)
+    executable = _write_executable(tmp_path, 0o640)
+    _mock_executable_owner(monkeypatch, executable, 0)
+    monkeypatch.setattr(subprocess, "run", _forbidden_subprocess)
+    try:
+        with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR):
+            physical_basebackup.create_postgres_physical_basebackup(
+                "physical_backup_source",
+                output_descriptor,
+                pg_basebackup_executable=str(executable),
+            )
+    finally:
+        os.close(output_descriptor)
+
+
 def test_foreign_owned_pg_basebackup_is_rejected_before_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
