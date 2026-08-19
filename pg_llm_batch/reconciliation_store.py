@@ -183,9 +183,21 @@ def load_reconciliation_candidates_in_transaction(
     fetched_page = tuple(rows)
     if len(fetched_page) > budget:
         raise ReconciliationStoreError()
-    row_snapshot = tuple(
-        tuple(row) if type(row) is list else row for row in fetched_page
-    )
+
+    row_snapshot: list[Any] = []
+    for row in fetched_page:
+        if type(row) is list:
+            bounded_row = row[:3]
+            if len(bounded_row) != 2:
+                raise ValidationError(
+                    field="reconciliation_candidate",
+                    value="<redacted>",
+                    reason="durable candidate row has an invalid shape",
+                    message="Persisted reconciliation candidate is invalid",
+                )
+            row_snapshot.append(tuple(bounded_row))
+        else:
+            row_snapshot.append(row)
 
     try:
         return tuple(_candidate_from_persisted_row(row) for row in row_snapshot)
