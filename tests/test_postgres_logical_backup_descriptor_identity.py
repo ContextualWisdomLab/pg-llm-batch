@@ -122,6 +122,28 @@ def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
         os.close(descriptor)
 
 
+def test_logical_backup_normalizes_oversized_output_descriptor(monkeypatch):
+    """Bound platform integer-conversion failure before any child process runs."""
+    subprocess_called = False
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run")
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", forbidden_run)
+    with pytest.raises(
+        PostgresLogicalBackupError,
+        match=r"^PostgreSQL logical backup output could not be retained$",
+    ):
+        create_postgres_logical_backup(
+            "safe_service",
+            1 << 1000,
+            pg_dump_executable="/usr/bin/pg_dump",
+        )
+    assert subprocess_called is False
+
+
 def test_logical_backup_cleanup_close_failure_preserves_success(
     tmp_path, monkeypatch
 ):
