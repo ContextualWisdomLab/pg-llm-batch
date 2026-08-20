@@ -24,6 +24,25 @@ _TRUSTED_EXECUTABLE_BYTES = b"trusted pg_receivewal bytes\n"
 _INVALID_PARAMETERS = "^invalid PostgreSQL WAL archive parameters$"
 
 
+@pytest.fixture(autouse=True)
+def _accept_bounded_filesystem_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Isolate executable-authority tests from host mount topology."""
+
+    def accept_bounded_filesystem(
+        _archive_directory_descriptor: int,
+        maximum_archive_bytes: int,
+    ) -> int:
+        return maximum_archive_bytes
+
+    monkeypatch.setattr(
+        wal_archive,
+        "_inspect_archive_filesystem_budget",
+        accept_bounded_filesystem,
+    )
+
+
 def _open_private_archive(tmp_path: Path, name: str) -> int:
     """Create and open one owner-only empty WAL archive directory."""
     archive_path = tmp_path / name
