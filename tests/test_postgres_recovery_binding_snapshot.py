@@ -32,32 +32,30 @@ def _bind_receipt(
     )
 
 
-def test_backup_mutation_after_provenance_check_cannot_rewrite_receipt(
+def test_backup_mutation_after_validation_cannot_rewrite_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A post-check mutation cannot replace the inspected backup digest or size."""
+    """A post-validation mutation cannot replace inspected backup identity."""
     backup_path = tmp_path / "backup.dump"
     backup_path.write_bytes(b"inspected-backup")
     schema_evidence = inspect_postgres_schema()
     backup_evidence = inspect_postgres_backup_artifact(str(backup_path))
     inspected_sha256 = backup_evidence.sha256
     inspected_size_bytes = backup_evidence.size_bytes
-    real_was_inspected = (
-        postgres_recovery_binding.postgres_backup_artifact_evidence_was_inspected
-    )
+    real_validate = postgres_recovery_binding._binding_inputs_are_valid
 
-    def mutate_after_check(evidence: object) -> bool:
-        valid = real_was_inspected(evidence)
+    def mutate_after_validation(*args: object) -> bool:
+        valid = real_validate(*args)
         assert valid
-        object.__setattr__(evidence, "sha256", "f" * 64)
-        object.__setattr__(evidence, "size_bytes", inspected_size_bytes + 1)
+        object.__setattr__(backup_evidence, "sha256", "f" * 64)
+        object.__setattr__(backup_evidence, "size_bytes", inspected_size_bytes + 1)
         return True
 
     monkeypatch.setattr(
         postgres_recovery_binding,
-        "postgres_backup_artifact_evidence_was_inspected",
-        mutate_after_check,
+        "_binding_inputs_are_valid",
+        mutate_after_validation,
     )
 
     receipt = _bind_receipt(schema_evidence, backup_evidence)
@@ -66,28 +64,28 @@ def test_backup_mutation_after_provenance_check_cannot_rewrite_receipt(
     assert receipt.backup_size_bytes == inspected_size_bytes
 
 
-def test_schema_mutation_after_provenance_check_cannot_rewrite_receipt(
+def test_schema_mutation_after_validation_cannot_rewrite_receipt(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A post-check mutation cannot replace the inspected packaged-schema digest."""
+    """A post-validation mutation cannot replace inspected packaged-schema identity."""
     backup_path = tmp_path / "backup.dump"
     backup_path.write_bytes(b"inspected-backup")
     schema_evidence = inspect_postgres_schema()
     backup_evidence = inspect_postgres_backup_artifact(str(backup_path))
     inspected_sha256 = schema_evidence.sha256
-    real_was_inspected = postgres_recovery_binding.postgres_schema_evidence_was_inspected
+    real_validate = postgres_recovery_binding._binding_inputs_are_valid
 
-    def mutate_after_check(evidence: object) -> bool:
-        valid = real_was_inspected(evidence)
+    def mutate_after_validation(*args: object) -> bool:
+        valid = real_validate(*args)
         assert valid
-        object.__setattr__(evidence, "sha256", "e" * 64)
+        object.__setattr__(schema_evidence, "sha256", "e" * 64)
         return True
 
     monkeypatch.setattr(
         postgres_recovery_binding,
-        "postgres_schema_evidence_was_inspected",
-        mutate_after_check,
+        "_binding_inputs_are_valid",
+        mutate_after_validation,
     )
 
     receipt = _bind_receipt(schema_evidence, backup_evidence)
