@@ -433,7 +433,7 @@ def _finalize_output(
         _invalidate_output(cleanup_descriptor)
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output became unsafe"
-        ) from None
+        )
     if (status.st_dev, status.st_ino) != (initial_status.st_dev, initial_status.st_ino):
         _invalidate_output(cleanup_descriptor)
         raise PostgresLogicalBackupError(
