@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import stat
@@ -74,13 +75,14 @@ def _output_is_owner_only(mode: int) -> bool:
 
 
 def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
-    """Require one private empty regular file through snapshotted descriptor authority."""
+    """Require one private empty writable file through snapshotted descriptor authority."""
     try:
         status = os.fstat(output_descriptor)
         if not stat.S_ISREG(status.st_mode) or status.st_size != 0:
             raise PostgresLogicalBackupError(
                 "PostgreSQL logical backup output must be a private empty regular file"
             )
+        access_mode = fcntl.fcntl(output_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
         offset = os.lseek(output_descriptor, 0, os.SEEK_CUR)
     except PostgresLogicalBackupError:
         raise
@@ -89,6 +91,10 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
             "PostgreSQL logical backup output could not be inspected"
         ) from None
 
+    if access_mode not in (os.O_WRONLY, os.O_RDWR):
+        raise PostgresLogicalBackupError(
+            "PostgreSQL logical backup output descriptor must be writable"
+        )
     if offset != 0:
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output must start at offset zero"
@@ -448,17 +454,19 @@ def create_postgres_logical_backup(
     invalidates the retained output.
 
     Before output inspection, the package duplicates the caller descriptor for stable
-    cleanup authority. It then reopens that retained file through ``/proc/self/fd`` so
-    package copying uses an independent open-file description and file offset.
-    Replacing the caller descriptor number or seeking it after the snapshot therefore
-    cannot redirect backup bytes or move the package output position. The absolute
-    ``pg_dump`` token is opened non-blocking without following its final symlink,
-    rejected unless it is a root-owned regular executable without group/other write or
-    set-user-ID/set-group-ID authority, and executed only through the retained
-    descriptor. This Linux system-package boundary prevents a non-root service account
-    from retaining chmod, in-place rewrite, or executable set-id authority to the
-    validated bytes. Environments without these process-descriptor boundaries fail
-    closed before ``pg_dump`` runs.
+    cleanup authority. That retained descriptor must itself carry write access; the
+    package never uses ``/proc/self/fd`` to widen a caller's read-only capability. It
+    then reopens that retained file through ``/proc/self/fd`` so package copying uses
+    an independent open-file description and file offset. Replacing the caller
+    descriptor number or seeking it after the snapshot therefore cannot redirect
+    backup bytes or move the package output position. The absolute ``pg_dump`` token
+    is opened non-blocking without following its final symlink, rejected unless it is
+    a root-owned regular executable without group/other write or set-user-ID/set-group-ID
+    authority, and executed only through the retained descriptor. This Linux
+    system-package boundary prevents a non-root service account from retaining chmod,
+    in-place rewrite, or executable set-id authority to the validated bytes.
+    Environments without these process-descriptor boundaries fail closed before
+    ``pg_dump`` runs.
     """
     if not _parameters_are_valid(
         service_name,
