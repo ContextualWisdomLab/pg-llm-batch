@@ -1,13 +1,16 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regress caller descriptor substitution during PostgreSQL logical restore."""
+"""Regress caller descriptor authority races during PostgreSQL logical restore."""
 
 from __future__ import annotations
 
 import os
 import subprocess
 
+import pytest
+
 import pg_llm_batch.postgres_logical_restore as logical_restore
 from pg_llm_batch.postgres_logical_restore import (
+    PostgresLogicalRestoreError,
     PostgresLogicalRestoreResult,
     restore_postgres_logical_backup,
 )
@@ -67,6 +70,96 @@ def test_restore_retains_inspected_archive_when_caller_replaces_descriptor(
     finally:
         os.close(caller_descriptor)
         os.close(replacement_descriptor)
+
+
+def test_restore_isolates_child_offset_from_caller_seek(tmp_path, monkeypatch):
+    """Keep caller seeks from moving the package-owned archive read position."""
+    payload = b"PGDMP-offset-authority"
+    caller_descriptor = _open_private_archive(tmp_path, "offset.dump", payload)
+    observed_child_offsets: list[int] = []
+
+    def seek_caller_then_run(argv, **kwargs):
+        os.lseek(caller_descriptor, 5, os.SEEK_SET)
+        observed_child_offsets.append(os.lseek(kwargs["stdin"], 0, os.SEEK_CUR))
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_restore.subprocess, "run", seek_caller_then_run)
+    try:
+        result = restore_postgres_logical_backup(
+            "isolated_restore",
+            caller_descriptor,
+            source_superusers_trusted=True,
+            pg_restore_executable="/usr/bin/pg_restore",
+        )
+        assert result == PostgresLogicalRestoreResult(size_bytes=len(payload))
+        assert observed_child_offsets == [0]
+    finally:
+        os.close(caller_descriptor)
+
+
+def test_restore_rejects_write_only_archive_without_widening_authority(
+    tmp_path, monkeypatch
+):
+    """Reject a write-only caller descriptor before any package reopen or child run."""
+    archive_path = tmp_path / "write-only.dump"
+    caller_descriptor = os.open(
+        archive_path,
+        os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+        0o600,
+    )
+    os.write(caller_descriptor, b"PGDMP-write-only")
+    os.lseek(caller_descriptor, 0, os.SEEK_SET)
+    monkeypatch.setattr(
+        logical_restore.subprocess,
+        "run",
+        lambda *_args, **_kwargs: pytest.fail("subprocess must not run"),
+    )
+    try:
+        with pytest.raises(
+            PostgresLogicalRestoreError,
+            match="^PostgreSQL logical restore archive descriptor must be readable$",
+        ):
+            restore_postgres_logical_backup(
+                "isolated_restore",
+                caller_descriptor,
+                source_superusers_trusted=True,
+                pg_restore_executable="/usr/bin/pg_restore",
+            )
+    finally:
+        os.close(caller_descriptor)
+
+
+def test_restore_normalizes_independent_archive_reopen_failure(tmp_path, monkeypatch):
+    """Fail closed without leaking platform detail when retained authority cannot reopen."""
+    payload = b"PGDMP-reopen"
+    caller_descriptor = _open_private_archive(tmp_path, "reopen.dump", payload)
+    real_open = os.open
+
+    def failing_reopen(path, flags, *args):
+        if type(path) is str and path.startswith("/proc/self/fd/"):
+            raise OSError("secret procfs detail")
+        return real_open(path, flags, *args)
+
+    monkeypatch.setattr(logical_restore.os, "open", failing_reopen)
+    monkeypatch.setattr(
+        logical_restore.subprocess,
+        "run",
+        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0),
+    )
+    try:
+        with pytest.raises(
+            PostgresLogicalRestoreError,
+            match="^PostgreSQL logical restore archive could not be isolated$",
+        ) as caught:
+            restore_postgres_logical_backup(
+                "isolated_restore",
+                caller_descriptor,
+                source_superusers_trusted=True,
+                pg_restore_executable="/usr/bin/pg_restore",
+            )
+        assert "secret" not in str(caught.value)
+    finally:
+        os.close(caller_descriptor)
 
 
 def test_restore_does_not_mask_success_when_private_descriptor_close_fails(
