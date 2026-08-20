@@ -82,6 +82,24 @@ def _archive_metadata(status: object) -> tuple[object, ...]:
     )
 
 
+def _retain_archive_descriptor(input_descriptor: int) -> int:
+    """Snapshot caller file authority before inspecting or executing the restore."""
+    try:
+        return os.dup(input_descriptor)
+    except (OSError, ValueError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+
+
+def _close_retained_archive_descriptor(input_descriptor: int) -> None:
+    """Best-effort close package-owned archive authority without masking evidence."""
+    try:
+        os.close(input_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
 def _inspect_initial_archive(
     input_descriptor: int,
     maximum_archive_size_bytes: int,
@@ -212,27 +230,32 @@ def restore_postgres_logical_backup(
     connect_timeout_seconds: int = 15,
     maximum_archive_size_bytes: int = _DEFAULT_MAXIMUM_ARCHIVE_SIZE_BYTES,
 ) -> PostgresLogicalRestoreResult:
-    """Restore one bounded custom archive through a caller-owned file descriptor.
+    """Restore one bounded custom archive through retained caller file authority.
 
     The caller must explicitly assert that the archive originates from trusted source
     superusers. This assertion is a caller-owned precondition, not package proof that
     archive definitions, ownership, or privileges are safe. The caller also selects
     the target libpq service and is responsible for making that service an isolated
     recovery target; the service name is not an authorization or proof-of-isolation
-    boundary. The package does not receive an archive path, place credentials in
-    process arguments, or reflect archive/database content in diagnostics. Only
-    ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be inherited, so ambient
-    host/database/options/SSL-mode variables cannot silently redirect or weaken the
-    target session. The validated non-secret service selector is supplied through
-    ``--dbname=service=...`` so ``pg_restore`` performs a direct database restore
-    rather than merely rendering SQL. The command runs with one transaction and exits
-    on the first SQL error, so timeout or execution failure does not intentionally
-    commit a partial package restore. Descriptor identity and observable archive
-    metadata are revalidated after the restore to reject in-place mutation detected
-    during execution. Custom-format ``pg_restore`` seeks to the table of contents
-    and data blocks, so a successful restore is not required to leave the
-    descriptor at end-of-file. A post-restore metadata mismatch means the SQL
-    transaction may already have committed; callers must treat that error as
+    boundary. The package snapshots the caller descriptor with a private duplicate
+    before inspection and uses only that retained descriptor for inspection,
+    ``pg_restore``, and final metadata verification. Replacing the caller's numeric
+    descriptor after entry therefore cannot substitute different archive bytes for the
+    child. The caller keeps ownership of the original descriptor; the package closes
+    only its retained duplicate. The package does not receive an archive path, place
+    credentials in process arguments, or reflect archive/database content in
+    diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
+    inherited, so ambient host/database/options/SSL-mode variables cannot silently
+    redirect or weaken the target session. The validated non-secret service selector
+    is supplied through ``--dbname=service=...`` so ``pg_restore`` performs a direct
+    database restore rather than merely rendering SQL. The command runs with one
+    transaction and exits on the first SQL error, so timeout or execution failure does
+    not intentionally commit a partial package restore. Descriptor identity and
+    observable archive metadata are revalidated after the restore to reject in-place
+    mutation detected during execution. Custom-format ``pg_restore`` seeks to the
+    table of contents and data blocks, so a successful restore is not required to
+    leave the descriptor at end-of-file. A post-restore metadata mismatch means the
+    SQL transaction may already have committed; callers must treat that error as
     unsafe rather than as proof that no restore occurred.
     """
     if not _parameters_are_valid(
@@ -252,17 +275,21 @@ def restore_postgres_logical_backup(
             "PostgreSQL logical restore requires trusted source superusers"
         )
 
-    initial_status = _inspect_initial_archive(
-        input_descriptor,
-        maximum_archive_size_bytes,
-    )
-    _run_pg_restore(
-        service_name=service_name,
-        input_descriptor=input_descriptor,
-        pg_restore_executable=pg_restore_executable,
-        timeout_seconds=timeout_seconds,
-        connect_timeout_seconds=connect_timeout_seconds,
-    )
-    return PostgresLogicalRestoreResult(
-        size_bytes=_verify_archive_unchanged(input_descriptor, initial_status)
-    )
+    retained_descriptor = _retain_archive_descriptor(input_descriptor)
+    try:
+        initial_status = _inspect_initial_archive(
+            retained_descriptor,
+            maximum_archive_size_bytes,
+        )
+        _run_pg_restore(
+            service_name=service_name,
+            input_descriptor=retained_descriptor,
+            pg_restore_executable=pg_restore_executable,
+            timeout_seconds=timeout_seconds,
+            connect_timeout_seconds=connect_timeout_seconds,
+        )
+        return PostgresLogicalRestoreResult(
+            size_bytes=_verify_archive_unchanged(retained_descriptor, initial_status)
+        )
+    finally:
+        _close_retained_archive_descriptor(retained_descriptor)
