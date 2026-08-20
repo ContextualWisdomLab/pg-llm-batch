@@ -183,13 +183,14 @@ def _run_pg_receivewal(
     slot_name: str,
     end_lsn: str,
     archive_directory_descriptor: int,
+    pg_receivewal_executable: str,
     pg_receivewal_descriptor: int,
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> subprocess.CompletedProcess[bytes]:
     """Receive synchronously flushed WAL to one pinned directory through an existing slot."""
     arguments = [
-        f"/proc/self/fd/{pg_receivewal_descriptor}",
+        pg_receivewal_executable,
         f"--directory=/proc/self/fd/{archive_directory_descriptor}",
         f"--endpos={end_lsn}",
         f"--slot={slot_name}",
@@ -207,7 +208,12 @@ def _run_pg_receivewal(
             timeout=timeout_seconds,
             check=False,
             close_fds=True,
-            pass_fds=(archive_directory_descriptor, pg_receivewal_descriptor),
+            executable=f"/proc/self/fd/{pg_receivewal_descriptor}",
+            pass_fds=tuple(
+                dict.fromkeys(
+                    (archive_directory_descriptor, pg_receivewal_descriptor)
+                )
+            ),
             env=environment,
         )
     except FileNotFoundError:
@@ -331,6 +337,7 @@ def receive_postgres_wal_archive(
                 slot_name=slot_name,
                 end_lsn=end_lsn,
                 archive_directory_descriptor=private_archive_descriptor,
+                pg_receivewal_executable=pg_receivewal_executable,
                 pg_receivewal_descriptor=executable_descriptor,
                 timeout_seconds=timeout_seconds,
                 connect_timeout_seconds=connect_timeout_seconds,
