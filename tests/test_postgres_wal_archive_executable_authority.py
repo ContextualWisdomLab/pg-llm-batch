@@ -7,10 +7,12 @@ import os
 import stat
 import subprocess
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NoReturn
 
 import pytest
 
+import pg_llm_batch.postgres_wal_archive as wal_archive
 from pg_llm_batch.postgres_wal_archive import (
     PostgresWalArchiveError,
     PostgresWalArchiveResult,
@@ -186,3 +188,116 @@ def test_receiver_rejects_set_id_receivewal(
             )
     finally:
         os.close(archive_descriptor)
+
+
+def test_receiver_rejects_symlinked_receivewal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A final symlink must not redirect the executable selected for child use."""
+    archive_descriptor = _open_private_archive(tmp_path, "symlink-archive")
+    target = _write_receivewal(tmp_path, name="trusted-pg_receivewal")
+    executable_path = tmp_path / "pg_receivewal"
+    executable_path.symlink_to(target)
+
+    def forbidden_run(*_args: object, **_kwargs: object) -> NoReturn:
+        raise AssertionError("symlinked pg_receivewal must fail before execution")
+
+    monkeypatch.setattr(subprocess, "run", forbidden_run)
+    try:
+        with pytest.raises(PostgresWalArchiveError, match=_INVALID_PARAMETERS):
+            receive_postgres_wal_archive(
+                "physical_replication_source",
+                "pg_llm_batch_archive",
+                "16/B374D848",
+                archive_descriptor,
+                pg_receivewal_executable=str(executable_path),
+            )
+    finally:
+        os.close(archive_descriptor)
+
+
+def test_missing_receivewal_has_one_content_free_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing executable must not disclose the selected host path."""
+
+    def missing_open(*_args: object, **_kwargs: object) -> NoReturn:
+        raise FileNotFoundError("sensitive missing executable path")
+
+    monkeypatch.setattr(wal_archive.os, "open", missing_open)
+    with pytest.raises(
+        PostgresWalArchiveError,
+        match="^PostgreSQL WAL archive executable unavailable$",
+    ) as caught:
+        wal_archive._retain_pg_receivewal_executable("/secret/pg_receivewal")
+    assert "sensitive" not in str(caught.value)
+    assert "/secret" not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [OSError("sensitive executable open diagnostic"), ValueError("sensitive integer")],
+)
+def test_receivewal_open_failure_is_content_free(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+) -> None:
+    """OS and platform conversion failures cross the fixed parameter boundary."""
+
+    def failed_open(*_args: object, **_kwargs: object) -> NoReturn:
+        raise failure
+
+    monkeypatch.setattr(wal_archive.os, "open", failed_open)
+    with pytest.raises(PostgresWalArchiveError, match=_INVALID_PARAMETERS) as caught:
+        wal_archive._retain_pg_receivewal_executable("/usr/bin/pg_receivewal")
+    assert "sensitive" not in str(caught.value)
+
+
+def test_receivewal_fstat_failure_closes_retained_authority(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-open inspection failure must not leak package-owned authority."""
+    close_attempts: list[int] = []
+
+    monkeypatch.setattr(wal_archive.os, "open", lambda *_args, **_kwargs: 91)
+
+    def failed_fstat(_file_descriptor: int) -> NoReturn:
+        raise OSError("sensitive executable metadata diagnostic")
+
+    monkeypatch.setattr(wal_archive.os, "fstat", failed_fstat)
+    monkeypatch.setattr(wal_archive.os, "close", close_attempts.append)
+    with pytest.raises(PostgresWalArchiveError, match=_INVALID_PARAMETERS) as caught:
+        wal_archive._retain_pg_receivewal_executable("/usr/bin/pg_receivewal")
+    assert "sensitive" not in str(caught.value)
+    assert close_attempts == [91]
+
+
+@pytest.mark.parametrize(
+    ("mode", "case_name"),
+    [
+        (stat.S_IFDIR | 0o500, "non-regular"),
+        (stat.S_IFREG | 0o520, "group-writable"),
+        (stat.S_IFREG | 0o502, "other-writable"),
+        (stat.S_IFREG | 0o400, "non-executable"),
+    ],
+)
+def test_receiver_rejects_unsafe_root_owned_receivewal_modes(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: int,
+    case_name: str,
+) -> None:
+    """Only an executable immutable regular system-tool inode may reach the child."""
+    close_attempts: list[int] = []
+    monkeypatch.setattr(wal_archive.os, "open", lambda *_args, **_kwargs: 92)
+    monkeypatch.setattr(
+        wal_archive.os,
+        "fstat",
+        lambda _file_descriptor: SimpleNamespace(st_mode=mode, st_uid=0),
+    )
+    monkeypatch.setattr(wal_archive.os, "close", close_attempts.append)
+    with pytest.raises(PostgresWalArchiveError, match=_INVALID_PARAMETERS):
+        wal_archive._retain_pg_receivewal_executable(
+            f"/usr/bin/{case_name}-pg_receivewal"
+        )
+    assert close_attempts == [92]
