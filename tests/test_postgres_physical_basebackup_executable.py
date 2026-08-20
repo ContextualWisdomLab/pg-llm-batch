@@ -213,6 +213,25 @@ def test_effective_user_owned_pg_basebackup_is_rejected(
         os.close(retained_descriptor)
 
 
+def test_symlink_pg_basebackup_is_rejected_before_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A basename-compatible symlink must not substitute another executable inode."""
+    target = tmp_path / "not-postgres"
+    target.write_text("#!/bin/sh\nprintf substitute\n", encoding="utf-8")
+    target.chmod(0o750)
+    executable = tmp_path / "pg_basebackup"
+    executable.symlink_to(target)
+    _mock_executable_owner(monkeypatch, target, 0)
+
+    with pytest.raises(PostgresPhysicalBaseBackupError, match=_EXECUTABLE_ERROR):
+        retained_descriptor = physical_basebackup._retain_pg_basebackup_executable(
+            str(executable)
+        )
+        os.close(retained_descriptor)
+
+
 def test_validated_pg_basebackup_inode_is_retained_through_execution(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
