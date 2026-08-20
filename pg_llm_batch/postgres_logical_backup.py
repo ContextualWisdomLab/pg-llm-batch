@@ -288,6 +288,14 @@ def _run_pg_dump(
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup execution failed"
         ) from None
+    except BaseException:
+        _close_descriptor(read_descriptor)
+        _close_descriptor(write_descriptor)
+        try:
+            _invalidate_output(cleanup_descriptor)
+        except PostgresLogicalBackupError:
+            pass
+        raise
 
     completed: object = None
     execution_error: BaseException | None = None
