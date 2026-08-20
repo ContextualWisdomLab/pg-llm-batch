@@ -151,3 +151,13 @@ def test_batch_request_preserves_valid_post_construction_assignment():
         "updated-system",
         "updated-id",
     )
+
+
+def test_batch_request_preserves_unrelated_dynamic_attribute_assignment():
+    """The guard must not freeze normal dataclass instance extensibility."""
+    request = BatchRequest(user_prompt="hello", model="gpt-4o")
+    marker = object()
+
+    setattr(request, "runtime_marker", marker)
+
+    assert request.runtime_marker is marker
