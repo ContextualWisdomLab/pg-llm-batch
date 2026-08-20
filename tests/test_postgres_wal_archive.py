@@ -15,6 +15,10 @@ from pg_llm_batch.postgres_wal_archive import (
     PostgresWalArchiveResult,
     receive_postgres_wal_archive,
 )
+from tests.wal_archive_test_support import install_retained_pg_receivewal_stub
+
+
+pytestmark = pytest.mark.usefixtures(install_retained_pg_receivewal_stub.__name__)
 
 
 def _open_private_directory(tmp_path: Path, name: str = "wal-archive") -> tuple[Path, int]:
@@ -71,6 +75,7 @@ def test_success_uses_slot_end_lsn_synchronous_flush_and_restricted_environment(
             "--no-loop",
             "--no-password",
         ]
+        assert captured["executable"] == f"/proc/self/fd/{private_descriptor}"
         assert captured["stdin"] is subprocess.DEVNULL
         assert captured["stdout"] is subprocess.DEVNULL
         assert captured["stderr"] is subprocess.DEVNULL
