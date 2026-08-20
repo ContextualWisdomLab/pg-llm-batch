@@ -96,6 +96,52 @@ def test_archive_budget_accepts_distinct_filesystem_within_ceiling(
         os.close(descriptor)
 
 
+@pytest.mark.parametrize(
+    ("fragment_size", "block_count"),
+    (
+        (True, 262_144),
+        (0, 262_144),
+        (4096, True),
+        (4096, -1),
+    ),
+)
+def test_archive_budget_rejects_invalid_filesystem_capacity_shape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fragment_size: object,
+    block_count: object,
+) -> None:
+    """Malformed filesystem-capacity authority fails through one fixed boundary."""
+    descriptor = _open_private_directory(tmp_path, "invalid-filesystem-capacity")
+    current_device = os.fstat(descriptor).st_dev
+    real_stat = os.stat
+
+    def distinct_parent(path: object, *args: object, **kwargs: object) -> object:
+        if path == ".." and kwargs.get("dir_fd") == descriptor:
+            return SimpleNamespace(st_dev=current_device + 1)
+        return real_stat(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "stat", distinct_parent)
+    monkeypatch.setattr(
+        os,
+        "fstatvfs",
+        lambda _descriptor: SimpleNamespace(
+            f_frsize=fragment_size,
+            f_blocks=block_count,
+        ),
+    )
+    try:
+        with pytest.raises(
+            PostgresWalArchiveError,
+            match="filesystem budget could not be inspected",
+        ) as caught:
+            wal_archive._inspect_archive_filesystem_budget(descriptor, 2 * _GIB)
+        assert caught.value.__cause__ is None
+        assert caught.value.__context__ is None
+    finally:
+        os.close(descriptor)
+
+
 def test_archive_budget_rejects_filesystem_capacity_above_ceiling(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
