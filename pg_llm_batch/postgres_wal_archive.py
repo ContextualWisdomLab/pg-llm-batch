@@ -32,11 +32,24 @@ class PostgresWalArchiveError(RuntimeError):
     """Report a fail-closed PostgreSQL WAL archive execution violation."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class PostgresWalArchiveResult:
-    """Describe the reviewed end LSN reached by one successful WAL receive run."""
+    """Record a requested end LSN without asserting that the receiver reached it."""
 
-    end_lsn: str
+    requested_end_lsn: str
+
+    def __init__(
+        self,
+        requested_end_lsn: str | None = None,
+        *,
+        end_lsn: str | None = None,
+    ) -> None:
+        """Build request-only evidence; ``end_lsn`` is a compatibility input alias."""
+        object.__setattr__(
+            self,
+            "requested_end_lsn",
+            requested_end_lsn if requested_end_lsn is not None else end_lsn,
+        )
 
 
 def _parameters_are_valid(
@@ -232,7 +245,7 @@ def _run_pg_receivewal(
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> subprocess.CompletedProcess[bytes]:
-    """Receive synchronously flushed WAL to one pinned directory through an existing slot."""
+    """Run synchronous bounded WAL reception with one requested end-position limit."""
     arguments = [
         pg_receivewal_executable,
         f"--directory=/proc/self/fd/{archive_directory_descriptor}",
@@ -324,7 +337,7 @@ def receive_postgres_wal_archive(
     timeout_seconds: int = 7200,
     connect_timeout_seconds: int = 15,
 ) -> PostgresWalArchiveResult:
-    """Receive a finite PostgreSQL WAL stream through an existing replication slot.
+    """Receive a bounded PostgreSQL WAL stream through an existing replication slot.
 
     The caller owns an already-open private archive directory descriptor and the
     lifecycle of its WAL files. The package snapshots that descriptor into private
@@ -350,17 +363,20 @@ def receive_postgres_wal_archive(
 
     ``pg_receivewal`` is invoked with ``--synchronous`` so received WAL is flushed in
     real time, ``--no-loop`` so connection loss is returned to the caller rather than
-    retried indefinitely, and an exact ``--endpos`` LSN so a successful invocation is
-    finite. The package sets a stable application name and callers must ensure that
-    server ``synchronous_standby_names`` policy does not select this receiver when
-    ``synchronous_commit=remote_apply``.
+    retried indefinitely, and ``--endpos`` to request a finite endpoint. The package's
+    timeout remains the hard execution bound. It also sets a stable application name,
+    and callers must ensure that server ``synchronous_standby_names`` policy does not
+    select this receiver when ``synchronous_commit=remote_apply``.
 
-    Success proves only that ``pg_receivewal`` exited successfully after reaching the
-    requested end LSN while the pinned archive directory retained its reviewed owner,
-    permissions, identity, and bounded-filesystem authority. It does not prove a
-    gap-free archive before the slot's retained start, validate every WAL segment,
-    configure ``restore_command``, replay WAL, execute PITR, or establish deployment
-    RPO/RTO.
+    A zero receiver exit status proves only that ``pg_receivewal`` reported a successful
+    process exit while the pinned archive directory retained its reviewed owner,
+    permissions, identity, and bounded-filesystem authority. PostgreSQL also exits
+    ``pg_receivewal`` with status zero after handled ``SIGINT``/``SIGTERM``; once the
+    child handles such a signal, ``subprocess.CompletedProcess`` does not preserve that
+    completion cause. Therefore the returned result records only the requested end LSN
+    and must not be treated as evidence that it was reached. Exact reach, gap-free WAL
+    continuity, segment integrity, timeline ancestry, replay/PITR, and deployment
+    RPO/RTO require independent evidence.
     """
     if not _parameters_are_valid(
         service_name,
@@ -398,7 +414,7 @@ def receive_postgres_wal_archive(
                 connect_timeout_seconds=connect_timeout_seconds,
             )
             _finalize_archive_directory(private_archive_descriptor, initial_status)
-            return PostgresWalArchiveResult(end_lsn=end_lsn)
+            return PostgresWalArchiveResult(requested_end_lsn=end_lsn)
         finally:
             _close_descriptor(executable_descriptor)
     finally:
