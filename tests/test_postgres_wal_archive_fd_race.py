@@ -38,13 +38,14 @@ def test_wal_receive_snapshots_archive_fd_before_subprocess_write(
     ) -> subprocess.CompletedProcess[bytes]:
         os.dup2(replacement_fd, original_fd)
         pass_fds = kwargs["pass_fds"]
-        assert isinstance(pass_fds, tuple) and len(pass_fds) == 2
+        assert isinstance(pass_fds, tuple) and len(pass_fds) == 1
         assert isinstance(args, list)
         directory_argument = next(
             argument for argument in args if argument.startswith("--directory=")
         )
         target_fd = int(directory_argument.rsplit("/", 1)[-1])
         assert target_fd in pass_fds
+        assert kwargs["executable"] == f"/proc/self/fd/{target_fd}"
         wal_fd = os.open(
             _WAL_NAME,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
