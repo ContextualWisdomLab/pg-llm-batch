@@ -73,12 +73,15 @@ def test_receiver_executes_the_retained_receivewal_inode(
         arguments: list[str],
         **kwargs: object,
     ) -> subprocess.CompletedProcess[bytes]:
-        assert arguments[0].startswith("/proc/self/fd/")
+        assert arguments[0] == str(executable_path)
         retained_path = tmp_path / "retained-pg_receivewal"
         executable_path.rename(retained_path)
         executable_path.write_bytes(b"attacker replacement bytes\n")
         executable_path.chmod(0o500)
-        executable_descriptor = int(arguments[0].rsplit("/", 1)[-1])
+        executable_authority = kwargs["executable"]
+        assert isinstance(executable_authority, str)
+        assert executable_authority.startswith("/proc/self/fd/")
+        executable_descriptor = int(executable_authority.rsplit("/", 1)[-1])
         assert executable_descriptor in kwargs["pass_fds"]
         assert os.pread(
             executable_descriptor,
