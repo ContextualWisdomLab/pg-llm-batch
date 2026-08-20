@@ -30,6 +30,34 @@ def _evidence() -> PostgresRestoreCatalogEvidence:
     )
 
 
+def test_as_dict_rejects_subclass_evidence() -> None:
+    """Serialization must reject subtype instances as untrusted evidence authority."""
+
+    class ForgedCatalogEvidence(PostgresRestoreCatalogEvidence):
+        pass
+
+    evidence = _evidence()
+    forged = ForgedCatalogEvidence(
+        required_table_count=evidence.required_table_count,
+        required_index_count=evidence.required_index_count,
+        lifecycle_rls_enabled=evidence.lifecycle_rls_enabled,
+        lifecycle_rls_forced=evidence.lifecycle_rls_forced,
+        checkpoint_store_present=evidence.checkpoint_store_present,
+        checkpoint_store_rls_forced=evidence.checkpoint_store_rls_forced,
+        expected_schema_sha256=evidence.expected_schema_sha256,
+        expected_schema_size_bytes=evidence.expected_schema_size_bytes,
+    )
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ) as caught:
+        forged.as_dict()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
