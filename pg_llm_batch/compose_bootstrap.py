@@ -40,7 +40,7 @@ def _load_database_password(password_file: Path) -> str:
     except OSError:
         raise ConfigError(_SECRET_UNAVAILABLE) from None
 
-    raw_password: bytes | None = None
+    raw_password = b""
     unavailable = False
     try:
         try:
@@ -58,7 +58,7 @@ def _load_database_password(password_file: Path) -> str:
         except OSError:
             unavailable = True
 
-    if unavailable or raw_password is None:
+    if unavailable:
         raise ConfigError(_SECRET_UNAVAILABLE) from None
     if not raw_password:
         raise ConfigError("The mounted PostgreSQL password secret is empty.")
