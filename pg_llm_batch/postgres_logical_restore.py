@@ -94,7 +94,17 @@ def _duplicate_archive_descriptor(input_descriptor: int) -> int:
 
 
 def _validate_snapshot_descriptor(input_descriptor: int) -> None:
-    """Require caller snapshot readability and a zero shared-file offset."""
+    """Require snapshot regularity, readability, and a zero shared-file offset."""
+    try:
+        status = os.fstat(input_descriptor)
+    except (OSError, ValueError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+    if not stat.S_ISREG(status.st_mode):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive must be a private regular file"
+        )
     try:
         access_mode = fcntl.fcntl(input_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
         offset = os.lseek(input_descriptor, 0, os.SEEK_CUR)
