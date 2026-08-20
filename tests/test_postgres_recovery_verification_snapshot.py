@@ -36,6 +36,50 @@ def _receipt(
     )
 
 
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("schema_sha256", "not-a-digest"),
+        ("backup_sha256", "not-a-digest"),
+        ("backup_size_bytes", 0),
+    ],
+)
+def test_verifier_rejects_mutated_exact_receipt_identity_before_inspection(
+    field_name: str,
+    invalid_value: object,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every invalid snapshot field must fail before live inspection authority."""
+    receipt = _receipt(
+        schema_sha256="d" * 64,
+        backup_sha256="e" * 64,
+        backup_size_bytes=1,
+    )
+    object.__setattr__(receipt, field_name, invalid_value)
+    inspected = False
+
+    def forbidden_schema_inspection() -> object:
+        nonlocal inspected
+        inspected = True
+        raise AssertionError("invalid receipt identity must not be inspected")
+
+    monkeypatch.setattr(
+        recovery_verification,
+        "inspect_postgres_schema",
+        forbidden_schema_inspection,
+    )
+
+    with pytest.raises(
+        recovery_verification.PostgresRecoveryVerificationError,
+        match="^invalid PostgreSQL recovery verification inputs$",
+    ):
+        recovery_verification.verify_postgres_recovery_receipt(
+            receipt,
+            backup_artifact_path="tenant_export.dump",
+        )
+    assert inspected is False
+
+
 def test_schema_inspection_cannot_rewrite_validated_receipt_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
