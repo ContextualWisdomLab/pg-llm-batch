@@ -262,6 +262,25 @@ def test_tampered_cluster_identity_fails_closed_before_comparison() -> None:
     assert "secret" not in str(raised.value)
 
 
+def test_deleted_cluster_identity_slot_fails_closed_before_comparison() -> None:
+    """A removed caller-owned identifier remains a package validation failure."""
+    damaged = _identity(RESTORE_CLUSTER)
+    object.__delattr__(damaged, "system_identifier")
+
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^invalid PostgreSQL restore target isolation inputs$",
+    ) as raised:
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=damaged,
+        )
+    assert "secret" not in str(raised.value)
+    assert str(RESTORE_CLUSTER) not in str(raised.value)
+
+
 def test_verifier_does_not_accept_dsn_tenant_or_credential_arguments() -> None:
     """Callers cannot inject a DSN, tenant scope, or credential as target identity."""
     parameters = inspect.signature(verify_postgres_restore_target_isolation).parameters
