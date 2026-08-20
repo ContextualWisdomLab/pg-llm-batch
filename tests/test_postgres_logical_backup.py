@@ -387,12 +387,16 @@ def test_logical_backup_rejects_empty_success(tmp_path, monkeypatch):
 
 def test_logical_backup_normalizes_success_path_fsync_failure(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
+    fsync_calls = 0
+
+    def fail_first_fsync(_descriptor):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise OSError("secret fsync detail")
+
     monkeypatch.setattr(logical_backup.subprocess, "run", _write_successfully)
-    monkeypatch.setattr(
-        logical_backup.os,
-        "fsync",
-        lambda _descriptor: (_ for _ in ()).throw(OSError("secret fsync detail")),
-    )
+    monkeypatch.setattr(logical_backup.os, "fsync", fail_first_fsync)
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
@@ -402,6 +406,7 @@ def test_logical_backup_normalizes_success_path_fsync_failure(tmp_path, monkeypa
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
             )
         assert "secret" not in str(caught.value)
+        assert fsync_calls == 2
         assert os.lseek(descriptor, 0, os.SEEK_CUR) == 0
         assert _read_descriptor(descriptor) == b""
     finally:
