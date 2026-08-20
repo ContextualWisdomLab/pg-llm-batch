@@ -15,6 +15,7 @@ _SLOT_NAME_RE = re.compile(r"[a-z0-9_]{1,63}\Z")
 _LSN_RE = re.compile(r"[0-9A-F]{1,8}/[0-9A-F]{1,8}\Z")
 _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_CONNECT_TIMEOUT_SECONDS = 60
+_NONBLOCKING_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _INHERITED_LIBPQ_VARIABLES = frozenset(
     {
         "PGPASSWORD",
@@ -81,12 +82,49 @@ def _retain_archive_directory(archive_directory_descriptor: int) -> int:
         ) from None
 
 
-def _close_archive_directory(archive_directory_descriptor: int) -> None:
-    """Best-effort close package-owned directory authority without replacing evidence."""
+def _close_descriptor(file_descriptor: int) -> None:
+    """Best-effort close package-owned authority without replacing evidence."""
     try:
-        os.close(archive_directory_descriptor)
+        os.close(file_descriptor)
     except (OSError, ValueError):
         pass
+
+
+def _retain_pg_receivewal_executable(pg_receivewal_executable: str) -> int:
+    """Retain one root-owned non-set-id pg_receivewal executable inode."""
+    try:
+        executable_descriptor = os.open(
+            pg_receivewal_executable,
+            _NONBLOCKING_READ_FLAGS,
+        )
+    except FileNotFoundError:
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive executable unavailable"
+        ) from None
+    except (OSError, ValueError):
+        raise PostgresWalArchiveError(
+            "invalid PostgreSQL WAL archive parameters"
+        ) from None
+
+    try:
+        status = os.fstat(executable_descriptor)
+    except (AttributeError, OSError, ValueError):
+        _close_descriptor(executable_descriptor)
+        raise PostgresWalArchiveError(
+            "invalid PostgreSQL WAL archive parameters"
+        ) from None
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_uid != 0
+        or status.st_mode
+        & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID)
+        or status.st_mode & 0o111 == 0
+    ):
+        _close_descriptor(executable_descriptor)
+        raise PostgresWalArchiveError(
+            "invalid PostgreSQL WAL archive parameters"
+        )
+    return executable_descriptor
 
 
 def _inspect_archive_directory(
@@ -145,13 +183,13 @@ def _run_pg_receivewal(
     slot_name: str,
     end_lsn: str,
     archive_directory_descriptor: int,
-    pg_receivewal_executable: str,
+    pg_receivewal_descriptor: int,
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> subprocess.CompletedProcess[bytes]:
     """Receive synchronously flushed WAL to one pinned directory through an existing slot."""
     arguments = [
-        pg_receivewal_executable,
+        f"/proc/self/fd/{pg_receivewal_descriptor}",
         f"--directory=/proc/self/fd/{archive_directory_descriptor}",
         f"--endpos={end_lsn}",
         f"--slot={slot_name}",
@@ -169,7 +207,7 @@ def _run_pg_receivewal(
             timeout=timeout_seconds,
             check=False,
             close_fds=True,
-            pass_fds=(archive_directory_descriptor,),
+            pass_fds=(archive_directory_descriptor, pg_receivewal_descriptor),
             env=environment,
         )
     except FileNotFoundError:
@@ -246,7 +284,13 @@ def receive_postgres_wal_archive(
     directory entry rather than materializing attacker-influenced directory contents.
     The subprocess sees only the package-owned pinned directory as
     ``/proc/self/fd/<fd>``; no caller filesystem path or connection secret is placed in
-    argv. The selected replication slot must already exist and remain an
+    argv. The absolute ``pg_receivewal`` token is opened non-blocking without following
+    its final symlink, rejected unless it is a root-owned regular executable with at
+    least one execute bit and without group/other write or set-user-ID/set-group-ID
+    authority, and executed only through the retained descriptor. This Linux
+    system-package boundary prevents a non-root service account from retaining rewrite
+    authority and prevents a pathname swap from changing the child executable bytes.
+    The selected replication slot must already exist and remain an
     operator-governed server resource. The package never creates or drops slots.
 
     ``pg_receivewal`` is invoked with ``--synchronous`` so received WAL is flushed in
@@ -278,16 +322,22 @@ def receive_postgres_wal_archive(
     private_archive_descriptor = _retain_archive_directory(archive_directory_descriptor)
     try:
         initial_status = _inspect_archive_directory(private_archive_descriptor)
-        _run_pg_receivewal(
-            service_name=service_name,
-            slot_name=slot_name,
-            end_lsn=end_lsn,
-            archive_directory_descriptor=private_archive_descriptor,
-            pg_receivewal_executable=pg_receivewal_executable,
-            timeout_seconds=timeout_seconds,
-            connect_timeout_seconds=connect_timeout_seconds,
+        executable_descriptor = _retain_pg_receivewal_executable(
+            pg_receivewal_executable
         )
-        _finalize_archive_directory(private_archive_descriptor, initial_status)
-        return PostgresWalArchiveResult(end_lsn=end_lsn)
+        try:
+            _run_pg_receivewal(
+                service_name=service_name,
+                slot_name=slot_name,
+                end_lsn=end_lsn,
+                archive_directory_descriptor=private_archive_descriptor,
+                pg_receivewal_descriptor=executable_descriptor,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+            )
+            _finalize_archive_directory(private_archive_descriptor, initial_status)
+            return PostgresWalArchiveResult(end_lsn=end_lsn)
+        finally:
+            _close_descriptor(executable_descriptor)
     finally:
-        _close_archive_directory(private_archive_descriptor)
+        _close_descriptor(private_archive_descriptor)
