@@ -340,7 +340,6 @@ def _run_pg_basebackup(
         try:
             pump_thread.join()
         except BaseException:
-            _close_cleanup_descriptor(read_descriptor)
             try:
                 _invalidate_output(cleanup_descriptor)
             except PostgresPhysicalBaseBackupError:
