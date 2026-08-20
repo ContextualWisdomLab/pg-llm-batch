@@ -93,6 +93,25 @@ def _duplicate_archive_descriptor(input_descriptor: int) -> int:
         ) from None
 
 
+def _validate_snapshot_descriptor(input_descriptor: int) -> None:
+    """Require caller snapshot readability and a zero shared-file offset."""
+    try:
+        access_mode = fcntl.fcntl(input_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
+        offset = os.lseek(input_descriptor, 0, os.SEEK_CUR)
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+    if access_mode not in (os.O_RDONLY, os.O_RDWR):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive descriptor must be readable"
+        )
+    if offset != 0:
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive must start at offset zero"
+        )
+
+
 def _open_independent_archive(input_descriptor: int) -> int:
     """Reopen retained archive authority with an independent package read offset."""
     try:
@@ -118,11 +137,10 @@ def _inspect_initial_archive(
     input_descriptor: int,
     maximum_archive_size_bytes: int,
 ) -> os.stat_result:
-    """Require a private, readable, bounded regular archive at offset zero."""
+    """Require a private, bounded, non-empty regular archive at offset zero."""
     try:
         status = os.fstat(input_descriptor)
-        access_mode = fcntl.fcntl(input_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
-    except (OSError, ValueError, OverflowError):
+    except (OSError, ValueError):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive could not be inspected"
         ) from None
@@ -134,10 +152,6 @@ def _inspect_initial_archive(
     if status.st_size <= 0 or status.st_size > maximum_archive_size_bytes:
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive must be non-empty and bounded"
-        )
-    if access_mode not in (os.O_RDONLY, os.O_RDWR):
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore archive descriptor must be readable"
         )
     try:
         offset = os.lseek(input_descriptor, 0, os.SEEK_CUR)
@@ -257,28 +271,29 @@ def restore_postgres_logical_backup(
     the target libpq service and is responsible for making that service an isolated
     recovery target; the service name is not an authorization or proof-of-isolation
     boundary. The package first duplicates the caller descriptor so later numeric-FD
-    replacement cannot substitute another archive. That snapshot must itself be a
-    readable, owner-only, one-link, bounded regular file at offset zero; package code
-    does not widen write-only caller authority. The validated snapshot is then reopened
-    through ``/proc/self/fd`` so ``pg_restore`` receives an independent package-owned
-    open file description and read offset. Seeking or replacing the caller descriptor
-    after the snapshot therefore cannot redirect the child or move its archive read
-    position. The caller keeps ownership of the original descriptor; package cleanup
-    closes only package-owned descriptors. The package does not receive an archive
-    path, place credentials in process arguments, or reflect archive/database content
-    in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
-    inherited, so ambient host/database/options/SSL-mode variables cannot silently
-    redirect or weaken the target session. The validated non-secret service selector
-    is supplied through ``--dbname=service=...`` so ``pg_restore`` performs a direct
-    database restore rather than merely rendering SQL. The command runs with one
-    transaction and exits on the first SQL error, so timeout or execution failure does
-    not intentionally commit a partial package restore. Descriptor identity and
-    observable archive metadata are revalidated after the restore to reject in-place
-    mutation detected during execution. Custom-format ``pg_restore`` seeks to the
-    table of contents and data blocks, so a successful restore is not required to
-    leave the descriptor at end-of-file. A post-restore metadata mismatch means the
-    SQL transaction may already have committed; callers must treat that error as
-    unsafe rather than as proof that no restore occurred.
+    replacement cannot substitute another archive. That snapshot must itself carry
+    readable authority and be positioned at byte zero; package code does not widen a
+    write-only caller capability. The snapshot is then reopened through
+    ``/proc/self/fd`` so ``pg_restore`` receives an independent package-owned open file
+    description and read offset. That independent descriptor must pass the private,
+    one-link, bounded regular-file inspection before child execution. Seeking or
+    replacing the caller descriptor after the snapshot therefore cannot redirect the
+    child or move its archive read position. The caller keeps ownership of the original
+    descriptor; package cleanup closes only package-owned descriptors. The package does
+    not receive an archive path, place credentials in process arguments, or reflect
+    archive/database content in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and
+    ``PGSERVICEFILE`` may be inherited, so ambient host/database/options/SSL-mode
+    variables cannot silently redirect or weaken the target session. The validated
+    non-secret service selector is supplied through ``--dbname=service=...`` so
+    ``pg_restore`` performs a direct database restore rather than merely rendering
+    SQL. The command runs with one transaction and exits on the first SQL error, so
+    timeout or execution failure does not intentionally commit a partial package
+    restore. Descriptor identity and observable archive metadata are revalidated after
+    the restore to reject in-place mutation detected during execution. Custom-format
+    ``pg_restore`` seeks to the table of contents and data blocks, so a successful
+    restore is not required to leave the descriptor at end-of-file. A post-restore
+    metadata mismatch means the SQL transaction may already have committed; callers
+    must treat that error as unsafe rather than as proof that no restore occurred.
     """
     if not _parameters_are_valid(
         service_name,
@@ -299,7 +314,7 @@ def restore_postgres_logical_backup(
 
     snapshot_descriptor = _duplicate_archive_descriptor(input_descriptor)
     try:
-        _inspect_initial_archive(snapshot_descriptor, maximum_archive_size_bytes)
+        _validate_snapshot_descriptor(snapshot_descriptor)
         retained_descriptor = _open_independent_archive(snapshot_descriptor)
     finally:
         _close_retained_archive_descriptor(snapshot_descriptor)
