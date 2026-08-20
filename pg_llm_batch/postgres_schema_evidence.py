@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 
 # Package metadata requires Python >=3.10, so this stdlib import is supported.
@@ -16,6 +17,7 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 _MAX_SCHEMA_BYTES = 16 * 1024 * 1024
 _SCHEMA_PACKAGE = "pg_llm_batch"
 _SCHEMA_RESOURCE = "schema.sql"
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _SCHEMA_INSPECTION_MARK = object()
 _INSPECTED_SCHEMA_EVIDENCE_IDS: dict[
     int, tuple[ReferenceType[PostgresSchemaEvidence], str, int]
@@ -24,6 +26,16 @@ _INSPECTED_SCHEMA_EVIDENCE_IDS: dict[
 
 class PostgresSchemaEvidenceError(ValueError):
     """Report a fail-closed packaged PostgreSQL schema evidence violation."""
+
+
+def _schema_evidence_snapshot_is_valid(sha256: object, size_bytes: object) -> bool:
+    """Return whether one captured schema-evidence snapshot is bounded and exact."""
+    return (
+        type(sha256) is str
+        and _SHA256_RE.fullmatch(sha256) is not None
+        and type(size_bytes) is int
+        and 1 <= size_bytes <= _MAX_SCHEMA_BYTES
+    )
 
 
 @dataclass(frozen=True)
@@ -35,8 +47,20 @@ class PostgresSchemaEvidence:
     _inspection_mark: object = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, object]:
-        """Return the stable machine-readable packaged schema evidence schema."""
-        return {"sha256": self.sha256, "size_bytes": self.size_bytes}
+        """Return the stable schema from one revalidated evidence snapshot."""
+        try:
+            sha256 = self.sha256
+            size_bytes = self.size_bytes
+        except AttributeError:
+            raise PostgresSchemaEvidenceError(
+                "invalid PostgreSQL package schema evidence"
+            ) from None
+
+        if not _schema_evidence_snapshot_is_valid(sha256, size_bytes):
+            raise PostgresSchemaEvidenceError(
+                "invalid PostgreSQL package schema evidence"
+            )
+        return {"sha256": sha256, "size_bytes": size_bytes}
 
 
 def _record_inspected_schema_evidence(evidence: PostgresSchemaEvidence) -> None:
