@@ -43,6 +43,26 @@ def _forbid_subprocess(*_args, **_kwargs):
     pytest.fail("pg_restore must not run after archive inspection loses authority")
 
 
+def test_restore_normalizes_snapshot_archive_stat_failure(tmp_path, monkeypatch):
+    """Fail closed if the snapshotted caller authority cannot be statted."""
+    descriptor = _open_private_archive(tmp_path)
+
+    def fail_first_fstat(_target_descriptor):
+        raise OSError("secret snapshot archive stat detail")
+
+    monkeypatch.setattr(logical_restore.os, "fstat", fail_first_fstat)
+    monkeypatch.setattr(logical_restore.subprocess, "run", _forbid_subprocess)
+    try:
+        with pytest.raises(
+            PostgresLogicalRestoreError,
+            match="^PostgreSQL logical restore archive could not be inspected$",
+        ) as caught:
+            _restore(descriptor)
+        assert "secret" not in str(caught.value)
+    finally:
+        os.close(descriptor)
+
+
 def test_restore_normalizes_independent_archive_stat_failure(tmp_path, monkeypatch):
     """Fail closed if the independently reopened archive cannot be statted."""
     descriptor = _open_private_archive(tmp_path)
