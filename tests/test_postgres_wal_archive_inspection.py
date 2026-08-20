@@ -14,6 +14,10 @@ from pg_llm_batch.postgres_wal_archive import (
     PostgresWalArchiveError,
     receive_postgres_wal_archive,
 )
+from tests.wal_archive_test_support import install_retained_pg_receivewal_stub
+
+
+pytestmark = pytest.mark.usefixtures(install_retained_pg_receivewal_stub.__name__)
 
 
 def test_archive_directory_listing_failure_is_content_free(
