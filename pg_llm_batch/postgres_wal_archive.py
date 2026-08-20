@@ -15,6 +15,8 @@ _SLOT_NAME_RE = re.compile(r"[a-z0-9_]{1,63}\Z")
 _LSN_RE = re.compile(r"[0-9A-F]{1,8}/[0-9A-F]{1,8}\Z")
 _MAX_TIMEOUT_SECONDS = 86_400
 _MAX_CONNECT_TIMEOUT_SECONDS = 60
+_MAX_ARCHIVE_BYTES = 1024**4
+_DEFAULT_ARCHIVE_BYTES = 64 * 1024**3
 _NONBLOCKING_READ_FLAGS = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
 _INHERITED_LIBPQ_VARIABLES = frozenset(
     {
@@ -43,6 +45,7 @@ def _parameters_are_valid(
     end_lsn: object,
     archive_directory_descriptor: object,
     pg_receivewal_executable: object,
+    maximum_archive_bytes: object,
     timeout_seconds: object,
     connect_timeout_seconds: object,
 ) -> bool:
@@ -60,6 +63,8 @@ def _parameters_are_valid(
         and type(pg_receivewal_executable) is str
         and os.path.isabs(pg_receivewal_executable)
         and os.path.basename(pg_receivewal_executable) == "pg_receivewal"
+        and type(maximum_archive_bytes) is int
+        and 1 <= maximum_archive_bytes <= _MAX_ARCHIVE_BYTES
         and type(timeout_seconds) is int
         and 1 <= timeout_seconds <= _MAX_TIMEOUT_SECONDS
         and type(connect_timeout_seconds) is int
@@ -162,6 +167,45 @@ def _inspect_archive_directory(
             "PostgreSQL WAL archive directory must start empty"
         )
     return status
+
+
+def _inspect_archive_filesystem_budget(
+    archive_directory_descriptor: int,
+    maximum_archive_bytes: int,
+) -> int:
+    """Require an isolated filesystem whose total data capacity fits the byte budget."""
+    try:
+        archive_status = os.fstat(archive_directory_descriptor)
+        parent_status = os.stat(
+            "..",
+            dir_fd=archive_directory_descriptor,
+            follow_symlinks=False,
+        )
+        filesystem_status = os.fstatvfs(archive_directory_descriptor)
+        fragment_size = filesystem_status.f_frsize
+        block_count = filesystem_status.f_blocks
+        if (
+            type(fragment_size) is not int
+            or fragment_size <= 0
+            or type(block_count) is not int
+            or block_count < 0
+        ):
+            raise ValueError
+        capacity_bytes = fragment_size * block_count
+    except (AttributeError, OSError, OverflowError, TypeError, ValueError):
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive filesystem budget could not be inspected"
+        ) from None
+
+    if parent_status.st_dev == archive_status.st_dev:
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive requires an isolated bounded filesystem"
+        )
+    if capacity_bytes > maximum_archive_bytes:
+        raise PostgresWalArchiveError(
+            "PostgreSQL WAL archive filesystem exceeds configured byte budget"
+        )
+    return capacity_bytes
 
 
 def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[str, str]:
@@ -276,6 +320,7 @@ def receive_postgres_wal_archive(
     archive_directory_descriptor: int,
     *,
     pg_receivewal_executable: str,
+    maximum_archive_bytes: int = _DEFAULT_ARCHIVE_BYTES,
     timeout_seconds: int = 7200,
     connect_timeout_seconds: int = 15,
 ) -> PostgresWalArchiveResult:
@@ -288,16 +333,20 @@ def receive_postgres_wal_archive(
     be empty at invocation start so pre-existing local WAL state cannot choose
     ``pg_receivewal``'s starting position. Emptiness inspection consumes at most one
     directory entry rather than materializing attacker-influenced directory contents.
-    The subprocess sees only the package-owned pinned directory as
-    ``/proc/self/fd/<fd>``; no caller filesystem path or connection secret is placed in
-    argv. The absolute ``pg_receivewal`` token is opened non-blocking without following
-    its final symlink, rejected unless it is a root-owned regular executable with at
-    least one execute bit and without group/other write or set-user-ID/set-group-ID
-    authority, and executed only through the retained descriptor. This Linux
-    system-package boundary prevents a non-root service account from retaining rewrite
-    authority and prevents a pathname swap from changing the child executable bytes.
-    The selected replication slot must already exist and remain an
-    operator-governed server resource. The package never creates or drops slots.
+    The retained directory must also be the root of a distinct filesystem whose total
+    data-block capacity is no larger than ``maximum_archive_bytes``. This kernel-backed
+    boundary constrains aggregate receiver output across all WAL segment files without
+    directory enumeration, symlink traversal, or a per-file-only resource limit. The
+    subprocess sees only the package-owned pinned directory as ``/proc/self/fd/<fd>``;
+    no caller filesystem path or connection secret is placed in argv. The absolute
+    ``pg_receivewal`` token is opened non-blocking without following its final symlink,
+    rejected unless it is a root-owned regular executable with at least one execute bit
+    and without group/other write or set-user-ID/set-group-ID authority, and executed
+    only through the retained descriptor. This Linux system-package boundary prevents a
+    non-root service account from retaining rewrite authority and prevents a pathname
+    swap from changing the child executable bytes. The selected replication slot must
+    already exist and remain an operator-governed server resource. The package never
+    creates or drops slots.
 
     ``pg_receivewal`` is invoked with ``--synchronous`` so received WAL is flushed in
     real time, ``--no-loop`` so connection loss is returned to the caller rather than
@@ -308,9 +357,10 @@ def receive_postgres_wal_archive(
 
     Success proves only that ``pg_receivewal`` exited successfully after reaching the
     requested end LSN while the pinned archive directory retained its reviewed owner,
-    permissions, and identity. It does not prove a gap-free archive before the slot's
-    retained start, validate every WAL segment, configure ``restore_command``, replay
-    WAL, execute PITR, or establish deployment RPO/RTO.
+    permissions, identity, and bounded-filesystem authority. It does not prove a
+    gap-free archive before the slot's retained start, validate every WAL segment,
+    configure ``restore_command``, replay WAL, execute PITR, or establish deployment
+    RPO/RTO.
     """
     if not _parameters_are_valid(
         service_name,
@@ -318,6 +368,7 @@ def receive_postgres_wal_archive(
         end_lsn,
         archive_directory_descriptor,
         pg_receivewal_executable,
+        maximum_archive_bytes,
         timeout_seconds,
         connect_timeout_seconds,
     ):
@@ -328,6 +379,10 @@ def receive_postgres_wal_archive(
     private_archive_descriptor = _retain_archive_directory(archive_directory_descriptor)
     try:
         initial_status = _inspect_archive_directory(private_archive_descriptor)
+        _inspect_archive_filesystem_budget(
+            private_archive_descriptor,
+            maximum_archive_bytes,
+        )
         executable_descriptor = _retain_pg_receivewal_executable(
             pg_receivewal_executable
         )
