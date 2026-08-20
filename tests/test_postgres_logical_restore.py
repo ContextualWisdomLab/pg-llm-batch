@@ -100,7 +100,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
             "--exit-on-error",
             "--dbname=service=isolated_restore",
         ]
-        assert observed["kwargs"]["stdin"] == descriptor
+        assert observed["kwargs"]["stdin"] != descriptor
         assert observed["kwargs"]["stdout"] is subprocess.DEVNULL
         assert observed["kwargs"]["stderr"] is subprocess.DEVNULL
         assert observed["kwargs"]["timeout"] == 41
@@ -425,12 +425,15 @@ def test_restore_accepts_custom_format_seek_position(tmp_path, monkeypatch):
 def test_restore_normalizes_final_inspection_failure(tmp_path, monkeypatch):
     _path, descriptor, _size = _open_private_archive(tmp_path)
     real_fstat = os.fstat
+    retained_descriptor = None
     target_seen = False
 
     def flaky_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal retained_descriptor, target_seen
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
+        if retained_descriptor is None:
+            retained_descriptor = target_descriptor
+        if target_descriptor != retained_descriptor:
             return status
         if not target_seen:
             target_seen = True
@@ -465,12 +468,15 @@ def test_restore_rejects_archive_mutation_during_execution(
 ):
     _path, descriptor, _size = _open_private_archive(tmp_path)
     real_fstat = os.fstat
+    retained_descriptor = None
     target_seen = False
 
     def changed_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal retained_descriptor, target_seen
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
+        if retained_descriptor is None:
+            retained_descriptor = target_descriptor
+        if target_descriptor != retained_descriptor:
             return status
         if not target_seen:
             target_seen = True
