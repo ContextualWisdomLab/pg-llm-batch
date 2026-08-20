@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import stat
@@ -82,13 +83,26 @@ def _archive_metadata(status: object) -> tuple[object, ...]:
     )
 
 
-def _retain_archive_descriptor(input_descriptor: int) -> int:
-    """Snapshot caller file authority before inspecting or executing the restore."""
+def _duplicate_archive_descriptor(input_descriptor: int) -> int:
+    """Snapshot caller archive authority before inspection or package reopening."""
     try:
         return os.dup(input_descriptor)
-    except (OSError, ValueError):
+    except (OSError, ValueError, OverflowError):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+
+
+def _open_independent_archive(input_descriptor: int) -> int:
+    """Reopen retained archive authority with an independent package read offset."""
+    try:
+        return os.open(
+            f"/proc/self/fd/{input_descriptor}",
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be isolated"
         ) from None
 
 
@@ -104,10 +118,11 @@ def _inspect_initial_archive(
     input_descriptor: int,
     maximum_archive_size_bytes: int,
 ) -> os.stat_result:
-    """Require a private, bounded, non-empty regular archive at offset zero."""
+    """Require a private, readable, bounded regular archive at offset zero."""
     try:
         status = os.fstat(input_descriptor)
-    except (OSError, ValueError):
+        access_mode = fcntl.fcntl(input_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
+    except (OSError, ValueError, OverflowError):
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive could not be inspected"
         ) from None
@@ -119,6 +134,10 @@ def _inspect_initial_archive(
     if status.st_size <= 0 or status.st_size > maximum_archive_size_bytes:
         raise PostgresLogicalRestoreError(
             "PostgreSQL logical restore archive must be non-empty and bounded"
+        )
+    if access_mode not in (os.O_RDONLY, os.O_RDWR):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive descriptor must be readable"
         )
     try:
         offset = os.lseek(input_descriptor, 0, os.SEEK_CUR)
@@ -230,21 +249,24 @@ def restore_postgres_logical_backup(
     connect_timeout_seconds: int = 15,
     maximum_archive_size_bytes: int = _DEFAULT_MAXIMUM_ARCHIVE_SIZE_BYTES,
 ) -> PostgresLogicalRestoreResult:
-    """Restore one bounded custom archive through retained caller file authority.
+    """Restore one bounded custom archive through isolated caller file authority.
 
     The caller must explicitly assert that the archive originates from trusted source
     superusers. This assertion is a caller-owned precondition, not package proof that
     archive definitions, ownership, or privileges are safe. The caller also selects
     the target libpq service and is responsible for making that service an isolated
     recovery target; the service name is not an authorization or proof-of-isolation
-    boundary. The package snapshots the caller descriptor with a private duplicate
-    before inspection and uses only that retained descriptor for inspection,
-    ``pg_restore``, and final metadata verification. Replacing the caller's numeric
-    descriptor after entry therefore cannot substitute different archive bytes for the
-    child. The caller keeps ownership of the original descriptor; the package closes
-    only its retained duplicate. The package does not receive an archive path, place
-    credentials in process arguments, or reflect archive/database content in
-    diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
+    boundary. The package first duplicates the caller descriptor so later numeric-FD
+    replacement cannot substitute another archive. That snapshot must itself be a
+    readable, owner-only, one-link, bounded regular file at offset zero; package code
+    does not widen write-only caller authority. The validated snapshot is then reopened
+    through ``/proc/self/fd`` so ``pg_restore`` receives an independent package-owned
+    open file description and read offset. Seeking or replacing the caller descriptor
+    after the snapshot therefore cannot redirect the child or move its archive read
+    position. The caller keeps ownership of the original descriptor; package cleanup
+    closes only package-owned descriptors. The package does not receive an archive
+    path, place credentials in process arguments, or reflect archive/database content
+    in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be
     inherited, so ambient host/database/options/SSL-mode variables cannot silently
     redirect or weaken the target session. The validated non-secret service selector
     is supplied through ``--dbname=service=...`` so ``pg_restore`` performs a direct
@@ -275,7 +297,13 @@ def restore_postgres_logical_backup(
             "PostgreSQL logical restore requires trusted source superusers"
         )
 
-    retained_descriptor = _retain_archive_descriptor(input_descriptor)
+    snapshot_descriptor = _duplicate_archive_descriptor(input_descriptor)
+    try:
+        _inspect_initial_archive(snapshot_descriptor, maximum_archive_size_bytes)
+        retained_descriptor = _open_independent_archive(snapshot_descriptor)
+    finally:
+        _close_retained_archive_descriptor(snapshot_descriptor)
+
     try:
         initial_status = _inspect_initial_archive(
             retained_descriptor,
