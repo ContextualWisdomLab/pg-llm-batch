@@ -11,8 +11,10 @@ import pytest
 
 from pg_llm_batch import postgres_wal_archive
 from pg_llm_batch.postgres_wal_archive import receive_postgres_wal_archive
+from tests.wal_archive_test_support import install_retained_pg_receivewal_stub
 
 
+pytestmark = pytest.mark.usefixtures(install_retained_pg_receivewal_stub.__name__)
 _WAL_NAME = "000000010000000000000001"
 
 
@@ -36,8 +38,13 @@ def test_wal_receive_snapshots_archive_fd_before_subprocess_write(
     ) -> subprocess.CompletedProcess[bytes]:
         os.dup2(replacement_fd, original_fd)
         pass_fds = kwargs["pass_fds"]
-        assert isinstance(pass_fds, tuple) and len(pass_fds) == 1
-        target_fd = pass_fds[0]
+        assert isinstance(pass_fds, tuple) and len(pass_fds) == 2
+        assert isinstance(args, list)
+        directory_argument = next(
+            argument for argument in args if argument.startswith("--directory=")
+        )
+        target_fd = int(directory_argument.rsplit("/", 1)[-1])
+        assert target_fd in pass_fds
         wal_fd = os.open(
             _WAL_NAME,
             os.O_WRONLY | os.O_CREAT | os.O_EXCL,
