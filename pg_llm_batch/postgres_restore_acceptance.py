@@ -215,17 +215,8 @@ class PostgresRestoreCatalogEvidence:
     expected_schema_size_bytes: int
 
     def as_dict(self) -> dict[str, object]:
-        """Return the stable machine-readable restore-catalog evidence schema."""
-        return {
-            "required_table_count": self.required_table_count,
-            "required_index_count": self.required_index_count,
-            "lifecycle_rls_enabled": self.lifecycle_rls_enabled,
-            "lifecycle_rls_forced": self.lifecycle_rls_forced,
-            "checkpoint_store_present": self.checkpoint_store_present,
-            "checkpoint_store_rls_forced": self.checkpoint_store_rls_forced,
-            "expected_schema_sha256": self.expected_schema_sha256,
-            "expected_schema_size_bytes": self.expected_schema_size_bytes,
-        }
+        """Return validated machine-readable restore-catalog evidence."""
+        return _validated_catalog_evidence_snapshot(self)
 
 
 def _invalid_catalog() -> None:
@@ -233,6 +224,74 @@ def _invalid_catalog() -> None:
     raise PostgresRestoreAcceptanceError(
         "PostgreSQL restore catalog evidence is invalid"
     )
+
+
+def _validated_catalog_evidence_snapshot(
+    evidence: PostgresRestoreCatalogEvidence,
+) -> dict[str, object]:
+    """Snapshot and revalidate mutable Python evidence before serialization."""
+    if type(evidence) is not PostgresRestoreCatalogEvidence:
+        _invalid_catalog()
+
+    missing_authority = False
+    try:
+        snapshot = {
+            "required_table_count": evidence.required_table_count,
+            "required_index_count": evidence.required_index_count,
+            "lifecycle_rls_enabled": evidence.lifecycle_rls_enabled,
+            "lifecycle_rls_forced": evidence.lifecycle_rls_forced,
+            "checkpoint_store_present": evidence.checkpoint_store_present,
+            "checkpoint_store_rls_forced": evidence.checkpoint_store_rls_forced,
+            "expected_schema_sha256": evidence.expected_schema_sha256,
+            "expected_schema_size_bytes": evidence.expected_schema_size_bytes,
+        }
+    except AttributeError:
+        missing_authority = True
+    if missing_authority:
+        _invalid_catalog()
+
+    required_table_count = snapshot["required_table_count"]
+    required_index_count = snapshot["required_index_count"]
+    lifecycle_rls_enabled = snapshot["lifecycle_rls_enabled"]
+    lifecycle_rls_forced = snapshot["lifecycle_rls_forced"]
+    checkpoint_store_present = snapshot["checkpoint_store_present"]
+    checkpoint_store_rls_forced = snapshot["checkpoint_store_rls_forced"]
+    expected_schema_sha256 = snapshot["expected_schema_sha256"]
+    expected_schema_size_bytes = snapshot["expected_schema_size_bytes"]
+
+    if (
+        type(required_table_count) is not int
+        or required_table_count != len(_REQUIRED_TABLES)
+        or type(required_index_count) is not int
+        or required_index_count != len(_REQUIRED_INDEXES)
+        or type(lifecycle_rls_enabled) is not bool
+        or lifecycle_rls_enabled is not True
+        or type(lifecycle_rls_forced) is not bool
+        or lifecycle_rls_forced is not True
+        or type(checkpoint_store_present) is not bool
+        or type(checkpoint_store_rls_forced) is not bool
+        or checkpoint_store_rls_forced is not checkpoint_store_present
+        or type(expected_schema_sha256) is not str
+        or len(expected_schema_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in expected_schema_sha256)
+        or type(expected_schema_size_bytes) is not int
+        or expected_schema_size_bytes <= 0
+    ):
+        _invalid_catalog()
+
+    schema_failure = False
+    try:
+        schema = inspect_postgres_schema()
+    except Exception:
+        schema_failure = True
+    if schema_failure:
+        _invalid_catalog()
+    if (
+        expected_schema_sha256 != schema.sha256
+        or expected_schema_size_bytes != schema.size_bytes
+    ):
+        _invalid_catalog()
+    return snapshot
 
 
 def _evaluate_catalog_rows(
