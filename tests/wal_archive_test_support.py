@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 
 import pytest
@@ -17,6 +18,7 @@ def install_retained_pg_receivewal_stub(
     """Alias retained test authority without assuming a runner pg_receivewal."""
     retained_authority: dict[str, int] = {}
     real_retain_archive_directory = wal_archive._retain_archive_directory
+    real_close = os.close
 
     def retain_archive_directory(archive_directory_descriptor: int) -> int:
         private_descriptor = real_retain_archive_directory(
@@ -38,4 +40,12 @@ def install_retained_pg_receivewal_stub(
         "_retain_pg_receivewal_executable",
         retain_test_executable,
     )
-    yield
+    try:
+        yield
+    finally:
+        private_descriptor = retained_authority.get("archive")
+        if private_descriptor is not None:
+            try:
+                real_close(private_descriptor)
+            except OSError:
+                pass
