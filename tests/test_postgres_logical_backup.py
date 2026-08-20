@@ -79,10 +79,11 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
         ]
         assert observed["kwargs"]["pass_fds"] == (retained_descriptor,)
         assert observed["kwargs"]["stdout"] != descriptor
+        assert stat.S_ISFIFO(observed["stdout_status"].st_mode)
         assert (
             observed["stdout_status"].st_dev,
             observed["stdout_status"].st_ino,
-        ) == (caller_status.st_dev, caller_status.st_ino)
+        ) != (caller_status.st_dev, caller_status.st_ino)
         assert observed["kwargs"]["stderr"] is subprocess.DEVNULL
         assert observed["kwargs"]["stdin"] is subprocess.DEVNULL
         assert observed["kwargs"]["timeout"] == 31
