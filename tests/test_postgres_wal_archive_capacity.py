@@ -184,7 +184,7 @@ def test_archive_budget_rejects_invalid_filesystem_capacity_shape(
         ) as caught:
             wal_archive._inspect_archive_filesystem_budget(descriptor, 2 * _GIB)
         assert caught.value.__cause__ is None
-        assert caught.value.__context__ is None
+        assert caught.value.__suppress_context__ is True
     finally:
         os.close(descriptor)
 
@@ -238,6 +238,6 @@ def test_archive_budget_inspection_failure_is_content_free(
             wal_archive._inspect_archive_filesystem_budget(descriptor, _GIB)
         assert "SECRET-SENTINEL" not in str(caught.value)
         assert caught.value.__cause__ is None
-        assert caught.value.__context__ is None
+        assert caught.value.__suppress_context__ is True
     finally:
         os.close(descriptor)
