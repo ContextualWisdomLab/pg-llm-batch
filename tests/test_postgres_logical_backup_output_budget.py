@@ -142,10 +142,14 @@ def test_logical_backup_fails_closed_when_output_pump_cannot_start(
 ):
     _path, descriptor = _open_private_output(tmp_path)
 
-    def fail_start(_thread):
-        raise RuntimeError("private thread detail")
+    class StartFailureThread:
+        def __init__(self, **_kwargs):
+            pass
 
-    monkeypatch.setattr(logical_backup.threading.Thread, "start", fail_start)
+        def start(self):
+            raise RuntimeError("private thread detail")
+
+    monkeypatch.setattr(logical_backup.threading, "Thread", StartFailureThread)
     monkeypatch.setattr(
         logical_backup.subprocess,
         "run",
@@ -179,11 +183,15 @@ def test_logical_backup_preserves_start_interrupt_and_closes_pipe_fds(
         pipe_descriptors.extend((read_descriptor, write_descriptor))
         return read_descriptor, write_descriptor
 
-    def interrupt_start(_thread):
-        raise KeyboardInterrupt
+    class StartInterruptThread:
+        def __init__(self, **_kwargs):
+            pass
+
+        def start(self):
+            raise KeyboardInterrupt
 
     monkeypatch.setattr(logical_backup.os, "pipe", recording_pipe)
-    monkeypatch.setattr(logical_backup.threading.Thread, "start", interrupt_start)
+    monkeypatch.setattr(logical_backup.threading, "Thread", StartInterruptThread)
     try:
         with pytest.raises(KeyboardInterrupt):
             create_postgres_logical_backup(
@@ -208,15 +216,15 @@ def test_logical_backup_preserves_start_interrupt_and_closes_pipe_fds(
 def test_logical_backup_normalizes_output_pump_failure(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
 
-    def fail_read(_descriptor, _size):
-        raise OSError("private read detail")
+    def fail_copy(_descriptor, _chunk):
+        raise OSError("private write detail")
 
-    monkeypatch.setattr(logical_backup.os, "read", fail_read)
-    monkeypatch.setattr(
-        logical_backup.subprocess,
-        "run",
-        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0),
-    )
+    def one_byte_run(argv, **kwargs):
+        os.write(kwargs["stdout"], b"x")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_backup, "_write_all", fail_copy)
+    monkeypatch.setattr(logical_backup.subprocess, "run", one_byte_run)
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
@@ -236,15 +244,15 @@ def test_logical_backup_normalizes_output_pump_failure(tmp_path, monkeypatch):
 def test_logical_backup_preserves_output_pump_baseexception(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
 
-    def interrupt_read(_descriptor, _size):
+    def interrupt_copy(_descriptor, _chunk):
         raise KeyboardInterrupt
 
-    monkeypatch.setattr(logical_backup.os, "read", interrupt_read)
-    monkeypatch.setattr(
-        logical_backup.subprocess,
-        "run",
-        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0),
-    )
+    def one_byte_run(argv, **kwargs):
+        os.write(kwargs["stdout"], b"x")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_backup, "_write_all", interrupt_copy)
+    monkeypatch.setattr(logical_backup.subprocess, "run", one_byte_run)
     try:
         with pytest.raises(KeyboardInterrupt):
             create_postgres_logical_backup(
