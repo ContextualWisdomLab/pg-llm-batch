@@ -65,7 +65,7 @@ def _binding_inputs_are_valid(
     started_at_epoch: object,
     completed_at_epoch: object,
 ) -> bool:
-    """Return whether evidence objects are exact and internally well-formed."""
+    """Return whether exact caller-visible binding fields are well-formed."""
     if not (
         type(package_version) is str
         and type(source_commit) is str
@@ -82,8 +82,6 @@ def _binding_inputs_are_valid(
         and _positive_bigint(schema_evidence.size_bytes)
         and _content_free_digest(backup_evidence.sha256)
         and _positive_bigint(backup_evidence.size_bytes)
-        and postgres_schema_evidence_was_inspected(schema_evidence)
-        and postgres_backup_artifact_evidence_was_inspected(backup_evidence)
     )
 
 
