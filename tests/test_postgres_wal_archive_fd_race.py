@@ -75,6 +75,6 @@ def test_wal_receive_snapshots_archive_fd_before_subprocess_write(
         os.close(replacement_fd)
         os.close(original_fd)
 
-    assert result.end_lsn == "0/1000000"
+    assert result.requested_end_lsn == "0/1000000"
     assert (original_directory / _WAL_NAME).read_bytes() == b"sensitive-wal"
     assert not (replacement_directory / _WAL_NAME).exists()
