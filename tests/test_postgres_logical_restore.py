@@ -397,21 +397,27 @@ def test_restore_rejects_malformed_runner_result(tmp_path, monkeypatch):
         os.close(descriptor)
 
 
-def test_restore_requires_complete_archive_consumption(tmp_path, monkeypatch):
-    _path, descriptor, _size = _open_private_archive(tmp_path)
-    monkeypatch.setattr(
-        logical_restore.subprocess,
-        "run",
-        lambda argv, **_kwargs: subprocess.CompletedProcess(argv, 0),
-    )
+def test_restore_accepts_custom_format_seek_position(tmp_path, monkeypatch):
+    path, descriptor, size = _open_private_archive(tmp_path, payload=b"PGDMP" + (b"A" * 64))
+
+    def seek_based_restore(argv, **kwargs):
+        stdin = kwargs["stdin"]
+        os.lseek(stdin, size - 8, os.SEEK_SET)
+        assert os.read(stdin, 8) == b"A" * 8
+        os.lseek(stdin, 8, os.SEEK_SET)
+        assert os.read(stdin, 8) == b"A" * 8
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_restore.subprocess, "run", seek_based_restore)
     try:
-        with pytest.raises(
-            PostgresLogicalRestoreError,
-            match="^PostgreSQL logical restore archive was not consumed completely$",
-        ):
-            _restore_trusted(
-                "safe_service", descriptor, pg_restore_executable="/usr/bin/pg_restore"
-            )
+        result = _restore_trusted(
+            "isolated_restore",
+            descriptor,
+            pg_restore_executable="/usr/bin/pg_restore",
+        )
+        assert result == PostgresLogicalRestoreResult(size_bytes=size)
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) != size
+        assert str(path) not in "pg_restore"
     finally:
         os.close(descriptor)
 
@@ -473,6 +479,10 @@ def test_restore_rejects_archive_mutation_during_execution(
             "st_mode": status.st_mode,
             "st_nlink": status.st_nlink,
             "st_size": status.st_size,
+            "st_dev": status.st_dev,
+            "st_ino": status.st_ino,
+            "st_mtime_ns": status.st_mtime_ns,
+            "st_ctime_ns": status.st_ctime_ns,
         }
         values.update(final_override)
         return SimpleNamespace(**values)

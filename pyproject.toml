@@ -18,6 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+observability = ["opentelemetry-api>=1.44,<2"]
 secrets = ["cryptography>=50.0.0"]
 test = [
     "pytest>=7.4",
