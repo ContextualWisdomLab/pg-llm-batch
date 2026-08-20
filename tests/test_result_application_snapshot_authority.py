@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pg_llm_batch.result_application as result_application
 from pg_llm_batch.result_application import (
     ResultApplicationOutcome,
     apply_checkpointed_result_in_transaction,
@@ -84,6 +85,57 @@ def test_result_application_uses_validated_checkpoint_snapshot_after_load_hook()
         lambda _cursor, record: seen_records.append(dict(record)),
     )
 
+    assert checkpoint.batch_id == "batch-mutated"
+    assert store.saved_checkpoint == _checkpoint()
+    assert seen_records == [{"custom_id": "request-1"}]
+    assert outcome == ResultApplicationOutcome(
+        applied=True,
+        checkpoint=_checkpoint(),
+    )
+
+
+def test_result_application_does_not_reread_caller_slots_after_validation(
+    monkeypatch: Any,
+) -> None:
+    """Post-validation caller mutation cannot replace snapshotted authority."""
+    checkpoint = _checkpoint()
+    item = CheckpointedBatchResultRecord(
+        batch_id=checkpoint.batch_id,
+        file_kind=checkpoint.file_kind,
+        record={"custom_id": "request-1"},
+        checkpoint=checkpoint,
+    )
+    store = _MutatingLoadStore(item)
+    seen_records: list[dict[str, Any]] = []
+    original_validator = result_application._validate_item_and_effect
+    validation_calls = 0
+
+    def validate_then_mutate(
+        candidate: Any,
+        apply_record: Any,
+    ) -> CheckpointedBatchResultRecord:
+        nonlocal validation_calls
+        validated = original_validator(candidate, apply_record)
+        validation_calls += 1
+        if validation_calls == 1:
+            object.__setattr__(checkpoint, "batch_id", "batch-mutated")
+        return validated
+
+    monkeypatch.setattr(
+        result_application,
+        "_validate_item_and_effect",
+        validate_then_mutate,
+    )
+
+    outcome = apply_checkpointed_result_in_transaction(
+        object(),
+        store,
+        "result-writer",
+        item,
+        lambda _cursor, record: seen_records.append(dict(record)),
+    )
+
+    assert validation_calls == 1
     assert checkpoint.batch_id == "batch-mutated"
     assert store.saved_checkpoint == _checkpoint()
     assert seen_records == [{"custom_id": "request-1"}]
