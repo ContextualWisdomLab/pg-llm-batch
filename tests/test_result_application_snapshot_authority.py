@@ -100,6 +100,30 @@ class _MutatingSaveStore:
         return checkpoint
 
 
+class _MutatingNestedRecordStore:
+    """Mutate caller-owned nested JSON after the package snapshots the item."""
+
+    def __init__(self, item: CheckpointedBatchResultRecord) -> None:
+        self.item = item
+
+    def load_in_transaction(self, *_args: Any) -> None:
+        """Change a nested list/dict value before the business effect runs."""
+        self.item.record["response"]["choices"][0]["text"] = "substituted"
+        return None
+
+    def save_in_transaction(
+        self,
+        _cursor: Any,
+        _consumer_name: str,
+        checkpoint: BatchResultCheckpoint,
+        *,
+        expected_previous: BatchResultCheckpoint | None = None,
+    ) -> BatchResultCheckpoint:
+        """Echo the candidate checkpoint after the effect completes."""
+        assert expected_previous is None
+        return checkpoint
+
+
 def test_result_application_uses_validated_checkpoint_snapshot_after_load_hook() -> None:
     """A store hook cannot change the checkpoint applied after validation."""
     checkpoint = _checkpoint()
@@ -168,6 +192,36 @@ def test_result_application_does_not_reread_caller_slots_after_validation(
         applied=True,
         checkpoint=_checkpoint(),
     )
+
+
+def test_result_application_detaches_nested_json_before_load_hook() -> None:
+    """A retained caller record cannot rewrite nested business-effect content."""
+    checkpoint = _checkpoint()
+    record = {
+        "custom_id": "request-1",
+        "response": {"choices": [{"text": "approved"}]},
+    }
+    item = CheckpointedBatchResultRecord(
+        batch_id=checkpoint.batch_id,
+        file_kind=checkpoint.file_kind,
+        record=record,
+        checkpoint=checkpoint,
+    )
+    seen_text: list[str] = []
+
+    outcome = apply_checkpointed_result_in_transaction(
+        object(),
+        _MutatingNestedRecordStore(item),
+        "result-writer",
+        item,
+        lambda _cursor, applied_record: seen_text.append(
+            applied_record["response"]["choices"][0]["text"]
+        ),
+    )
+
+    assert record["response"]["choices"][0]["text"] == "substituted"
+    assert seen_text == ["approved"]
+    assert outcome == ResultApplicationOutcome(applied=True, checkpoint=_checkpoint())
 
 
 def test_mutated_checkpoint_semantics_are_redacted_before_store_access() -> None:
