@@ -72,18 +72,18 @@ def verify_postgres_recovery_receipt(
         raise PostgresRecoveryVerificationError(
             "invalid PostgreSQL recovery verification inputs"
         )
-    schema_sha256, backup_sha256, backup_size_bytes = receipt_identity
+    stored_schema_digest, stored_backup_digest, stored_backup_size = receipt_identity
 
     schema_evidence = inspect_postgres_schema()
     backup_evidence = inspect_postgres_backup_artifact(backup_artifact_path)
 
-    if not secrets.compare_digest(schema_sha256, schema_evidence.sha256):
+    if not secrets.compare_digest(stored_schema_digest, schema_evidence.sha256):
         raise PostgresRecoveryVerificationError(
             "inspected schema does not match recovery receipt"
         )
     if (
-        not secrets.compare_digest(backup_sha256, backup_evidence.sha256)
-        or backup_size_bytes != backup_evidence.size_bytes
+        not secrets.compare_digest(stored_backup_digest, backup_evidence.sha256)
+        or stored_backup_size != backup_evidence.size_bytes
     ):
         raise PostgresRecoveryVerificationError(
             "inspected backup does not match recovery receipt"
