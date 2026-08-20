@@ -54,6 +54,53 @@ def test_invalid_archive_byte_budget_fails_before_authority_retention(
         os.close(descriptor)
 
 
+def test_receive_rejects_shared_filesystem_before_executable_retention(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A shared filesystem must fail before executable authority or provider execution."""
+    descriptor = _open_private_directory(tmp_path, "shared-receive-filesystem")
+    retained_descriptors: list[int] = []
+    real_dup = os.dup
+    real_close = os.close
+
+    def tracking_dup(source_descriptor: int) -> int:
+        retained_descriptor = real_dup(source_descriptor)
+        retained_descriptors.append(retained_descriptor)
+        return retained_descriptor
+
+    def forbidden_executable(_pg_receivewal_executable: str) -> NoReturn:
+        raise AssertionError(
+            "filesystem budget must fail before executable retention"
+        )
+
+    monkeypatch.setattr(os, "dup", tracking_dup)
+    monkeypatch.setattr(
+        wal_archive,
+        "_retain_pg_receivewal_executable",
+        forbidden_executable,
+    )
+    try:
+        with pytest.raises(
+            PostgresWalArchiveError,
+            match="isolated bounded filesystem",
+        ):
+            wal_archive.receive_postgres_wal_archive(
+                "physical_replication_source",
+                "pg_llm_batch_archive",
+                "16/B374D848",
+                descriptor,
+                pg_receivewal_executable="/usr/bin/pg_receivewal",
+                maximum_archive_bytes=64 * _GIB,
+            )
+        assert retained_descriptors
+        for retained_descriptor in retained_descriptors:
+            with pytest.raises(OSError):
+                os.fstat(retained_descriptor)
+    finally:
+        real_close(descriptor)
+
+
 def test_archive_budget_requires_distinct_filesystem_root(tmp_path: Path) -> None:
     """A shared host filesystem cannot act as the receiver's aggregate byte quota."""
     descriptor = _open_private_directory(tmp_path, "shared-filesystem")
