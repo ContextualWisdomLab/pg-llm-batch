@@ -38,12 +38,15 @@ def test_restore_rejects_single_archive_metadata_mutation(
     os.lseek(descriptor, 0, os.SEEK_SET)
 
     real_fstat = os.fstat
+    retained_descriptor = None
     target_calls = 0
 
     def changing_fstat(target_descriptor):
-        nonlocal target_calls
+        nonlocal retained_descriptor, target_calls
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
+        if retained_descriptor is None:
+            retained_descriptor = target_descriptor
+        if target_descriptor != retained_descriptor:
             return status
         target_calls += 1
         if target_calls == 1:
