@@ -114,7 +114,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
         }
         assert str(path) not in " ".join(observed["argv"])
         assert "credential-value" not in " ".join(observed["argv"])
-        assert os.lseek(descriptor, 0, os.SEEK_CUR) == size
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == 0
     finally:
         os.close(descriptor)
 
