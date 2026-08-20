@@ -202,10 +202,7 @@ def _snapshot_json_record(record: dict[str, Any]) -> dict[str, Any]:
                 active_containers.remove(identity)
         raise reject()
 
-    copied_record = snapshot(record, 0)
-    if type(copied_record) is not dict:
-        raise reject()
-    return copied_record
+    return snapshot(record, 0)
 
 
 def _validate_item_and_effect(
