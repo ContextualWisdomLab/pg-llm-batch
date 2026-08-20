@@ -149,11 +149,13 @@ def _snapshot_json_record(record: dict[str, Any]) -> dict[str, Any]:
     active_containers: set[int] = set()
 
     def reject() -> ValidationError:
+        """Build the bounded redacted record validation error."""
         return _redacted_validation_error(
             "item.record", "must be bounded data made only of exact JSON primitives"
         )
 
     def snapshot(value: Any, depth: int) -> Any:
+        """Copy one JSON value while enforcing structural and text budgets."""
         nonlocal node_count, text_char_count
         node_count += 1
         if node_count > _MAX_RECORD_JSON_NODES:
