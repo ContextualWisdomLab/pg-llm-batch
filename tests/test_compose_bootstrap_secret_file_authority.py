@@ -71,6 +71,35 @@ def test_database_password_loader_normalizes_fstat_failure(
     assert caught.value.__cause__ is None
 
 
+def test_database_password_loader_rejects_content_mutation_after_initial_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Secret bytes cannot change after inspection and still become password authority."""
+    password_file = tmp_path / "database-password"
+    secret_text = "private-compose-password"
+    password_file.write_text(secret_text, encoding="utf-8")
+    real_fstat = compose_bootstrap.os.fstat
+    mutated = False
+
+    def mutate_after_first_fstat(fd: int) -> os.stat_result:
+        nonlocal mutated
+        status = real_fstat(fd)
+        if not mutated:
+            mutated = True
+            with password_file.open("ab") as stream:
+                stream.write(b"-mutated")
+        return status
+
+    monkeypatch.setattr(compose_bootstrap.os, "fstat", mutate_after_first_fstat)
+
+    with pytest.raises(ConfigError, match="unavailable") as caught:
+        compose_bootstrap._load_database_password(password_file)
+
+    assert secret_text not in str(caught.value)
+    assert "mutated" not in str(caught.value)
+    assert caught.value.__cause__ is None
+
+
 def test_database_password_loader_normalizes_close_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
