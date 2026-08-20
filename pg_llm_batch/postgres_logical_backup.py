@@ -189,16 +189,23 @@ def _libpq_environment(service_name: str, connect_timeout_seconds: int) -> dict[
 
 
 def _invalidate_output(cleanup_descriptor: int) -> None:
-    """Empty and rewind retained output or report content-free cleanup failure."""
+    """Durably empty and rewind retained output or report content-free cleanup failure."""
     invalidation_failed = False
+    truncation_completed = False
     try:
         os.ftruncate(cleanup_descriptor, 0)
+        truncation_completed = True
     except (OSError, ValueError):
         invalidation_failed = True
     try:
         os.lseek(cleanup_descriptor, 0, os.SEEK_SET)
     except (OSError, ValueError):
         invalidation_failed = True
+    if truncation_completed:
+        try:
+            os.fsync(cleanup_descriptor)
+        except (OSError, ValueError):
+            invalidation_failed = True
     if invalidation_failed:
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output could not be invalidated"
