@@ -35,9 +35,12 @@ def _snapshot_receipt_identity(
     """Capture one validated receipt identity before any live inspection occurs."""
     if type(receipt) is not PostgresRecoveryReceipt:
         return None
-    schema_sha256 = receipt.schema_sha256
-    backup_sha256 = receipt.backup_sha256
-    backup_size_bytes = receipt.backup_size_bytes
+    try:
+        schema_sha256 = receipt.schema_sha256
+        backup_sha256 = receipt.backup_sha256
+        backup_size_bytes = receipt.backup_size_bytes
+    except AttributeError:
+        return None
     if not (
         _content_free_digest(schema_sha256)
         and _content_free_digest(backup_sha256)
