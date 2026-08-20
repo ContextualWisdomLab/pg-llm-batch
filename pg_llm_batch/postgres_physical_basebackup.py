@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import stat
@@ -73,13 +74,14 @@ def _output_is_owner_only(mode: int) -> bool:
 
 
 def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
-    """Require a process-owned descriptor for one private empty regular file."""
+    """Require one private empty writable file through snapshotted descriptor authority."""
     try:
         status = os.fstat(output_descriptor)
         if not stat.S_ISREG(status.st_mode) or status.st_size != 0:
             raise PostgresPhysicalBaseBackupError(
                 "PostgreSQL physical base-backup output must be a private empty regular file"
             )
+        access_mode = fcntl.fcntl(output_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
         offset = os.lseek(output_descriptor, 0, os.SEEK_CUR)
         effective_user_id = os.geteuid()
     except PostgresPhysicalBaseBackupError:
@@ -89,6 +91,10 @@ def _inspect_initial_output(output_descriptor: int) -> os.stat_result:
             "PostgreSQL physical base-backup output could not be inspected"
         ) from None
 
+    if access_mode not in (os.O_WRONLY, os.O_RDWR):
+        raise PostgresPhysicalBaseBackupError(
+            "PostgreSQL physical base-backup output descriptor must be writable"
+        )
     if offset != 0:
         raise PostgresPhysicalBaseBackupError(
             "PostgreSQL physical base-backup output must start at offset zero"
@@ -480,17 +486,19 @@ def create_postgres_physical_basebackup(
     A SHA-256 backup manifest is requested and pg_basebackup's normal durable-sync
     behavior is retained; this function additionally fsyncs the caller-owned stream.
 
-    The output descriptor is privately snapshotted before inspection. The selected
-    file is then reopened through ``/proc/self/fd`` so the package-owned output copier
-    has an independent open-file description and file offset. Replacing, closing, or
-    seeking the caller-owned descriptor after the snapshot therefore cannot redirect
-    backup bytes, move the private output offset, or redirect final validation.
-    Environments unable to establish that process-descriptor reopening boundary fail
-    closed before ``pg_basebackup`` runs. The selected executable inode must be a
-    root-owned regular file with at least one execute bit, no set-user-ID or
-    set-group-ID bits, and no group/other write authority and remains retained through
-    subprocess creation, so a non-root service account cannot rewrite the validated
-    inode or gain privilege-transition authority through the selected executable.
+    The output descriptor is privately snapshotted before inspection. That retained
+    descriptor must itself carry write access; the package never uses ``/proc/self/fd``
+    to widen a caller's read-only capability. The selected file is then reopened through
+    ``/proc/self/fd`` so the package-owned output copier has an independent open-file
+    description and file offset. Replacing, closing, or seeking the caller-owned
+    descriptor after the snapshot therefore cannot redirect backup bytes, move the
+    private output offset, or redirect final validation. Environments unable to
+    establish that process-descriptor reopening boundary fail closed before
+    ``pg_basebackup`` runs. The selected executable inode must be a root-owned regular
+    file with at least one execute bit, no set-user-ID or set-group-ID bits, and no
+    group/other write authority and remains retained through subprocess creation, so a
+    non-root service account cannot rewrite the validated inode or gain
+    privilege-transition authority through the selected executable.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
     tar containing WAL required for backup consistency within the configured time and
