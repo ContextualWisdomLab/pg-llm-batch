@@ -41,18 +41,7 @@ def _plain_service_name(value: object) -> bool:
 
 def _plain_system_identifier(value: object) -> bool:
     """Return whether a value is an exact positive PostgreSQL system identifier."""
-    return (
-        type(value) is int
-        and 1 <= value <= _MAX_SYSTEM_IDENTIFIER
-    )
-
-
-def _plain_cluster_identity(value: object) -> bool:
-    """Return whether a value is an exact built-in cluster-identity record."""
-    return (
-        type(value) is PostgresRestoreTargetIdentity
-        and _plain_system_identifier(value.system_identifier)
-    )
+    return type(value) is int and 1 <= value <= _MAX_SYSTEM_IDENTIFIER
 
 
 def verify_postgres_restore_target_isolation(
@@ -70,11 +59,12 @@ def verify_postgres_restore_target_isolation(
     strings that match the same libpq service-name grammar used by the
     logical dump and restore executors. Both identities must be exact
     ``PostgresRestoreTargetIdentity`` values whose ``system_identifier``
-    values differ. Distinct names alone are not isolation: two service
-    sections or DNS aliases can resolve to the same cluster. The function
-    does not accept a DSN, password, ``tenant_scope``, host, port, or
-    backup-byte argument, and it does not execute ``pg_dump`` or
-    ``pg_restore``.
+    values differ. The verifier snapshots those caller-owned identifiers once
+    and makes the isolation decision only from the validated local snapshot.
+    Distinct names alone are not isolation: two service sections or DNS aliases
+    can resolve to the same cluster. The function does not accept a DSN,
+    password, ``tenant_scope``, host, port, or backup-byte argument, and it
+    does not execute ``pg_dump`` or ``pg_restore``.
     """
     if not _plain_service_name(live_service_name) or not _plain_service_name(
         restore_service_name
@@ -82,9 +72,23 @@ def verify_postgres_restore_target_isolation(
         raise PostgresRestoreTargetError(
             "invalid PostgreSQL restore target isolation inputs"
         )
-    if not _plain_cluster_identity(live_target_identity) or not _plain_cluster_identity(
-        restore_target_identity
+    if (
+        type(live_target_identity) is not PostgresRestoreTargetIdentity
+        or type(restore_target_identity) is not PostgresRestoreTargetIdentity
     ):
+        raise PostgresRestoreTargetError(
+            "invalid PostgreSQL restore target isolation inputs"
+        )
+    try:
+        live_system_identifier = live_target_identity.system_identifier
+        restore_system_identifier = restore_target_identity.system_identifier
+    except AttributeError:
+        raise PostgresRestoreTargetError(
+            "invalid PostgreSQL restore target isolation inputs"
+        ) from None
+    if not _plain_system_identifier(
+        live_system_identifier
+    ) or not _plain_system_identifier(restore_system_identifier):
         raise PostgresRestoreTargetError(
             "invalid PostgreSQL restore target isolation inputs"
         )
@@ -92,10 +96,7 @@ def verify_postgres_restore_target_isolation(
         raise PostgresRestoreTargetError(
             "PostgreSQL restore target is not isolated from the live service"
         )
-    if (
-        live_target_identity.system_identifier
-        == restore_target_identity.system_identifier
-    ):
+    if live_system_identifier == restore_system_identifier:
         raise PostgresRestoreTargetError(
             "PostgreSQL restore target is not isolated from the live service"
         )
