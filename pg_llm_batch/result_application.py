@@ -18,12 +18,18 @@ import asyncio
 import inspect
 from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass
+from math import isfinite
 from threading import get_ident
 from typing import Any, Callable, Mapping
 
 from .checkpoint_store import CheckpointConflictError
 from .exceptions import PgLlmBatchError, ValidationError
-from .result_streaming import BatchResultCheckpoint, CheckpointedBatchResultRecord
+from .result_streaming import (
+    DEFAULT_MAX_JSONL_LINE_BYTES,
+    DEFAULT_MAX_JSONL_RECORDS,
+    BatchResultCheckpoint,
+    CheckpointedBatchResultRecord,
+)
 
 
 _CHECKPOINT_STRING_FIELDS = (
@@ -39,6 +45,9 @@ _CHECKPOINT_INTEGER_FIELDS = (
     "batch_line_count",
     "record_count",
 )
+_MAX_RECORD_JSON_DEPTH = 64
+_MAX_RECORD_JSON_NODES = DEFAULT_MAX_JSONL_RECORDS
+_MAX_RECORD_JSON_TEXT_CHARS = DEFAULT_MAX_JSONL_LINE_BYTES
 
 
 class ResultApplicationError(PgLlmBatchError):
@@ -131,6 +140,72 @@ def _checkpoint_primitive_type_error(checkpoint: BatchResultCheckpoint) -> str |
         if type(getattr(checkpoint, field)) is not int:
             return field
     return None
+
+
+def _snapshot_json_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Deep-copy one exact-JSON object under finite structural and text budgets."""
+    node_count = 0
+    text_char_count = 0
+    active_containers: set[int] = set()
+
+    def reject() -> ValidationError:
+        return _redacted_validation_error(
+            "item.record", "must be bounded data made only of exact JSON primitives"
+        )
+
+    def snapshot(value: Any, depth: int) -> Any:
+        nonlocal node_count, text_char_count
+        node_count += 1
+        if node_count > _MAX_RECORD_JSON_NODES:
+            raise reject()
+
+        value_type = type(value)
+        if value_type is str:
+            text_char_count += len(value)
+            if text_char_count > _MAX_RECORD_JSON_TEXT_CHARS:
+                raise reject()
+            return value
+        if value is None or value_type is bool or value_type is int:
+            return value
+        if value_type is float:
+            if not isfinite(value):
+                raise reject()
+            return value
+        if value_type is dict:
+            if depth >= _MAX_RECORD_JSON_DEPTH:
+                raise reject()
+            identity = id(value)
+            if identity in active_containers:
+                raise reject()
+            active_containers.add(identity)
+            try:
+                copied: dict[str, Any] = {}
+                for key, nested_value in value.items():
+                    if type(key) is not str:
+                        raise reject()
+                    copied[snapshot(key, depth + 1)] = snapshot(
+                        nested_value, depth + 1
+                    )
+                return copied
+            finally:
+                active_containers.remove(identity)
+        if value_type is list:
+            if depth >= _MAX_RECORD_JSON_DEPTH:
+                raise reject()
+            identity = id(value)
+            if identity in active_containers:
+                raise reject()
+            active_containers.add(identity)
+            try:
+                return [snapshot(element, depth + 1) for element in value]
+            finally:
+                active_containers.remove(identity)
+        raise reject()
+
+    copied_record = snapshot(record, 0)
+    if type(copied_record) is not dict:
+        raise reject()
+    return copied_record
 
 
 def _validate_item_and_effect(
@@ -277,7 +352,7 @@ def _snapshot_item_and_effect(
     snapshot = CheckpointedBatchResultRecord(
         batch_id=batch_id,
         file_kind=file_kind,
-        record=record.copy(),
+        record=_snapshot_json_record(record),
         checkpoint=_snapshot_checkpoint(checkpoint, field_prefix="item.checkpoint"),
     )
     return _validate_item_and_effect(snapshot, apply_record)
@@ -296,8 +371,11 @@ def apply_checkpointed_result_in_transaction(
     or callback hook. Checkpoint slots are captured once into exact built-in
     primitives, reconstructed as package-owned checkpoints, and only those
     snapshots participate in load/replay/regression decisions, record effects,
-    save confirmation, or the returned outcome. Missing or post-construction
-    mutated authority fails through bounded redacted package diagnostics.
+    save confirmation, or the returned outcome. The record tree is recursively
+    copied before hooks using only exact JSON primitives under finite depth,
+    node-count, and text-size budgets. Missing, behavior-bearing, cyclic,
+    non-finite, or post-construction-mutated authority fails through bounded
+    redacted package diagnostics.
 
     The durable predecessor is likewise copied immediately after the load hook;
     save receives separate copies of both the candidate and predecessor so a
