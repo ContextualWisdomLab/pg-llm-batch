@@ -20,11 +20,20 @@ def test_restore_normalizes_initial_seek_failure(tmp_path, monkeypatch):
     descriptor = os.open(archive_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     os.write(descriptor, b"PGDMP-archive")
     os.lseek(descriptor, 0, os.SEEK_SET)
+    real_dup = os.dup
     real_lseek = os.lseek
+    retained_descriptor = None
     called = False
 
-    def failing_lseek(target_descriptor, offset, whence):
+    def tracking_dup(target_descriptor):
+        nonlocal retained_descriptor
+        duplicate = real_dup(target_descriptor)
         if target_descriptor == descriptor:
+            retained_descriptor = duplicate
+        return duplicate
+
+    def failing_lseek(target_descriptor, offset, whence):
+        if retained_descriptor is not None and target_descriptor == retained_descriptor:
             raise OSError("secret initial seek detail")
         return real_lseek(target_descriptor, offset, whence)
 
@@ -33,6 +42,7 @@ def test_restore_normalizes_initial_seek_failure(tmp_path, monkeypatch):
         called = True
         raise AssertionError("subprocess must not run")
 
+    monkeypatch.setattr(logical_restore.os, "dup", tracking_dup)
     monkeypatch.setattr(logical_restore.os, "lseek", failing_lseek)
     monkeypatch.setattr(logical_restore.subprocess, "run", forbidden_run)
     try:
