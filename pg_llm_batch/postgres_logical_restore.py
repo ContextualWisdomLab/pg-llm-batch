@@ -283,12 +283,15 @@ def restore_postgres_logical_backup(
     boundary. The package first duplicates the caller descriptor so later numeric-FD
     replacement cannot substitute another archive. That snapshot must itself carry
     readable authority and be positioned at byte zero; package code does not widen a
-    write-only caller capability. The snapshot is then reopened through
-    ``/proc/self/fd`` so ``pg_restore`` receives an independent package-owned open file
-    description and read offset. That independent descriptor must pass the private,
-    one-link, bounded regular-file inspection before child execution. Seeking or
-    replacing the caller descriptor after the snapshot therefore cannot redirect the
-    child or move its archive read position. The caller keeps ownership of the original
+    write-only caller capability. The snapshot is retained through execution and
+    reopened through ``/proc/self/fd`` so ``pg_restore`` receives an independent
+    package-owned open file description and read offset. That independent descriptor
+    must pass the private, one-link, bounded regular-file inspection before child
+    execution. Seeking or replacing the caller descriptor after the snapshot therefore
+    cannot redirect the child or move its archive read position. The retained snapshot
+    is reverified after execution against the inspected child-archive metadata so the
+    original snapshotted authority, rather than only the reopened stream, remains the
+    post-restore integrity boundary. The caller keeps ownership of the original
     descriptor; package cleanup closes only package-owned descriptors. The package does
     not receive an archive path, place credentials in process arguments, or reflect
     archive/database content in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and
@@ -326,23 +329,25 @@ def restore_postgres_logical_backup(
     try:
         _validate_snapshot_descriptor(snapshot_descriptor)
         retained_descriptor = _open_independent_archive(snapshot_descriptor)
+        try:
+            initial_status = _inspect_initial_archive(
+                retained_descriptor,
+                maximum_archive_size_bytes,
+            )
+            _run_pg_restore(
+                service_name=service_name,
+                input_descriptor=retained_descriptor,
+                pg_restore_executable=pg_restore_executable,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+            )
+            return PostgresLogicalRestoreResult(
+                size_bytes=_verify_archive_unchanged(
+                    snapshot_descriptor,
+                    initial_status,
+                )
+            )
+        finally:
+            _close_retained_archive_descriptor(retained_descriptor)
     finally:
         _close_retained_archive_descriptor(snapshot_descriptor)
-
-    try:
-        initial_status = _inspect_initial_archive(
-            retained_descriptor,
-            maximum_archive_size_bytes,
-        )
-        _run_pg_restore(
-            service_name=service_name,
-            input_descriptor=retained_descriptor,
-            pg_restore_executable=pg_restore_executable,
-            timeout_seconds=timeout_seconds,
-            connect_timeout_seconds=connect_timeout_seconds,
-        )
-        return PostgresLogicalRestoreResult(
-            size_bytes=_verify_archive_unchanged(retained_descriptor, initial_status)
-        )
-    finally:
-        _close_retained_archive_descriptor(retained_descriptor)
