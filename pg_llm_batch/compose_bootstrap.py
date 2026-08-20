@@ -12,6 +12,8 @@ the existing health server.
 from __future__ import annotations
 
 import argparse
+import os
+import stat
 from pathlib import Path
 from typing import Sequence
 
@@ -23,16 +25,41 @@ from .health import serve_healthz
 
 _DEFAULT_PASSWORD_FILE = Path("/run/secrets/postgres_password")
 _MAX_PASSWORD_BYTES = 65_536
+_SECRET_UNAVAILABLE = "The mounted PostgreSQL password secret is unavailable."
 
 
 def _load_database_password(password_file: Path) -> str:
-    """Read one bounded UTF-8 password from an explicitly mounted secret file."""
+    """Read one bounded UTF-8 password from an exact regular secret-file object."""
     try:
-        with password_file.open("rb") as secret_stream:
-            raw_password = secret_stream.read(_MAX_PASSWORD_BYTES + 1)
-    except OSError:
-        raise ConfigError("The mounted PostgreSQL password secret is unavailable.") from None
+        secure_flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+    except AttributeError:
+        raise ConfigError(_SECRET_UNAVAILABLE) from None
 
+    try:
+        secret_fd = os.open(password_file, secure_flags)
+    except OSError:
+        raise ConfigError(_SECRET_UNAVAILABLE) from None
+
+    raw_password: bytes | None = None
+    unavailable = False
+    try:
+        try:
+            secret_stat = os.fstat(secret_fd)
+            if not stat.S_ISREG(secret_stat.st_mode):
+                unavailable = True
+            else:
+                with os.fdopen(secret_fd, "rb", closefd=False) as secret_stream:
+                    raw_password = secret_stream.read(_MAX_PASSWORD_BYTES + 1)
+        except OSError:
+            unavailable = True
+    finally:
+        try:
+            os.close(secret_fd)
+        except OSError:
+            unavailable = True
+
+    if unavailable or raw_password is None:
+        raise ConfigError(_SECRET_UNAVAILABLE) from None
     if not raw_password:
         raise ConfigError("The mounted PostgreSQL password secret is empty.")
     if len(raw_password) > _MAX_PASSWORD_BYTES:
