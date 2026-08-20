@@ -79,6 +79,48 @@ def test_as_dict_rejects_deleted_slot_with_bounded_error() -> None:
     assert caught.value.__context__ is None
 
 
+def test_as_dict_rejects_validly_shaped_but_wrong_schema_identity() -> None:
+    """Syntactically valid digest evidence must still match the packaged schema."""
+    evidence = _evidence()
+    replacement = "0" * 64
+    if evidence.expected_schema_sha256 == replacement:
+        replacement = "1" * 64
+    object.__setattr__(evidence, "expected_schema_sha256", replacement)
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ) as caught:
+        evidence.as_dict()
+
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
+def test_as_dict_hides_package_schema_revalidation_failure(monkeypatch: Any) -> None:
+    """Package-resource failures must not become serialized recovery diagnostics."""
+    evidence = _evidence()
+
+    def fail_inspection() -> Any:
+        raise RuntimeError("SECRET-SENTINEL package loader diagnostic")
+
+    monkeypatch.setattr(
+        restore_acceptance,
+        "inspect_postgres_schema",
+        fail_inspection,
+    )
+
+    with pytest.raises(
+        PostgresRestoreAcceptanceError,
+        match="PostgreSQL restore catalog evidence is invalid",
+    ) as caught:
+        evidence.as_dict()
+
+    assert "SECRET-SENTINEL" not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_as_dict_uses_one_snapshot_before_package_schema_revalidation(
     monkeypatch: Any,
 ) -> None:
