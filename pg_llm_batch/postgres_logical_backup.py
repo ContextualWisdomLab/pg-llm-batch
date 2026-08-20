@@ -338,7 +338,12 @@ def _run_pg_dump(
                 pass
             raise
 
-    if execution_error is not None and not isinstance(execution_error, Exception):
+    if (
+        execution_error is not None
+        and not isinstance(execution_error, Exception)
+        and pump_failures
+        and isinstance(pump_failures[0], Exception)
+    ):
         try:
             _invalidate_output(cleanup_descriptor)
         except PostgresLogicalBackupError:
@@ -363,6 +368,12 @@ def _run_pg_dump(
         ) from None
 
     if execution_error is not None:
+        if not isinstance(execution_error, Exception):
+            try:
+                _invalidate_output(cleanup_descriptor)
+            except PostgresLogicalBackupError:
+                pass
+            raise execution_error
         _invalidate_output(cleanup_descriptor)
         if isinstance(execution_error, FileNotFoundError):
             raise PostgresLogicalBackupError(
