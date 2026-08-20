@@ -124,6 +124,35 @@ class _MutatingNestedRecordStore:
         return checkpoint
 
 
+class _DictSubclass(dict[str, Any]):
+    """Represent a behavior-capable mapping that is not an exact JSON object."""
+
+
+class _ListSubclass(list[Any]):
+    """Represent a behavior-capable sequence that is not an exact JSON array."""
+
+
+def _assert_record_rejected(record: dict[Any, Any]) -> None:
+    """Require malformed manual JSON authority to fail before store access."""
+    checkpoint = _checkpoint()
+    item = CheckpointedBatchResultRecord(
+        batch_id=checkpoint.batch_id,
+        file_kind=checkpoint.file_kind,
+        record=record,
+        checkpoint=checkpoint,
+    )
+
+    with pytest.raises(ValidationError) as caught:
+        apply_checkpointed_result_in_transaction(
+            object(), object(), "result-writer", item, lambda *_args: None
+        )
+
+    assert caught.value.details["field"] == "item.record"
+    assert caught.value.details["value"] == "<redacted>"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
+
+
 def test_result_application_uses_validated_checkpoint_snapshot_after_load_hook() -> None:
     """A store hook cannot change the checkpoint applied after validation."""
     checkpoint = _checkpoint()
@@ -222,6 +251,68 @@ def test_result_application_detaches_nested_json_before_load_hook() -> None:
     assert record["response"]["choices"][0]["text"] == "substituted"
     assert seen_text == ["approved"]
     assert outcome == ResultApplicationOutcome(applied=True, checkpoint=_checkpoint())
+
+
+def test_json_snapshot_preserves_exact_scalar_meaning_and_detaches_containers() -> None:
+    """Exact JSON scalars survive while nested list/dict containers are detached."""
+    original = {
+        "none": None,
+        "boolean": True,
+        "integer": 7,
+        "float": 1.5,
+        "nested": [{"text": "approved"}],
+    }
+
+    copied = result_application._snapshot_json_record(original)
+
+    assert copied == original
+    assert copied is not original
+    assert copied["nested"] is not original["nested"]
+    assert copied["nested"][0] is not original["nested"][0]
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"value": ("not", "json")},
+        {"value": float("nan")},
+        {"value": _DictSubclass({"nested": "value"})},
+        {"value": _ListSubclass(["value"])},
+        {1: "non-string-key"},
+    ],
+)
+def test_json_snapshot_rejects_non_exact_or_non_json_values(record: dict[Any, Any]) -> None:
+    """Manual records cannot introduce behavior-bearing or non-JSON values."""
+    _assert_record_rejected(record)
+
+
+def test_json_snapshot_rejects_recursive_dict_and_list_cycles() -> None:
+    """Cyclic manual containers fail before recursive traversal can run forever."""
+    dict_cycle: dict[str, Any] = {}
+    dict_cycle["self"] = dict_cycle
+    _assert_record_rejected(dict_cycle)
+
+    list_cycle: list[Any] = []
+    list_cycle.append(list_cycle)
+    _assert_record_rejected({"cycle": list_cycle})
+
+
+def test_json_snapshot_enforces_depth_node_and_text_budgets(monkeypatch: Any) -> None:
+    """Manual JSON authority remains finite across all package-owned work budgets."""
+    too_deep: dict[str, Any] = {}
+    cursor = too_deep
+    for _ in range(result_application._MAX_RECORD_JSON_DEPTH):
+        child: dict[str, Any] = {}
+        cursor["next"] = child
+        cursor = child
+    _assert_record_rejected(too_deep)
+
+    monkeypatch.setattr(result_application, "_MAX_RECORD_JSON_NODES", 2)
+    _assert_record_rejected({"key": 1})
+
+    monkeypatch.setattr(result_application, "_MAX_RECORD_JSON_NODES", 100)
+    monkeypatch.setattr(result_application, "_MAX_RECORD_JSON_TEXT_CHARS", 3)
+    _assert_record_rejected({"ab": "cd"})
 
 
 def test_mutated_checkpoint_semantics_are_redacted_before_store_access() -> None:
