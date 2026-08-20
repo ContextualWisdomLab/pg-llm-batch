@@ -181,6 +181,36 @@ def _validate_item_and_effect(
     return item
 
 
+def _snapshot_checkpoint(checkpoint: BatchResultCheckpoint) -> BatchResultCheckpoint:
+    """Copy validated checkpoint primitives into package-owned authority."""
+    return BatchResultCheckpoint(
+        schema_version=checkpoint.schema_version,
+        batch_id=checkpoint.batch_id,
+        endpoint_alias=checkpoint.endpoint_alias,
+        file_kind=checkpoint.file_kind,
+        file_id=checkpoint.file_id,
+        file_line_number=checkpoint.file_line_number,
+        batch_line_count=checkpoint.batch_line_count,
+        record_count=checkpoint.record_count,
+        prefix_sha256=checkpoint.prefix_sha256,
+    )
+
+
+def _snapshot_item_and_effect(
+    item: Any,
+    apply_record: Any,
+) -> CheckpointedBatchResultRecord:
+    """Validate then detach application authority from caller-owned containers."""
+    candidate = _validate_item_and_effect(item, apply_record)
+    snapshot = CheckpointedBatchResultRecord(
+        batch_id=candidate.batch_id,
+        file_kind=candidate.file_kind,
+        record=candidate.record.copy(),
+        checkpoint=_snapshot_checkpoint(candidate.checkpoint),
+    )
+    return _validate_item_and_effect(snapshot, apply_record)
+
+
 def apply_checkpointed_result_in_transaction(
     cursor: Any,
     checkpoint_store: Any,
@@ -194,7 +224,10 @@ def apply_checkpointed_result_in_transaction(
     predecessor, and save confirmation must use exact package-owned or built-in
     types. Subclasses are rejected before their behavior-bearing comparison or
     attribute hooks can execute, so caller-controlled subclass code cannot
-    disclose diagnostics or forge durable confirmation.
+    disclose diagnostics or forge durable confirmation. Validated item and
+    checkpoint authority is copied before any store or callback work; a second
+    checkpoint copy is handed to the save hook so hook-side mutation cannot
+    change the package-owned comparison and outcome authority.
 
     The durable predecessor is loaded and validated before the local effect. An
     exact replay returns without re-running the effect, while a count regression
@@ -226,7 +259,7 @@ def apply_checkpointed_result_in_transaction(
     after their exception scope has ended, preventing implicit traceback context
     from retaining provider or database diagnostics.
     """
-    candidate = _validate_item_and_effect(item, apply_record)
+    candidate = _snapshot_item_and_effect(item, apply_record)
 
     load_failure: ResultApplicationError | None = None
     previous: BatchResultCheckpoint | None = None
@@ -288,10 +321,11 @@ def apply_checkpointed_result_in_transaction(
 
     save_failure: ResultApplicationError | None = None
     try:
+        checkpoint_to_save = _snapshot_checkpoint(candidate.checkpoint)
         saved_checkpoint = checkpoint_store.save_in_transaction(
             cursor,
             consumer_name,
-            candidate.checkpoint,
+            checkpoint_to_save,
             expected_previous=previous,
         )
         if type(saved_checkpoint) is not BatchResultCheckpoint:
