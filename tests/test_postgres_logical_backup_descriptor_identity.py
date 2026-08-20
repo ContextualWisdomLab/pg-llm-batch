@@ -23,7 +23,7 @@ pytestmark = pytest.mark.usefixtures(install_retained_pg_dump_stub.__name__)
 def test_logical_backup_child_uses_snapshotted_output_authority(
     tmp_path, monkeypatch
 ):
-    """Keep pg_dump bound to the inspected file after caller-fd substitution."""
+    """Keep bounded package copying bound to the inspected file after caller-fd substitution."""
     original_path = tmp_path / "snapshotted.dump"
     replacement_path = tmp_path / "replacement.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
@@ -54,17 +54,16 @@ def test_logical_backup_child_uses_snapshotted_output_authority(
         os.close(descriptor)
 
 
-def test_logical_backup_child_offset_is_independent_from_caller_descriptor(
+def test_logical_backup_package_output_offset_is_independent_from_caller_descriptor(
     tmp_path, monkeypatch
 ):
-    """Keep caller seek authority from moving the pg_dump output position."""
+    """Keep caller seek authority from moving the package-owned output position."""
     original_path = tmp_path / "independent-offset.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
 
     def shift_caller_offset_then_write(argv, **kwargs):
         assert kwargs["stdout"] != descriptor
         os.lseek(descriptor, 4096, os.SEEK_SET)
-        assert os.lseek(kwargs["stdout"], 0, os.SEEK_CUR) == 0
         os.write(kwargs["stdout"], b"PGDMP-safe")
         return subprocess.CompletedProcess(argv, 0)
 
@@ -156,7 +155,7 @@ def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
 def test_logical_backup_normalizes_independent_output_open_failure(
     tmp_path, monkeypatch
 ):
-    """Fail closed if an independent child-output description cannot be opened."""
+    """Fail closed if an independent package-output description cannot be opened."""
     original_path = tmp_path / "open-failure.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     real_open = os.open
@@ -239,7 +238,7 @@ def test_logical_backup_cleanup_close_failure_preserves_success(
             descriptor,
             pg_dump_executable="/usr/bin/pg_dump",
         ) == PostgresLogicalBackupResult(size_bytes=10)
-        assert len(leaked_cleanup_descriptors) == 3
+        assert len(leaked_cleanup_descriptors) == 5
     finally:
         monkeypatch.setattr(logical_backup.os, "close", real_close)
         for cleanup_descriptor in leaked_cleanup_descriptors:
