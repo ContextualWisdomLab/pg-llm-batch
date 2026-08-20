@@ -214,11 +214,11 @@ def test_logical_backup_normalizes_oversized_output_descriptor(monkeypatch):
 def test_logical_backup_cleanup_close_failure_preserves_success(
     tmp_path, monkeypatch
 ):
-    """Do not replace valid backup evidence with an authority-close diagnostic."""
+    """Ignore post-release close diagnostics without leaving the output pump blocked."""
     original_path = tmp_path / "close-failure.dump"
     descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
     real_close = os.close
-    leaked_cleanup_descriptors: list[int] = []
+    closed_cleanup_descriptors: list[int] = []
 
     def write_successfully(argv, **kwargs):
         os.write(kwargs["stdout"], b"PGDMP-safe")
@@ -227,7 +227,8 @@ def test_logical_backup_cleanup_close_failure_preserves_success(
     def fail_cleanup_close(target_descriptor):
         if target_descriptor == descriptor:
             return real_close(target_descriptor)
-        leaked_cleanup_descriptors.append(target_descriptor)
+        real_close(target_descriptor)
+        closed_cleanup_descriptors.append(target_descriptor)
         raise OSError("secret cleanup close failure")
 
     monkeypatch.setattr(logical_backup.subprocess, "run", write_successfully)
@@ -238,9 +239,10 @@ def test_logical_backup_cleanup_close_failure_preserves_success(
             descriptor,
             pg_dump_executable="/usr/bin/pg_dump",
         ) == PostgresLogicalBackupResult(size_bytes=10)
-        assert len(leaked_cleanup_descriptors) == 5
+        assert len(closed_cleanup_descriptors) == 5
+        for cleanup_descriptor in closed_cleanup_descriptors:
+            with pytest.raises(OSError):
+                os.fstat(cleanup_descriptor)
     finally:
         monkeypatch.setattr(logical_backup.os, "close", real_close)
-        for cleanup_descriptor in leaked_cleanup_descriptors:
-            real_close(cleanup_descriptor)
         real_close(descriptor)
