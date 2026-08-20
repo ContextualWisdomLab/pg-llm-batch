@@ -150,7 +150,7 @@ def _retain_pg_basebackup_executable(pg_basebackup_executable: str) -> int:
     try:
         executable_descriptor = os.open(
             pg_basebackup_executable,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW,
         )
     except (OSError, ValueError):
         raise PostgresPhysicalBaseBackupError(
@@ -493,10 +493,11 @@ def create_postgres_physical_basebackup(
     descriptor after the snapshot therefore cannot redirect backup bytes, move the
     private output offset, or redirect final validation. Environments unable to
     establish that process-descriptor reopening boundary fail closed before
-    ``pg_basebackup`` runs. The selected executable inode must be a root-owned regular
-    file with at least one execute bit, no set-user-ID or set-group-ID bits, and no
-    group/other write authority and remains retained through subprocess creation, so a
-    non-root service account cannot rewrite the validated inode or gain
+    ``pg_basebackup`` runs. The selected executable path is opened without following
+    its final symlink. Its retained inode must be a root-owned regular file with at least
+    one execute bit, no set-user-ID or set-group-ID bits, and no group/other write
+    authority and remains retained through subprocess creation, so a non-root service
+    account cannot redirect the final path, rewrite the validated inode, or gain
     privilege-transition authority through the selected executable.
 
     Successful execution proves only that PostgreSQL produced one physical base-backup
