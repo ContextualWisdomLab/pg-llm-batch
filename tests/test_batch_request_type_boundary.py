@@ -97,3 +97,57 @@ def test_batch_request_preserves_string_compatibility():
         "",
         "",
     )
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value", "original_value"),
+    (
+        ("user_prompt", ["assignment-secret-sentinel"], "hello"),
+        ("model", StringSubclass("assignment-secret-sentinel"), "gpt-4o"),
+        ("system_prompt", ["assignment-secret-sentinel"], "system"),
+        ("id", ["assignment-secret-sentinel"], "request-1"),
+    ),
+)
+def test_batch_request_rejects_invalid_post_construction_assignment(
+    field, invalid_value, original_value
+):
+    """Validated fields must not become invalid after construction."""
+    request = BatchRequest(
+        user_prompt="hello",
+        model="gpt-4o",
+        system_prompt="system",
+        id="request-1",
+    )
+
+    with pytest.raises(ValidationError) as captured:
+        setattr(request, field, invalid_value)
+
+    error = captured.value
+    assert error.details["field"] == field
+    assert error.details["value"] == "<redacted>"
+    assert "assignment-secret-sentinel" not in str(error)
+    assert "assignment-secret-sentinel" not in repr(error.details)
+    assert getattr(request, field) == original_value
+
+
+def test_batch_request_preserves_valid_post_construction_assignment():
+    """Exact strings and an optional None remain mutable for compatibility."""
+    request = BatchRequest(
+        user_prompt="hello",
+        model="gpt-4o",
+        system_prompt="system",
+        id="request-1",
+    )
+
+    request.user_prompt = "updated-user"
+    request.model = "updated-model"
+    request.system_prompt = None
+    request.system_prompt = "updated-system"
+    request.id = "updated-id"
+
+    assert (request.user_prompt, request.model, request.system_prompt, request.id) == (
+        "updated-user",
+        "updated-model",
+        "updated-system",
+        "updated-id",
+    )
