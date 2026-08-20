@@ -268,18 +268,18 @@ def _run_pg_dump(
         ) from None
 
     pump_failures: list[BaseException] = []
-    pump_thread = threading.Thread(
-        target=_copy_bounded_output,
-        args=(
-            read_descriptor,
-            output_descriptor,
-            maximum_output_bytes,
-            pump_failures,
-        ),
-        name="pg-llm-batch-logical-backup-output",
-        daemon=True,
-    )
     try:
+        pump_thread = threading.Thread(
+            target=_copy_bounded_output,
+            args=(
+                read_descriptor,
+                output_descriptor,
+                maximum_output_bytes,
+                pump_failures,
+            ),
+            name="pg-llm-batch-logical-backup-output",
+            daemon=True,
+        )
         pump_thread.start()
     except Exception:
         _close_descriptor(read_descriptor)
