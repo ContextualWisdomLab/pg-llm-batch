@@ -331,7 +331,6 @@ def _run_pg_dump(
         try:
             pump_thread.join()
         except BaseException:
-            _close_descriptor(read_descriptor)
             try:
                 _invalidate_output(cleanup_descriptor)
             except PostgresLogicalBackupError:
@@ -434,7 +433,7 @@ def _finalize_output(
         _invalidate_output(cleanup_descriptor)
         raise PostgresLogicalBackupError(
             "PostgreSQL logical backup output became unsafe"
-        )
+        ) from None
     if (status.st_dev, status.st_ino) != (initial_status.st_dev, initial_status.st_ino):
         _invalidate_output(cleanup_descriptor)
         raise PostgresLogicalBackupError(
