@@ -195,6 +195,51 @@ def _libpq_environment(connect_timeout_seconds: int) -> dict[str, str]:
     return environment
 
 
+def _close_retained_executable_descriptor(executable_descriptor: int) -> None:
+    """Best-effort close package-owned pg_restore executable authority."""
+    try:
+        os.close(executable_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
+def _open_retained_pg_restore_executable(pg_restore_executable: str) -> int:
+    """Retain one root-owned non-set-id regular pg_restore executable inode."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        executable_descriptor = os.open(pg_restore_executable, flags)
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore executable unavailable"
+        ) from None
+
+    try:
+        status = os.fstat(executable_descriptor)
+    except (OSError, ValueError):
+        _close_retained_executable_descriptor(executable_descriptor)
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore executable could not be inspected"
+        ) from None
+
+    mode = status.st_mode
+    if (
+        not stat.S_ISREG(mode)
+        or status.st_uid != 0
+        or mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) == 0
+        or mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID) != 0
+    ):
+        _close_retained_executable_descriptor(executable_descriptor)
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore executable is unsafe"
+        )
+    return executable_descriptor
+
+
 def _run_pg_restore(
     *,
     service_name: str,
@@ -203,7 +248,7 @@ def _run_pg_restore(
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> None:
-    """Run one shell-free, single-transaction pg_restore with bounded diagnostics."""
+    """Run one shell-free pg_restore through retained executable inode authority."""
     arguments = [
         pg_restore_executable,
         "--single-transaction",
@@ -211,36 +256,44 @@ def _run_pg_restore(
         f"--dbname=service={service_name}",
     ]
     environment = _libpq_environment(connect_timeout_seconds)
+    executable_descriptor = _open_retained_pg_restore_executable(pg_restore_executable)
     try:
-        completed = subprocess.run(
-            arguments,
-            stdin=input_descriptor,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout_seconds,
-            check=False,
-            close_fds=True,
-            env=environment,
-        )
-    except FileNotFoundError:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore executable unavailable"
-        ) from None
-    except subprocess.TimeoutExpired:
-        raise PostgresLogicalRestoreError("PostgreSQL logical restore timed out") from None
-    except Exception:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore execution failed"
-        ) from None
+        try:
+            completed = subprocess.run(
+                arguments,
+                executable=f"/proc/self/fd/{executable_descriptor}",
+                pass_fds=(executable_descriptor,),
+                stdin=input_descriptor,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+                check=False,
+                close_fds=True,
+                env=environment,
+            )
+        except FileNotFoundError:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore executable unavailable"
+            ) from None
+        except subprocess.TimeoutExpired:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore timed out"
+            ) from None
+        except Exception:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore execution failed"
+            ) from None
 
-    if type(completed) is not subprocess.CompletedProcess:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore execution failed"
-        )
-    if completed.returncode != 0:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore command failed"
-        )
+        if type(completed) is not subprocess.CompletedProcess:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore execution failed"
+            )
+        if completed.returncode != 0:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore command failed"
+            )
+    finally:
+        _close_retained_executable_descriptor(executable_descriptor)
 
 
 def _verify_archive_unchanged(
@@ -292,10 +345,15 @@ def restore_postgres_logical_backup(
     is reverified after execution against the inspected child-archive metadata so the
     original snapshotted authority, rather than only the reopened stream, remains the
     post-restore integrity boundary. The caller keeps ownership of the original
-    descriptor; package cleanup closes only package-owned descriptors. The package does
-    not receive an archive path, place credentials in process arguments, or reflect
-    archive/database content in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``, and
-    ``PGSERVICEFILE`` may be inherited, so ambient host/database/options/SSL-mode
+    descriptor; package cleanup closes only package-owned descriptors. Before child
+    execution, the selected absolute ``pg_restore`` path is opened no-follow and
+    non-blocking, then accepted only as a root-owned regular executable with no
+    group/other write or set-id authority. The child executes that retained inode via
+    ``/proc/self/fd`` while preserving the caller pathname only as ``argv[0]``; replacing
+    the path after retention cannot substitute different executable bytes. The package
+    does not receive an archive path, place credentials in process arguments, or
+    reflect archive/database content in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``,
+    and ``PGSERVICEFILE`` may be inherited, so ambient host/database/options/SSL-mode
     variables cannot silently redirect or weaken the target session. The validated
     non-secret service selector is supplied through ``--dbname=service=...`` so
     ``pg_restore`` performs a direct database restore rather than merely rendering
