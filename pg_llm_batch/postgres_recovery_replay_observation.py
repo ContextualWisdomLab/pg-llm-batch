@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from weakref import WeakKeyDictionary
 
 
-_LSN_RE = re.compile(r"(?:0|[1-9A-F][0-9A-F]{0,7})/[0-9A-F]{8}\Z")
+_LSN_RE = re.compile(r"(?:0|[1-9A-F][0-9A-F]{0,7})/[0-9A-F]{1,8}\Z")
 _REPLAY_SQL = """
 SELECT
     pg_catalog.pg_is_in_recovery(),
@@ -106,7 +106,7 @@ def _record_observed_replay(evidence: PostgresRecoveryReplayObservation) -> None
 
 
 def _lsn_position(value: object) -> int | None:
-    """Return a canonical nonzero PostgreSQL LSN as a uint64 position."""
+    """Return a normalized nonzero PostgreSQL LSN as a uint64 position."""
     if type(value) is not str:
         return None
     if _LSN_RE.fullmatch(value) is None:
@@ -176,12 +176,13 @@ def observe_postgres_recovery_replay(
     """Observe that an isolated recovery target replayed at least one target LSN.
 
     ``connection`` is caller-owned and already connected to the isolated
-    PostgreSQL target. ``target_lsn`` must be canonical nonzero PostgreSQL LSN
-    text. The function performs one fixed, catalog-qualified read-only query and
-    requires three conditions in the same returned row: recovery is still in
-    progress, ``pg_get_wal_replay_pause_state()`` reports ``paused`` rather than
-    merely a pause request, and ``pg_last_wal_replay_lsn()`` is at or beyond the
-    requested LSN.
+    PostgreSQL target. ``target_lsn`` must be normalized uppercase nonzero
+    PostgreSQL LSN text with at most eight hexadecimal digits per segment. The
+    function performs one fixed, catalog-qualified read-only query and requires
+    three conditions in the same returned row: recovery is still in progress,
+    ``pg_get_wal_replay_pause_state()`` reports ``paused`` rather than merely a
+    pause request, and ``pg_last_wal_replay_lsn()`` is at or beyond the requested
+    LSN.
 
     PostgreSQL documents LSNs as monotonically increasing WAL byte positions and
     documents the ``paused`` state as the state in which no further database
