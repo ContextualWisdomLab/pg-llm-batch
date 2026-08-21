@@ -107,6 +107,17 @@ def test_observe_recovery_replay_accepts_exact_target_lsn() -> None:
     assert evidence.target_reached is True
 
 
+def test_observe_recovery_replay_accepts_postgresql_printed_short_lsn_segments() -> None:
+    evidence = observe_postgres_recovery_replay(
+        _ReplayConnection((True, "paused", "0/16B1971")),
+        target_lsn="0/16B1970",
+    )
+
+    assert evidence.target_lsn == "0/16B1970"
+    assert evidence.replay_lsn == "0/16B1971"
+    assert evidence.target_reached is True
+
+
 def test_manual_observation_is_not_inspection_provenance() -> None:
     fabricated = PostgresRecoveryReplayObservation(
         target_lsn="1/00000010",
@@ -147,9 +158,10 @@ def test_copied_or_mutated_observation_loses_inspection_provenance() -> None:
         _HostileString("1/00000010"),
         "",
         "01/00000010",
-        "1/10",
         "1/0000000a",
         "0/00000000",
+        "1/000000010",
+        "100000000/1",
     ],
 )
 def test_observe_recovery_replay_rejects_invalid_target_before_database_io(
