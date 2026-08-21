@@ -63,10 +63,10 @@ class PostgresRecoveryReplayObservation:
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable content-free machine-readable observation schema."""
-        _require_observed(self)
+        target_lsn, replay_lsn = _require_observed(self)
         return {
-            "target_lsn": self.target_lsn,
-            "replay_lsn": self.replay_lsn,
+            "target_lsn": target_lsn,
+            "replay_lsn": replay_lsn,
             "recovery_in_progress": True,
             "replay_paused": True,
             "target_reached": True,
@@ -92,12 +92,20 @@ def postgres_recovery_replay_observation_was_observed(evidence: object) -> bool:
     )
 
 
-def _require_observed(evidence: PostgresRecoveryReplayObservation) -> None:
-    """Fail closed when a record is fabricated, copied, or mutated after observation."""
+def _require_observed(
+    evidence: PostgresRecoveryReplayObservation,
+) -> tuple[str, str]:
+    """Return the validated immutable observation snapshot or fail closed."""
     if not postgres_recovery_replay_observation_was_observed(evidence):
         raise PostgresRecoveryReplayObservationError(
             "PostgreSQL recovery replay observation provenance is invalid"
         )
+    observed = _OBSERVED_REPLAY.get(evidence)
+    if observed is None:
+        raise PostgresRecoveryReplayObservationError(
+            "PostgreSQL recovery replay observation provenance is invalid"
+        )
+    return observed
 
 
 def _record_observed_replay(evidence: PostgresRecoveryReplayObservation) -> None:
