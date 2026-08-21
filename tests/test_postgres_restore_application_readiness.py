@@ -75,6 +75,7 @@ def test_restore_application_readiness_accepts_exact_prerequisites() -> None:
     assert "pg_catalog.pg_proc" in cursor.executed_sql
     assert "pg_catalog.has_table_privilege" in cursor.executed_sql
     assert "pg_catalog.has_function_privilege" in cursor.executed_sql
+    assert cursor.executed_sql.count("pg_catalog.has_schema_privilege") >= 2
     assert "pg_llm_batch_health_check()" not in cursor.executed_sql
 
 
