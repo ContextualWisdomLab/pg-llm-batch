@@ -81,6 +81,22 @@ def test_restore_application_readiness_accepts_exact_prerequisites() -> None:
     assert "pg_llm_batch_health_check()" not in cursor.executed_sql
 
 
+def test_restore_application_readiness_requires_exact_health_result_contract() -> None:
+    """A callable zero-argument health function must expose the package row shape."""
+    _evidence, cursor = _inspect()
+
+    assert cursor.executed_sql is not None
+    assert "function_row.proretset" in cursor.executed_sql
+    assert "function_row.prorettype" in cursor.executed_sql
+    assert "function_row.proallargtypes" in cursor.executed_sql
+    assert "function_row.proargmodes" in cursor.executed_sql
+    assert "function_row.proargnames" in cursor.executed_sql
+    assert "NOT function_row.prosecdef" in cursor.executed_sql
+    assert "component" in cursor.executed_sql
+    assert "is_ready" in cursor.executed_sql
+    assert "detail" in cursor.executed_sql
+
+
 def test_restore_application_readiness_rejects_fabricated_evidence() -> None:
     """Public construction and subclasses cannot fabricate observed readiness."""
 
