@@ -7,6 +7,7 @@ from dataclasses import replace
 
 import pytest
 
+import pg_llm_batch.postgres_recovery_replay_observation as replay_observation
 from pg_llm_batch.postgres_recovery_replay_observation import (
     PostgresRecoveryReplayObservation,
     PostgresRecoveryReplayObservationError,
@@ -149,6 +150,39 @@ def test_copied_or_mutated_observation_loses_inspection_provenance() -> None:
         match="PostgreSQL recovery replay observation provenance is invalid",
     ):
         evidence.target_reached
+
+
+def test_observation_registry_eviction_between_checks_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    evidence = observe_postgres_recovery_replay(
+        _ReplayConnection((True, "paused", "1/00000020")),
+        target_lsn="1/00000010",
+    )
+    snapshot = (evidence.target_lsn, evidence.replay_lsn)
+
+    class _EvictingRegistry:
+        """Model concurrent provenance eviction between the guarded reads."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, candidate: object) -> tuple[str, str] | None:
+            self.calls += 1
+            if candidate is evidence and self.calls == 1:
+                return snapshot
+            return None
+
+    registry = _EvictingRegistry()
+    monkeypatch.setattr(replay_observation, "_OBSERVED_REPLAY", registry)
+
+    with pytest.raises(
+        PostgresRecoveryReplayObservationError,
+        match="PostgreSQL recovery replay observation provenance is invalid",
+    ):
+        evidence.as_dict()
+
+    assert registry.calls == 2
 
 
 @pytest.mark.parametrize(
