@@ -1,0 +1,194 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Inspect database-side application prerequisites after an isolated restore."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+
+_READINESS_SQL = """
+SELECT
+    pg_catalog.current_database() IS NOT NULL,
+    EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_extension AS extension
+        WHERE extension.extname = 'pg_tiktoken'
+    ),
+    EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_depend AS dependency
+        INNER JOIN pg_catalog.pg_extension AS extension
+            ON extension.oid = dependency.refobjid
+        WHERE dependency.classid = pg_catalog.to_regclass('pg_catalog.pg_proc')
+          AND dependency.refclassid = pg_catalog.to_regclass('pg_catalog.pg_extension')
+          AND dependency.objid = pg_catalog.to_regprocedure(
+              'tiktoken_count(text,text)'
+          )
+          AND dependency.deptype = 'e'
+          AND extension.extname = 'pg_tiktoken'
+    ),
+    EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_depend AS dependency
+        INNER JOIN pg_catalog.pg_extension AS extension
+            ON extension.oid = dependency.refobjid
+        WHERE dependency.classid = pg_catalog.to_regclass('pg_catalog.pg_proc')
+          AND dependency.refclassid = pg_catalog.to_regclass('pg_catalog.pg_extension')
+          AND dependency.objid = pg_catalog.to_regprocedure(
+              'tiktoken_encode(text,text)'
+          )
+          AND dependency.deptype = 'e'
+          AND extension.extname = 'pg_tiktoken'
+    ),
+    EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS relation
+        INNER JOIN pg_catalog.pg_namespace AS namespace
+            ON namespace.oid = relation.relnamespace
+        WHERE namespace.nspname = pg_catalog.current_schema()
+          AND relation.relname = 'com_config'
+          AND relation.relkind = 'r'
+          AND pg_catalog.has_table_privilege(relation.oid, 'SELECT')
+    ),
+    (
+        SELECT COUNT(*)
+        FROM pg_catalog.pg_proc AS function_row
+        INNER JOIN pg_catalog.pg_namespace AS namespace
+            ON namespace.oid = function_row.pronamespace
+        WHERE namespace.nspname = pg_catalog.current_schema()
+          AND function_row.proname = 'pg_llm_batch_health_check'
+          AND function_row.pronargs = 0
+          AND function_row.prokind = 'f'
+    ),
+    EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_proc AS function_row
+        INNER JOIN pg_catalog.pg_namespace AS namespace
+            ON namespace.oid = function_row.pronamespace
+        WHERE namespace.nspname = pg_catalog.current_schema()
+          AND function_row.proname = 'pg_llm_batch_health_check'
+          AND function_row.pronargs = 0
+          AND function_row.prokind = 'f'
+          AND pg_catalog.has_function_privilege(function_row.oid, 'EXECUTE')
+    )
+""".strip()
+
+
+class PostgresRestoreApplicationReadinessError(ValueError):
+    """Report a fail-closed restore application-readiness violation."""
+
+
+@dataclass(frozen=True, slots=True)
+class PostgresRestoreApplicationReadinessEvidence:
+    """Represent content-free database-side readiness on an isolated target."""
+
+    database_reachable: bool
+    pg_tiktoken_extension_present: bool
+    tiktoken_count_present: bool
+    tiktoken_encode_present: bool
+    config_table_readable: bool
+    health_function_count: int
+    health_function_executable: bool
+
+    def as_dict(self) -> dict[str, object]:
+        """Return the stable machine-readable application-readiness schema."""
+        return {
+            "database_reachable": self.database_reachable,
+            "pg_tiktoken_extension_present": self.pg_tiktoken_extension_present,
+            "tiktoken_count_present": self.tiktoken_count_present,
+            "tiktoken_encode_present": self.tiktoken_encode_present,
+            "config_table_readable": self.config_table_readable,
+            "health_function_count": self.health_function_count,
+            "health_function_executable": self.health_function_executable,
+        }
+
+
+def _invalid_readiness_evidence() -> None:
+    """Reject malformed database evidence without reflecting row contents."""
+    raise PostgresRestoreApplicationReadinessError(
+        "PostgreSQL restore application-readiness evidence is invalid"
+    )
+
+
+def _evaluate_readiness_row(
+    row: object,
+) -> PostgresRestoreApplicationReadinessEvidence:
+    """Validate one fixed database-side application-readiness observation."""
+    if type(row) is not tuple or len(row) != 7:
+        _invalid_readiness_evidence()
+    (
+        database_reachable,
+        pg_tiktoken_extension_present,
+        tiktoken_count_present,
+        tiktoken_encode_present,
+        config_table_readable,
+        health_function_count,
+        health_function_executable,
+    ) = row
+    if (
+        type(database_reachable) is not bool
+        or type(pg_tiktoken_extension_present) is not bool
+        or type(tiktoken_count_present) is not bool
+        or type(tiktoken_encode_present) is not bool
+        or type(config_table_readable) is not bool
+        or type(health_function_count) is not int
+        or type(health_function_executable) is not bool
+    ):
+        _invalid_readiness_evidence()
+    if not database_reachable:
+        raise PostgresRestoreApplicationReadinessError(
+            "PostgreSQL restore target database is unavailable"
+        )
+    if (
+        not pg_tiktoken_extension_present
+        or not tiktoken_count_present
+        or not tiktoken_encode_present
+    ):
+        raise PostgresRestoreApplicationReadinessError(
+            "PostgreSQL restore target tokenizer is unavailable"
+        )
+    if not config_table_readable:
+        raise PostgresRestoreApplicationReadinessError(
+            "PostgreSQL restore target configuration is unavailable"
+        )
+    if health_function_count != 1 or not health_function_executable:
+        raise PostgresRestoreApplicationReadinessError(
+            "PostgreSQL restore target health contract is unavailable"
+        )
+    return PostgresRestoreApplicationReadinessEvidence(
+        database_reachable=database_reachable,
+        pg_tiktoken_extension_present=pg_tiktoken_extension_present,
+        tiktoken_count_present=tiktoken_count_present,
+        tiktoken_encode_present=tiktoken_encode_present,
+        config_table_readable=config_table_readable,
+        health_function_count=health_function_count,
+        health_function_executable=health_function_executable,
+    )
+
+
+def inspect_postgres_restore_application_readiness(
+    connection: object,
+) -> PostgresRestoreApplicationReadinessEvidence:
+    """Inspect fixed database-side prerequisites on a caller-owned restore target.
+
+    ``connection`` is caller-owned and already connected to the isolated target.
+    The function performs one fixed, read-only catalog query. It proves only that
+    the current database is reachable, the resolved pg_tiktoken functions belong
+    to the installed pg_tiktoken extension, the current schema's ``com_config``
+    table is readable by the current role, and one zero-argument current-schema
+    ``pg_llm_batch_health_check`` function is executable by that role.
+
+    It does not invoke the health function, install extensions, grant privileges,
+    change search paths, open another connection, start or promote recovery, test
+    providers or external secret custody, prove exact PITR stop semantics, or
+    establish end-user readiness, RPO/RTO, HA/DR, CSAP, SOC 2, or certification.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(_READINESS_SQL)
+            row = cursor.fetchone()
+    except Exception:
+        raise PostgresRestoreApplicationReadinessError(
+            "PostgreSQL restore application readiness could not be inspected"
+        ) from None
+    return _evaluate_readiness_row(row)
