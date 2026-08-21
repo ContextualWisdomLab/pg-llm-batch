@@ -158,8 +158,7 @@ def _readiness_was_observed(evidence: object) -> bool:
         return False
     if evidence._observation_mark is not _READINESS_OBSERVATION_MARK:
         return False
-    observed = _READINESS_SNAPSHOTS.get(evidence)
-    return observed is not None and observed == _readiness_snapshot(evidence)
+    return _READINESS_SNAPSHOTS.get(evidence) == _readiness_snapshot(evidence)
 
 
 def _require_observed_readiness(
