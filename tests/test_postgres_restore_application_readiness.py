@@ -82,22 +82,31 @@ def test_restore_application_readiness_accepts_exact_prerequisites() -> None:
 
 
 def test_restore_application_readiness_rejects_fabricated_evidence() -> None:
-    """Public construction cannot fabricate package-observed readiness evidence."""
-    fabricated = PostgresRestoreApplicationReadinessEvidence(
-        database_reachable=True,
-        pg_tiktoken_extension_present=True,
-        tiktoken_count_callable=True,
-        tiktoken_encode_callable=True,
-        config_table_readable=True,
-        health_function_count=1,
-        health_function_executable=True,
+    """Public construction and subclasses cannot fabricate observed readiness."""
+
+    class _FabricatedSubclass(PostgresRestoreApplicationReadinessEvidence):
+        pass
+
+    fields = {
+        "database_reachable": True,
+        "pg_tiktoken_extension_present": True,
+        "tiktoken_count_callable": True,
+        "tiktoken_encode_callable": True,
+        "config_table_readable": True,
+        "health_function_count": 1,
+        "health_function_executable": True,
+    }
+    fabricated_candidates = (
+        PostgresRestoreApplicationReadinessEvidence(**fields),
+        _FabricatedSubclass(**fields),
     )
 
-    with pytest.raises(
-        PostgresRestoreApplicationReadinessError,
-        match="^PostgreSQL restore application-readiness provenance is invalid$",
-    ):
-        fabricated.as_dict()
+    for fabricated in fabricated_candidates:
+        with pytest.raises(
+            PostgresRestoreApplicationReadinessError,
+            match="^PostgreSQL restore application-readiness provenance is invalid$",
+        ):
+            fabricated.as_dict()
 
 
 def test_restore_application_readiness_rejects_copied_or_mutated_evidence() -> None:
