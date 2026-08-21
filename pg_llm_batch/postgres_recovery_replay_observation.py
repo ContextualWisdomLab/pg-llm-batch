@@ -4,7 +4,8 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from weakref import WeakKeyDictionary
 
 
 _LSN_RE = re.compile(r"(?:0|[1-9A-F][0-9A-F]{0,7})/[0-9A-F]{8}\Z")
@@ -14,44 +15,55 @@ SELECT
     pg_catalog.pg_get_wal_replay_pause_state(),
     pg_catalog.pg_last_wal_replay_lsn()::pg_catalog.text
 """.strip()
+_REPLAY_OBSERVATION_MARK = object()
+_OBSERVED_REPLAY: WeakKeyDictionary[
+    PostgresRecoveryReplayObservation, tuple[str, str]
+] = WeakKeyDictionary()
 
 
 class PostgresRecoveryReplayObservationError(ValueError):
     """Report a fail-closed PostgreSQL recovery replay observation violation."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, eq=False)
 class PostgresRecoveryReplayObservation:
     """Represent one content-free paused recovery replay observation.
 
-    The record proves only what ``observe_postgres_recovery_replay`` observed
-    through the caller-owned connection: recovery was still active, replay was
-    actually paused, and the last replayed WAL location was at or beyond the
-    requested LSN. It does not prove that the configured recovery target was
-    exact, that the archive is complete, that the timeline is correct, that the
-    target is application-ready, or that any RPO/RTO objective is achieved.
+    Only ``observe_postgres_recovery_replay`` registers an object as observed.
+    Public construction, copying, or post-construction field mutation therefore
+    cannot be reused as package inspection provenance. The record proves only
+    what the caller-owned connection returned: recovery was still active,
+    replay was actually paused, and the last replayed WAL location was at or
+    beyond the requested LSN. It does not prove exact recovery-target semantics,
+    archive completeness, timeline correctness, application readiness, or an
+    achieved RPO/RTO objective.
     """
 
     target_lsn: str
     replay_lsn: str
+    _observation_mark: object = field(default=None, repr=False, compare=False)
 
     @property
     def recovery_in_progress(self) -> bool:
-        """Return the recovery-state predicate required by this observation."""
+        """Return the recovery-state predicate from a live observed record."""
+        _require_observed(self)
         return True
 
     @property
     def replay_paused(self) -> bool:
-        """Return the actual pause-state predicate required by this observation."""
+        """Return the actual pause-state predicate from a live observed record."""
+        _require_observed(self)
         return True
 
     @property
     def target_reached(self) -> bool:
-        """Return the bounded replay-progress predicate established on creation."""
+        """Return the bounded replay-progress predicate from a live record."""
+        _require_observed(self)
         return True
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable content-free machine-readable observation schema."""
+        _require_observed(self)
         return {
             "target_lsn": self.target_lsn,
             "replay_lsn": self.replay_lsn,
@@ -59,6 +71,38 @@ class PostgresRecoveryReplayObservation:
             "replay_paused": True,
             "target_reached": True,
         }
+
+
+def postgres_recovery_replay_observation_was_observed(evidence: object) -> bool:
+    """Return whether one exact live object still matches its observed snapshot."""
+    if type(evidence) is not PostgresRecoveryReplayObservation:
+        return False
+    observed = _OBSERVED_REPLAY.get(evidence)
+    if observed is None:
+        return False
+    observed_target_lsn, observed_replay_lsn = observed
+    return (
+        evidence._observation_mark,
+        evidence.target_lsn,
+        evidence.replay_lsn,
+    ) == (
+        _REPLAY_OBSERVATION_MARK,
+        observed_target_lsn,
+        observed_replay_lsn,
+    )
+
+
+def _require_observed(evidence: PostgresRecoveryReplayObservation) -> None:
+    """Fail closed when a record is fabricated, copied, or mutated after observation."""
+    if not postgres_recovery_replay_observation_was_observed(evidence):
+        raise PostgresRecoveryReplayObservationError(
+            "PostgreSQL recovery replay observation provenance is invalid"
+        )
+
+
+def _record_observed_replay(evidence: PostgresRecoveryReplayObservation) -> None:
+    """Remember the exact live observation object and its immutable field snapshot."""
+    _OBSERVED_REPLAY[evidence] = (evidence.target_lsn, evidence.replay_lsn)
 
 
 def _lsn_position(value: object) -> int | None:
@@ -115,10 +159,13 @@ def _evaluate_replay_row(
         raise PostgresRecoveryReplayObservationError(
             "PostgreSQL recovery target has not been replayed"
         )
-    return PostgresRecoveryReplayObservation(
+    evidence = PostgresRecoveryReplayObservation(
         target_lsn=target_lsn,
         replay_lsn=replay_lsn,
+        _observation_mark=_REPLAY_OBSERVATION_MARK,
     )
+    _record_observed_replay(evidence)
+    return evidence
 
 
 def observe_postgres_recovery_replay(
