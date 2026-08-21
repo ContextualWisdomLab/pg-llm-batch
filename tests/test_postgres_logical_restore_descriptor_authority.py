@@ -16,6 +16,21 @@ from pg_llm_batch.postgres_logical_restore import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_retained_executable_for_mocked_child(monkeypatch):
+    """Keep mocked child tests independent of host PostgreSQL client packages."""
+    real_open = os.open
+
+    def open_inert_descriptor(_pg_restore_executable):
+        return real_open(os.devnull, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+
+    monkeypatch.setattr(
+        logical_restore,
+        "_open_retained_pg_restore_executable",
+        open_inert_descriptor,
+    )
+
+
 def _open_private_archive(tmp_path, name: str, payload: bytes) -> int:
     """Create one private regular archive descriptor positioned at byte zero."""
     descriptor = os.open(
