@@ -123,6 +123,35 @@ def test_restore_application_readiness_rejects_copied_or_mutated_evidence() -> N
             candidate.as_dict()
 
 
+def test_restore_application_readiness_rejects_deleted_evidence_field() -> None:
+    """Deleting observed state fails through the fixed provenance boundary."""
+    evidence, _cursor = _inspect()
+    object.__delattr__(evidence, "health_function_count")
+
+    with pytest.raises(
+        PostgresRestoreApplicationReadinessError,
+        match="^PostgreSQL restore application-readiness provenance is invalid$",
+    ):
+        evidence.as_dict()
+
+
+def test_restore_application_readiness_rejects_behavior_bearing_mutation() -> None:
+    """Mutated evidence cannot execute caller comparison behavior."""
+
+    class _HostileComparable:
+        def __eq__(self, _other: object) -> bool:
+            raise AssertionError("behavior-bearing evidence value was compared")
+
+    evidence, _cursor = _inspect()
+    object.__setattr__(evidence, "database_reachable", _HostileComparable())
+
+    with pytest.raises(
+        PostgresRestoreApplicationReadinessError,
+        match="^PostgreSQL restore application-readiness provenance is invalid$",
+    ):
+        evidence.as_dict()
+
+
 @pytest.mark.parametrize(
     "row",
     [
