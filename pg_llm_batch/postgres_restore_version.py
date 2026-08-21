@@ -47,12 +47,7 @@ def _parse_server_version_row(row: object) -> tuple[int, int]:
         raise PostgresRestoreVersionError(
             "PostgreSQL restore version evidence is invalid"
         )
-    observed_major = server_version_num // 10000
-    if not _plain_expected_major(observed_major):
-        raise PostgresRestoreVersionError(
-            "PostgreSQL restore version evidence is invalid"
-        )
-    return server_version_num, observed_major
+    return server_version_num, server_version_num // 10000
 
 
 def verify_postgres_restore_server_major(
