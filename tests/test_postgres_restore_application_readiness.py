@@ -3,12 +3,14 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
 from pg_llm_batch.postgres_restore_application_readiness import (
     PostgresRestoreApplicationReadinessError,
+    PostgresRestoreApplicationReadinessEvidence,
     inspect_postgres_restore_application_readiness,
 )
 
@@ -77,6 +79,39 @@ def test_restore_application_readiness_accepts_exact_prerequisites() -> None:
     assert cursor.executed_sql.count("pg_catalog.has_schema_privilege") >= 4
     assert cursor.executed_sql.count("pg_catalog.has_function_privilege") >= 3
     assert "pg_llm_batch_health_check()" not in cursor.executed_sql
+
+
+def test_restore_application_readiness_rejects_fabricated_evidence() -> None:
+    """Public construction cannot fabricate package-observed readiness evidence."""
+    fabricated = PostgresRestoreApplicationReadinessEvidence(
+        database_reachable=True,
+        pg_tiktoken_extension_present=True,
+        tiktoken_count_callable=True,
+        tiktoken_encode_callable=True,
+        config_table_readable=True,
+        health_function_count=1,
+        health_function_executable=True,
+    )
+
+    with pytest.raises(
+        PostgresRestoreApplicationReadinessError,
+        match="^PostgreSQL restore application-readiness provenance is invalid$",
+    ):
+        fabricated.as_dict()
+
+
+def test_restore_application_readiness_rejects_copied_or_mutated_evidence() -> None:
+    """Copying or mutating a live observation cannot retain inspection provenance."""
+    evidence, _cursor = _inspect()
+    copied = replace(evidence)
+    object.__setattr__(evidence, "health_function_count", 0)
+
+    for candidate in (copied, evidence):
+        with pytest.raises(
+            PostgresRestoreApplicationReadinessError,
+            match="^PostgreSQL restore application-readiness provenance is invalid$",
+        ):
+            candidate.as_dict()
 
 
 @pytest.mark.parametrize(
