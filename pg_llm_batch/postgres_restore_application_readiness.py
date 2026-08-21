@@ -3,7 +3,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from weakref import WeakKeyDictionary
 
 
 _READINESS_SQL = """
@@ -86,15 +87,21 @@ SELECT
           AND pg_catalog.has_function_privilege(function_row.oid, 'EXECUTE')
     )
 """.strip()
+_READINESS_OBSERVATION_MARK = object()
 
 
 class PostgresRestoreApplicationReadinessError(ValueError):
     """Report a fail-closed restore application-readiness violation."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, eq=False)
 class PostgresRestoreApplicationReadinessEvidence:
-    """Represent content-free database-side readiness on an isolated target."""
+    """Represent content-free database-side readiness on an isolated target.
+
+    Only ``inspect_postgres_restore_application_readiness`` registers an object
+    as package-observed. Public construction, copying, or post-construction field
+    mutation therefore cannot be reused as inspection provenance.
+    """
 
     database_reachable: bool
     pg_tiktoken_extension_present: bool
@@ -103,9 +110,16 @@ class PostgresRestoreApplicationReadinessEvidence:
     config_table_readable: bool
     health_function_count: int
     health_function_executable: bool
+    _observation_mark: object = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def as_dict(self) -> dict[str, object]:
-        """Return the stable machine-readable application-readiness schema."""
+        """Return the stable schema only for unchanged package-observed evidence."""
+        _require_observed_readiness(self)
         return {
             "database_reachable": self.database_reachable,
             "pg_tiktoken_extension_present": self.pg_tiktoken_extension_present,
@@ -115,6 +129,56 @@ class PostgresRestoreApplicationReadinessEvidence:
             "health_function_count": self.health_function_count,
             "health_function_executable": self.health_function_executable,
         }
+
+
+_READINESS_SNAPSHOTS: WeakKeyDictionary[
+    PostgresRestoreApplicationReadinessEvidence,
+    tuple[bool, bool, bool, bool, bool, int, bool],
+] = WeakKeyDictionary()
+
+
+def _readiness_snapshot(
+    evidence: PostgresRestoreApplicationReadinessEvidence,
+) -> tuple[bool, bool, bool, bool, bool, int, bool]:
+    """Return the behavior-bearing fields used to bind live observation provenance."""
+    return (
+        evidence.database_reachable,
+        evidence.pg_tiktoken_extension_present,
+        evidence.tiktoken_count_callable,
+        evidence.tiktoken_encode_callable,
+        evidence.config_table_readable,
+        evidence.health_function_count,
+        evidence.health_function_executable,
+    )
+
+
+def _readiness_was_observed(evidence: object) -> bool:
+    """Return whether one exact object still matches its inspected snapshot."""
+    if type(evidence) is not PostgresRestoreApplicationReadinessEvidence:
+        return False
+    if evidence._observation_mark is not _READINESS_OBSERVATION_MARK:
+        return False
+    observed = _READINESS_SNAPSHOTS.get(evidence)
+    return observed is not None and observed == _readiness_snapshot(evidence)
+
+
+def _require_observed_readiness(
+    evidence: PostgresRestoreApplicationReadinessEvidence,
+) -> None:
+    """Fail closed when readiness evidence was fabricated, copied, or mutated."""
+    if not _readiness_was_observed(evidence):
+        raise PostgresRestoreApplicationReadinessError(
+            "PostgreSQL restore application-readiness provenance is invalid"
+        )
+
+
+def _record_readiness_observation(
+    evidence: PostgresRestoreApplicationReadinessEvidence,
+) -> PostgresRestoreApplicationReadinessEvidence:
+    """Mark and snapshot exactly one evidence object created from a live query row."""
+    object.__setattr__(evidence, "_observation_mark", _READINESS_OBSERVATION_MARK)
+    _READINESS_SNAPSHOTS[evidence] = _readiness_snapshot(evidence)
+    return evidence
 
 
 def _invalid_readiness_evidence() -> None:
@@ -169,7 +233,7 @@ def _evaluate_readiness_row(
         raise PostgresRestoreApplicationReadinessError(
             "PostgreSQL restore target health contract is unavailable"
         )
-    return PostgresRestoreApplicationReadinessEvidence(
+    evidence = PostgresRestoreApplicationReadinessEvidence(
         database_reachable=database_reachable,
         pg_tiktoken_extension_present=pg_tiktoken_extension_present,
         tiktoken_count_callable=tiktoken_count_callable,
@@ -178,6 +242,7 @@ def _evaluate_readiness_row(
         health_function_count=health_function_count,
         health_function_executable=health_function_executable,
     )
+    return _record_readiness_observation(evidence)
 
 
 def inspect_postgres_restore_application_readiness(
@@ -191,7 +256,8 @@ def inspect_postgres_restore_application_readiness(
     functions are extension-owned and callable through schema ``USAGE`` plus
     function ``EXECUTE`` authority, the current schema's ``com_config`` table is
     readable, and one zero-argument current-schema ``pg_llm_batch_health_check``
-    function is callable by the current role.
+    function is callable by the current role. Returned evidence is bound to the
+    exact observed object and immutable field snapshot before it can be serialized.
 
     It does not invoke the health function, install extensions, grant privileges,
     change search paths, open another connection, start or promote recovery, test
