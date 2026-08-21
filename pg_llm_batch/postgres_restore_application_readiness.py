@@ -48,6 +48,7 @@ SELECT
         WHERE namespace.nspname = pg_catalog.current_schema()
           AND relation.relname = 'com_config'
           AND relation.relkind = 'r'
+          AND pg_catalog.has_schema_privilege(namespace.oid, 'USAGE')
           AND pg_catalog.has_table_privilege(relation.oid, 'SELECT')
     ),
     (
@@ -69,6 +70,7 @@ SELECT
           AND function_row.proname = 'pg_llm_batch_health_check'
           AND function_row.pronargs = 0
           AND function_row.prokind = 'f'
+          AND pg_catalog.has_schema_privilege(namespace.oid, 'USAGE')
           AND pg_catalog.has_function_privilege(function_row.oid, 'EXECUTE')
     )
 """.strip()
@@ -176,7 +178,8 @@ def inspect_postgres_restore_application_readiness(
     the current database is reachable, the resolved pg_tiktoken functions belong
     to the installed pg_tiktoken extension, the current schema's ``com_config``
     table is readable by the current role, and one zero-argument current-schema
-    ``pg_llm_batch_health_check`` function is executable by that role.
+    ``pg_llm_batch_health_check`` function is callable through schema ``USAGE``
+    plus function ``EXECUTE`` authority for that role.
 
     It does not invoke the health function, install extensions, grant privileges,
     change search paths, open another connection, start or promote recovery, test
