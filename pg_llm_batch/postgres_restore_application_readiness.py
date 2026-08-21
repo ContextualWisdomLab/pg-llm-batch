@@ -88,6 +88,7 @@ SELECT
     )
 """.strip()
 _READINESS_OBSERVATION_MARK = object()
+_READINESS_SNAPSHOT_TYPES = (bool, bool, bool, bool, bool, int, bool)
 
 
 class PostgresRestoreApplicationReadinessError(ValueError):
@@ -119,15 +120,23 @@ class PostgresRestoreApplicationReadinessEvidence:
 
     def as_dict(self) -> dict[str, object]:
         """Return the stable schema only for unchanged package-observed evidence."""
-        _require_observed_readiness(self)
+        (
+            database_reachable,
+            pg_tiktoken_extension_present,
+            tiktoken_count_callable,
+            tiktoken_encode_callable,
+            config_table_readable,
+            health_function_count,
+            health_function_executable,
+        ) = _require_observed_readiness(self)
         return {
-            "database_reachable": self.database_reachable,
-            "pg_tiktoken_extension_present": self.pg_tiktoken_extension_present,
-            "tiktoken_count_callable": self.tiktoken_count_callable,
-            "tiktoken_encode_callable": self.tiktoken_encode_callable,
-            "config_table_readable": self.config_table_readable,
-            "health_function_count": self.health_function_count,
-            "health_function_executable": self.health_function_executable,
+            "database_reachable": database_reachable,
+            "pg_tiktoken_extension_present": pg_tiktoken_extension_present,
+            "tiktoken_count_callable": tiktoken_count_callable,
+            "tiktoken_encode_callable": tiktoken_encode_callable,
+            "config_table_readable": config_table_readable,
+            "health_function_count": health_function_count,
+            "health_function_executable": health_function_executable,
         }
 
 
@@ -140,7 +149,7 @@ _READINESS_SNAPSHOTS: WeakKeyDictionary[
 def _readiness_snapshot(
     evidence: PostgresRestoreApplicationReadinessEvidence,
 ) -> tuple[bool, bool, bool, bool, bool, int, bool]:
-    """Return the behavior-bearing fields used to bind live observation provenance."""
+    """Capture behavior-bearing fields used to bind live observation provenance."""
     return (
         evidence.database_reachable,
         evidence.pg_tiktoken_extension_present,
@@ -152,23 +161,30 @@ def _readiness_snapshot(
     )
 
 
-def _readiness_was_observed(evidence: object) -> bool:
-    """Return whether one exact object still matches its inspected snapshot."""
-    if type(evidence) is not PostgresRestoreApplicationReadinessEvidence:
-        return False
-    if evidence._observation_mark is not _READINESS_OBSERVATION_MARK:
-        return False
-    return _READINESS_SNAPSHOTS.get(evidence) == _readiness_snapshot(evidence)
+def _provenance_error() -> PostgresRestoreApplicationReadinessError:
+    """Build the fixed error used for invalid inspection provenance."""
+    return PostgresRestoreApplicationReadinessError(
+        "PostgreSQL restore application-readiness provenance is invalid"
+    )
 
 
 def _require_observed_readiness(
     evidence: PostgresRestoreApplicationReadinessEvidence,
-) -> None:
-    """Fail closed when readiness evidence was fabricated, copied, or mutated."""
-    if not _readiness_was_observed(evidence):
-        raise PostgresRestoreApplicationReadinessError(
-            "PostgreSQL restore application-readiness provenance is invalid"
-        )
+) -> tuple[bool, bool, bool, bool, bool, int, bool]:
+    """Return one validated snapshot or fail closed on fabricated evidence."""
+    if type(evidence) is not PostgresRestoreApplicationReadinessEvidence:
+        raise _provenance_error()
+    try:
+        if evidence._observation_mark is not _READINESS_OBSERVATION_MARK:
+            raise _provenance_error()
+        current_snapshot = _readiness_snapshot(evidence)
+    except AttributeError:
+        raise _provenance_error() from None
+    if tuple(map(type, current_snapshot)) != _READINESS_SNAPSHOT_TYPES:
+        raise _provenance_error()
+    if _READINESS_SNAPSHOTS.get(evidence) != current_snapshot:
+        raise _provenance_error()
+    return current_snapshot
 
 
 def _record_readiness_observation(
