@@ -83,6 +83,24 @@ SELECT
           AND function_row.proname = 'pg_llm_batch_health_check'
           AND function_row.pronargs = 0
           AND function_row.prokind = 'f'
+          AND function_row.proretset
+          AND function_row.prorettype = 'pg_catalog.record'::regtype
+          AND function_row.proallargtypes = ARRAY[
+                  'pg_catalog.text'::regtype::oid,
+                  'pg_catalog.bool'::regtype::oid,
+                  'pg_catalog.text'::regtype::oid
+              ]::oid[]
+          AND function_row.proargmodes = ARRAY[
+                  't'::"char",
+                  't'::"char",
+                  't'::"char"
+              ]
+          AND function_row.proargnames = ARRAY[
+                  'component',
+                  'is_ready',
+                  'detail'
+              ]::text[]
+          AND NOT function_row.prosecdef
           AND pg_catalog.has_schema_privilege(namespace.oid, 'USAGE')
           AND pg_catalog.has_function_privilege(function_row.oid, 'EXECUTE')
     )
@@ -271,8 +289,10 @@ def inspect_postgres_restore_application_readiness(
     functions are extension-owned and callable through schema ``USAGE`` plus
     function ``EXECUTE`` authority, the current schema's ``com_config`` table is
     readable, and one zero-argument current-schema ``pg_llm_batch_health_check``
-    function is callable by the current role. Returned evidence is bound to the
-    exact observed object and immutable field snapshot before it can be serialized.
+    function is callable by the current role and has the packaged set-returning
+    ``TABLE(component TEXT, is_ready BOOLEAN, detail TEXT)`` catalog identity.
+    Returned evidence is bound to the exact observed object and immutable field
+    snapshot before it can be serialized.
 
     It does not invoke the health function, install extensions, grant privileges,
     change search paths, open another connection, start or promote recovery, test
