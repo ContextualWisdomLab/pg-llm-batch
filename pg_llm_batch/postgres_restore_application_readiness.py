@@ -16,29 +16,41 @@ SELECT
     ),
     EXISTS (
         SELECT 1
-        FROM pg_catalog.pg_depend AS dependency
+        FROM pg_catalog.pg_proc AS function_row
+        INNER JOIN pg_catalog.pg_namespace AS namespace
+            ON namespace.oid = function_row.pronamespace
+        INNER JOIN pg_catalog.pg_depend AS dependency
+            ON dependency.objid = function_row.oid
         INNER JOIN pg_catalog.pg_extension AS extension
             ON extension.oid = dependency.refobjid
-        WHERE dependency.classid = pg_catalog.to_regclass('pg_catalog.pg_proc')
+        WHERE function_row.oid = pg_catalog.to_regprocedure(
+                  'tiktoken_count(text,text)'
+              )
+          AND dependency.classid = pg_catalog.to_regclass('pg_catalog.pg_proc')
           AND dependency.refclassid = pg_catalog.to_regclass('pg_catalog.pg_extension')
-          AND dependency.objid = pg_catalog.to_regprocedure(
-              'tiktoken_count(text,text)'
-          )
           AND dependency.deptype = 'e'
           AND extension.extname = 'pg_tiktoken'
+          AND pg_catalog.has_schema_privilege(namespace.oid, 'USAGE')
+          AND pg_catalog.has_function_privilege(function_row.oid, 'EXECUTE')
     ),
     EXISTS (
         SELECT 1
-        FROM pg_catalog.pg_depend AS dependency
+        FROM pg_catalog.pg_proc AS function_row
+        INNER JOIN pg_catalog.pg_namespace AS namespace
+            ON namespace.oid = function_row.pronamespace
+        INNER JOIN pg_catalog.pg_depend AS dependency
+            ON dependency.objid = function_row.oid
         INNER JOIN pg_catalog.pg_extension AS extension
             ON extension.oid = dependency.refobjid
-        WHERE dependency.classid = pg_catalog.to_regclass('pg_catalog.pg_proc')
+        WHERE function_row.oid = pg_catalog.to_regprocedure(
+                  'tiktoken_encode(text,text)'
+              )
+          AND dependency.classid = pg_catalog.to_regclass('pg_catalog.pg_proc')
           AND dependency.refclassid = pg_catalog.to_regclass('pg_catalog.pg_extension')
-          AND dependency.objid = pg_catalog.to_regprocedure(
-              'tiktoken_encode(text,text)'
-          )
           AND dependency.deptype = 'e'
           AND extension.extname = 'pg_tiktoken'
+          AND pg_catalog.has_schema_privilege(namespace.oid, 'USAGE')
+          AND pg_catalog.has_function_privilege(function_row.oid, 'EXECUTE')
     ),
     EXISTS (
         SELECT 1
@@ -86,8 +98,8 @@ class PostgresRestoreApplicationReadinessEvidence:
 
     database_reachable: bool
     pg_tiktoken_extension_present: bool
-    tiktoken_count_present: bool
-    tiktoken_encode_present: bool
+    tiktoken_count_callable: bool
+    tiktoken_encode_callable: bool
     config_table_readable: bool
     health_function_count: int
     health_function_executable: bool
@@ -97,8 +109,8 @@ class PostgresRestoreApplicationReadinessEvidence:
         return {
             "database_reachable": self.database_reachable,
             "pg_tiktoken_extension_present": self.pg_tiktoken_extension_present,
-            "tiktoken_count_present": self.tiktoken_count_present,
-            "tiktoken_encode_present": self.tiktoken_encode_present,
+            "tiktoken_count_callable": self.tiktoken_count_callable,
+            "tiktoken_encode_callable": self.tiktoken_encode_callable,
             "config_table_readable": self.config_table_readable,
             "health_function_count": self.health_function_count,
             "health_function_executable": self.health_function_executable,
@@ -121,8 +133,8 @@ def _evaluate_readiness_row(
     (
         database_reachable,
         pg_tiktoken_extension_present,
-        tiktoken_count_present,
-        tiktoken_encode_present,
+        tiktoken_count_callable,
+        tiktoken_encode_callable,
         config_table_readable,
         health_function_count,
         health_function_executable,
@@ -130,8 +142,8 @@ def _evaluate_readiness_row(
     if (
         type(database_reachable) is not bool
         or type(pg_tiktoken_extension_present) is not bool
-        or type(tiktoken_count_present) is not bool
-        or type(tiktoken_encode_present) is not bool
+        or type(tiktoken_count_callable) is not bool
+        or type(tiktoken_encode_callable) is not bool
         or type(config_table_readable) is not bool
         or type(health_function_count) is not int
         or type(health_function_executable) is not bool
@@ -143,8 +155,8 @@ def _evaluate_readiness_row(
         )
     if (
         not pg_tiktoken_extension_present
-        or not tiktoken_count_present
-        or not tiktoken_encode_present
+        or not tiktoken_count_callable
+        or not tiktoken_encode_callable
     ):
         raise PostgresRestoreApplicationReadinessError(
             "PostgreSQL restore target tokenizer is unavailable"
@@ -160,8 +172,8 @@ def _evaluate_readiness_row(
     return PostgresRestoreApplicationReadinessEvidence(
         database_reachable=database_reachable,
         pg_tiktoken_extension_present=pg_tiktoken_extension_present,
-        tiktoken_count_present=tiktoken_count_present,
-        tiktoken_encode_present=tiktoken_encode_present,
+        tiktoken_count_callable=tiktoken_count_callable,
+        tiktoken_encode_callable=tiktoken_encode_callable,
         config_table_readable=config_table_readable,
         health_function_count=health_function_count,
         health_function_executable=health_function_executable,
@@ -175,11 +187,11 @@ def inspect_postgres_restore_application_readiness(
 
     ``connection`` is caller-owned and already connected to the isolated target.
     The function performs one fixed, read-only catalog query. It proves only that
-    the current database is reachable, the resolved pg_tiktoken functions belong
-    to the installed pg_tiktoken extension, the current schema's ``com_config``
-    table is readable by the current role, and one zero-argument current-schema
-    ``pg_llm_batch_health_check`` function is callable through schema ``USAGE``
-    plus function ``EXECUTE`` authority for that role.
+    the current database is reachable, the resolved ``pg_tiktoken`` count/encode
+    functions are extension-owned and callable through schema ``USAGE`` plus
+    function ``EXECUTE`` authority, the current schema's ``com_config`` table is
+    readable, and one zero-argument current-schema ``pg_llm_batch_health_check``
+    function is callable by the current role.
 
     It does not invoke the health function, install extensions, grant privileges,
     change search paths, open another connection, start or promote recovery, test
