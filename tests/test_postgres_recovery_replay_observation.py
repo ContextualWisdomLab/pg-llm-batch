@@ -3,11 +3,15 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from pg_llm_batch.postgres_recovery_replay_observation import (
+    PostgresRecoveryReplayObservation,
     PostgresRecoveryReplayObservationError,
     observe_postgres_recovery_replay,
+    postgres_recovery_replay_observation_was_observed,
 )
 
 
@@ -78,6 +82,7 @@ def test_observe_recovery_replay_accepts_paused_target_at_or_beyond_lsn() -> Non
         target_lsn="1/00000010",
     )
 
+    assert postgres_recovery_replay_observation_was_observed(evidence) is True
     assert evidence.target_lsn == "1/00000010"
     assert evidence.replay_lsn == "1/00000020"
     assert evidence.recovery_in_progress is True
@@ -100,6 +105,39 @@ def test_observe_recovery_replay_accepts_exact_target_lsn() -> None:
 
     assert evidence.replay_lsn == evidence.target_lsn
     assert evidence.target_reached is True
+
+
+def test_manual_observation_is_not_inspection_provenance() -> None:
+    fabricated = PostgresRecoveryReplayObservation(
+        target_lsn="1/00000010",
+        replay_lsn="1/00000020",
+    )
+
+    assert postgres_recovery_replay_observation_was_observed(fabricated) is False
+    assert postgres_recovery_replay_observation_was_observed(object()) is False
+    with pytest.raises(
+        PostgresRecoveryReplayObservationError,
+        match="PostgreSQL recovery replay observation provenance is invalid",
+    ):
+        fabricated.as_dict()
+
+
+def test_copied_or_mutated_observation_loses_inspection_provenance() -> None:
+    evidence = observe_postgres_recovery_replay(
+        _ReplayConnection((True, "paused", "1/00000020")),
+        target_lsn="1/00000010",
+    )
+
+    copied = replace(evidence)
+    assert postgres_recovery_replay_observation_was_observed(copied) is False
+
+    object.__setattr__(evidence, "replay_lsn", "1/00000030")
+    assert postgres_recovery_replay_observation_was_observed(evidence) is False
+    with pytest.raises(
+        PostgresRecoveryReplayObservationError,
+        match="PostgreSQL recovery replay observation provenance is invalid",
+    ):
+        evidence.target_reached
 
 
 @pytest.mark.parametrize(
