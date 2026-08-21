@@ -62,8 +62,8 @@ def test_restore_application_readiness_accepts_exact_prerequisites() -> None:
     assert evidence.as_dict() == {
         "database_reachable": True,
         "pg_tiktoken_extension_present": True,
-        "tiktoken_count_present": True,
-        "tiktoken_encode_present": True,
+        "tiktoken_count_callable": True,
+        "tiktoken_encode_callable": True,
         "config_table_readable": True,
         "health_function_count": 1,
         "health_function_executable": True,
@@ -74,8 +74,8 @@ def test_restore_application_readiness_accepts_exact_prerequisites() -> None:
     assert "pg_catalog.pg_class" in cursor.executed_sql
     assert "pg_catalog.pg_proc" in cursor.executed_sql
     assert "pg_catalog.has_table_privilege" in cursor.executed_sql
-    assert "pg_catalog.has_function_privilege" in cursor.executed_sql
-    assert cursor.executed_sql.count("pg_catalog.has_schema_privilege") >= 2
+    assert cursor.executed_sql.count("pg_catalog.has_schema_privilege") >= 4
+    assert cursor.executed_sql.count("pg_catalog.has_function_privilege") >= 3
     assert "pg_llm_batch_health_check()" not in cursor.executed_sql
 
 
