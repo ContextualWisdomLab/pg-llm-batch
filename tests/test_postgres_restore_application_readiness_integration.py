@@ -33,8 +33,8 @@ def test_live_restore_application_readiness_accepts_packaged_schema() -> None:
     assert evidence.as_dict() == {
         "database_reachable": True,
         "pg_tiktoken_extension_present": True,
-        "tiktoken_count_present": True,
-        "tiktoken_encode_present": True,
+        "tiktoken_count_callable": True,
+        "tiktoken_encode_callable": True,
         "config_table_readable": True,
         "health_function_count": 1,
         "health_function_executable": True,
