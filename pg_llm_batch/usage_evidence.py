@@ -27,6 +27,7 @@ class UsageAuthority(str, Enum):
 
 
 def _require_identifier(value: object) -> str:
+    """Return one bounded opaque identifier or fail closed."""
     if type(value) is not str:
         raise UsageEvidenceError("invalid usage evidence identifier")
     if len(value) > _MAX_IDENTIFIER_LENGTH:
@@ -37,18 +38,21 @@ def _require_identifier(value: object) -> str:
 
 
 def _optional_identifier(value: object | None) -> str | None:
+    """Return a validated optional opaque identifier."""
     if value is None:
         return None
     return _require_identifier(value)
 
 
 def _require_count(value: object) -> int:
+    """Return a bounded non-negative integer count or fail closed."""
     if type(value) is not int or value < 0 or value > _MAX_COUNT:
         raise UsageEvidenceError("invalid usage evidence count")
     return value
 
 
 def _optional_count(value: object | None) -> int | None:
+    """Return a validated optional bounded count."""
     if value is None:
         return None
     return _require_count(value)
