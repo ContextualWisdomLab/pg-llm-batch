@@ -669,7 +669,7 @@ class BatchAPIClient:
                     response_data={"error_type": "ProviderHTTPError"},
                 )
             result = await self._read_json_object(response, "Files API upload")
-            logger.info("Uploaded JSONL file: %s", result.get("id"))
+            logger.info("Uploaded JSONL file")
             return result
 
     async def delete_file(
@@ -749,7 +749,7 @@ class BatchAPIClient:
                     response_data={"error_type": "ProviderHTTPError"},
                 )
             result = await self._read_json_object(response, "Batch creation")
-            logger.info("Created batch job: %s", result.get("id"))
+            logger.info("Created batch job")
             return result
 
     async def get_batch_status(
