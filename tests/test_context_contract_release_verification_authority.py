@@ -38,6 +38,7 @@ APPROVAL = ContextContractReleaseApproval(
     verification=VERIFICATION,
     approval_policy_sha256="2" * 64,
 )
+REQUIRED_POLICY_SHA256 = "2" * 64
 
 
 def test_release_identity_alone_cannot_authorize_release_readiness() -> None:
@@ -46,6 +47,7 @@ def test_release_identity_alone_cannot_authorize_release_readiness() -> None:
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=RELEASE_PIN,  # type: ignore[arg-type]
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -55,6 +57,7 @@ def test_verification_receipt_cannot_impersonate_policy_approval() -> None:
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=VERIFICATION,  # type: ignore[arg-type]
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -63,6 +66,7 @@ def test_release_readiness_accepts_only_policy_approved_verification_receipt() -
     admitted = require_context_contract_release_ready(
         verification=VERIFICATION,
         approved=APPROVAL,
+        required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
     )
 
     assert admitted == RELEASE_PIN
