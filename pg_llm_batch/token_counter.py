@@ -385,6 +385,17 @@ class BatchAccumulator:
             )
         return selected
 
+    @staticmethod
+    def _require_nonnegative_resource_count(field: str, value: Any) -> int:
+        """Require an exact non-negative integer before resource arithmetic."""
+        if type(value) is not int or value < 0:
+            raise ValidationError(
+                field=field,
+                value="<provided>",
+                reason="must be a non-negative integer",
+            )
+        return value
+
     def reset(self) -> None:
         """Clear all accumulated lines and counters."""
         self.entries: List[Tuple[str, str, int]] = []
@@ -407,6 +418,8 @@ class BatchAccumulator:
 
     def would_exceed(self, tokens: int, byte_size: int) -> bool:
         """Report whether adding a line would exceed any active limit."""
+        tokens = self._require_nonnegative_resource_count("tokens", tokens)
+        byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
         if self.record_count == 0:
             return False
         if self.total_tokens + tokens > self.token_limit:
@@ -421,6 +434,8 @@ class BatchAccumulator:
         self, request_id: str, json_line: str, tokens: int, byte_size: int
     ) -> None:
         """Append one valid record and update aggregate counters."""
+        tokens = self._require_nonnegative_resource_count("tokens", tokens)
+        byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
         if tokens > self.token_limit:
             raise TokenLimitExceededError(
                 current_tokens=tokens,
