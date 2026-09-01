@@ -133,17 +133,20 @@ def validate_context_contract_release_pin(
     if type(pin) is not ContextContractReleasePin:
         raise _invalid_release_pin()
 
-    distribution_name = pin.distribution_name
-    release_version = pin.release_version
-    source_commit = pin.source_commit
-    distribution_sha256 = pin.distribution_sha256
-    profile_name = pin.profile_name
-    profile_sha256 = pin.profile_sha256
-    resource_name = pin.resource_name
-    resource_sha256 = pin.resource_sha256
-    conformance_sha256 = pin.conformance_sha256
-    admission_sha256 = pin.admission_sha256
-    provenance_sha256 = pin.provenance_sha256
+    try:
+        distribution_name = pin.distribution_name
+        release_version = pin.release_version
+        source_commit = pin.source_commit
+        distribution_sha256 = pin.distribution_sha256
+        profile_name = pin.profile_name
+        profile_sha256 = pin.profile_sha256
+        resource_name = pin.resource_name
+        resource_sha256 = pin.resource_sha256
+        conformance_sha256 = pin.conformance_sha256
+        admission_sha256 = pin.admission_sha256
+        provenance_sha256 = pin.provenance_sha256
+    except AttributeError:
+        raise _invalid_release_pin() from None
 
     return ContextContractReleasePin(
         distribution_name=_validate_name(distribution_name),
@@ -182,11 +185,14 @@ def validate_context_contract_release_verification(
     if type(verification) is not ContextContractReleaseVerification:
         raise _invalid_release_pin()
 
-    release_pin = verification.release_pin
-    release_published = verification.release_published
-    conformance_passed = verification.conformance_passed
-    admission_passed = verification.admission_passed
-    provenance_verified = verification.provenance_verified
+    try:
+        release_pin = verification.release_pin
+        release_published = verification.release_published
+        conformance_passed = verification.conformance_passed
+        admission_passed = verification.admission_passed
+        provenance_verified = verification.provenance_verified
+    except AttributeError:
+        raise _invalid_release_pin() from None
 
     validated_pin = validate_context_contract_release_pin(release_pin)
     _require_verified_gate(release_published)
