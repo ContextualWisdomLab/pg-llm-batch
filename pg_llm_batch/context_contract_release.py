@@ -51,6 +51,24 @@ class ContextContractReleasePin:
     provenance_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class ContextContractReleaseVerification:
+    """Bind release-readiness outcomes to the exact release identity they verify.
+
+    A trusted discovery and verification boundary constructs this receipt only after
+    checking one immutable publication. Keeping the release pin inside the same
+    value prevents callers from accidentally combining gate outcomes for one release
+    with the identity of another release at the pg-llm-batch admission boundary.
+    Construction alone grants no authority; the receipt is revalidated before use.
+    """
+
+    release_pin: ContextContractReleasePin
+    release_published: bool
+    conformance_passed: bool
+    admission_passed: bool
+    provenance_verified: bool
+
+
 def _invalid_release_pin() -> ContextContractReleasePinError:
     """Build the fixed non-reflecting error used for every invalid pin."""
     return ContextContractReleasePinError(_ERROR_MESSAGE)
@@ -142,6 +160,49 @@ def validate_context_contract_release_pin(
     )
 
 
+def validate_context_contract_release_verification(
+    verification: ContextContractReleaseVerification,
+) -> ContextContractReleaseVerification:
+    """Snapshot and validate subject-bound Context Fabric release verification.
+
+    The package-owned receipt type is checked before any member is read. The release
+    identity and all four gate outcomes are then snapshotted and independently
+    validated so shaped objects, mutable aliases, non-boolean truthy values, or a
+    mutated frozen receipt fail through the same non-reflecting error boundary.
+
+    Args:
+        verification: Release-scoped evidence from a trusted verification boundary.
+
+    Returns:
+        A fresh receipt whose pin and required gate outcomes are valid.
+
+    Raises:
+        ContextContractReleasePinError: If the receipt or any member is invalid.
+    """
+    if type(verification) is not ContextContractReleaseVerification:
+        raise _invalid_release_pin()
+
+    release_pin = verification.release_pin
+    release_published = verification.release_published
+    conformance_passed = verification.conformance_passed
+    admission_passed = verification.admission_passed
+    provenance_verified = verification.provenance_verified
+
+    validated_pin = validate_context_contract_release_pin(release_pin)
+    _require_verified_gate(release_published)
+    _require_verified_gate(conformance_passed)
+    _require_verified_gate(admission_passed)
+    _require_verified_gate(provenance_verified)
+
+    return ContextContractReleaseVerification(
+        release_pin=validated_pin,
+        release_published=release_published,
+        conformance_passed=conformance_passed,
+        admission_passed=admission_passed,
+        provenance_verified=provenance_verified,
+    )
+
+
 def require_context_contract_release_compatibility(
     *,
     candidate: ContextContractReleasePin,
@@ -175,44 +236,31 @@ def require_context_contract_release_compatibility(
 
 def require_context_contract_release_ready(
     *,
-    candidate: ContextContractReleasePin,
+    verification: ContextContractReleaseVerification,
     approved: ContextContractReleasePin,
-    release_published: bool,
-    conformance_passed: bool,
-    admission_passed: bool,
-    provenance_verified: bool,
 ) -> ContextContractReleasePin:
-    """Admit an immutable pin only after all release-grade evidence is verified.
+    """Admit only subject-bound verification for the approved immutable release.
 
-    The boolean gates are supplied by a trusted release-discovery and verification
-    boundary. Exact ``True`` is required for immutable publication, executable
-    conformance, admission, and provenance verification before this function even
-    inspects candidate identity. This keeps a syntactically valid or operator-pinned
-    value from being mistaken for a released contract when publication is absent.
-
-    This function does not fetch GitHub releases, schemas, attestations, or
-    signatures itself. A caller must establish each gate through its authoritative
-    release mechanism and then provide the exact observed and approved identities.
+    Release publication, executable conformance, admission, and provenance outcomes
+    travel with the exact release pin they verify. This prevents independent boolean
+    evidence from one release being accidentally paired with another release identity
+    at the consumer boundary. The approved pin must still come from trusted operator
+    or deployment policy; this function does not discover or authenticate releases.
 
     Args:
-        candidate: Immutable identity observed for the candidate release.
-        approved: Immutable identity approved for this deployment.
-        release_published: Whether the authoritative immutable publication exists.
-        conformance_passed: Whether executable contract conformance passed.
-        admission_passed: Whether the release admission policy passed.
-        provenance_verified: Whether release provenance was verified.
+        verification: Subject-bound release identity and positive gate outcomes.
+        approved: Exact immutable release identity approved for this deployment.
 
     Returns:
-        A fresh validated identity for a fully admitted released contract.
+        A fresh validated identity for the fully admitted released contract.
 
     Raises:
-        ContextContractReleasePinError: If any release gate or identity is invalid.
+        ContextContractReleasePinError: If evidence or approved identity is invalid.
     """
-    _require_verified_gate(release_published)
-    _require_verified_gate(conformance_passed)
-    _require_verified_gate(admission_passed)
-    _require_verified_gate(provenance_verified)
+    validated_verification = validate_context_contract_release_verification(
+        verification
+    )
     return require_context_contract_release_compatibility(
-        candidate=candidate,
+        candidate=validated_verification.release_pin,
         approved=approved,
     )
