@@ -85,6 +85,12 @@ def _validate_sha256(value: object) -> str:
     return value
 
 
+def _require_verified_gate(value: object) -> None:
+    """Reject absent, false, or shaped release-readiness gate evidence."""
+    if type(value) is not bool or not value:
+        raise _invalid_release_pin()
+
+
 def validate_context_contract_release_pin(
     pin: ContextContractReleasePin,
 ) -> ContextContractReleasePin:
@@ -165,3 +171,48 @@ def require_context_contract_release_compatibility(
     if validated_candidate != validated_approved:
         raise _invalid_release_pin()
     return validated_candidate
+
+
+def require_context_contract_release_ready(
+    *,
+    candidate: ContextContractReleasePin,
+    approved: ContextContractReleasePin,
+    release_published: bool,
+    conformance_passed: bool,
+    admission_passed: bool,
+    provenance_verified: bool,
+) -> ContextContractReleasePin:
+    """Admit an immutable pin only after all release-grade evidence is verified.
+
+    The boolean gates are supplied by a trusted release-discovery and verification
+    boundary. Exact ``True`` is required for immutable publication, executable
+    conformance, admission, and provenance verification before this function even
+    inspects candidate identity. This keeps a syntactically valid or operator-pinned
+    value from being mistaken for a released contract when publication is absent.
+
+    This function does not fetch GitHub releases, schemas, attestations, or
+    signatures itself. A caller must establish each gate through its authoritative
+    release mechanism and then provide the exact observed and approved identities.
+
+    Args:
+        candidate: Immutable identity observed for the candidate release.
+        approved: Immutable identity approved for this deployment.
+        release_published: Whether the authoritative immutable publication exists.
+        conformance_passed: Whether executable contract conformance passed.
+        admission_passed: Whether the release admission policy passed.
+        provenance_verified: Whether release provenance was verified.
+
+    Returns:
+        A fresh validated identity for a fully admitted released contract.
+
+    Raises:
+        ContextContractReleasePinError: If any release gate or identity is invalid.
+    """
+    _require_verified_gate(release_published)
+    _require_verified_gate(conformance_passed)
+    _require_verified_gate(admission_passed)
+    _require_verified_gate(provenance_verified)
+    return require_context_contract_release_compatibility(
+        candidate=candidate,
+        approved=approved,
+    )
