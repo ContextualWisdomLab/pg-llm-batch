@@ -33,7 +33,7 @@ concurrency:
 jobs:
   resolve-source:
     name: Resolve exact acceptance source
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       source_commit: ${{ steps.resolve.outputs.source_commit }}
@@ -97,7 +97,7 @@ jobs:
   reproducible-distributions:
     name: Reproducible wheel and sdist
     needs: resolve-source
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Harden runner
