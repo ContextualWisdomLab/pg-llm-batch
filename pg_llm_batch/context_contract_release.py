@@ -84,6 +84,24 @@ class ContextContractReleaseApproval:
     approval_policy_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class ContextContractReleaseTransitionVerification:
+    """Bind forward-migration and rollback evidence to one exact release change.
+
+    A trusted migration-verification boundary supplies this receipt after exercising
+    the transition from one immutable released contract to another. The two SHA-256
+    fields identify content-free migration and rollback evidence; they are not
+    signatures and do not replace release provenance or deployment-policy approval.
+    """
+
+    source_release_pin: ContextContractReleasePin
+    target_release_pin: ContextContractReleasePin
+    migration_evidence_sha256: str
+    rollback_evidence_sha256: str
+    migration_verified: bool
+    rollback_verified: bool
+
+
 def _invalid_release_pin() -> ContextContractReleasePinError:
     """Build the fixed non-reflecting error used for every invalid pin."""
     return ContextContractReleasePinError(_ERROR_MESSAGE)
@@ -258,6 +276,55 @@ def validate_context_contract_release_approval(
     )
 
 
+def validate_context_contract_release_transition_verification(
+    transition: ContextContractReleaseTransitionVerification,
+) -> ContextContractReleaseTransitionVerification:
+    """Snapshot migration and rollback evidence for one immutable release change.
+
+    Exact package-owned evidence is required before any member is read. Source and
+    target pins are independently snapshotted, evidence identities are bounded to
+    lowercase SHA-256 digests, and both forward-migration and rollback gates must be
+    exact built-in ``True`` values.
+
+    Args:
+        transition: Transition evidence from a trusted migration verifier.
+
+    Returns:
+        A fresh verification receipt bound to exact source and target releases.
+
+    Raises:
+        ContextContractReleasePinError: If any transition evidence is invalid.
+    """
+    if type(transition) is not ContextContractReleaseTransitionVerification:
+        raise _invalid_release_pin()
+
+    try:
+        source_release_pin = transition.source_release_pin
+        target_release_pin = transition.target_release_pin
+        migration_evidence_sha256 = transition.migration_evidence_sha256
+        rollback_evidence_sha256 = transition.rollback_evidence_sha256
+        migration_verified = transition.migration_verified
+        rollback_verified = transition.rollback_verified
+    except AttributeError:
+        raise _invalid_release_pin() from None
+
+    validated_source = validate_context_contract_release_pin(source_release_pin)
+    validated_target = validate_context_contract_release_pin(target_release_pin)
+    validated_migration = _validate_sha256(migration_evidence_sha256)
+    validated_rollback = _validate_sha256(rollback_evidence_sha256)
+    _require_verified_gate(migration_verified)
+    _require_verified_gate(rollback_verified)
+
+    return ContextContractReleaseTransitionVerification(
+        source_release_pin=validated_source,
+        target_release_pin=validated_target,
+        migration_evidence_sha256=validated_migration,
+        rollback_evidence_sha256=validated_rollback,
+        migration_verified=migration_verified,
+        rollback_verified=rollback_verified,
+    )
+
+
 def require_context_contract_release_compatibility(
     *,
     candidate: ContextContractReleasePin,
@@ -333,3 +400,51 @@ def require_context_contract_release_ready(
         candidate=validated_verification.release_pin,
         approved=validated_approval.verification.release_pin,
     )
+
+
+def require_context_contract_release_transition_ready(
+    *,
+    current_release: ContextContractReleasePin,
+    verification: ContextContractReleaseVerification,
+    approved: ContextContractReleaseApproval,
+    required_approval_policy_sha256: str,
+    transition: ContextContractReleaseTransitionVerification,
+) -> ContextContractReleasePin:
+    """Admit a release change only with exact migration and rollback evidence.
+
+    The target release must first pass the ordinary publication, conformance,
+    admission, provenance, and deployment-policy boundary. Transition evidence is
+    then independently validated and must name both the exact currently deployed
+    release and the exact admitted target. No semantic-version ordering is inferred:
+    upgrade, downgrade, or lateral compatibility remains an explicit operator-owned
+    migration and rollback decision represented by the supplied evidence.
+
+    Args:
+        current_release: Exact immutable release identity currently in use.
+        verification: Positive release-readiness evidence for the target release.
+        approved: Deployment-policy approval for the target verification.
+        required_approval_policy_sha256: Deployment-configured policy identity.
+        transition: Migration and rollback verification for this exact release pair.
+
+    Returns:
+        A fresh validated target release pin after all boundaries agree.
+
+    Raises:
+        ContextContractReleasePinError: If target readiness or transition evidence
+            is malformed, incomplete, or bound to another release pair.
+    """
+    validated_current = validate_context_contract_release_pin(current_release)
+    admitted_target = require_context_contract_release_ready(
+        verification=verification,
+        approved=approved,
+        required_approval_policy_sha256=required_approval_policy_sha256,
+    )
+    validated_transition = validate_context_contract_release_transition_verification(
+        transition
+    )
+    if (
+        validated_transition.source_release_pin != validated_current
+        or validated_transition.target_release_pin != admitted_target
+    ):
+        raise _invalid_release_pin()
+    return admitted_target
