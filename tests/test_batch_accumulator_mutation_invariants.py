@@ -66,3 +66,26 @@ def test_add_entry_rejects_forged_jsonl_byte_accounting_without_mutation() -> No
         )
 
     assert _snapshot(accumulator) == before
+
+
+def test_add_entry_counts_actual_jsonl_bytes_across_multiple_records() -> None:
+    """Aggregate bytes cannot be reduced by repeatedly under-reporting each record."""
+    accumulator = BatchAccumulator(
+        _CounterLimits(),
+        "model",
+        max_records=10,
+        max_bytes=10,
+    )
+    for index in range(3):
+        accumulator.add_entry(
+            f"record-{index}",
+            "{}",
+            tokens=1,
+            byte_size=1,
+        )
+
+    assert accumulator.byte_size == 9
+    before = _snapshot(accumulator)
+    with pytest.raises(ValidationError, match="max_bytes=10"):
+        accumulator.add_entry("record-overflow", "{}", tokens=1, byte_size=1)
+    assert _snapshot(accumulator) == before
