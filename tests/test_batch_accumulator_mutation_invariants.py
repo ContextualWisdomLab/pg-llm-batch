@@ -57,7 +57,7 @@ def test_add_entry_rejects_forged_jsonl_byte_accounting_without_mutation() -> No
     accumulator = BatchAccumulator(_CounterLimits(), "model")
     before = _snapshot(accumulator)
 
-    with pytest.raises(ValidationError, match="must match the JSONL UTF-8 byte size"):
+    with pytest.raises(ValidationError, match="max_bytes=10"):
         accumulator.add_entry(
             "forged-byte-count",
             "abcdefghij",
