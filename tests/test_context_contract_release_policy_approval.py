@@ -103,3 +103,13 @@ def test_release_readiness_rejects_policy_approval_for_other_verification() -> N
             verification=VERIFICATION,
             approved=approval,
         )
+
+
+def test_release_readiness_rejects_unapproved_deployment_policy_identity() -> None:
+    """A well-formed but unapproved policy digest cannot authorize deployment."""
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_ready(
+            verification=VERIFICATION,
+            approved=APPROVAL,
+            required_approval_policy_sha256="3" * 64,
+        )
