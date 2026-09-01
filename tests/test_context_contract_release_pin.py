@@ -98,6 +98,16 @@ def test_validate_context_contract_release_pin_revalidates_mutated_frozen_input(
     assert "tenant-secret" not in str(raised.value)
 
 
+def test_validate_context_contract_release_pin_rejects_deleted_member() -> None:
+    pin = replace(VALID_PIN)
+    object.__delattr__(pin, "resource_sha256")
+
+    with pytest.raises(ContextContractReleasePinError) as raised:
+        validate_context_contract_release_pin(pin)
+
+    assert str(raised.value) == "invalid release pin"
+
+
 def test_validate_context_contract_release_pin_rejects_shaped_object_before_member_access() -> None:
     class HostilePin:
         @property
@@ -244,6 +254,19 @@ def test_require_context_contract_release_ready_revalidates_mutated_verification
 
     assert str(raised.value) == "invalid release pin"
     assert "operator-secret" not in str(raised.value)
+
+
+def test_require_context_contract_release_ready_rejects_deleted_verification_member() -> None:
+    verification = replace(VALID_VERIFICATION)
+    object.__delattr__(verification, "provenance_verified")
+
+    with pytest.raises(ContextContractReleasePinError) as raised:
+        require_context_contract_release_ready(
+            verification=verification,
+            approved=VALID_PIN,
+        )
+
+    assert str(raised.value) == "invalid release pin"
 
 
 def test_require_context_contract_release_ready_rejects_shaped_verification_before_access() -> None:
