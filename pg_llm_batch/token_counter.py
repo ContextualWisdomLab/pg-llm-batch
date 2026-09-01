@@ -448,10 +448,33 @@ class BatchAccumulator:
                 value=byte_size,
                 reason=f"single JSONL record exceeds max_bytes={self.max_bytes}",
             )
+
+        next_total_tokens = self.total_tokens + tokens
+        if next_total_tokens > self.token_limit:
+            raise TokenLimitExceededError(
+                current_tokens=next_total_tokens,
+                limit_tokens=self.token_limit,
+                batch_id=request_id,
+            )
+        next_byte_size = self.byte_size + byte_size
+        if next_byte_size > self.max_bytes:
+            raise ValidationError(
+                field="byte_size",
+                value=next_byte_size,
+                reason=f"batch JSONL bytes exceed max_bytes={self.max_bytes}",
+            )
+        next_record_count = self.record_count + 1
+        if next_record_count > self.max_records:
+            raise ValidationError(
+                field="record_count",
+                value=next_record_count,
+                reason=f"batch record count exceeds max_records={self.max_records}",
+            )
+
         self.entries.append((request_id, json_line, tokens))
-        self.total_tokens += tokens
-        self.record_count += 1
-        self.byte_size += byte_size
+        self.total_tokens = next_total_tokens
+        self.record_count = next_record_count
+        self.byte_size = next_byte_size
 
     def drain(self) -> Dict[str, Any]:
         """Return accumulated metadata and reset the accumulator."""
