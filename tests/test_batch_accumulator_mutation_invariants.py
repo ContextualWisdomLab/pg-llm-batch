@@ -50,3 +50,19 @@ def test_add_entry_rejects_aggregate_limit_bypass_without_mutation() -> None:
     with pytest.raises(ValidationError, match="max_records=2"):
         record_acc.add_entry("record-overflow", "{}", tokens=1, byte_size=1)
     assert _snapshot(record_acc) == before
+
+
+def test_add_entry_rejects_forged_jsonl_byte_accounting_without_mutation() -> None:
+    """A caller cannot under-report JSONL bytes to bypass the file-size ceiling."""
+    accumulator = BatchAccumulator(_CounterLimits(), "model")
+    before = _snapshot(accumulator)
+
+    with pytest.raises(ValidationError, match="must match the JSONL UTF-8 byte size"):
+        accumulator.add_entry(
+            "forged-byte-count",
+            "abcdefghij",
+            tokens=1,
+            byte_size=1,
+        )
+
+    assert _snapshot(accumulator) == before
