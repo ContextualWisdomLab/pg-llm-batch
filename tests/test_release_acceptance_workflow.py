@@ -30,6 +30,14 @@ def test_release_acceptance_workflow_is_exact_head_least_privilege() -> None:
     assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in text
 
 
+def test_release_acceptance_uses_explicit_supported_runner_image() -> None:
+    """Release evidence jobs must acquire the supported Ubuntu 24.04 pool."""
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "runs-on: ubuntu-latest" not in text
+    assert text.count("runs-on: ubuntu-24.04") == 2
+
+
 def test_release_acceptance_uv_matches_repository_toolchain_contract() -> None:
     """Release verification must install the exact uv version required by the repo."""
     text = WORKFLOW.read_text(encoding="utf-8")
