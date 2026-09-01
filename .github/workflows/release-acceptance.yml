@@ -133,6 +133,9 @@ jobs:
       - name: Install locked verification dependencies
         run: uv sync --locked
 
+      - name: Verify release workflow regression contract
+        run: uv run pytest -q tests/test_release_acceptance_workflow.py
+
       - name: Derive exact-source reproducibility environment
         shell: bash
         run: |
