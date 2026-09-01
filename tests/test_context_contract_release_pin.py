@@ -11,6 +11,7 @@ from pg_llm_batch.context_contract_release import (
     ContextContractReleasePin,
     ContextContractReleasePinError,
     require_context_contract_release_compatibility,
+    require_context_contract_release_ready,
     validate_context_contract_release_pin,
 )
 
@@ -158,3 +159,60 @@ def test_require_context_contract_release_compatibility_revalidates_approved_pol
 
     assert str(raised.value) == "invalid release pin"
     assert "operator-secret" not in str(raised.value)
+
+
+def test_require_context_contract_release_ready_accepts_verified_published_release() -> None:
+    admitted = require_context_contract_release_ready(
+        candidate=VALID_PIN,
+        approved=replace(VALID_PIN),
+        release_published=True,
+        conformance_passed=True,
+        admission_passed=True,
+        provenance_verified=True,
+    )
+
+    assert admitted == VALID_PIN
+    assert admitted is not VALID_PIN
+
+
+@pytest.mark.parametrize(
+    "failed_gate",
+    [
+        "release_published",
+        "conformance_passed",
+        "admission_passed",
+        "provenance_verified",
+    ],
+)
+def test_require_context_contract_release_ready_rejects_missing_release_evidence(
+    failed_gate: str,
+) -> None:
+    evidence = {
+        "release_published": True,
+        "conformance_passed": True,
+        "admission_passed": True,
+        "provenance_verified": True,
+    }
+    evidence[failed_gate] = False
+
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_ready(
+            candidate=VALID_PIN,
+            approved=VALID_PIN,
+            **evidence,
+        )
+
+
+@pytest.mark.parametrize("invalid_gate", [1, 0, "true", None])
+def test_require_context_contract_release_ready_rejects_non_boolean_evidence(
+    invalid_gate: object,
+) -> None:
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_ready(
+            candidate=VALID_PIN,
+            approved=VALID_PIN,
+            release_published=invalid_gate,  # type: ignore[arg-type]
+            conformance_passed=True,
+            admission_passed=True,
+            provenance_verified=True,
+        )
