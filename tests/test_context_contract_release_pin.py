@@ -182,7 +182,7 @@ def test_require_context_contract_release_compatibility_revalidates_approved_pol
 def test_require_context_contract_release_ready_accepts_subject_bound_verification() -> None:
     admitted = require_context_contract_release_ready(
         verification=VALID_VERIFICATION,
-        approved=replace(VALID_PIN),
+        approved=replace(VALID_VERIFICATION),
     )
 
     assert admitted == VALID_PIN
@@ -206,7 +206,7 @@ def test_require_context_contract_release_ready_rejects_missing_release_evidence
     with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         require_context_contract_release_ready(
             verification=verification,
-            approved=VALID_PIN,
+            approved=VALID_VERIFICATION,
         )
 
 
@@ -222,7 +222,7 @@ def test_require_context_contract_release_ready_rejects_non_boolean_evidence(
     with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         require_context_contract_release_ready(
             verification=verification,
-            approved=VALID_PIN,
+            approved=VALID_VERIFICATION,
         )
 
 
@@ -235,7 +235,7 @@ def test_require_context_contract_release_ready_rejects_cross_release_evidence_m
     with pytest.raises(ContextContractReleasePinError) as raised:
         require_context_contract_release_ready(
             verification=verification,
-            approved=VALID_PIN,
+            approved=VALID_VERIFICATION,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -249,11 +249,22 @@ def test_require_context_contract_release_ready_revalidates_mutated_verification
     with pytest.raises(ContextContractReleasePinError) as raised:
         require_context_contract_release_ready(
             verification=verification,
-            approved=VALID_PIN,
+            approved=VALID_VERIFICATION,
         )
 
     assert str(raised.value) == "invalid release pin"
     assert "operator-secret" not in str(raised.value)
+
+
+def test_require_context_contract_release_ready_revalidates_approved_verification() -> None:
+    approved = replace(VALID_VERIFICATION)
+    object.__setattr__(approved, "release_pin", None)
+
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_ready(
+            verification=VALID_VERIFICATION,
+            approved=approved,
+        )
 
 
 def test_require_context_contract_release_ready_rejects_deleted_verification_member() -> None:
@@ -263,7 +274,7 @@ def test_require_context_contract_release_ready_rejects_deleted_verification_mem
     with pytest.raises(ContextContractReleasePinError) as raised:
         require_context_contract_release_ready(
             verification=verification,
-            approved=VALID_PIN,
+            approved=VALID_VERIFICATION,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -278,5 +289,5 @@ def test_require_context_contract_release_ready_rejects_shaped_verification_befo
     with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         require_context_contract_release_ready(
             verification=HostileVerification(),  # type: ignore[arg-type]
-            approved=VALID_PIN,
+            approved=VALID_VERIFICATION,
         )
