@@ -293,32 +293,41 @@ def require_context_contract_release_ready(
     *,
     verification: ContextContractReleaseVerification,
     approved: ContextContractReleaseApproval,
+    required_approval_policy_sha256: str,
 ) -> ContextContractReleasePin:
-    """Admit only verification approved by a distinct deployment-policy receipt.
+    """Admit only verification approved by the configured deployment policy.
 
     Release identity alone is insufficient authority because it cannot prove that
     publication, executable conformance, admission, and provenance verification
     actually succeeded. An observed verification receipt therefore cannot double as
     policy approval. The trusted deployment/release-policy boundary must provide a
     separate approval containing the exact verification plus a content-free policy
-    SHA-256 identity. This function neither discovers a release nor authenticates
-    the external policy boundary itself.
+    SHA-256 identity, and the deployment must independently require that exact policy
+    identity. This function neither discovers a release nor authenticates the
+    external policy boundary itself.
 
     Args:
         verification: Subject-bound release identity and positive gate outcomes.
         approved: Distinct policy approval for the exact verification receipt.
+        required_approval_policy_sha256: Exact deployment-configured policy identity
+            that must match the approval receipt before interoperability is enabled.
 
     Returns:
         A fresh validated identity for the fully admitted released contract.
 
     Raises:
-        ContextContractReleasePinError: If evidence is invalid or receipts differ.
+        ContextContractReleasePinError: If evidence, policy identity, or binding is
+            invalid or inconsistent.
     """
     validated_verification = validate_context_contract_release_verification(
         verification
     )
     validated_approval = validate_context_contract_release_approval(approved)
-    if validated_verification != validated_approval.verification:
+    required_policy = _validate_sha256(required_approval_policy_sha256)
+    if (
+        validated_verification != validated_approval.verification
+        or validated_approval.approval_policy_sha256 != required_policy
+    ):
         raise _invalid_release_pin()
     return require_context_contract_release_compatibility(
         candidate=validated_verification.release_pin,
