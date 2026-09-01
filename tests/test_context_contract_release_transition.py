@@ -14,6 +14,7 @@ from pg_llm_batch.context_contract_release import (
     ContextContractReleaseTransitionVerification,
     ContextContractReleaseVerification,
     require_context_contract_release_transition_ready,
+    validate_context_contract_release_transition_verification,
 )
 
 
@@ -103,6 +104,14 @@ def test_release_transition_rejects_truthy_shaped_gate() -> None:
 
     with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         _admit(transition)
+
+
+def test_release_transition_rejects_non_transition_receipt() -> None:
+    """Another package-owned receipt type cannot impersonate transition evidence."""
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        validate_context_contract_release_transition_verification(
+            TARGET_VERIFICATION  # type: ignore[arg-type]
+        )
 
 
 def test_release_transition_binds_the_observed_current_release() -> None:
