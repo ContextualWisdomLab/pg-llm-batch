@@ -59,7 +59,8 @@ class ContextContractReleaseVerification:
     checking one immutable publication. Keeping the release pin inside the same
     value prevents callers from accidentally combining gate outcomes for one release
     with the identity of another release at the pg-llm-batch admission boundary.
-    Construction alone grants no authority; the receipt is revalidated before use.
+    Construction alone grants no authority; admission requires a matching receipt
+    supplied by the trusted deployment or release-policy boundary.
     """
 
     release_pin: ContextContractReleasePin
@@ -243,30 +244,34 @@ def require_context_contract_release_compatibility(
 def require_context_contract_release_ready(
     *,
     verification: ContextContractReleaseVerification,
-    approved: ContextContractReleasePin,
+    approved: ContextContractReleaseVerification,
 ) -> ContextContractReleasePin:
-    """Admit only subject-bound verification for the approved immutable release.
+    """Admit only verification explicitly approved for the same immutable release.
 
-    Release publication, executable conformance, admission, and provenance outcomes
-    travel with the exact release pin they verify. This prevents independent boolean
-    evidence from one release being accidentally paired with another release identity
-    at the consumer boundary. The approved pin must still come from trusted operator
-    or deployment policy; this function does not discover or authenticate releases.
+    Release identity alone is insufficient authority because it cannot prove that
+    publication, executable conformance, admission, and provenance verification
+    actually succeeded. Both the observed receipt and the policy-approved receipt
+    therefore carry those outcomes with the exact release pin they verify. The
+    approved receipt must come from the trusted deployment or release-policy
+    boundary; this function neither discovers a release nor manufactures evidence.
 
     Args:
         verification: Subject-bound release identity and positive gate outcomes.
-        approved: Exact immutable release identity approved for this deployment.
+        approved: Exact subject-bound receipt approved for this deployment.
 
     Returns:
         A fresh validated identity for the fully admitted released contract.
 
     Raises:
-        ContextContractReleasePinError: If evidence or approved identity is invalid.
+        ContextContractReleasePinError: If evidence is invalid or receipts differ.
     """
     validated_verification = validate_context_contract_release_verification(
         verification
     )
+    validated_approved = validate_context_contract_release_verification(approved)
+    if validated_verification != validated_approved:
+        raise _invalid_release_pin()
     return require_context_contract_release_compatibility(
         candidate=validated_verification.release_pin,
-        approved=approved,
+        approved=validated_approved.release_pin,
     )
