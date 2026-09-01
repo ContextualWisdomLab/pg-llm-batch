@@ -436,16 +436,17 @@ class BatchAccumulator:
         """Append one valid record and update aggregate counters."""
         tokens = self._require_nonnegative_resource_count("tokens", tokens)
         byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
+        accounted_byte_size = max(byte_size, self.compute_byte_size(json_line))
         if tokens > self.token_limit:
             raise TokenLimitExceededError(
                 current_tokens=tokens,
                 limit_tokens=self.token_limit,
                 batch_id=request_id,
             )
-        if byte_size > self.max_bytes:
+        if accounted_byte_size > self.max_bytes:
             raise ValidationError(
                 field="byte_size",
-                value=byte_size,
+                value=accounted_byte_size,
                 reason=f"single JSONL record exceeds max_bytes={self.max_bytes}",
             )
 
@@ -456,7 +457,7 @@ class BatchAccumulator:
                 limit_tokens=self.token_limit,
                 batch_id=request_id,
             )
-        next_byte_size = self.byte_size + byte_size
+        next_byte_size = self.byte_size + accounted_byte_size
         if next_byte_size > self.max_bytes:
             raise ValidationError(
                 field="byte_size",
