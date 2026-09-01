@@ -134,3 +134,34 @@ def validate_context_contract_release_pin(
         admission_sha256=_validate_sha256(admission_sha256),
         provenance_sha256=_validate_sha256(provenance_sha256),
     )
+
+
+def require_context_contract_release_compatibility(
+    *,
+    candidate: ContextContractReleasePin,
+    approved: ContextContractReleasePin,
+) -> ContextContractReleasePin:
+    """Admit only a release pin identical to the approved immutable identity.
+
+    Both values are independently snapshotted and validated before comparison. The
+    approved value must come from a trusted operator or release-policy boundary;
+    this function does not discover or authenticate releases. Exact equality binds
+    distribution/version/source plus profile, resource, conformance, admission,
+    and provenance evidence so syntactically valid drift fails closed before a
+    future Context Fabric adapter can emit interoperable evidence.
+
+    Args:
+        candidate: Release identity observed by the consumer discovery boundary.
+        approved: Exact immutable release identity approved for this deployment.
+
+    Returns:
+        A fresh validated copy of the admitted candidate identity.
+
+    Raises:
+        ContextContractReleasePinError: If either pin is invalid or identities differ.
+    """
+    validated_candidate = validate_context_contract_release_pin(candidate)
+    validated_approved = validate_context_contract_release_pin(approved)
+    if validated_candidate != validated_approved:
+        raise _invalid_release_pin()
+    return validated_candidate
