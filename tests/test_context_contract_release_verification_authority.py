@@ -3,11 +3,10 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from pg_llm_batch.context_contract_release import (
+    ContextContractReleaseApproval,
     ContextContractReleasePin,
     ContextContractReleasePinError,
     ContextContractReleaseVerification,
@@ -35,6 +34,10 @@ VERIFICATION = ContextContractReleaseVerification(
     admission_passed=True,
     provenance_verified=True,
 )
+APPROVAL = ContextContractReleaseApproval(
+    verification=VERIFICATION,
+    approval_policy_sha256="2" * 64,
+)
 
 
 def test_release_identity_alone_cannot_authorize_release_readiness() -> None:
@@ -42,7 +45,16 @@ def test_release_identity_alone_cannot_authorize_release_readiness() -> None:
     with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         require_context_contract_release_ready(
             verification=VERIFICATION,
-            approved=RELEASE_PIN,
+            approved=RELEASE_PIN,  # type: ignore[arg-type]
+        )
+
+
+def test_verification_receipt_cannot_impersonate_policy_approval() -> None:
+    """Observed evidence and deployment approval remain different authority roles."""
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_ready(
+            verification=VERIFICATION,
+            approved=VERIFICATION,  # type: ignore[arg-type]
         )
 
 
@@ -50,7 +62,7 @@ def test_release_readiness_accepts_only_policy_approved_verification_receipt() -
     """The trusted policy boundary must approve the subject-bound receipt itself."""
     admitted = require_context_contract_release_ready(
         verification=VERIFICATION,
-        approved=replace(VERIFICATION),
+        approved=APPROVAL,
     )
 
     assert admitted == RELEASE_PIN
