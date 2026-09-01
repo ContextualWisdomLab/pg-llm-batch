@@ -5,6 +5,7 @@
 Public API:
     TokenCounter, BatchAccumulator      -- pg_tiktoken token counting
     PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
+    BatchInferencePort                  -- provider-neutral batch lifecycle seam
     BatchAPIClient                      -- submit, poll, and retrieve
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultRecord                   -- immutable streamed result/error record
@@ -22,6 +23,7 @@ from .batch_api_client import (
     GatewayCredentials,
     config_credentials_provider,
 )
+from .batch_inference_port import BatchInferencePort
 from .checkpoint_store import (
     CheckpointConflictError,
     PostgresBatchResultCheckpointStore,
@@ -57,6 +59,7 @@ from .token_counter import BatchAccumulator, TokenCounter
 __version__ = "0.1.0"
 
 __all__ = [
+    "BatchInferencePort",
     "BatchAPIClient",
     "StreamingBatchAPIClient",
     "BatchResultRecord",
