@@ -76,6 +76,20 @@ def test_release_readiness_rejects_malformed_policy_identity() -> None:
     assert "operator-secret" not in str(raised.value)
 
 
+def test_release_readiness_rejects_deleted_policy_identity() -> None:
+    """Deleted approval provenance fails through the bounded policy boundary."""
+    approval = replace(APPROVAL)
+    object.__delattr__(approval, "approval_policy_sha256")
+
+    with pytest.raises(ContextContractReleasePinError) as raised:
+        require_context_contract_release_ready(
+            verification=VERIFICATION,
+            approved=approval,
+        )
+
+    assert str(raised.value) == "invalid release pin"
+
+
 def test_release_readiness_rejects_policy_approval_for_other_verification() -> None:
     """An approval for another immutable release cannot authorize this observation."""
     other_verification = replace(
