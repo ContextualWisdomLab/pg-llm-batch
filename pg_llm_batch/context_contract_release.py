@@ -1,0 +1,136 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Validate immutable identity pins for optional Context Fabric contracts.
+
+This module deliberately validates only bounded release identity metadata. It does
+not discover releases, trust mutable branches, fetch schemas, or grant model,
+provider, routing, architecture, or publication authority to pg-llm-batch.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import re
+
+
+_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z")
+_SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
+_SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+_MUTABLE_RELEASE_ALIASES = frozenset(
+    {"head", "latest", "main", "master", "develop", "snapshot", "nightly"}
+)
+_ERROR_MESSAGE = "invalid release pin"
+
+
+class ContextContractReleasePinError(ValueError):
+    """Report malformed immutable Context Fabric release identity evidence.
+
+    The exception intentionally uses a fixed message so hostile release metadata
+    cannot be reflected into logs or operator surfaces through validation errors.
+    """
+
+
+@dataclass(frozen=True, slots=True)
+class ContextContractReleasePin:
+    """Carry exact identities required to consume one released contract safely.
+
+    These fields are evidence supplied by a trusted release-discovery boundary;
+    constructing this value does not itself prove that the release exists or that
+    any referenced provenance, conformance, or admission evidence is authentic.
+    """
+
+    distribution_name: str
+    release_version: str
+    source_commit: str
+    distribution_sha256: str
+    profile_name: str
+    profile_sha256: str
+    resource_name: str
+    resource_sha256: str
+    conformance_sha256: str
+    admission_sha256: str
+    provenance_sha256: str
+
+
+def _invalid_release_pin() -> ContextContractReleasePinError:
+    """Build the fixed non-reflecting error used for every invalid pin."""
+    return ContextContractReleasePinError(_ERROR_MESSAGE)
+
+
+def _validate_name(value: object) -> str:
+    """Return one bounded path-free release identity component."""
+    if type(value) is not str or _NAME_PATTERN.fullmatch(value) is None:
+        raise _invalid_release_pin()
+    return value
+
+
+def _validate_release_version(value: object) -> str:
+    """Return one immutable version label while rejecting branch-like aliases."""
+    version = _validate_name(value)
+    if version.lower() in _MUTABLE_RELEASE_ALIASES:
+        raise _invalid_release_pin()
+    return version
+
+
+def _validate_source_commit(value: object) -> str:
+    """Return one exact lowercase Git object identity for released source."""
+    if type(value) is not str or _SOURCE_COMMIT_PATTERN.fullmatch(value) is None:
+        raise _invalid_release_pin()
+    return value
+
+
+def _validate_sha256(value: object) -> str:
+    """Return one exact lowercase SHA-256 identity without coercing input."""
+    if type(value) is not str or _SHA256_PATTERN.fullmatch(value) is None:
+        raise _invalid_release_pin()
+    return value
+
+
+def validate_context_contract_release_pin(
+    pin: ContextContractReleasePin,
+) -> ContextContractReleasePin:
+    """Snapshot and validate one immutable Context Fabric release identity pin.
+
+    The validator accepts only the exact package-owned value type, snapshots every
+    member once, validates immutable source and artifact identities, and returns a
+    fresh value. It does not prove release existence, signature validity, trusted
+    provenance, schema compatibility, or conformance success; callers must obtain
+    those facts from the released Context Fabric authority before interoperability
+    is enabled.
+
+    Args:
+        pin: Candidate release identity supplied by a trusted discovery boundary.
+
+    Returns:
+        A fresh validated snapshot suitable for later release-evidence checks.
+
+    Raises:
+        ContextContractReleasePinError: If any identity is mutable or malformed.
+    """
+    if type(pin) is not ContextContractReleasePin:
+        raise _invalid_release_pin()
+
+    distribution_name = pin.distribution_name
+    release_version = pin.release_version
+    source_commit = pin.source_commit
+    distribution_sha256 = pin.distribution_sha256
+    profile_name = pin.profile_name
+    profile_sha256 = pin.profile_sha256
+    resource_name = pin.resource_name
+    resource_sha256 = pin.resource_sha256
+    conformance_sha256 = pin.conformance_sha256
+    admission_sha256 = pin.admission_sha256
+    provenance_sha256 = pin.provenance_sha256
+
+    return ContextContractReleasePin(
+        distribution_name=_validate_name(distribution_name),
+        release_version=_validate_release_version(release_version),
+        source_commit=_validate_source_commit(source_commit),
+        distribution_sha256=_validate_sha256(distribution_sha256),
+        profile_name=_validate_name(profile_name),
+        profile_sha256=_validate_sha256(profile_sha256),
+        resource_name=_validate_name(resource_name),
+        resource_sha256=_validate_sha256(resource_sha256),
+        conformance_sha256=_validate_sha256(conformance_sha256),
+        admission_sha256=_validate_sha256(admission_sha256),
+        provenance_sha256=_validate_sha256(provenance_sha256),
+    )
