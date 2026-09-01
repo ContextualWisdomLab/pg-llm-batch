@@ -42,6 +42,7 @@ VALID_APPROVAL = ContextContractReleaseApproval(
     verification=VALID_VERIFICATION,
     approval_policy_sha256="2" * 64,
 )
+REQUIRED_POLICY_SHA256 = "2" * 64
 
 
 def test_validate_context_contract_release_pin_accepts_complete_immutable_identity() -> None:
@@ -188,6 +189,7 @@ def test_require_context_contract_release_ready_accepts_subject_bound_verificati
     admitted = require_context_contract_release_ready(
         verification=VALID_VERIFICATION,
         approved=replace(VALID_APPROVAL),
+        required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
     )
 
     assert admitted == VALID_PIN
@@ -212,6 +214,7 @@ def test_require_context_contract_release_ready_rejects_missing_release_evidence
         require_context_contract_release_ready(
             verification=verification,
             approved=VALID_APPROVAL,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -228,6 +231,7 @@ def test_require_context_contract_release_ready_rejects_non_boolean_evidence(
         require_context_contract_release_ready(
             verification=verification,
             approved=VALID_APPROVAL,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -241,6 +245,7 @@ def test_require_context_contract_release_ready_rejects_cross_release_evidence_m
         require_context_contract_release_ready(
             verification=verification,
             approved=VALID_APPROVAL,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -255,6 +260,7 @@ def test_require_context_contract_release_ready_revalidates_mutated_verification
         require_context_contract_release_ready(
             verification=verification,
             approved=VALID_APPROVAL,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -273,6 +279,7 @@ def test_require_context_contract_release_ready_revalidates_approved_verificatio
         require_context_contract_release_ready(
             verification=VALID_VERIFICATION,
             approved=approved,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -284,6 +291,7 @@ def test_require_context_contract_release_ready_rejects_deleted_verification_mem
         require_context_contract_release_ready(
             verification=verification,
             approved=VALID_APPROVAL,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -299,4 +307,5 @@ def test_require_context_contract_release_ready_rejects_shaped_verification_befo
         require_context_contract_release_ready(
             verification=HostileVerification(),  # type: ignore[arg-type]
             approved=VALID_APPROVAL,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
