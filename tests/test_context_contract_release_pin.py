@@ -10,6 +10,7 @@ import pytest
 from pg_llm_batch.context_contract_release import (
     ContextContractReleasePin,
     ContextContractReleasePinError,
+    require_context_contract_release_compatibility,
     validate_context_contract_release_pin,
 )
 
@@ -96,3 +97,64 @@ def test_validate_context_contract_release_pin_rejects_shaped_object_before_memb
 
     with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         validate_context_contract_release_pin(HostilePin())  # type: ignore[arg-type]
+
+
+def test_require_context_contract_release_compatibility_accepts_exact_approved_identity() -> None:
+    admitted = require_context_contract_release_compatibility(
+        candidate=VALID_PIN,
+        approved=replace(VALID_PIN),
+    )
+
+    assert admitted == VALID_PIN
+    assert admitted is not VALID_PIN
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("release_version", "0.1.1"),
+        ("source_commit", "2" * 40),
+        ("distribution_sha256", "2" * 64),
+        ("profile_sha256", "3" * 64),
+        ("resource_sha256", "4" * 64),
+        ("conformance_sha256", "5" * 64),
+        ("admission_sha256", "6" * 64),
+        ("provenance_sha256", "7" * 64),
+    ],
+)
+def test_require_context_contract_release_compatibility_rejects_identity_drift(
+    field: str,
+    value: str,
+) -> None:
+    candidate = replace(VALID_PIN, **{field: value})
+
+    with pytest.raises(ContextContractReleasePinError) as raised:
+        require_context_contract_release_compatibility(
+            candidate=candidate,
+            approved=VALID_PIN,
+        )
+
+    assert str(raised.value) == "invalid release pin"
+    assert value not in str(raised.value)
+
+
+def test_require_context_contract_release_compatibility_rejects_absent_release() -> None:
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_compatibility(
+            candidate=None,  # type: ignore[arg-type]
+            approved=VALID_PIN,
+        )
+
+
+def test_require_context_contract_release_compatibility_revalidates_approved_policy() -> None:
+    approved = replace(VALID_PIN)
+    object.__setattr__(approved, "resource_sha256", "operator-secret")
+
+    with pytest.raises(ContextContractReleasePinError) as raised:
+        require_context_contract_release_compatibility(
+            candidate=VALID_PIN,
+            approved=approved,
+        )
+
+    assert str(raised.value) == "invalid release pin"
+    assert "operator-secret" not in str(raised.value)
