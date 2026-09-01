@@ -40,6 +40,7 @@ APPROVAL = ContextContractReleaseApproval(
     verification=VERIFICATION,
     approval_policy_sha256="2" * 64,
 )
+REQUIRED_POLICY_SHA256 = "2" * 64
 
 
 def test_release_readiness_requires_distinct_policy_approval_evidence() -> None:
@@ -48,6 +49,7 @@ def test_release_readiness_requires_distinct_policy_approval_evidence() -> None:
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=VERIFICATION,  # type: ignore[arg-type]
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -56,6 +58,7 @@ def test_release_readiness_accepts_policy_bound_exact_verification() -> None:
     admitted = require_context_contract_release_ready(
         verification=VERIFICATION,
         approved=APPROVAL,
+        required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
     )
 
     assert admitted == RELEASE_PIN
@@ -70,6 +73,7 @@ def test_release_readiness_rejects_malformed_policy_identity() -> None:
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=approval,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -85,6 +89,7 @@ def test_release_readiness_rejects_deleted_policy_identity() -> None:
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=approval,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
     assert str(raised.value) == "invalid release pin"
@@ -102,6 +107,7 @@ def test_release_readiness_rejects_policy_approval_for_other_verification() -> N
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=approval,
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
 
@@ -113,3 +119,16 @@ def test_release_readiness_rejects_unapproved_deployment_policy_identity() -> No
             approved=APPROVAL,
             required_approval_policy_sha256="3" * 64,
         )
+
+
+def test_release_readiness_rejects_malformed_required_policy_identity() -> None:
+    """Configured policy identity is validated without reflecting hostile values."""
+    with pytest.raises(ContextContractReleasePinError) as raised:
+        require_context_contract_release_ready(
+            verification=VERIFICATION,
+            approved=APPROVAL,
+            required_approval_policy_sha256="operator-secret",
+        )
+
+    assert str(raised.value) == "invalid release pin"
+    assert "operator-secret" not in str(raised.value)
