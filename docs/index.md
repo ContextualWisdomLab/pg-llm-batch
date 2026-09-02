@@ -21,12 +21,17 @@ The current compose/install commands document development and verification of to
 
 ## Development quick start
 
+Create a fresh development-only database password for this run. Docker Compose consumes the value through its named `postgres_password` secret, and the same generated value is used only as bootstrap transport for the local CLI DSN.
+
 ```bash
+export PG_LLM_BATCH_POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 docker compose up -d --build
-export PG_LLM_BATCH_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm
+export PG_LLM_BATCH_DSN="postgresql://pgllm:${PG_LLM_BATCH_POSTGRES_PASSWORD}@localhost:5432/pgllm"
 python -m pg_llm_batch init-db
 python -m pg_llm_batch health
 ```
+
+Do not replace the generated value with a shared example password. Production deployments should supply the Compose secret and application bootstrap credential through their reviewed secret-management path.
 
 Use the [repository README](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/README.md) for gateway configuration, secret input, batch submission, durable lifecycle modes, the currently blocked embedding path, recovery, observability, and test instructions.
 
