@@ -85,7 +85,11 @@ def _validate_cli_dsn(
     postgres_driver: PostgresDriverPort | None = None,
 ) -> str:
     """Accept valid PostgreSQL selectors without concrete-driver coupling."""
-    driver = postgres_driver or _default_postgres_driver()
+    driver = (
+        postgres_driver
+        if postgres_driver is not None
+        else _default_postgres_driver()
+    )
     try:
         parameters = driver.parse_conninfo(value)
     except Exception as exc:
