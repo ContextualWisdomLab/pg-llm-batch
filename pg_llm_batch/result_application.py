@@ -224,7 +224,19 @@ def _snapshot_json_record(record_object: dict[str, Any]) -> dict[str, Any]:
                 raise reject_record()
             record_text_byte_count += text_byte_count
             return json_value
-        if json_value is None or json_value_type is bool or json_value_type is int:
+        if json_value_type is int:
+            try:
+                integer_text_byte_count = len(str(json_value))
+            except ValueError:
+                raise reject_record() from None
+            if (
+                record_text_byte_count + integer_text_byte_count
+                > _MAX_RECORD_JSON_TEXT_CHARS
+            ):
+                raise reject_record()
+            record_text_byte_count += integer_text_byte_count
+            return json_value
+        if json_value is None or json_value_type is bool:
             return json_value
         if json_value_type is float:
             if not isfinite(json_value):
