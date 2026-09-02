@@ -48,6 +48,7 @@ _CHECKPOINT_INTEGER_FIELDS = (
 _MAX_RECORD_JSON_DEPTH = 64
 _MAX_RECORD_JSON_NODES = DEFAULT_MAX_JSONL_RECORDS
 _MAX_RECORD_JSON_TEXT_CHARS = DEFAULT_MAX_JSONL_LINE_BYTES
+_UTF8_BUDGET_CHUNK_CHARACTERS = 4096
 
 
 class ResultApplicationError(PgLlmBatchError):
@@ -179,10 +180,23 @@ def _checkpoint_primitive_type_error(
     return None
 
 
+def _utf8_text_bytes_within_budget(text_value: str, remaining_bytes: int) -> int | None:
+    """Count UTF-8 payload bytes without allocating an unbounded encoded copy."""
+    text_byte_count = 0
+    for chunk_start in range(0, len(text_value), _UTF8_BUDGET_CHUNK_CHARACTERS):
+        text_chunk = text_value[
+            chunk_start : chunk_start + _UTF8_BUDGET_CHUNK_CHARACTERS
+        ]
+        text_byte_count += len(text_chunk.encode("utf-8", errors="surrogatepass"))
+        if text_byte_count > remaining_bytes:
+            return None
+    return text_byte_count
+
+
 def _snapshot_json_record(record_object: dict[str, Any]) -> dict[str, Any]:
     """Deep-copy one exact-JSON object under finite structural and text budgets."""
     record_node_count = 0
-    record_text_char_count = 0
+    record_text_byte_count = 0
     active_containers: set[int] = set()
 
     def reject_record() -> ValidationError:
@@ -193,17 +207,22 @@ def _snapshot_json_record(record_object: dict[str, Any]) -> dict[str, Any]:
         )
 
     def snapshot_json_value(json_value: Any, json_depth: int) -> Any:
-        """Copy one JSON value while enforcing structural and text budgets."""
-        nonlocal record_node_count, record_text_char_count
+        """Copy one JSON value while enforcing structural and UTF-8 byte budgets."""
+        nonlocal record_node_count, record_text_byte_count
         record_node_count += 1
         if record_node_count > _MAX_RECORD_JSON_NODES:
             raise reject_record()
 
         json_value_type = type(json_value)
         if json_value_type is str:
-            record_text_char_count += len(json_value)
-            if record_text_char_count > _MAX_RECORD_JSON_TEXT_CHARS:
+            remaining_text_bytes = _MAX_RECORD_JSON_TEXT_CHARS - record_text_byte_count
+            text_byte_count = _utf8_text_bytes_within_budget(
+                json_value,
+                remaining_text_bytes,
+            )
+            if text_byte_count is None:
                 raise reject_record()
+            record_text_byte_count += text_byte_count
             return json_value
         if json_value is None or json_value_type is bool or json_value_type is int:
             return json_value
