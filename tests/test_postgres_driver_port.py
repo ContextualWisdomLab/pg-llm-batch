@@ -41,6 +41,7 @@ def test_connection_port_covers_transaction_and_cursor_lifecycle() -> None:
 def test_driver_port_covers_psycopg_replacement_capabilities_only() -> None:
     assert PostgresDriverPort.__abstractmethods__ == {
         "connect",
+        "is_invalid_conninfo",
         "is_undefined_function",
         "jsonb",
         "make_conninfo",
@@ -135,6 +136,10 @@ class _UndefinedFunctionError(Exception):
     pass
 
 
+class _InvalidConninfoError(Exception):
+    pass
+
+
 class _Driver(PostgresDriverPort):
     def connect(
         self,
@@ -155,6 +160,9 @@ class _Driver(PostgresDriverPort):
 
     def jsonb(self, value: object) -> object:
         return ("jsonb", value)
+
+    def is_invalid_conninfo(self, error: BaseException) -> bool:
+        return isinstance(error, _InvalidConninfoError)
 
     def is_undefined_function(self, error: BaseException) -> bool:
         return isinstance(error, _UndefinedFunctionError)
@@ -194,6 +202,8 @@ def test_complete_port_can_run_without_psycopg_types() -> None:
         "jsonb",
         {"request_id": "opaque"},
     )
+    assert driver.is_invalid_conninfo(_InvalidConninfoError()) is True
+    assert driver.is_invalid_conninfo(RuntimeError()) is False
     assert driver.is_undefined_function(_UndefinedFunctionError()) is True
     assert driver.is_undefined_function(RuntimeError()) is False
 
