@@ -420,10 +420,13 @@ def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
     return _provider_metadata(value)[0]
 
 
-def reserve_remote_batch_observation_order(dsn: str) -> int:
-    """Reserve and return one positive database-owned lifecycle order."""
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+def reserve_remote_batch_observation_order(
+    dsn: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> int:
+    """Reserve one positive database-owned lifecycle order through the driver port."""
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT nextval('llm_remote_batch_observation_sequence')")
             row = cur.fetchone()
@@ -445,6 +448,16 @@ def _set_transaction_tenant_scope(cursor: Any, tenant_scope: str) -> None:
         "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
         (tenant_scope,),
     )
+
+
+def _cursor_row_count(
+    cursor: Any,
+    postgres_driver: PostgresDriverPort | None,
+) -> int | None:
+    """Read affected-row evidence without leaking a candidate driver's raw cursor API."""
+    if postgres_driver is not None:
+        return cursor.row_count()
+    return getattr(cursor, "rowcount", None)
 
 
 def _normalize_remote_batch_snapshot(
@@ -550,8 +563,9 @@ def _persist_remote_batch_state(
     observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
-    """Persist one validated tenant-qualified lifecycle projection."""
+    """Persist one validated tenant lifecycle projection through the driver port."""
     snapshot, metadata_json = _normalize_remote_batch_snapshot(
         tenant_scope,
         endpoint_alias,
@@ -676,12 +690,11 @@ def _persist_remote_batch_state(
         terminal_at,
         observed,
     )
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
-            if getattr(cur, "rowcount", None) == 0:
+            if _cursor_row_count(cur, postgres_driver) == 0:
                 cur.execute(
                     """
                     SELECT tenant_scope,
@@ -732,8 +745,9 @@ def persist_remote_batch_state(
     observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
-    """Persist one standalone projection without changing its return shape."""
+    """Persist one standalone projection through the selected PostgreSQL driver."""
     snapshot = _persist_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
@@ -741,6 +755,7 @@ def persist_remote_batch_state(
         provider_batch,
         observation_order,
         observed_at=observed_at,
+        postgres_driver=postgres_driver,
     )
     snapshot.pop("tenant_scope", None)
     snapshot.pop("total_requests_known", None)
@@ -755,8 +770,9 @@ def persist_tenant_remote_batch_state(
     observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
-    """Persist one lifecycle projection for an explicit trusted tenant scope."""
+    """Persist one trusted-tenant lifecycle projection through the driver port."""
     snapshot = _persist_remote_batch_state(
         dsn,
         tenant_scope,
@@ -764,6 +780,7 @@ def persist_tenant_remote_batch_state(
         provider_batch,
         observation_order,
         observed_at=observed_at,
+        postgres_driver=postgres_driver,
     )
     snapshot.pop("total_requests_known", None)
     return snapshot
@@ -774,8 +791,10 @@ def get_tenant_remote_batch_state(
     tenant_scope: str,
     endpoint_alias: str,
     remote_batch_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return one lifecycle projection visible to a validated tenant scope."""
+    """Return one tenant-visible lifecycle projection through the driver port."""
     normalized_tenant_scope = validate_tenant_scope(tenant_scope)
     normalized_alias = validate_endpoint_alias(endpoint_alias)
     normalized_remote_batch_id = validate_remote_resource_id(
@@ -805,8 +824,7 @@ def get_tenant_remote_batch_state(
           AND endpoint_alias = %s
           AND remote_batch_id = %s
     """
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, normalized_tenant_scope)
             cur.execute(
@@ -829,13 +847,16 @@ def get_remote_batch_state(
     dsn: str,
     endpoint_alias: str,
     remote_batch_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return one lifecycle projection from the standalone tenant scope."""
+    """Return one standalone lifecycle projection through the driver port."""
     return get_tenant_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
         endpoint_alias,
         remote_batch_id,
+        postgres_driver=postgres_driver,
     )
 
 
