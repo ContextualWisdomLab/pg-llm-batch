@@ -18,12 +18,36 @@ import asyncio
 import inspect
 from concurrent.futures import Future as ConcurrentFuture
 from dataclasses import dataclass
+from math import isfinite
 from threading import get_ident
 from typing import Any, Callable, Mapping
 
 from .checkpoint_store import CheckpointConflictError
 from .exceptions import PgLlmBatchError, ValidationError
-from .result_streaming import BatchResultCheckpoint, CheckpointedBatchResultRecord
+from .result_streaming import (
+    DEFAULT_MAX_JSONL_LINE_BYTES,
+    DEFAULT_MAX_JSONL_RECORDS,
+    BatchResultCheckpoint,
+    CheckpointedBatchResultRecord,
+)
+
+
+_CHECKPOINT_STRING_FIELDS = (
+    "batch_id",
+    "endpoint_alias",
+    "file_kind",
+    "file_id",
+    "prefix_sha256",
+)
+_CHECKPOINT_INTEGER_FIELDS = (
+    "schema_version",
+    "file_line_number",
+    "batch_line_count",
+    "record_count",
+)
+_MAX_RECORD_JSON_DEPTH = 64
+_MAX_RECORD_JSON_NODES = DEFAULT_MAX_JSONL_RECORDS
+_MAX_RECORD_JSON_TEXT_CHARS = DEFAULT_MAX_JSONL_LINE_BYTES
 
 
 class ResultApplicationError(PgLlmBatchError):
@@ -45,8 +69,7 @@ class ResultApplicationOutcome:
     ``applied`` and ``checkpoint`` are historical public dataclass fields. They
     remain at this compatibility boundary because changing dataclass field names
     would alter construction, introspection, and ``dataclasses.asdict`` output.
-    New package-owned implementation code uses the semantic
-    :class:`_SemanticResultApplicationOutcome` instead.
+    Package-owned execution uses :class:`_SemanticResultApplicationOutcome`.
     """
 
     applied: bool
@@ -54,12 +77,12 @@ class ResultApplicationOutcome:
 
     @property
     def record_applied(self) -> bool:
-        """Expose the semantic applied-state name to new callers."""
+        """Expose the semantic applied-state name without breaking old callers."""
         return self.applied
 
     @property
     def result_checkpoint(self) -> BatchResultCheckpoint:
-        """Expose the semantic checkpoint name to new callers."""
+        """Expose the semantic checkpoint name without breaking old callers."""
         return self.checkpoint
 
 
@@ -146,40 +169,100 @@ def _redacted_validation_error(
 def _checkpoint_primitive_type_error(
     result_checkpoint: BatchResultCheckpoint,
 ) -> str | None:
-    """Return the first checkpoint field whose primitive type can execute behavior."""
-    for checkpoint_field_name in (
-        "batch_id",
-        "endpoint_alias",
-        "file_kind",
-        "file_id",
-        "prefix_sha256",
-    ):
+    """Return the first checkpoint field with a behavior-bearing primitive."""
+    for checkpoint_field_name in _CHECKPOINT_STRING_FIELDS:
         if type(getattr(result_checkpoint, checkpoint_field_name)) is not str:
             return checkpoint_field_name
-    for checkpoint_field_name in (
-        "schema_version",
-        "file_line_number",
-        "batch_line_count",
-        "record_count",
-    ):
+    for checkpoint_field_name in _CHECKPOINT_INTEGER_FIELDS:
         if type(getattr(result_checkpoint, checkpoint_field_name)) is not int:
             return checkpoint_field_name
     return None
+
+
+def _snapshot_json_record(record_object: dict[str, Any]) -> dict[str, Any]:
+    """Deep-copy one exact-JSON object under finite structural and text budgets."""
+    record_node_count = 0
+    record_text_char_count = 0
+    active_containers: set[int] = set()
+
+    def reject_record() -> ValidationError:
+        """Build the bounded redacted record validation error."""
+        return _redacted_validation_error(
+            "item.record",
+            "must be bounded data made only of exact JSON primitives",
+        )
+
+    def snapshot_json_value(json_value: Any, json_depth: int) -> Any:
+        """Copy one JSON value while enforcing structural and text budgets."""
+        nonlocal record_node_count, record_text_char_count
+        record_node_count += 1
+        if record_node_count > _MAX_RECORD_JSON_NODES:
+            raise reject_record()
+
+        json_value_type = type(json_value)
+        if json_value_type is str:
+            record_text_char_count += len(json_value)
+            if record_text_char_count > _MAX_RECORD_JSON_TEXT_CHARS:
+                raise reject_record()
+            return json_value
+        if json_value is None or json_value_type is bool or json_value_type is int:
+            return json_value
+        if json_value_type is float:
+            if not isfinite(json_value):
+                raise reject_record()
+            return json_value
+        if json_value_type is dict:
+            if json_depth >= _MAX_RECORD_JSON_DEPTH:
+                raise reject_record()
+            container_identity = id(json_value)
+            if container_identity in active_containers:
+                raise reject_record()
+            active_containers.add(container_identity)
+            try:
+                copied_object: dict[str, Any] = {}
+                for object_key, nested_value in json_value.items():
+                    if type(object_key) is not str:
+                        raise reject_record()
+                    copied_object[
+                        snapshot_json_value(object_key, json_depth + 1)
+                    ] = snapshot_json_value(nested_value, json_depth + 1)
+                return copied_object
+            finally:
+                active_containers.remove(container_identity)
+        if json_value_type is list:
+            if json_depth >= _MAX_RECORD_JSON_DEPTH:
+                raise reject_record()
+            container_identity = id(json_value)
+            if container_identity in active_containers:
+                raise reject_record()
+            active_containers.add(container_identity)
+            try:
+                return [
+                    snapshot_json_value(list_element, json_depth + 1)
+                    for list_element in json_value
+                ]
+            finally:
+                active_containers.remove(container_identity)
+        raise reject_record()
+
+    return snapshot_json_value(record_object, 0)
 
 
 def _validate_item_and_effect(
     checkpointed_record: Any,
     record_effect: Any,
 ) -> CheckpointedBatchResultRecord:
-    """Validate the local application boundary before store or callback work."""
+    """Validate package-owned application authority before store or callback work."""
     if type(checkpointed_record) is not CheckpointedBatchResultRecord:
         raise _redacted_validation_error(
-            "item", "must be an exact checkpointed batch result record"
+            "item",
+            "must be an exact checkpointed batch result record",
         )
     result_checkpoint = checkpointed_record.checkpoint
     if type(result_checkpoint) is not BatchResultCheckpoint:
         raise _redacted_validation_error(
-            "item.checkpoint", "must be an exact batch result checkpoint"
+            "item.checkpoint",
+            "must be an exact batch result checkpoint",
         )
     checkpoint_field_name = _checkpoint_primitive_type_error(result_checkpoint)
     if checkpoint_field_name is not None:
@@ -189,11 +272,13 @@ def _validate_item_and_effect(
         )
     if type(checkpointed_record.batch_id) is not str:
         raise _redacted_validation_error(
-            "item.batch_id", "must be an exact built-in string"
+            "item.batch_id",
+            "must be an exact built-in string",
         )
     if type(checkpointed_record.file_kind) is not str:
         raise _redacted_validation_error(
-            "item.file_kind", "must be an exact built-in string"
+            "item.file_kind",
+            "must be an exact built-in string",
         )
     if not callable(record_effect):
         raise _redacted_validation_error("apply_record", "must be callable")
@@ -204,19 +289,136 @@ def _validate_item_and_effect(
         static_call
     ):
         raise _redacted_validation_error(
-            "apply_record", "must complete synchronously in the caller transaction"
+            "apply_record",
+            "must complete synchronously in the caller transaction",
         )
     if checkpointed_record.batch_id != result_checkpoint.batch_id:
         raise _redacted_validation_error(
-            "item.batch_id", "must match the checkpoint batch identity"
+            "item.batch_id",
+            "must match the checkpoint batch identity",
         )
     if checkpointed_record.file_kind != result_checkpoint.file_kind:
         raise _redacted_validation_error(
-            "item.file_kind", "must match the checkpoint file kind"
+            "item.file_kind",
+            "must match the checkpoint file kind",
         )
     if type(checkpointed_record.record) is not dict:
-        raise _redacted_validation_error("item.record", "must be an exact JSON object")
+        raise _redacted_validation_error(
+            "item.record",
+            "must be an exact JSON object",
+        )
     return checkpointed_record
+
+
+def _snapshot_checkpoint(
+    result_checkpoint: Any,
+    *,
+    field_prefix: str,
+) -> BatchResultCheckpoint:
+    """Capture complete checkpoint authority into package-owned primitives."""
+    if type(result_checkpoint) is not BatchResultCheckpoint:
+        raise _redacted_validation_error(
+            field_prefix,
+            "must be an exact batch result checkpoint",
+        )
+
+    missing_authority = False
+    try:
+        checkpoint_values = {
+            "schema_version": result_checkpoint.schema_version,
+            "batch_id": result_checkpoint.batch_id,
+            "endpoint_alias": result_checkpoint.endpoint_alias,
+            "file_kind": result_checkpoint.file_kind,
+            "file_id": result_checkpoint.file_id,
+            "file_line_number": result_checkpoint.file_line_number,
+            "batch_line_count": result_checkpoint.batch_line_count,
+            "record_count": result_checkpoint.record_count,
+            "prefix_sha256": result_checkpoint.prefix_sha256,
+        }
+    except AttributeError:
+        missing_authority = True
+    if missing_authority:
+        raise _redacted_validation_error(
+            field_prefix,
+            "must contain complete checkpoint authority",
+        ) from None
+
+    for checkpoint_field_name in _CHECKPOINT_STRING_FIELDS:
+        if type(checkpoint_values[checkpoint_field_name]) is not str:
+            raise _redacted_validation_error(
+                f"{field_prefix}.{checkpoint_field_name}",
+                "must use an exact built-in primitive type",
+            )
+    for checkpoint_field_name in _CHECKPOINT_INTEGER_FIELDS:
+        if type(checkpoint_values[checkpoint_field_name]) is not int:
+            raise _redacted_validation_error(
+                f"{field_prefix}.{checkpoint_field_name}",
+                "must use an exact built-in primitive type",
+            )
+
+    validation_failed = False
+    try:
+        checkpoint_snapshot = BatchResultCheckpoint(**checkpoint_values)
+    except ValidationError:
+        validation_failed = True
+    if validation_failed:
+        raise _redacted_validation_error(
+            field_prefix,
+            "must satisfy the batch result checkpoint contract",
+        ) from None
+    return checkpoint_snapshot
+
+
+def _snapshot_item_and_effect(
+    checkpointed_record: Any,
+    record_effect: Any,
+) -> CheckpointedBatchResultRecord:
+    """Detach caller-owned item authority before validating or invoking hooks."""
+    if type(checkpointed_record) is not CheckpointedBatchResultRecord:
+        raise _redacted_validation_error(
+            "item",
+            "must be an exact checkpointed batch result record",
+        )
+
+    missing_authority = False
+    try:
+        batch_id = checkpointed_record.batch_id
+        file_kind = checkpointed_record.file_kind
+        record_object = checkpointed_record.record
+        result_checkpoint = checkpointed_record.checkpoint
+    except AttributeError:
+        missing_authority = True
+    if missing_authority:
+        raise _redacted_validation_error(
+            "item",
+            "must contain complete checkpointed result authority",
+        ) from None
+    if type(batch_id) is not str:
+        raise _redacted_validation_error(
+            "item.batch_id",
+            "must be an exact built-in string",
+        )
+    if type(file_kind) is not str:
+        raise _redacted_validation_error(
+            "item.file_kind",
+            "must be an exact built-in string",
+        )
+    if type(record_object) is not dict:
+        raise _redacted_validation_error(
+            "item.record",
+            "must be an exact JSON object",
+        )
+
+    record_snapshot = CheckpointedBatchResultRecord(
+        batch_id=batch_id,
+        file_kind=file_kind,
+        record=_snapshot_json_record(record_object),
+        checkpoint=_snapshot_checkpoint(
+            result_checkpoint,
+            field_prefix="item.checkpoint",
+        ),
+    )
+    return _validate_item_and_effect(record_snapshot, record_effect)
 
 
 def _apply_checkpointed_record_in_transaction(
@@ -226,37 +428,37 @@ def _apply_checkpointed_record_in_transaction(
     checkpointed_record: CheckpointedBatchResultRecord,
     record_effect: Callable[[Any, Mapping[str, Any]], None],
 ) -> _SemanticResultApplicationOutcome:
-    """Apply one semantic checkpointed record within the caller transaction."""
-    validated_record = _validate_item_and_effect(checkpointed_record, record_effect)
+    """Apply one snapshotted record and checkpoint in the caller transaction."""
+    validated_record = _snapshot_item_and_effect(checkpointed_record, record_effect)
 
     checkpoint_load_failure: ResultApplicationError | None = None
     previous_checkpoint: BatchResultCheckpoint | None = None
     try:
-        previous_checkpoint = checkpoint_store.load_in_transaction(
+        loaded_previous_checkpoint = checkpoint_store.load_in_transaction(
             transaction_cursor,
             consumer_name,
             validated_record.batch_id,
             validated_record.checkpoint.endpoint_alias,
         )
+        if loaded_previous_checkpoint is not None:
+            previous_checkpoint = _snapshot_checkpoint(
+                loaded_previous_checkpoint,
+                field_prefix="checkpoint",
+            )
     except CheckpointConflictError:
         raise
     except Exception:
         checkpoint_load_failure = ResultApplicationError("checkpoint_load")
     if checkpoint_load_failure is not None:
         raise checkpoint_load_failure from None
-    if previous_checkpoint is not None:
-        if type(previous_checkpoint) is not BatchResultCheckpoint:
-            raise ResultApplicationError("checkpoint_load") from None
-        if _checkpoint_primitive_type_error(previous_checkpoint) is not None:
-            raise ResultApplicationError("checkpoint_load") from None
-        if (
-            previous_checkpoint.batch_id != validated_record.checkpoint.batch_id
-            or previous_checkpoint.endpoint_alias
-            != validated_record.checkpoint.endpoint_alias
-            or previous_checkpoint.file_kind != validated_record.checkpoint.file_kind
-            or previous_checkpoint.file_id != validated_record.checkpoint.file_id
-        ):
-            raise ResultApplicationError("checkpoint_load") from None
+    if previous_checkpoint is not None and (
+        previous_checkpoint.batch_id != validated_record.checkpoint.batch_id
+        or previous_checkpoint.endpoint_alias
+        != validated_record.checkpoint.endpoint_alias
+        or previous_checkpoint.file_kind != validated_record.checkpoint.file_kind
+        or previous_checkpoint.file_id != validated_record.checkpoint.file_id
+    ):
+        raise ResultApplicationError("checkpoint_load") from None
 
     if previous_checkpoint == validated_record.checkpoint:
         return _SemanticResultApplicationOutcome(
@@ -297,17 +499,29 @@ def _apply_checkpointed_record_in_transaction(
 
     checkpoint_save_failure: ResultApplicationError | None = None
     try:
+        checkpoint_to_save = _snapshot_checkpoint(
+            validated_record.checkpoint,
+            field_prefix="checkpoint",
+        )
+        expected_previous_checkpoint = (
+            None
+            if previous_checkpoint is None
+            else _snapshot_checkpoint(
+                previous_checkpoint,
+                field_prefix="expected_previous",
+            )
+        )
         saved_checkpoint = checkpoint_store.save_in_transaction(
             transaction_cursor,
             consumer_name,
-            validated_record.checkpoint,
-            expected_previous=previous_checkpoint,
+            checkpoint_to_save,
+            expected_previous=expected_previous_checkpoint,
         )
-        if type(saved_checkpoint) is not BatchResultCheckpoint:
-            checkpoint_save_failure = ResultApplicationError("checkpoint_save")
-        elif _checkpoint_primitive_type_error(saved_checkpoint) is not None:
-            checkpoint_save_failure = ResultApplicationError("checkpoint_save")
-        elif saved_checkpoint != validated_record.checkpoint:
+        saved_checkpoint_snapshot = _snapshot_checkpoint(
+            saved_checkpoint,
+            field_prefix="checkpoint",
+        )
+        if saved_checkpoint_snapshot != validated_record.checkpoint:
             checkpoint_save_failure = ResultApplicationError("checkpoint_save")
     except CheckpointConflictError:
         raise
@@ -331,30 +545,36 @@ def apply_checkpointed_result_in_transaction(
 ) -> ResultApplicationOutcome:
     """Apply one result and advance its checkpoint in the caller's transaction.
 
-    ``cursor``, ``item``, and ``apply_record`` are historical released keyword
-    names retained only at this compatibility boundary. Internally they are
-    translated immediately to ``transaction_cursor``, ``checkpointed_record``,
-    and ``record_effect`` so package-owned implementation vocabulary remains
-    semantically specific.
+    ``cursor``, ``item``, and ``apply_record`` are historical public keyword
+    names retained at this compatibility boundary. Internally they become
+    ``transaction_cursor``, ``checkpointed_record``, and ``record_effect``.
 
-    The item, checkpoint, checkpoint primitive fields, JSON object, loaded
-    predecessor, and save confirmation must use exact package-owned or built-in
-    types. Subclasses are rejected before their behavior-bearing comparison or
-    attribute hooks can execute, so caller-controlled subclass code cannot
-    disclose diagnostics or forge durable confirmation.
+    The caller-owned item is snapshotted before semantic validation or any store
+    or callback hook. Checkpoint slots are captured once into exact built-in
+    primitives, reconstructed as package-owned checkpoints, and only those
+    snapshots participate in load/replay/regression decisions, record effects,
+    save confirmation, or the returned outcome. The record tree is recursively
+    copied before hooks using only exact JSON primitives under finite depth,
+    node-count, and text-size budgets. Missing, behavior-bearing, cyclic,
+    non-finite, or post-construction-mutated authority fails through bounded
+    redacted package diagnostics.
 
-    The durable predecessor is loaded and validated before the local effect. An
-    exact replay returns without re-running the effect, while a count regression
-    is rejected before caller-owned business logic. Fresh work invokes
-    ``apply_record`` with a package-scoped cursor facade on the supplied
-    transaction and advances the checkpoint only after that callback completes
-    synchronously and returns ``None``. The facade permits ordinary synchronous
-    ``execute``/``executemany`` and ``fetch*`` operations only on the callback's
-    original thread. It is revoked on every callback exit, so deferred work
-    cannot retain package-supplied transaction cursor authority after return.
-    This is an authority boundary, not a claim that Python can forcibly
-    terminate arbitrary already-running Futures, Tasks, threads, or other
-    caller-retained resources.
+    The durable predecessor is likewise copied immediately after the load hook;
+    save receives separate copies of both the candidate and predecessor so a
+    caller-owned adapter cannot mutate the package's comparison authority. A
+    returned save confirmation is independently snapshotted before comparison.
+    Exact checkpoint and primitive types are required before behavior-bearing
+    comparisons can execute.
+
+    Fresh work invokes ``apply_record`` with a package-scoped cursor facade on
+    the supplied transaction and advances the checkpoint only after that
+    callback completes synchronously and returns ``None``. The facade permits
+    ordinary synchronous ``execute``/``executemany`` and ``fetch*`` operations
+    only on the callback's original thread. It is revoked on every callback exit,
+    so deferred work cannot retain package-supplied transaction cursor authority
+    after return. This is an authority boundary, not a claim that Python can
+    forcibly terminate arbitrary already-running Futures, Tasks, threads, or
+    other caller-retained resources.
 
     Statically visible asynchronous callables, including static-method and
     class-method descriptors, are rejected before checkpoint-store access. A raw
@@ -371,7 +591,8 @@ def apply_checkpointed_result_in_transaction(
     signal from both checkpoint load and save operations. All other
     store/callback failures are replaced with a fixed phase-only package error
     after their exception scope has ended, preventing implicit traceback context
-    from retaining provider or database diagnostics.
+    from retaining provider or database diagnostics. Local transaction atomicity
+    is not distributed exactly-once delivery for external systems.
     """
     semantic_outcome = _apply_checkpointed_record_in_transaction(
         transaction_cursor=cursor,
