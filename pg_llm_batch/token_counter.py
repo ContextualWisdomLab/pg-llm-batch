@@ -420,8 +420,6 @@ class BatchAccumulator:
         """Report whether adding a line would exceed any active limit."""
         tokens = self._require_nonnegative_resource_count("tokens", tokens)
         byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
-        if self.record_count == 0:
-            return False
         if self.total_tokens + tokens > self.token_limit:
             return True
         if self.byte_size + byte_size > self.max_bytes:
