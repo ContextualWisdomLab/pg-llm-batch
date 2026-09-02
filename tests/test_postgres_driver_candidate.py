@@ -176,6 +176,22 @@ def test_candidate_rejects_surrounding_whitespace_in_identity_evidence(
         _evidence(**{field_name: " candidate-driver "})
 
 
+@pytest.mark.parametrize(
+    "identity_value",
+    [
+        "candidate\ndriver",
+        "candidate\tdriver",
+        "candidate\u00a0driver",
+        "candidate\x7fdriver",
+    ],
+)
+def test_candidate_rejects_embedded_whitespace_or_control_identity_evidence(
+    identity_value: str,
+) -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError):
+        _evidence(package_name=identity_value)
+
+
 @pytest.mark.parametrize("field_name", ["package_name", "package_version", "license_spdx"])
 def test_candidate_rejects_unbounded_identity_evidence(field_name: str) -> None:
     with pytest.raises(PostgresDriverCandidateEvidenceError):
