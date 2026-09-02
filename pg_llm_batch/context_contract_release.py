@@ -361,14 +361,15 @@ def require_context_contract_release_compatibility(
     candidate: ContextContractReleasePin,
     approved: ContextContractReleasePin,
 ) -> ContextContractReleasePin:
-    """Admit only a release pin identical to the approved immutable identity.
+    """Admit only a release pin matching the approved immutable release identity.
 
     Both values are independently snapshotted and validated before comparison. The
     approved value must come from a trusted operator or release-policy boundary;
-    this function does not discover or authenticate releases. Exact equality binds
-    distribution/version/source plus profile, resource, conformance, admission,
-    and provenance evidence so syntactically valid drift fails closed before a
-    future Context Fabric adapter can emit interoperable evidence.
+    this function does not discover or authenticate releases. Distribution names use
+    the Python packaging canonical comparison while version/source plus profile,
+    resource, conformance, admission, and provenance identities remain exact, so
+    syntactically valid drift fails closed before a future Context Fabric adapter can
+    emit interoperable evidence.
 
     Args:
         candidate: Release identity observed by the consumer discovery boundary.
@@ -382,7 +383,23 @@ def require_context_contract_release_compatibility(
     """
     validated_candidate = validate_context_contract_release_pin(candidate)
     validated_approved = validate_context_contract_release_pin(approved)
-    if validated_candidate != validated_approved:
+    if (
+        _canonical_distribution_name(validated_candidate.distribution_name)
+        != _canonical_distribution_name(validated_approved.distribution_name)
+        or validated_candidate.release_version != validated_approved.release_version
+        or validated_candidate.source_commit != validated_approved.source_commit
+        or validated_candidate.distribution_sha256
+        != validated_approved.distribution_sha256
+        or validated_candidate.profile_name != validated_approved.profile_name
+        or validated_candidate.profile_sha256 != validated_approved.profile_sha256
+        or validated_candidate.resource_name != validated_approved.resource_name
+        or validated_candidate.resource_sha256 != validated_approved.resource_sha256
+        or validated_candidate.conformance_sha256
+        != validated_approved.conformance_sha256
+        or validated_candidate.admission_sha256 != validated_approved.admission_sha256
+        or validated_candidate.provenance_sha256
+        != validated_approved.provenance_sha256
+    ):
         raise _invalid_release_pin()
     return validated_candidate
 
