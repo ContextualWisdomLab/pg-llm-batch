@@ -178,6 +178,79 @@ def test_assemble_payloads_passes_driver_to_model_metadata(
     assert payloads[0]["record_count"] == 1
 
 
+def test_prepare_batches_propagates_driver_to_store_and_token_counter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preparation must keep one explicit driver boundary across its DB helpers."""
+    driver = _Driver()
+    monkeypatch.setattr(orchestrator_module, "psycopg", None)
+    calls: list[tuple[str, object]] = []
+
+    class _Config:
+        def close(self) -> None:
+            calls.append(("config_close", self))
+
+    config = _Config()
+
+    def _config_factory(
+        dsn: str,
+        *,
+        postgres_driver: object = None,
+    ) -> _Config:
+        assert dsn == "postgresql://x"
+        calls.append(("config_driver", postgres_driver))
+        return config
+
+    class _Counter:
+        effective_limit = 100
+        azure_max_files_per_job = 1
+
+        def __init__(
+            self,
+            dsn: str,
+            *,
+            config: object,
+            postgres_driver: object = None,
+        ) -> None:
+            assert dsn == "postgresql://x"
+            assert config is globals_config
+            calls.append(("counter_driver", postgres_driver))
+
+        def close(self) -> None:
+            calls.append(("counter_close", self))
+
+    globals_config = config
+    monkeypatch.setattr(orchestrator_module, "PostgresConfigStore", _config_factory)
+    monkeypatch.setattr(orchestrator_module, "TokenCounter", _Counter)
+
+    orchestrator = PostgresBatchOrchestrator(
+        "postgresql://x",
+        postgres_driver=driver,
+    )
+    monkeypatch.setattr(
+        orchestrator,
+        "_resolve_batch_uuid",
+        lambda _batch_key: "11111111-1111-1111-1111-111111111111",
+    )
+    monkeypatch.setattr(orchestrator, "_assemble_payloads", lambda _counter, _rows: [])
+    monkeypatch.setattr(
+        orchestrator,
+        "_persist_payloads",
+        lambda _payloads, batch_key, _counter: {
+            "ready": [batch_key],
+            "overflow": [],
+        },
+    )
+
+    result = orchestrator.prepare_batches(batch_uuid="source.jsonl")
+
+    assert result["ready"] == ["11111111-1111-1111-1111-111111111111"]
+    assert ("config_driver", driver) in calls
+    assert ("counter_driver", driver) in calls
+    assert any("FROM llm_requests" in query for query, _params in driver.executions)
+    assert sum(name.endswith("_close") for name, _value in calls) == 2
+
+
 def test_persist_payloads_uses_driver_jsonb_transaction_and_row_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
