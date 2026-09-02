@@ -207,13 +207,13 @@ class PostgresDriverPort(ABC):
         self,
         dsn: str,
         *,
-        connect_timeout_seconds: float | None = None,
+        connect_timeout_seconds: int | None = None,
     ) -> PostgresConnectionPort:
         """Open one synchronous PostgreSQL connection for a validated DSN.
 
-        The concrete adapter must honor the requested finite connection timeout
-        when supplied and return a connection whose transaction/session behavior
-        conforms to ``PostgresConnectionPort``.
+        The concrete adapter must honor the requested finite positive timeout in
+        whole seconds when supplied and return a connection whose transaction and
+        session behavior conforms to ``PostgresConnectionPort``.
         """
 
     @abstractmethod
