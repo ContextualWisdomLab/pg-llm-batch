@@ -3,10 +3,10 @@
 The repository must replace its current LGPL-family Psycopg runtime dependency
 without turning an unverified alternative into production authority. This module
 revalidates a bounded candidate snapshot and decides only whether a candidate
-has enough permissive-license, Python-version, artifact-identity, vulnerability,
-and capability evidence to enter parity validation. Production approval remains
-a later gate that requires a concrete adapter plus PostgreSQL/RLS/recovery/package
-evidence.
+has enough permissive-license, immutable license/artifact identity, Python-version,
+vulnerability, and capability evidence to enter parity validation. Production
+approval remains a later gate that requires a concrete adapter plus
+PostgreSQL/RLS/recovery/package evidence.
 """
 
 from __future__ import annotations
@@ -136,7 +136,8 @@ class PostgresDriverCandidateEvidence:
     """Describe one validated PostgreSQL-driver package candidate.
 
     ``source_commit_sha`` identifies the reviewed source revision,
-    ``artifact_sha256`` identifies the exact distributable, and
+    ``license_report_sha256`` binds the exact license evidence used for
+    ``license_spdx``, ``artifact_sha256`` identifies the exact distributable, and
     ``vulnerability_report_sha256`` binds the exact vulnerability evidence used
     for the decision. ``known_vulnerability_ids`` records unresolved advisories
     from that report. ``python_versions`` and ``capabilities`` must contain
@@ -149,6 +150,7 @@ class PostgresDriverCandidateEvidence:
     package_name: str
     package_version: str
     license_spdx: str
+    license_report_sha256: str
     python_versions: tuple[str, ...]
     source_commit_sha: str
     artifact_sha256: str
@@ -164,6 +166,13 @@ class PostgresDriverCandidateEvidence:
             ("license", self.license_spdx),
         ):
             _validate_identity_text(label, value)
+        if (
+            type(self.license_report_sha256) is not str
+            or _ARTIFACT_SHA256.fullmatch(self.license_report_sha256) is None
+        ):
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver license report evidence is invalid"
+            )
         if (
             type(self.python_versions) is not tuple
             or not self.python_versions
@@ -254,6 +263,7 @@ def _validated_candidate_snapshot(
             package_name=evidence.package_name,
             package_version=evidence.package_version,
             license_spdx=evidence.license_spdx,
+            license_report_sha256=evidence.license_report_sha256,
             python_versions=evidence.python_versions,
             source_commit_sha=evidence.source_commit_sha,
             artifact_sha256=evidence.artifact_sha256,
