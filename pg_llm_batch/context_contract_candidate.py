@@ -3,9 +3,10 @@
 
 This module exists so pg-llm-batch can exercise an exact unreleased upstream
 candidate without converting that candidate into production authority. Candidate
-identity is bound to an immutable source commit and content digests, but it carries
-no release version, publication gate, deployment approval, or authority to satisfy
-the production release-admission functions in :mod:`context_contract_release`.
+identity is bound to an immutable distribution name, source commit, and content
+digests, but it carries no release version, publication gate, deployment approval,
+or authority to satisfy the production release-admission functions in
+:mod:`context_contract_release`.
 """
 
 from __future__ import annotations
@@ -38,12 +39,13 @@ class ContextContractCandidateError(ValueError):
 class ContextContractCandidatePin:
     """Identify one exact unreleased Context Fabric candidate for test-only use.
 
-    The candidate is intentionally identified by an immutable source commit and
-    content digests rather than a branch or tag name. It has no release version or
-    publication state, so this value cannot be confused with
+    The candidate is intentionally identified by an immutable distribution name,
+    source commit, and content digests rather than a branch or tag name. It has no
+    release version or publication state, so this value cannot be confused with
     ``ContextContractReleasePin`` at the production admission boundary.
     """
 
+    distribution_name: str
     source_commit: str
     candidate_artifact_sha256: str
     profile_name: str
@@ -110,9 +112,10 @@ def validate_context_contract_candidate_pin(
     """Snapshot one immutable candidate identity without granting release authority.
 
     The exact package-owned candidate type is required before any member is read.
-    Every field is then snapshotted once and validated as an immutable commit or
-    content identity. Mutable branch aliases cannot pass because no ref-name field
-    exists and ``source_commit`` accepts only a lowercase forty-hex commit identity.
+    Every field is then snapshotted once and validated as a distribution, immutable
+    commit, or content identity. Mutable branch aliases cannot pass because no
+    ref-name field exists and ``source_commit`` accepts only a lowercase forty-hex
+    commit identity.
 
     Args:
         candidate: Candidate-only identity supplied by a test discovery boundary.
@@ -127,6 +130,7 @@ def validate_context_contract_candidate_pin(
         raise _invalid_candidate()
 
     try:
+        distribution_name = candidate.distribution_name
         source_commit = candidate.source_commit
         candidate_artifact_sha256 = candidate.candidate_artifact_sha256
         profile_name = candidate.profile_name
@@ -140,6 +144,7 @@ def validate_context_contract_candidate_pin(
         raise _invalid_candidate() from None
 
     return ContextContractCandidatePin(
+        distribution_name=_validate_name(distribution_name),
         source_commit=_validate_source_commit(source_commit),
         candidate_artifact_sha256=_validate_sha256(candidate_artifact_sha256),
         profile_name=_validate_name(profile_name),
@@ -207,9 +212,10 @@ def require_context_contract_candidate_compatibility(
 
     This helper lets pg-llm-batch preflight a specific upstream PR-head artifact while
     Context Fabric has no immutable release. ``expected`` is test configuration, not
-    production authority. Exact equality binds source, artifact, profile, resource,
-    conformance, admission, and provenance identities. The returned candidate type
-    cannot satisfy the distinct production release-admission API.
+    production authority. Exact equality binds distribution, source, artifact,
+    profile, resource, conformance, admission, and provenance identities. The
+    returned candidate type cannot satisfy the distinct production release-admission
+    API.
 
     Args:
         verification: Positive evidence for the observed unreleased candidate.
@@ -235,14 +241,14 @@ def require_context_contract_candidate_release_identity(
     verification: ContextContractCandidateVerification,
     release: ContextContractReleasePin,
 ) -> ContextContractCandidatePin:
-    """Require a later immutable publication to match the tested candidate bytes.
+    """Require a later immutable publication to match the tested candidate identity.
 
     This is a continuity check, not release admission. It proves only that the exact
-    source, distribution bytes, semantic profile, resource, conformance, admission,
-    and provenance identities in a syntactically valid release pin match the exact
-    candidate that previously passed pre-release verification. Publication status,
-    deployment-policy approval, and production readiness still belong to the
-    separate release-admission boundary.
+    distribution, source, distribution bytes, semantic profile, resource,
+    conformance, admission, and provenance identities in a syntactically valid
+    release pin match the exact candidate that previously passed pre-release
+    verification. Publication status, deployment-policy approval, and production
+    readiness still belong to the separate release-admission boundary.
 
     Args:
         verification: Positive pre-release verification for the tested candidate.
@@ -261,7 +267,8 @@ def require_context_contract_candidate_release_identity(
     validated_release = validate_context_contract_release_pin(release)
     candidate = validated_verification.candidate_pin
     if (
-        candidate.source_commit != validated_release.source_commit
+        candidate.distribution_name != validated_release.distribution_name
+        or candidate.source_commit != validated_release.source_commit
         or candidate.candidate_artifact_sha256
         != validated_release.distribution_sha256
         or candidate.profile_name != validated_release.profile_name
