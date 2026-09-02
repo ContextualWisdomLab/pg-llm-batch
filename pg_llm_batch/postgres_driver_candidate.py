@@ -35,6 +35,9 @@ REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
 )
 """Capabilities a replacement driver must evidence before parity validation."""
 
+REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS = frozenset({"3.10", "3.12", "3.14"})
+"""Repository CI Python minors a replacement driver must evidence explicitly."""
+
 _APPROVED_PERMISSIVE_LICENSES = frozenset(
     {
         "Apache-2.0",
@@ -207,16 +210,22 @@ def evaluate_postgres_driver_candidate(
 
     The decision first revalidates one exact package-owned snapshot, then fails
     closed when the SPDX identifier is not in the repository's explicitly
-    reviewed permissive set, Python 3.14 support is not evidenced, or any runtime
-    capability required by the migration port is absent. Reasons are deterministic
-    so CI and acquisition diligence can compare exact evidence.
+    reviewed permissive set, any repository-required Python runtime is not
+    evidenced, or any runtime capability required by the migration port is absent.
+    Reasons are deterministic so CI and acquisition diligence can compare exact
+    evidence.
     """
     snapshot = _validated_candidate_snapshot(evidence)
     reasons: list[str] = []
     if snapshot.license_spdx not in _APPROVED_PERMISSIVE_LICENSES:
         reasons.append("license_not_approved")
-    if "3.14" not in snapshot.python_versions:
-        reasons.append("python_3_14_not_evidenced")
+    missing_python_versions = REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS - set(
+        snapshot.python_versions
+    )
+    reasons.extend(
+        f"missing_python_version:{version}"
+        for version in sorted(missing_python_versions)
+    )
     missing_capabilities = REQUIRED_POSTGRES_DRIVER_CAPABILITIES - snapshot.capabilities
     reasons.extend(
         f"missing_capability:{capability}"
