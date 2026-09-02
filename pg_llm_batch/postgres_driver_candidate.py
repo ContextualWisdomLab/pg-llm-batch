@@ -55,6 +55,8 @@ _APPROVED_PERMISSIVE_LICENSES = frozenset(
     }
 )
 _MAX_IDENTITY_EVIDENCE_BYTES = 256
+_MAX_PYTHON_VERSION_EVIDENCE_ITEMS = 32
+_MAX_VULNERABILITY_EVIDENCE_ITEMS = 256
 _MINOR_PYTHON_VERSION = re.compile(r"^[1-9][0-9]*\.[0-9]+$")
 _SOURCE_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _ARTIFACT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -99,14 +101,18 @@ def _validate_identity_text(label: str, value: object) -> None:
 
 
 def _validate_vulnerability_ids(values: object) -> tuple[str, ...]:
-    """Validate immutable advisory identifiers without normalizing scan evidence.
+    """Validate bounded advisory identifiers without normalizing scan evidence.
 
     The tuple may be empty only when the bound vulnerability report found no
     known advisories. Identifiers remain opaque CVE/GHSA/vendor tokens; the
-    evaluator constrains their representation rather than inventing a particular
-    advisory namespace or treating display text as authority.
+    evaluator constrains their representation and cardinality rather than
+    inventing a namespace or letting untrusted scan metadata amplify evaluation
+    work and decision receipts without bound.
     """
-    if type(values) is not tuple:
+    if (
+        type(values) is not tuple
+        or len(values) > _MAX_VULNERABILITY_EVIDENCE_ITEMS
+    ):
         raise PostgresDriverCandidateEvidenceError(
             "PostgreSQL driver vulnerability evidence is invalid"
         )
@@ -157,7 +163,11 @@ class PostgresDriverCandidateEvidence:
             ("license", self.license_spdx),
         ):
             _validate_identity_text(label, value)
-        if type(self.python_versions) is not tuple or not self.python_versions:
+        if (
+            type(self.python_versions) is not tuple
+            or not self.python_versions
+            or len(self.python_versions) > _MAX_PYTHON_VERSION_EVIDENCE_ITEMS
+        ):
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver Python version evidence is invalid"
             )
@@ -197,6 +207,10 @@ class PostgresDriverCandidateEvidence:
         if type(self.capabilities) is not frozenset or not self.capabilities:
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver capability evidence is invalid"
+            )
+        if len(self.capabilities) > len(REQUIRED_POSTGRES_DRIVER_CAPABILITIES):
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver capability evidence contains an unknown capability"
             )
         unknown_capabilities = self.capabilities - REQUIRED_POSTGRES_DRIVER_CAPABILITIES
         if unknown_capabilities:
