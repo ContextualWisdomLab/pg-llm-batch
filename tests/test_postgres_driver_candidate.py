@@ -60,7 +60,7 @@ def test_candidate_contract_preserves_each_supported_dsn_selector_family() -> No
 
 def test_candidate_contract_requires_every_repository_ci_python_version() -> None:
     assert REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS == frozenset(
-        {"3.10", "3.12", "3.14"}
+        {"3.10", "3.11", "3.12", "3.13", "3.14"}
     )
 
 
@@ -94,7 +94,9 @@ def test_candidate_fails_closed_when_license_is_not_explicitly_permissive(
     assert expected_reason in decision.reasons
 
 
-@pytest.mark.parametrize("missing_version", ["3.10", "3.12", "3.14"])
+@pytest.mark.parametrize(
+    "missing_version", ["3.10", "3.11", "3.12", "3.13", "3.14"]
+)
 def test_candidate_requires_every_repository_ci_python_version(
     missing_version: str,
 ) -> None:
