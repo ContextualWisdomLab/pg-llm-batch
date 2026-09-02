@@ -135,6 +135,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced generic package-owned Result Application implementation names with
+  `application_phase`, `record_applied`, `result_checkpoint`,
+  `transaction_cursor`, `checkpointed_record`, and `record_effect`. Historical
+  `apply_checkpointed_result_in_transaction(cursor, ..., item, apply_record)`,
+  `ResultApplicationOutcome(applied=..., checkpoint=...)`, and `.applied` /
+  `.checkpoint` reads remain explicit source-compatibility adapters; provider
+  wire contracts and PostgreSQL persistence are unchanged.
 - Bound repository CI checkouts to the exact pull-request source head and verify
   the checked-out commit before tests, coverage, packaging, or container gates.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
