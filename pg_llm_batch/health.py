@@ -13,6 +13,8 @@ import json
 import logging
 from typing import Any, Dict, List
 
+from .postgres_driver_port import PostgresDriverPort
+
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
 except ImportError:  # pragma: no cover
@@ -24,9 +26,32 @@ logger = logging.getLogger(__name__)
 REQUIRED_COMPONENTS = {"database", "pg_tiktoken", "com_config"}
 
 
-def check_health(dsn: str) -> Dict[str, Any]:
-    """Return a readiness report ``{ready: bool, components: [...]}``."""
+def _connect_health_database(
+    dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+) -> Any:
+    """Open the bounded readiness connection through the selected database seam.
+
+    An explicitly injected driver is authoritative for this call and receives the
+    same five-second connection budget as the retained Psycopg path. Omitting the
+    port preserves the current optional-dependency behavior until a replacement
+    driver has passed the repository's commercial parity gates.
+    """
+    if postgres_driver is not None:
+        return postgres_driver.connect(dsn, connect_timeout_seconds=5)
     if psycopg is None:
+        return None
+    return psycopg.connect(dsn, connect_timeout=5)
+
+
+def check_health(
+    dsn: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> Dict[str, Any]:
+    """Return a readiness report using the injected or retained database driver."""
+    connection = _connect_health_database(dsn, postgres_driver)
+    if connection is None:
         return {
             "ready": False,
             "components": [
@@ -35,7 +60,7 @@ def check_health(dsn: str) -> Dict[str, Any]:
         }
     components: List[Dict[str, Any]] = []
     try:
-        with psycopg.connect(dsn, connect_timeout=5) as conn:
+        with connection as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT component, is_ready, detail FROM pg_llm_batch_health_check()"
