@@ -9,6 +9,17 @@ Azure OpenAI, or a LiteLLM gateway).
 Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and
 relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 
+> **Commercial dependency status:** the repository's own source is Apache-2.0,
+> but the current runtime dependency `psycopg[binary]>=3.1` resolves to
+> LGPL-3.0-only Psycopg/Psycopg Binary distributions. That GPL-family inbound
+> path is outside ContextualWisdomLab's commercial dependency baseline and is
+> tracked in [issue #322](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/322).
+> The current install/compose/submodule commands below document development and
+> verification behavior; they are **not** evidence that this dependency graph is
+> approved for commercial incorporation or distribution. Do not suppress the
+> license inventory or treat this repository's Apache-2.0 grant as relicensing
+> Psycopg.
+
 ## Why it exists
 
 - **Token counting is authoritative.** Counts come from `pg_tiktoken` in the
@@ -63,13 +74,20 @@ than a second database-side network authority.
 - PostgreSQL with `pg_tiktoken`. Fresh bundled database initialization does not
   create `pg_cron` or `http`; their image packages are retained temporarily only
   for existing-volume cleanup and rollback compatibility.
-- Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
+- Python 3.10+ with the **current** `psycopg[binary]` and `aiohttp` dependency
+  graph (installed via `pip install .`). Psycopg is LGPL-3.0-only and therefore
+  remains an unresolved commercial-policy blocker under issue #322; this line
+  describes present execution requirements, not an approved inbound dependency.
 - Tenant-scoped lifecycle deployments require an application database role with
   `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
 
 ---
 
-## Standalone use
+## Standalone development and verification
+
+The following path exercises the current implementation. Because it installs the
+LGPL-family Psycopg runtime path described above, it is not the approved
+commercial distribution path while issue #322 remains open.
 
 ### 1. Bring up the stack
 
@@ -219,7 +237,14 @@ exits zero, treat the target as unsafe and do not retry into the same service.
 See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md)
 for the operator steps.
 
-## Embed as a git submodule
+## Embedding boundary
+
+The codebase supports submodule-style embedding mechanically, but the current
+runtime graph contains the unapproved LGPL-family Psycopg dependency. The
+commands below document existing developer integration only; do not incorporate
+this package into a commercial ContextualWisdomLab distribution until issue
+#322 removes/replaces that dependency and exact-head package/license evidence is
+clean.
 
 ```bash
 git submodule add https://github.com/ContextualWisdomLab/pg-llm-batch.git \
@@ -306,6 +331,9 @@ for signals, ownership boundaries, privacy rules, and APA 7 references.
 
 ## Tests
 
+The current test environment also installs Psycopg and therefore verifies the
+present implementation, not the eventual commercially compatible replacement.
+
 ```bash
 pip install -e '.[test]'
 pytest                       # unit tests (fakes, no DB needed)
@@ -339,4 +367,10 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+The pg-llm-batch repository's original source is Apache-2.0; see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). That grant does not relicense
+third-party dependencies. The current direct runtime path includes
+`psycopg[binary]>=3.1` / Psycopg Binary under LGPL-3.0-only, which is not
+accepted by ContextualWisdomLab's commercial inbound baseline. Issue #322 owns
+its removal/replacement; do not present the current dependency graph as
+commercial-policy clean until that work is integrated and reverified.
