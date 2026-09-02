@@ -273,14 +273,18 @@ class TokenCounter:
             pass
 
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
-        """Read a config value from the KV store, returning the default on any failure."""
-        if self.config is not None:
-            try:
-                value = self.config.get(category, key, default)
-                return value if value is not None else default
-            except Exception:
-                return default
-        return default
+        """Read a config value, failing closed when an explicit authority is unavailable."""
+        if self.config is None:
+            return default
+        try:
+            value = self.config.get(category, key, default)
+        except Exception:
+            raise ValidationError(
+                field=f"{category}.{key}",
+                value="<unavailable>",
+                reason="configured value could not be read",
+            ) from None
+        return value if value is not None else default
 
     def _ensure_pg_tiktoken(self) -> bool:
         """Verify the pre-provisioned pg_tiktoken extension and functions read-only."""
