@@ -21,6 +21,10 @@ class _CandidateDriver:
     def __init__(self) -> None:
         self.parsed_values: list[str] = []
 
+    def __bool__(self) -> bool:
+        """Remain falsy so dependency selection cannot rely on object truthiness."""
+        return False
+
     def parse_conninfo(self, value: str) -> dict[str, str]:
         """Parse bounded fixtures without delegating to Psycopg."""
         self.parsed_values.append(value)
@@ -78,7 +82,10 @@ def test_cli_module_has_no_eager_psycopg_import() -> None:
         for node in ast.walk(tree)
         if (
             isinstance(node, ast.Import)
-            and any(alias.name == "psycopg" or alias.name.startswith("psycopg.") for alias in node.names)
+            and any(
+                alias.name == "psycopg" or alias.name.startswith("psycopg.")
+                for alias in node.names
+            )
         )
         or (
             isinstance(node, ast.ImportFrom)
