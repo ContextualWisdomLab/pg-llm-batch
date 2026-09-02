@@ -7,14 +7,15 @@ from dataclasses import replace
 
 import pytest
 
-from pg_llm_batch.context_contract_release import (
+from pg_llm_batch.context_contract_candidate import (
+    ContextContractCandidateError,
     ContextContractCandidatePin,
     ContextContractCandidateVerification,
-    ContextContractReleasePinError,
     require_context_contract_candidate_compatibility,
     validate_context_contract_candidate_pin,
     validate_context_contract_candidate_verification,
 )
+from pg_llm_batch.context_contract_release import validate_context_contract_release_pin
 
 
 VALID_CANDIDATE = ContextContractCandidatePin(
@@ -78,7 +79,7 @@ def test_candidate_pin_rejects_mutable_or_malformed_identity(
 ) -> None:
     candidate = replace(VALID_CANDIDATE, **{field: value})  # type: ignore[arg-type]
 
-    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
         validate_context_contract_candidate_pin(candidate)
 
 
@@ -97,7 +98,7 @@ def test_candidate_verification_rejects_missing_evidence(failed_gate: str) -> No
         **{failed_gate: False},
     )
 
-    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
         validate_context_contract_candidate_verification(verification)
 
 
@@ -110,20 +111,20 @@ def test_candidate_verification_rejects_non_boolean_evidence(
         artifact_verified=invalid_gate,  # type: ignore[arg-type]
     )
 
-    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
         validate_context_contract_candidate_verification(verification)
 
 
 def test_candidate_compatibility_rejects_exact_identity_drift() -> None:
     expected = replace(VALID_CANDIDATE, source_commit="2" * 40)
 
-    with pytest.raises(ContextContractReleasePinError) as raised:
+    with pytest.raises(ContextContractCandidateError) as raised:
         require_context_contract_candidate_compatibility(
             verification=VALID_CANDIDATE_VERIFICATION,
             expected=expected,
         )
 
-    assert str(raised.value) == "invalid release pin"
+    assert str(raised.value) == "invalid contract candidate"
     assert "2" * 40 not in str(raised.value)
 
 
@@ -131,10 +132,10 @@ def test_candidate_verification_revalidates_mutated_frozen_input() -> None:
     verification = replace(VALID_CANDIDATE_VERIFICATION)
     object.__setattr__(verification, "artifact_verified", "operator-secret")
 
-    with pytest.raises(ContextContractReleasePinError) as raised:
+    with pytest.raises(ContextContractCandidateError) as raised:
         validate_context_contract_candidate_verification(verification)
 
-    assert str(raised.value) == "invalid release pin"
+    assert str(raised.value) == "invalid contract candidate"
     assert "operator-secret" not in str(raised.value)
 
 
@@ -144,5 +145,10 @@ def test_candidate_pin_rejects_shaped_object_before_member_access() -> None:
         def source_commit(self) -> str:
             raise AssertionError("untrusted candidate member accessed")
 
-    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
         validate_context_contract_candidate_pin(HostileCandidate())  # type: ignore[arg-type]
+
+
+def test_candidate_pin_cannot_be_promoted_to_released_identity() -> None:
+    with pytest.raises(Exception, match="invalid release pin"):
+        validate_context_contract_release_pin(VALID_CANDIDATE)  # type: ignore[arg-type]
