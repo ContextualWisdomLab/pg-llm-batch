@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .exceptions import ValidationError
+from .postgres_driver_port import PostgresDriverPort
 
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
@@ -96,20 +97,44 @@ def _require_psycopg() -> None:
         raise RuntimeError("psycopg is required for database access")
 
 
-def apply_schema(dsn: str) -> None:
-    """Apply the package-owned idempotent schema to one PostgreSQL database."""
+def _connect_database(
+    dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+) -> Any:
+    """Open one connection through an injected migration driver when supplied.
+
+    The default remains Psycopg until a permissively licensed adapter has passed
+    the repository's parity and release gates. Injected candidates can therefore
+    exercise package SQL without making the current runtime dependency an
+    unavoidable prerequisite for every persistence consumer.
+    """
+    if postgres_driver is not None:
+        return postgres_driver.connect(dsn)
     _require_psycopg()
+    return psycopg.connect(dsn)
+
+
+def apply_schema(
+    dsn: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> None:
+    """Apply the package-owned schema through the selected PostgreSQL driver."""
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
-    with psycopg.connect(dsn) as conn:
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
         conn.commit()
 
 
-def load_virtual_payload(dsn: str, file_id: str) -> Optional[str]:
-    """Load one canonical package-owned JSONL payload or fail closed."""
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+def load_virtual_payload(
+    dsn: str,
+    file_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> Optional[str]:
+    """Load canonical package JSONL through the selected PostgreSQL driver."""
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT content FROM llm_batch_file_payloads WHERE file_id = %s",
