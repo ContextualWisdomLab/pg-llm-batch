@@ -20,7 +20,7 @@ class _RawCursor:
     def __init__(self) -> None:
         self.executions: list[tuple[str, object | None]] = []
         self.many_executions: list[tuple[str, object]] = []
-        self.rows: list[object] = [("one",), ("two",)]
+        self.rows: list[object] = [["one"], ["two"]]
         self.rowcount: object = 2
         self.entered = False
         self.exited = False
