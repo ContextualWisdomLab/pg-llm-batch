@@ -118,3 +118,37 @@ def test_add_entry_rejects_embedded_jsonl_record_delimiters_without_mutation() -
             "reason": "must be a single physical JSONL record without CR/LF",
         }
         assert _snapshot(accumulator) == before
+
+
+def test_add_entry_rejects_behavior_bearing_jsonl_text_before_use() -> None:
+    """Caller-controlled str subclasses must not execute before record validation."""
+
+    class BehaviorBearingStr(str):
+        def __contains__(self, _item: object) -> bool:
+            raise AssertionError("caller containment must not run")
+
+        def encode(self, *_args: object, **_kwargs: object) -> bytes:
+            raise AssertionError("caller encoding must not run")
+
+    accumulator = BatchAccumulator(
+        _CounterLimits(),
+        "model",
+        max_records=1,
+        max_bytes=100,
+    )
+    before = _snapshot(accumulator)
+
+    with pytest.raises(ValidationError, match="single physical JSONL record") as error:
+        accumulator.add_entry(
+            "behavior-bearing-jsonl",
+            BehaviorBearingStr("{}"),
+            tokens=1,
+            byte_size=1,
+        )
+
+    assert error.value.details == {
+        "field": "json_line",
+        "value": "<provided>",
+        "reason": "must be a single physical JSONL record without CR/LF",
+    }
+    assert _snapshot(accumulator) == before
