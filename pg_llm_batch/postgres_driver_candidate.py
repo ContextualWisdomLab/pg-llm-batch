@@ -25,9 +25,12 @@ REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
         "invalid_conninfo_classification",
         "jsonb",
         "parameterized_sql",
+        "result_row_semantics",
         "row_count",
+        "sql_parameter_style_adaptation",
         "transaction_commit_rollback",
         "undefined_function_classification",
+        "uuid_timestamp_adaptation",
     }
 )
 """Capabilities a replacement driver must evidence before parity validation."""
