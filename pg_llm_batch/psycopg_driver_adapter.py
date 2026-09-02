@@ -14,6 +14,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import psycopg
+from psycopg import ProgrammingError
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.errors import UndefinedFunction
 from psycopg.types.json import Jsonb
@@ -198,6 +199,10 @@ class PsycopgDriverAdapter(PostgresDriverPort):
     def jsonb(self, value: object) -> Jsonb:
         """Wrap a validated Python value in Psycopg's JSONB parameter adapter."""
         return Jsonb(value)
+
+    def is_invalid_conninfo(self, error: BaseException) -> bool:
+        """Recognize only Psycopg's connection-selector grammar error category."""
+        return isinstance(error, ProgrammingError)
 
     def is_undefined_function(self, error: BaseException) -> bool:
         """Recognize only Psycopg's PostgreSQL undefined-function error category."""
