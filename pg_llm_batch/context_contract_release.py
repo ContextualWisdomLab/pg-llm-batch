@@ -282,9 +282,9 @@ def validate_context_contract_release_transition_verification(
     """Snapshot migration and rollback evidence for one immutable release change.
 
     Exact package-owned evidence is required before any member is read. Source and
-    target pins are independently snapshotted, evidence identities are bounded to
-    lowercase SHA-256 digests, and both forward-migration and rollback gates must be
-    exact built-in ``True`` values.
+    target pins are independently snapshotted and must identify different immutable
+    releases; evidence identities are bounded to lowercase SHA-256 digests, and both
+    forward-migration and rollback gates must be exact built-in ``True`` values.
 
     Args:
         transition: Transition evidence from a trusted migration verifier.
@@ -310,6 +310,8 @@ def validate_context_contract_release_transition_verification(
 
     validated_source = validate_context_contract_release_pin(source_release_pin)
     validated_target = validate_context_contract_release_pin(target_release_pin)
+    if validated_source == validated_target:
+        raise _invalid_release_pin()
     validated_migration = _validate_sha256(migration_evidence_sha256)
     validated_rollback = _validate_sha256(rollback_evidence_sha256)
     _require_verified_gate(migration_verified)
