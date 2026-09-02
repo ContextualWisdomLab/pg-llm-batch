@@ -45,6 +45,9 @@ REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS = frozenset(
 )
 """Repository-supported Python minors a replacement driver must evidence explicitly."""
 
+POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION = "1"
+"""Version of the candidate-evidence receipt interpreted by this evaluator."""
+
 _APPROVED_PERMISSIVE_LICENSES = frozenset(
     {
         "Apache-2.0",
@@ -142,9 +145,10 @@ class PostgresDriverCandidateEvidence:
     for the decision. ``known_vulnerability_ids`` records unresolved advisories
     from that report. ``python_versions`` and ``capabilities`` must contain
     explicit evidence rather than inferred support from a nearby release or
-    similar database driver. Evaluation revalidates a fresh snapshot because
-    Python's frozen dataclasses do not make ``object.__setattr__`` an authority
-    boundary.
+    similar database driver. ``evidence_schema_version`` prevents a future
+    receipt shape from being silently interpreted under today's semantics.
+    Evaluation revalidates a fresh snapshot because Python's frozen dataclasses
+    do not make ``object.__setattr__`` an authority boundary.
     """
 
     package_name: str
@@ -157,6 +161,7 @@ class PostgresDriverCandidateEvidence:
     vulnerability_report_sha256: str
     known_vulnerability_ids: tuple[str, ...]
     capabilities: frozenset[str]
+    evidence_schema_version: str = POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
         """Validate candidate evidence without normalizing ambiguous inputs."""
@@ -166,6 +171,10 @@ class PostgresDriverCandidateEvidence:
             ("license", self.license_spdx),
         ):
             _validate_identity_text(label, value)
+        if self.evidence_schema_version != POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION:
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver candidate evidence schema version is unsupported"
+            )
         if (
             type(self.license_report_sha256) is not str
             or _ARTIFACT_SHA256.fullmatch(self.license_report_sha256) is None
@@ -270,6 +279,7 @@ def _validated_candidate_snapshot(
             vulnerability_report_sha256=evidence.vulnerability_report_sha256,
             known_vulnerability_ids=evidence.known_vulnerability_ids,
             capabilities=evidence.capabilities,
+            evidence_schema_version=evidence.evidence_schema_version,
         )
     except AttributeError:
         raise PostgresDriverCandidateEvidenceError(
