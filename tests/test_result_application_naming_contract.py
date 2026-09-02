@@ -23,11 +23,13 @@ def _checkpoint() -> BatchResultCheckpoint:
 
 
 def test_result_application_internal_signatures_use_semantic_names() -> None:
-    """Owned helpers describe checkpointed-result semantics instead of generic values."""
+    """Owned private helpers use semantic names without breaking public keywords."""
     assert tuple(signature(result_application.ResultApplicationError.__init__).parameters) == (
         "self",
-        "application_phase",
+        "phase",
     )
+    public_error = result_application.ResultApplicationError(phase="checkpoint_load")
+    assert public_error.details == {"phase": "checkpoint_load"}
     assert tuple(signature(result_application._redacted_validation_error).parameters) == (
         "field_name",
         "validation_reason",
@@ -48,7 +50,7 @@ def test_result_application_internal_signatures_use_semantic_names() -> None:
 
 
 def test_public_outcome_preserves_released_dataclass_contract() -> None:
-    """The released dataclass shape remains stable at the compatibility boundary."""
+    """The public dataclass shape remains stable at the compatibility boundary."""
     result_checkpoint = _checkpoint()
     application_outcome = result_application.ResultApplicationOutcome(
         applied=True,
@@ -84,7 +86,7 @@ def test_internal_outcome_owns_semantic_fields() -> None:
 
 
 def test_legacy_public_function_remains_an_explicit_compatibility_adapter() -> None:
-    """Existing keyword callers retain the released parameter contract at the ACL boundary."""
+    """Existing keyword callers retain the public parameter contract at the ACL boundary."""
     assert tuple(
         signature(result_application.apply_checkpointed_result_in_transaction).parameters
     ) == (
