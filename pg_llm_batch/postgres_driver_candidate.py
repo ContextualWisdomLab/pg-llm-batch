@@ -39,8 +39,10 @@ REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
 )
 """Capabilities a replacement driver must evidence before parity validation."""
 
-REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS = frozenset({"3.10", "3.12", "3.14"})
-"""Repository CI Python minors a replacement driver must evidence explicitly."""
+REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS = frozenset(
+    {"3.10", "3.11", "3.12", "3.13", "3.14"}
+)
+"""Repository-supported Python minors a replacement driver must evidence explicitly."""
 
 _APPROVED_PERMISSIVE_LICENSES = frozenset(
     {
