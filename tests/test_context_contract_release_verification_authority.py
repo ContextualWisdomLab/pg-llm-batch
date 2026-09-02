@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from pg_llm_batch.context_contract_release import (
@@ -30,6 +32,7 @@ RELEASE_PIN = ContextContractReleasePin(
 VERIFICATION = ContextContractReleaseVerification(
     release_pin=RELEASE_PIN,
     release_published=True,
+    artifact_verified=True,
     conformance_passed=True,
     admission_passed=True,
     provenance_verified=True,
@@ -57,6 +60,22 @@ def test_verification_receipt_cannot_impersonate_policy_approval() -> None:
         require_context_contract_release_ready(
             verification=VERIFICATION,
             approved=VERIFICATION,  # type: ignore[arg-type]
+            required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
+        )
+
+
+def test_unverified_release_artifact_cannot_authorize_release_readiness() -> None:
+    """Publication alone cannot substitute for verifying the pinned distribution bytes."""
+    unverified = replace(VERIFICATION, artifact_verified=False)
+    approval = ContextContractReleaseApproval(
+        verification=unverified,
+        approval_policy_sha256=REQUIRED_POLICY_SHA256,
+    )
+
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        require_context_contract_release_ready(
+            verification=unverified,
+            approved=approval,
             required_approval_policy_sha256=REQUIRED_POLICY_SHA256,
         )
 
