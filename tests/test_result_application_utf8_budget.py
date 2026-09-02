@@ -31,3 +31,12 @@ def test_json_snapshot_numeric_values_consume_text_budget(monkeypatch: Any) -> N
 
     assert caught.value.details["field"] == "item.record"
     assert caught.value.details["value"] == "<redacted>"
+
+
+def test_json_snapshot_rejects_integer_text_conversion_overflow() -> None:
+    """Interpreter integer-string limits must fail through redacted validation."""
+    with pytest.raises(ValidationError) as caught:
+        result_application._snapshot_json_record({"n": 10**5000})
+
+    assert caught.value.details["field"] == "item.record"
+    assert caught.value.details["value"] == "<redacted>"
