@@ -64,16 +64,18 @@ def _validate_identity_text(label: str, value: object) -> None:
     """Require one finite, exact package-identity token without normalization.
 
     Package name, version, and SPDX evidence participate in an acquisition
-    decision and can arrive from untrusted package metadata. Rejecting surrounding
-    whitespace prevents two textual identities from being treated as equivalent,
-    while the UTF-8 byte ceiling keeps malformed metadata from expanding an
-    otherwise tiny decision record without imposing a package-manager grammar.
+    decision and can arrive from untrusted package metadata. Rejecting whitespace
+    and control characters keeps one evidence value from becoming multiple visual
+    or line-oriented identities, while the UTF-8 byte ceiling bounds malformed
+    metadata without inventing a package-manager-specific grammar.
     """
+    if type(value) is not str or not value:
+        raise PostgresDriverCandidateEvidenceError(
+            f"PostgreSQL driver {label} evidence is invalid"
+        )
     if (
-        type(value) is not str
-        or not value
-        or value != value.strip()
-        or len(value.encode("utf-8")) > _MAX_IDENTITY_EVIDENCE_BYTES
+        len(value.encode("utf-8")) > _MAX_IDENTITY_EVIDENCE_BYTES
+        or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         raise PostgresDriverCandidateEvidenceError(
             f"PostgreSQL driver {label} evidence is invalid"
