@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
 
 import pytest
 
@@ -32,7 +31,9 @@ def test_connection_port_covers_transaction_and_cursor_lifecycle() -> None:
         "commit",
         "cursor",
         "execute",
+        "is_closed",
         "rollback",
+        "set_autocommit",
     }
 
 
@@ -88,6 +89,7 @@ class _Connection(PostgresConnectionPort):
         self.committed = False
         self.rolled_back = False
         self.closed = False
+        self.autocommit = False
 
     def cursor(self) -> _Cursor:
         return self.cursor_instance
@@ -100,6 +102,12 @@ class _Connection(PostgresConnectionPort):
 
     def rollback(self) -> None:
         self.rolled_back = True
+
+    def set_autocommit(self, enabled: bool) -> None:
+        self.autocommit = enabled
+
+    def is_closed(self) -> bool:
+        return self.closed
 
     def close(self) -> None:
         self.closed = True
@@ -152,6 +160,10 @@ def test_complete_port_can_run_without_psycopg_types() -> None:
         "service=pg_llm_batch",
         connect_timeout_seconds=5.0,
     )
+    assert connection.is_closed() is False
+    connection.set_autocommit(True)
+    assert connection.autocommit is True
+
     with connection as active_connection:
         with active_connection.cursor() as cursor:
             cursor.execute("SELECT %s", ("tenant-a",))
@@ -162,7 +174,7 @@ def test_complete_port_can_run_without_psycopg_types() -> None:
         active_connection.commit()
 
     assert connection.committed is True
-    assert connection.closed is True
+    assert connection.is_closed() is True
     assert driver.parse_conninfo("service=pg_llm_batch") == {
         "service": "pg_llm_batch"
     }
