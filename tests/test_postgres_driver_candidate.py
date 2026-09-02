@@ -84,14 +84,21 @@ def test_candidate_reports_every_missing_runtime_capability_deterministically() 
     ("field_name", "value"),
     [
         ("package_name", ""),
+        ("package_name", 7),
         ("package_version", ""),
+        ("package_version", False),
         ("license_spdx", ""),
+        ("license_spdx", object()),
         ("python_versions", ()),
+        ("python_versions", ["3.14"]),
         ("source_commit_sha", "a" * 39),
         ("source_commit_sha", "g" * 40),
+        ("source_commit_sha", 40),
         ("artifact_sha256", "b" * 63),
         ("artifact_sha256", "z" * 64),
+        ("artifact_sha256", 64),
         ("capabilities", frozenset()),
+        ("capabilities", {"parameterized_sql"}),
     ],
 )
 def test_candidate_rejects_incomplete_or_nonimmutable_evidence(
@@ -105,6 +112,11 @@ def test_candidate_rejects_incomplete_or_nonimmutable_evidence(
 def test_candidate_rejects_ambiguous_python_version_tokens() -> None:
     with pytest.raises(PostgresDriverCandidateEvidenceError, match="Python version"):
         _evidence(python_versions=("3.14+",))
+
+
+def test_candidate_rejects_non_string_python_version_tokens() -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError, match="Python version"):
+        _evidence(python_versions=("3.14", 314))
 
 
 def test_candidate_rejects_unknown_capability_names() -> None:
