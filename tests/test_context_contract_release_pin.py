@@ -71,6 +71,7 @@ def test_validate_context_contract_release_pin_rejects_mutable_release_aliases(
     [
         ("distribution_name", ""),
         ("distribution_name", "../candidate"),
+        ("distribution_name", "future+context-contracts"),
         ("release_version", "0.1.0/branch"),
         ("source_commit", "A" * 40),
         ("source_commit", "abc"),
