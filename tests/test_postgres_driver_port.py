@@ -20,6 +20,7 @@ def test_cursor_port_covers_existing_database_interaction_surface() -> None:
         "fetchall",
         "fetchmany",
         "fetchone",
+        "row_count",
     }
 
 
@@ -53,13 +54,16 @@ def test_driver_port_covers_psycopg_replacement_capabilities_only() -> None:
 class _Cursor(PostgresCursorPort):
     def __init__(self) -> None:
         self.executions: list[tuple[str, object | None]] = []
+        self.affected_rows = 0
 
     def execute(self, query: str, params: object | None = None) -> _Cursor:
         self.executions.append((query, params))
+        self.affected_rows = 1
         return self
 
     def executemany(self, query: str, params_seq: object) -> _Cursor:
         self.executions.append((query, params_seq))
+        self.affected_rows = 2
         return self
 
     def fetchone(self) -> object | None:
@@ -70,6 +74,9 @@ class _Cursor(PostgresCursorPort):
 
     def fetchall(self) -> list[object]:
         return [("row",)]
+
+    def row_count(self) -> int:
+        return self.affected_rows
 
     def __enter__(self) -> _Cursor:
         return self
@@ -167,7 +174,9 @@ def test_complete_port_can_run_without_psycopg_types() -> None:
     with connection as active_connection:
         with active_connection.cursor() as cursor:
             cursor.execute("SELECT %s", ("tenant-a",))
+            assert cursor.row_count() == 1
             cursor.executemany("SELECT %s", [("tenant-a",), ("tenant-b",)])
+            assert cursor.row_count() == 2
             assert cursor.fetchone() == ("row",)
             assert cursor.fetchmany(1) == [("row",)]
             assert cursor.fetchall() == [("row",)]
