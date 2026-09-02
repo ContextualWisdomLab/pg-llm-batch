@@ -140,10 +140,10 @@ class _Driver(PostgresDriverPort):
         self,
         dsn: str,
         *,
-        connect_timeout_seconds: float | None = None,
+        connect_timeout_seconds: int | None = None,
     ) -> _Connection:
         assert dsn == "service=pg_llm_batch"
-        assert connect_timeout_seconds == 5.0
+        assert connect_timeout_seconds == 5
         return _Connection()
 
     def parse_conninfo(self, dsn: str) -> Mapping[str, str]:
@@ -165,7 +165,7 @@ def test_complete_port_can_run_without_psycopg_types() -> None:
 
     connection = driver.connect(
         "service=pg_llm_batch",
-        connect_timeout_seconds=5.0,
+        connect_timeout_seconds=5,
     )
     assert connection.is_closed() is False
     connection.set_autocommit(True)
@@ -204,7 +204,7 @@ def test_incomplete_driver_cannot_be_instantiated() -> None:
             self,
             dsn: str,
             *,
-            connect_timeout_seconds: float | None = None,
+            connect_timeout_seconds: int | None = None,
         ) -> PostgresConnectionPort:
             raise AssertionError("not called")
 
