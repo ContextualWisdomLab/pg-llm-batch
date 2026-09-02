@@ -16,7 +16,7 @@ class _ProviderNeutralAdapter:
         self,
         file_path: str,
         endpoint_alias: str,
-        purpose: str = "batch",
+        purpose: str,
         expires_after_seconds: int | None = None,
     ) -> dict[str, Any]:
         return {"id": file_path, "endpoint_alias": endpoint_alias, "purpose": purpose}
