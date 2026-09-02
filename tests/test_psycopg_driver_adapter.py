@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from psycopg import ProgrammingError
 from psycopg.errors import UndefinedFunction
 from psycopg.types.json import Jsonb
 
@@ -207,6 +208,13 @@ def test_driver_uses_psycopg_conninfo_and_jsonb_contracts() -> None:
     adapted = driver.jsonb({"count": 1})
     assert isinstance(adapted, Jsonb)
     assert adapted.obj == {"count": 1}
+
+
+def test_driver_classifies_only_psycopg_conninfo_grammar_failures() -> None:
+    driver = PsycopgDriverAdapter()
+
+    assert driver.is_invalid_conninfo(ProgrammingError("invalid conninfo")) is True
+    assert driver.is_invalid_conninfo(RuntimeError("invalid conninfo")) is False
 
 
 def test_driver_classifies_only_psycopg_undefined_function() -> None:
