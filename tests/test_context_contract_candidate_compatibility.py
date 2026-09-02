@@ -122,6 +122,7 @@ def test_candidate_release_identity_rejects_publication_drift(
     ("field", "value"),
     [
         ("distribution_name", "../context-contracts"),
+        ("distribution_name", "cwl+context-contracts"),
         ("source_commit", "main"),
         ("source_commit", "A" * 40),
         ("candidate_artifact_sha256", "b" * 63),
