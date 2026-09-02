@@ -17,21 +17,21 @@ class BatchInferencePort(Protocol):
     """Expose the provider-neutral asynchronous batch lifecycle boundary.
 
     Implementations may speak an OpenAI-compatible API or another provider batch
-    wire contract. Callers provide an already-authorized endpoint alias and exact
-    batch operation; the port never discovers models/providers, chooses a provider
-    wire endpoint, or decides routing. Returned mappings are provider transport
-    evidence and must be validated by the owning lifecycle/result-ingestion boundary
-    before becoming durable truth.
+    wire contract. Callers provide an already-authorized endpoint alias, explicit
+    upload purpose, and exact batch operation; the port never discovers models or
+    providers, chooses provider wire defaults, or decides routing. Returned mappings
+    are provider transport evidence and must be validated by the owning lifecycle or
+    result-ingestion boundary before becoming durable truth.
     """
 
     async def upload_jsonl(
         self,
         file_path: str,
         endpoint_alias: str,
-        purpose: str = "batch",
+        purpose: str,
         expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Upload one prepared memory-backed JSONL payload to the selected adapter."""
+        """Upload one prepared JSONL payload for an explicitly selected purpose."""
         ...
 
     async def create_batch_job(
