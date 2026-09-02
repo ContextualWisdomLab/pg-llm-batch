@@ -69,6 +69,17 @@ class PostgresCursorPort(ABC):
         """
 
     @abstractmethod
+    def row_count(self) -> int:
+        """Return the concrete driver's affected-row count for the last operation.
+
+        Existing persistence paths use the count to detect missing updates and
+        partial batch membership writes. The adapter must preserve the driver's
+        integer semantics rather than guessing success when the count is unknown;
+        consumers that require an exact count remain responsible for failing
+        closed on a driver-specific unknown sentinel.
+        """
+
+    @abstractmethod
     def __enter__(self) -> PostgresCursorPort:
         """Enter the cursor context without changing transaction ownership.
 
