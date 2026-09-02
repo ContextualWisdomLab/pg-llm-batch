@@ -131,6 +131,15 @@ def test_release_transition_binds_the_policy_approved_target_release() -> None:
         _admit(verification=other_verification)
 
 
+def test_release_transition_rejects_noop_release_identity() -> None:
+    """Migration evidence cannot manufacture a release change when source equals target."""
+    noop_verification = replace(TARGET_VERIFICATION, release_pin=CURRENT_PIN)
+    noop_transition = replace(TRANSITION, target_release_pin=CURRENT_PIN)
+
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        _admit(noop_transition, verification=noop_verification)
+
+
 def test_release_transition_rejects_malformed_evidence_identity_without_reflection() -> None:
     """Migration evidence identities remain bounded and content-free on failure."""
     transition = replace(TRANSITION, migration_evidence_sha256="migration-secret")
