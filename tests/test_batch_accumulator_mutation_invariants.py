@@ -89,3 +89,32 @@ def test_add_entry_counts_actual_jsonl_bytes_across_multiple_records() -> None:
     with pytest.raises(ValidationError, match="max_bytes=10"):
         accumulator.add_entry("record-overflow", "{}", tokens=1, byte_size=1)
     assert _snapshot(accumulator) == before
+
+
+def test_add_entry_rejects_embedded_jsonl_record_delimiters_without_mutation() -> None:
+    """One accumulator entry must not smuggle additional physical JSONL records."""
+    accumulator = BatchAccumulator(
+        _CounterLimits(),
+        "model",
+        max_records=1,
+        max_bytes=100,
+    )
+
+    for json_line in ('{"first":1}\n{"second":2}', '{"first":1}\r{"second":2}'):
+        before = _snapshot(accumulator)
+        with pytest.raises(
+            ValidationError,
+            match="single physical JSONL record",
+        ) as error:
+            accumulator.add_entry(
+                "embedded-record-delimiter",
+                json_line,
+                tokens=1,
+                byte_size=1,
+            )
+        assert error.value.details == {
+            "field": "json_line",
+            "value": "<provided>",
+            "reason": "must be a single physical JSONL record without CR/LF",
+        }
+        assert _snapshot(accumulator) == before
