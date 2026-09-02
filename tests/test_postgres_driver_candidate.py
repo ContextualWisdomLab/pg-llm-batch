@@ -16,6 +16,7 @@ FULL_PYTHON_VERSIONS = tuple(sorted(REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS))
 SOURCE_SHA = "a" * 40
 ARTIFACT_SHA256 = "b" * 64
 VULNERABILITY_REPORT_SHA256 = "c" * 64
+LICENSE_REPORT_SHA256 = "d" * 64
 
 
 def _evidence(**overrides: object) -> PostgresDriverCandidateEvidence:
@@ -40,6 +41,26 @@ def test_complete_permissive_candidate_is_eligible_only_for_parity_validation() 
     assert decision.eligible_for_parity_validation is True
     assert decision.production_approved is False
     assert decision.reasons == ()
+
+
+def test_candidate_requires_immutable_license_report_identity() -> None:
+    decision = evaluate_postgres_driver_candidate(
+        _evidence(license_report_sha256=LICENSE_REPORT_SHA256)
+    )
+
+    assert decision.eligible_for_parity_validation is True
+    assert decision.production_approved is False
+
+
+@pytest.mark.parametrize(
+    "license_report_sha256",
+    ["d" * 63, "z" * 64, 64],
+)
+def test_candidate_rejects_malformed_license_report_identity(
+    license_report_sha256: object,
+) -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError, match="license report"):
+        _evidence(license_report_sha256=license_report_sha256)
 
 
 def test_candidate_contract_covers_issue_322_type_and_parameter_parity() -> None:
