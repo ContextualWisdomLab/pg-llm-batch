@@ -13,6 +13,9 @@ import re
 
 
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z")
+_DISTRIBUTION_NAME_PATTERN = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?\Z"
+)
 _DISTRIBUTION_SEPARATOR_PATTERN = re.compile(r"[-_.]+")
 _SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
@@ -116,6 +119,13 @@ def _validate_name(value: object) -> str:
     return value
 
 
+def _validate_distribution_name(value: object) -> str:
+    """Return one bounded Python distribution name accepted by packaging specs."""
+    if type(value) is not str or _DISTRIBUTION_NAME_PATTERN.fullmatch(value) is None:
+        raise _invalid_release_pin()
+    return value
+
+
 def _canonical_distribution_name(value: str) -> str:
     """Return the normalized Python distribution identity used for comparison."""
     return _DISTRIBUTION_SEPARATOR_PATTERN.sub("-", value).lower()
@@ -189,7 +199,7 @@ def validate_context_contract_release_pin(
         raise _invalid_release_pin() from None
 
     return ContextContractReleasePin(
-        distribution_name=_validate_name(distribution_name),
+        distribution_name=_validate_distribution_name(distribution_name),
         release_version=_validate_release_version(release_version),
         source_commit=_validate_source_commit(source_commit),
         distribution_sha256=_validate_sha256(distribution_sha256),
