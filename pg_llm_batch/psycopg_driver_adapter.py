@@ -36,6 +36,16 @@ class PsycopgDriverAdapterError(RuntimeError):
     """
 
 
+class PsycopgInvalidConninfoError(PsycopgDriverAdapterError):
+    """Identify conninfo grammar failures created at the adapter parsing boundary.
+
+    Psycopg's public ``ProgrammingError`` class also represents server-side SQL
+    errors such as undefined tables and malformed statements. Wrapping only
+    failures raised by conninfo parsing/rendering prevents those unrelated
+    database errors from being misclassified as an invalid DSN.
+    """
+
+
 class PsycopgCursorAdapter(PostgresCursorPort):
     """Wrap one Psycopg-compatible cursor without changing its transaction owner.
 
@@ -189,20 +199,30 @@ class PsycopgDriverAdapter(PostgresDriverPort):
         return PsycopgConnectionAdapter(psycopg.connect(dsn, **kwargs))
 
     def parse_conninfo(self, dsn: str) -> Mapping[str, str]:
-        """Parse PostgreSQL conninfo using Psycopg/libpq-compatible quoting rules."""
-        return conninfo_to_dict(dsn)
+        """Parse conninfo and narrow Psycopg's broad ProgrammingError category."""
+        try:
+            return conninfo_to_dict(dsn)
+        except ProgrammingError:
+            raise PsycopgInvalidConninfoError(
+                "PostgreSQL connection selector is invalid"
+            ) from None
 
     def make_conninfo(self, params: Mapping[str, str]) -> str:
-        """Render PostgreSQL conninfo using Psycopg's reviewed quoting implementation."""
-        return make_conninfo(**dict(params))
+        """Render conninfo and narrow Psycopg's broad ProgrammingError category."""
+        try:
+            return make_conninfo(**dict(params))
+        except ProgrammingError:
+            raise PsycopgInvalidConninfoError(
+                "PostgreSQL connection selector is invalid"
+            ) from None
 
     def jsonb(self, value: object) -> Jsonb:
         """Wrap a validated Python value in Psycopg's JSONB parameter adapter."""
         return Jsonb(value)
 
     def is_invalid_conninfo(self, error: BaseException) -> bool:
-        """Recognize only Psycopg's connection-selector grammar error category."""
-        return isinstance(error, ProgrammingError)
+        """Recognize only errors wrapped at the conninfo grammar boundary."""
+        return isinstance(error, PsycopgInvalidConninfoError)
 
     def is_undefined_function(self, error: BaseException) -> bool:
         """Recognize only Psycopg's PostgreSQL undefined-function error category."""
