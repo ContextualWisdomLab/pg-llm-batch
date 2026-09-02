@@ -1,9 +1,7 @@
 """Naming-contract regressions for checkpointed result application."""
 
-from dataclasses import fields
+from dataclasses import asdict, fields
 from inspect import signature
-
-import pytest
 
 from pg_llm_batch import result_application as result_application
 from pg_llm_batch.result_streaming import BatchResultCheckpoint
@@ -49,73 +47,40 @@ def test_result_application_internal_signatures_use_semantic_names() -> None:
     )
 
 
-def test_result_application_outcome_uses_semantic_fields_with_legacy_accessors() -> None:
-    """The domain result owns semantic fields while legacy attribute reads stay compatible."""
-    assert {field.name for field in fields(result_application.ResultApplicationOutcome)} == {
-        "record_applied",
-        "result_checkpoint",
-    }
-    assert isinstance(result_application.ResultApplicationOutcome.applied, property)
-    assert isinstance(result_application.ResultApplicationOutcome.checkpoint, property)
-
-
-def test_semantic_outcome_construction_exposes_legacy_reads() -> None:
-    """New semantic construction remains readable through released legacy properties."""
+def test_public_outcome_preserves_released_dataclass_contract() -> None:
+    """The released dataclass shape remains stable at the compatibility boundary."""
     result_checkpoint = _checkpoint()
     application_outcome = result_application.ResultApplicationOutcome(
-        record_applied=True,
-        result_checkpoint=result_checkpoint,
-    )
-
-    assert application_outcome.record_applied is True
-    assert application_outcome.result_checkpoint is result_checkpoint
-    assert application_outcome.applied is True
-    assert application_outcome.checkpoint is result_checkpoint
-
-
-def test_legacy_outcome_construction_populates_semantic_fields() -> None:
-    """Released constructor keywords translate immediately into semantic fields."""
-    result_checkpoint = _checkpoint()
-    application_outcome = result_application.ResultApplicationOutcome(
-        applied=False,
+        applied=True,
         checkpoint=result_checkpoint,
     )
 
-    assert application_outcome.record_applied is False
+    assert {field.name for field in fields(result_application.ResultApplicationOutcome)} == {
+        "applied",
+        "checkpoint",
+    }
+    assert asdict(application_outcome) == {
+        "applied": True,
+        "checkpoint": asdict(result_checkpoint),
+    }
+    assert application_outcome.record_applied is True
     assert application_outcome.result_checkpoint is result_checkpoint
 
 
-def test_outcome_rejects_duplicate_applied_vocabulary() -> None:
-    """Callers cannot supply both semantic and legacy applied flags ambiguously."""
-    with pytest.raises(TypeError, match="record_applied or legacy applied"):
-        result_application.ResultApplicationOutcome(
-            record_applied=True,
-            applied=False,
-            result_checkpoint=_checkpoint(),
-        )
-
-
-def test_outcome_rejects_duplicate_checkpoint_vocabulary() -> None:
-    """Callers cannot supply both semantic and legacy checkpoint values ambiguously."""
+def test_internal_outcome_owns_semantic_fields() -> None:
+    """Package-owned execution state uses semantic names behind the public adapter."""
     result_checkpoint = _checkpoint()
-    with pytest.raises(TypeError, match="result_checkpoint or legacy checkpoint"):
-        result_application.ResultApplicationOutcome(
-            record_applied=True,
-            result_checkpoint=result_checkpoint,
-            checkpoint=result_checkpoint,
-        )
+    semantic_outcome = result_application._SemanticResultApplicationOutcome(
+        record_applied=False,
+        result_checkpoint=result_checkpoint,
+    )
 
-
-def test_outcome_requires_applied_value() -> None:
-    """Either semantic or legacy applied vocabulary is required explicitly."""
-    with pytest.raises(TypeError, match="record_applied is required"):
-        result_application.ResultApplicationOutcome(result_checkpoint=_checkpoint())
-
-
-def test_outcome_requires_checkpoint_value() -> None:
-    """Either semantic or legacy checkpoint vocabulary is required explicitly."""
-    with pytest.raises(TypeError, match="result_checkpoint is required"):
-        result_application.ResultApplicationOutcome(record_applied=True)
+    assert {
+        field.name
+        for field in fields(result_application._SemanticResultApplicationOutcome)
+    } == {"record_applied", "result_checkpoint"}
+    assert semantic_outcome.record_applied is False
+    assert semantic_outcome.result_checkpoint is result_checkpoint
 
 
 def test_legacy_public_function_remains_an_explicit_compatibility_adapter() -> None:
