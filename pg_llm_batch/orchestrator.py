@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from . import db
 from .config import PostgresConfigStore
 from .exceptions import ValidationError
+from .postgres_driver_port import PostgresDriverPort
 from .token_counter import BatchAccumulator, TokenCounter
 
 try:  # pragma: no cover - optional dependency
@@ -60,11 +61,45 @@ class BatchPayload:
 class PostgresBatchOrchestrator:
     """Assemble and persist JSONL batch payloads from queued requests."""
 
-    def __init__(self, dsn: str) -> None:
-        """Initialize the orchestrator with an explicit PostgreSQL DSN."""
-        if not dsn or psycopg is None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        postgres_driver: PostgresDriverPort | None = None,
+    ) -> None:
+        """Initialize with an explicit DSN and optional migration driver."""
+        if not dsn or (postgres_driver is None and psycopg is None):
             raise RuntimeError("A Postgres DSN and psycopg are required")
         self.dsn = dsn
+        self._postgres_driver = postgres_driver
+
+    def _connect_database(self) -> Any:
+        """Open one orchestrator connection through the selected driver boundary."""
+        if self._postgres_driver is not None:
+            return self._postgres_driver.connect(self.dsn)
+        assert psycopg is not None
+        return psycopg.connect(self.dsn)
+
+    def _set_autocommit(self, connection: Any, enabled: bool) -> None:
+        """Set transaction mode without exposing a candidate driver's raw API."""
+        if self._postgres_driver is not None:
+            connection.set_autocommit(enabled)
+            return
+        connection.autocommit = enabled
+
+    def _adapt_jsonb(self, value: object) -> object:
+        """Adapt JSONB through the selected driver while preserving exact payload data."""
+        if self._postgres_driver is not None:
+            return self._postgres_driver.jsonb(value)
+        if Jsonb is not None:
+            return Jsonb(value)
+        return json.dumps(value)
+
+    def _cursor_row_count(self, cursor: Any) -> int | None:
+        """Read affected-row evidence through the selected cursor contract."""
+        if self._postgres_driver is not None:
+            return cursor.row_count()
+        return getattr(cursor, "rowcount", None)
 
     def _resolve_batch_uuid(self, batch_key: str) -> Optional[str]:
         """Resolve an exact string batch UUID or input-file-path selector."""
@@ -79,7 +114,7 @@ class PostgresBatchOrchestrator:
             return batch_key
         except ValueError:
             pass
-        with psycopg.connect(self.dsn) as conn:
+        with self._connect_database() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT batch_uuid FROM llm_batches "
@@ -115,7 +150,7 @@ class PostgresBatchOrchestrator:
                 ),
             )
 
-        with psycopg.connect(self.dsn) as conn:
+        with self._connect_database() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
@@ -130,9 +165,22 @@ class PostgresBatchOrchestrator:
                 )
                 rows: List[Tuple] = cur.fetchall()
 
-        config = PostgresConfigStore(self.dsn)
+        if self._postgres_driver is None:
+            config = PostgresConfigStore(self.dsn)
+        else:
+            config = PostgresConfigStore(
+                self.dsn,
+                postgres_driver=self._postgres_driver,
+            )
         try:
-            counter = TokenCounter(self.dsn, config=config)
+            if self._postgres_driver is None:
+                counter = TokenCounter(self.dsn, config=config)
+            else:
+                counter = TokenCounter(
+                    self.dsn,
+                    config=config,
+                    postgres_driver=self._postgres_driver,
+                )
             try:
                 if validated_token_limit is not None:
                     counter.effective_limit = min(
@@ -156,7 +204,14 @@ class PostgresBatchOrchestrator:
         payloads: List[Dict[str, Any]] = []
 
         for (request_uuid, system_prompt, user_prompt, model_name) in rows:
-            metadata = db.get_model_metadata(self.dsn, model_name)
+            if self._postgres_driver is None:
+                metadata = db.get_model_metadata(self.dsn, model_name)
+            else:
+                metadata = db.get_model_metadata(
+                    self.dsn,
+                    model_name,
+                    postgres_driver=self._postgres_driver,
+                )
             mode = str((metadata or {}).get("mode") or "").lower()
             system_for_tokens = system_prompt if mode != "embedding" else ""
 
@@ -278,8 +333,8 @@ class PostgresBatchOrchestrator:
         immediate_limit = counter.azure_max_files_per_job
         lock_key = self._batch_lock_key(batch_uuid)
 
-        with psycopg.connect(self.dsn) as conn:
-            conn.autocommit = False
+        with self._connect_database() as conn:
+            self._set_autocommit(conn, False)
             with conn.cursor() as cur:
                 cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
                 cur.execute(
@@ -331,11 +386,7 @@ class PostgresBatchOrchestrator:
                     request_ids = [str(item) for item in meta.get("request_ids", [])]
                     content = "\n".join(lines) + ("\n" if lines else "")
                     payload_doc = {"text": content, "line_count": len(lines)}
-                    adapted = (
-                        Jsonb(payload_doc)
-                        if Jsonb is not None
-                        else json.dumps(payload_doc)
-                    )
+                    adapted = self._adapt_jsonb(payload_doc)
                     cur.execute(
                         """
                         INSERT INTO llm_batch_file_payloads (file_id, content)
@@ -399,7 +450,7 @@ class PostgresBatchOrchestrator:
                             """,
                             (file_uuid, batch_uuid, request_ids),
                         )
-                        if cur.rowcount != len(request_ids):
+                        if self._cursor_row_count(cur) != len(request_ids):
                             raise ValidationError(
                                 field="request_ids",
                                 value=request_ids,
