@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from pg_llm_batch import BatchAPIClient, BatchInferencePort
@@ -24,7 +25,7 @@ class _ProviderNeutralAdapter:
         self,
         input_file_id: str,
         endpoint_alias: str,
-        endpoint: str = "/v1/chat/completions",
+        endpoint: str,
         metadata: dict[str, Any] | None = None,
         output_expires_after_seconds: int | None = None,
     ) -> dict[str, Any]:
@@ -61,3 +62,9 @@ def test_batch_inference_port_accepts_non_http_adapter_without_routing_authority
     assert isinstance(_ProviderNeutralAdapter(), BatchInferencePort)
     assert not hasattr(_ProviderNeutralAdapter(), "discover_models")
     assert not hasattr(_ProviderNeutralAdapter(), "route_model")
+
+
+def test_batch_inference_port_requires_host_selected_batch_operation() -> None:
+    """The provider-neutral port must not choose an OpenAI wire endpoint by default."""
+    signature = inspect.signature(BatchInferencePort.create_batch_job)
+    assert signature.parameters["endpoint"].default is inspect.Parameter.empty
