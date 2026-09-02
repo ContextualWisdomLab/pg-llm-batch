@@ -154,8 +154,14 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
-    """Serve a minimal ``/healthz`` endpoint (blocking)."""
+def serve_healthz(
+    dsn: str,
+    host: str = "0.0.0.0",
+    port: int = 8080,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> None:
+    """Serve ``/healthz`` using the selected PostgreSQL driver boundary."""
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
@@ -167,7 +173,9 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
                 self.send_response(404)
                 self.end_headers()
                 return
-            report = public_health_report(check_health(dsn))
+            report = public_health_report(
+                check_health(dsn, postgres_driver=postgres_driver)
+            )
             body = json.dumps(report).encode("utf-8")
             self.send_response(200 if report["ready"] else 503)
             self.send_header("Content-Type", "application/json")
