@@ -28,12 +28,13 @@ relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 - **Provider secrets stay out of ordinary process arguments.** Runtime provider
   configuration and credentials live in Postgres KV tables (`com_config`,
   `com_secrets`). Environment variables are limited to explicit bootstrap
-  transport such as the DSN and optional Fernet key; the bundled Compose path
-  mounts the PostgreSQL password as a named secret instead of embedding it in
-  the component DSN. CLI secret values are entered through a no-echo prompt or
-  bounded standard input, never as process arguments. Content-bearing
-  `count-tokens` input is likewise accepted only through bounded UTF-8 standard
-  input, so prompt text is not placed in process arguments.
+  transport such as the DSN, Compose secret source, passfile path, and optional
+  Fernet key; the bundled Compose path mounts the PostgreSQL password as a named
+  secret instead of embedding it in the component DSN. CLI secret values are
+  entered through a no-echo prompt or bounded standard input, never as process
+  arguments. Content-bearing `count-tokens` input is likewise accepted only
+  through bounded UTF-8 standard input, so prompt text is not placed in process
+  arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 - **Standalone or tenant-scoped lifecycle state.** `DurableBatchAPIClient`
@@ -99,28 +100,58 @@ that password only when it initializes the `pgdata` volume, so later starts of
 the same volume must reuse the same value unless you deliberately rotate the
 role credential inside PostgreSQL.
 
+For the host-side CLI, create a mode-0600 libpq passfile before starting Compose.
+The passfile escapes libpq delimiters, so arbitrary generated or restored
+passwords are not interpolated into a connection URI. After Compose has read its
+bootstrap secret, remove the plaintext password from the shell environment; the
+CLI environment contains only the passfile path and a credential-free DSN.
+
 ```bash
 export PG_LLM_BATCH_POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 # Save the generated value outside the repository in your local secret manager.
+export PGPASSFILE="$(mktemp "${TMPDIR:-/tmp}/pg-llm-batch.pgpass.XXXXXX")"
+chmod 600 "$PGPASSFILE"
+python - <<'PY'
+import os
+from pathlib import Path
+
+password = os.environ["PG_LLM_BATCH_POSTGRES_PASSWORD"]
+escaped = password.replace("\\", "\\\\").replace(":", "\\:")
+Path(os.environ["PGPASSFILE"]).write_text(
+    f"localhost:5432:pgllm:pgllm:{escaped}\n",
+    encoding="utf-8",
+)
+PY
+
 docker compose up -d --build
+unset PG_LLM_BATCH_POSTGRES_PASSWORD
+export PG_LLM_BATCH_DSN="postgresql://pgllm@localhost:5432/pgllm"
 # postgres becomes healthy only once pg_tiktoken + com_config are ready;
 # the component then serves GET /healthz on :8080
 curl -fsS localhost:8080/healthz
 ```
 
 On subsequent starts that reuse the existing `pgdata` volume, restore the same
-password to `PG_LLM_BATCH_POSTGRES_PASSWORD` before running `docker compose up`.
-Changing only the Compose secret does not rotate the persisted database role. If
-a disposable development password is intentionally lost, `docker compose down
--v` removes the persisted database volume so the next start can initialize a new
-password; that command permanently deletes the old local database contents.
-Retained environments should use a deliberate PostgreSQL credential-rotation
-procedure and update the deployment/application secret together.
+password from your local secret manager, recreate the mode-0600 passfile with the
+same Python escaping step, run `docker compose up`, and unset
+`PG_LLM_BATCH_POSTGRES_PASSWORD` again. Changing only the Compose secret does not
+rotate the persisted database role. If a disposable development password is
+intentionally lost, `docker compose down -v` removes the persisted database
+volume so the next start can initialize a new password; that command permanently
+deletes the old local database contents. Retained environments should use a
+deliberate PostgreSQL credential-rotation procedure and update the
+deployment/application secret together.
+
+Remove the temporary passfile when the local CLI session is finished:
+
+```bash
+rm -f "$PGPASSFILE"
+unset PGPASSFILE PG_LLM_BATCH_DSN
+```
 
 ### 2. Point it at your gateway (config + secret in the DB, not argv)
 
 ```bash
-export PG_LLM_BATCH_DSN="postgresql://pgllm:${PG_LLM_BATCH_POSTGRES_PASSWORD}@localhost:5432/pgllm"
 python -m pg_llm_batch init-db                                   # idempotent
 python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
 python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo prompt
@@ -359,12 +390,14 @@ present implementation, not the eventual commercially compatible replacement.
 pip install -e '.[test]'
 pytest                       # unit tests (fakes, no DB needed)
 
-# Reuse the same development password as the existing pgdata volume, or generate
-# one once before the first initialization of a new disposable test volume.
+# Restore the same development password used by the existing pgdata volume,
+# recreate a mode-0600 PGPASSFILE as in the quick start, then unset the plaintext
+# password after Compose has consumed it.
 export PG_LLM_BATCH_POSTGRES_PASSWORD="<same locally retained development password>"
 docker compose up -d --build postgres
-PG_LLM_BATCH_TEST_DSN="postgresql://pgllm:${PG_LLM_BATCH_POSTGRES_PASSWORD}@localhost:5432/pgllm" \
-    pytest -m integration    # against the real pg_tiktoken PostgreSQL container
+unset PG_LLM_BATCH_POSTGRES_PASSWORD
+PG_LLM_BATCH_TEST_DSN="postgresql://pgllm@localhost:5432/pgllm" \
+    pytest -m integration    # libpq reads the password from PGPASSFILE
 ```
 
 ## Docs
