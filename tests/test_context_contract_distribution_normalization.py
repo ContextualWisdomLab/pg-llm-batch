@@ -17,6 +17,7 @@ from pg_llm_batch.context_contract_release import (
     ContextContractReleaseTransitionVerification,
     ContextContractReleaseVerification,
     require_context_contract_release_compatibility,
+    require_context_contract_release_ready,
     require_context_contract_release_transition_ready,
 )
 
@@ -111,6 +112,32 @@ def test_release_approval_compatibility_uses_normalized_distribution_identity() 
 
     assert admitted == candidate
     assert admitted is not candidate
+
+
+def test_release_policy_binding_uses_normalized_distribution_identity() -> None:
+    """Policy approval binds one project identity despite equivalent name spelling."""
+    observed_pin = _release_pin(distribution_name="CWL.Context__Contracts")
+    approved_pin = replace(observed_pin, distribution_name="cwl-context-contracts")
+    observed = ContextContractReleaseVerification(
+        release_pin=observed_pin,
+        release_published=True,
+        artifact_verified=True,
+        conformance_passed=True,
+        admission_passed=True,
+        provenance_verified=True,
+    )
+    approval = ContextContractReleaseApproval(
+        verification=replace(observed, release_pin=approved_pin),
+        approval_policy_sha256="9" * 64,
+    )
+
+    admitted = require_context_contract_release_ready(
+        verification=observed,
+        approved=approval,
+        required_approval_policy_sha256="9" * 64,
+    )
+
+    assert admitted == observed_pin
 
 
 def test_release_transition_binding_uses_normalized_distribution_identity() -> None:
