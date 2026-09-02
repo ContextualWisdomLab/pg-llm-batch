@@ -21,6 +21,9 @@ from .context_contract_release import (
 
 
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z")
+_DISTRIBUTION_NAME_PATTERN = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,126}[A-Za-z0-9])?\Z"
+)
 _SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _ERROR_MESSAGE = "invalid contract candidate"
@@ -86,6 +89,13 @@ def _validate_name(value: object) -> str:
     return value
 
 
+def _validate_distribution_name(value: object) -> str:
+    """Return one bounded Python distribution name accepted by packaging specs."""
+    if type(value) is not str or _DISTRIBUTION_NAME_PATTERN.fullmatch(value) is None:
+        raise _invalid_candidate()
+    return value
+
+
 def _validate_source_commit(value: object) -> str:
     """Return one exact lowercase Git commit identity for candidate source."""
     if type(value) is not str or _SOURCE_COMMIT_PATTERN.fullmatch(value) is None:
@@ -144,7 +154,7 @@ def validate_context_contract_candidate_pin(
         raise _invalid_candidate() from None
 
     return ContextContractCandidatePin(
-        distribution_name=_validate_name(distribution_name),
+        distribution_name=_validate_distribution_name(distribution_name),
         source_commit=_validate_source_commit(source_commit),
         candidate_artifact_sha256=_validate_sha256(candidate_artifact_sha256),
         profile_name=_validate_name(profile_name),
