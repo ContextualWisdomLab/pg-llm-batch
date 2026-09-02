@@ -224,7 +224,15 @@ def test_config_resolution_buffer_validation_and_encoder_cache(fake_pg, monkeypa
     assert counter.buffer_percentage == counter.DEFAULT_BUFFER_PERCENTAGE
     assert counter._resolve_config_value("x", "y", 7) == 7
     counter.config = Config(error=True)
-    assert counter._resolve_config_value("x", "y", 8) == 8
+    with pytest.raises(
+        ValidationError, match="configured value could not be read"
+    ) as config_error:
+        counter._resolve_config_value("x", "y", 8)
+    assert config_error.value.details == {
+        "field": "x.y",
+        "value": "<unavailable>",
+        "reason": "configured value could not be read",
+    }
 
     for invalid in (-1, 51):
         with pytest.raises(ValidationError, match="between 0 and 50"):
