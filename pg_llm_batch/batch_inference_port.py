@@ -18,9 +18,10 @@ class BatchInferencePort(Protocol):
 
     Implementations may speak an OpenAI-compatible API or another provider batch
     wire contract. Callers provide an already-authorized endpoint alias and exact
-    batch endpoint; the port never discovers models/providers or decides routing.
-    Returned mappings are provider transport evidence and must be validated by the
-    owning lifecycle/result-ingestion boundary before becoming durable truth.
+    batch operation; the port never discovers models/providers, chooses a provider
+    wire endpoint, or decides routing. Returned mappings are provider transport
+    evidence and must be validated by the owning lifecycle/result-ingestion boundary
+    before becoming durable truth.
     """
 
     async def upload_jsonl(
@@ -37,11 +38,11 @@ class BatchInferencePort(Protocol):
         self,
         input_file_id: str,
         endpoint_alias: str,
-        endpoint: str = "/v1/chat/completions",
+        endpoint: str,
         metadata: Optional[Dict[str, Any]] = None,
         output_expires_after_seconds: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Create one provider batch for an already selected endpoint contract."""
+        """Create one provider batch for an explicitly selected operation contract."""
         ...
 
     async def get_batch_status(
