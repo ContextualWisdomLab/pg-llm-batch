@@ -3,9 +3,10 @@
 The repository must replace its current LGPL-family Psycopg runtime dependency
 without turning an unverified alternative into production authority. This module
 revalidates a bounded candidate snapshot and decides only whether a candidate
-has enough permissive-license, Python-version, artifact-identity, and capability
-evidence to enter parity validation. Production approval remains a later gate
-that requires a concrete adapter plus PostgreSQL/RLS/recovery/package evidence.
+has enough permissive-license, Python-version, artifact-identity, vulnerability,
+and capability evidence to enter parity validation. Production approval remains
+a later gate that requires a concrete adapter plus PostgreSQL/RLS/recovery/package
+evidence.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ _MAX_IDENTITY_EVIDENCE_BYTES = 256
 _MINOR_PYTHON_VERSION = re.compile(r"^[1-9][0-9]*\.[0-9]+$")
 _SOURCE_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _ARTIFACT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_VULNERABILITY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 
 
 class PostgresDriverCandidateEvidenceError(ValueError):
@@ -92,16 +94,45 @@ def _validate_identity_text(label: str, value: object) -> None:
         )
 
 
+def _validate_vulnerability_ids(values: object) -> tuple[str, ...]:
+    """Validate immutable advisory identifiers without normalizing scan evidence.
+
+    The tuple may be empty only when the bound vulnerability report found no
+    known advisories. Identifiers remain opaque CVE/GHSA/vendor tokens; the
+    evaluator constrains their representation rather than inventing a particular
+    advisory namespace or treating display text as authority.
+    """
+    if type(values) is not tuple:
+        raise PostgresDriverCandidateEvidenceError(
+            "PostgreSQL driver vulnerability evidence is invalid"
+        )
+    if any(
+        type(value) is not str or _VULNERABILITY_ID.fullmatch(value) is None
+        for value in values
+    ):
+        raise PostgresDriverCandidateEvidenceError(
+            "PostgreSQL driver vulnerability evidence is invalid"
+        )
+    if len(set(values)) != len(values):
+        raise PostgresDriverCandidateEvidenceError(
+            "PostgreSQL driver vulnerability evidence is invalid"
+        )
+    return values
+
+
 @dataclass(frozen=True, slots=True)
 class PostgresDriverCandidateEvidence:
     """Describe one validated PostgreSQL-driver package candidate.
 
-    ``source_commit_sha`` identifies the reviewed source revision and
-    ``artifact_sha256`` identifies the exact distributable under evaluation.
-    ``python_versions`` and ``capabilities`` must contain explicit evidence rather
-    than inferred support from a nearby release or similar database driver.
-    Evaluation revalidates a fresh snapshot because Python's frozen dataclasses do
-    not make ``object.__setattr__`` an authority boundary.
+    ``source_commit_sha`` identifies the reviewed source revision,
+    ``artifact_sha256`` identifies the exact distributable, and
+    ``vulnerability_report_sha256`` binds the exact vulnerability evidence used
+    for the decision. ``known_vulnerability_ids`` records unresolved advisories
+    from that report. ``python_versions`` and ``capabilities`` must contain
+    explicit evidence rather than inferred support from a nearby release or
+    similar database driver. Evaluation revalidates a fresh snapshot because
+    Python's frozen dataclasses do not make ``object.__setattr__`` an authority
+    boundary.
     """
 
     package_name: str
@@ -110,6 +141,8 @@ class PostgresDriverCandidateEvidence:
     python_versions: tuple[str, ...]
     source_commit_sha: str
     artifact_sha256: str
+    vulnerability_report_sha256: str
+    known_vulnerability_ids: tuple[str, ...]
     capabilities: frozenset[str]
 
     def __post_init__(self) -> None:
@@ -149,6 +182,14 @@ class PostgresDriverCandidateEvidence:
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver artifact digest evidence is invalid"
             )
+        if (
+            type(self.vulnerability_report_sha256) is not str
+            or _ARTIFACT_SHA256.fullmatch(self.vulnerability_report_sha256) is None
+        ):
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver vulnerability report evidence is invalid"
+            )
+        _validate_vulnerability_ids(self.known_vulnerability_ids)
         if type(self.capabilities) is not frozenset or not self.capabilities:
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver capability evidence is invalid"
@@ -197,6 +238,8 @@ def _validated_candidate_snapshot(
             python_versions=evidence.python_versions,
             source_commit_sha=evidence.source_commit_sha,
             artifact_sha256=evidence.artifact_sha256,
+            vulnerability_report_sha256=evidence.vulnerability_report_sha256,
+            known_vulnerability_ids=evidence.known_vulnerability_ids,
             capabilities=evidence.capabilities,
         )
     except AttributeError:
@@ -211,14 +254,17 @@ def evaluate_postgres_driver_candidate(
     """Evaluate one candidate without promoting it to a production dependency.
 
     The decision first revalidates one exact package-owned snapshot, then fails
-    closed when the SPDX identifier is not in the repository's explicitly
-    reviewed permissive set, any repository-required Python runtime is not
-    evidenced, or any runtime capability required by the migration port is absent.
-    Reasons are deterministic so CI and acquisition diligence can compare exact
-    evidence.
+    closed when the bound vulnerability report contains a known advisory, the
+    SPDX identifier is not in the repository's explicitly reviewed permissive
+    set, any repository-required Python runtime is not evidenced, or any runtime
+    capability required by the migration port is absent. Reasons are
+    deterministic so CI and acquisition diligence can compare exact evidence.
     """
     snapshot = _validated_candidate_snapshot(evidence)
-    reasons: list[str] = []
+    reasons = [
+        f"known_vulnerability:{vulnerability_id}"
+        for vulnerability_id in sorted(snapshot.known_vulnerability_ids)
+    ]
     if snapshot.license_spdx not in _APPROVED_PERMISSIVE_LICENSES:
         reasons.append("license_not_approved")
     missing_python_versions = REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS - set(
