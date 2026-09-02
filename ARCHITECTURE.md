@@ -76,9 +76,13 @@ Checkpointed result application is a package-owned domain service. Internally,
 its ubiquitous language is `transaction_cursor`, `checkpointed_record`,
 `record_effect`, `record_applied`, and `result_checkpoint`. The released
 `apply_checkpointed_result_in_transaction(cursor, checkpoint_store,
-consumer_name, item, apply_record)` signature and the historical outcome reads
-`.applied` / `.checkpoint` remain compatibility adapters only; they translate at
-the package boundary rather than defining internal domain vocabulary.
+consumer_name, item, apply_record)` keyword signature and the public
+`ResultApplicationOutcome(applied, checkpoint)` dataclass field/introspection
+shape remain compatibility adapters because renaming them would be a released
+source/serialization break. The adapter immediately translates to/from a
+private semantic outcome model. Additive `.record_applied` and
+`.result_checkpoint` properties expose the semantic vocabulary without changing
+historical `dataclasses.fields` or `dataclasses.asdict` output.
 
 The service preserves the same transaction and replay invariants: the local
 record effect and checkpoint save occur under the caller-owned transaction,
