@@ -29,21 +29,63 @@ from .result_streaming import BatchResultCheckpoint, CheckpointedBatchResultReco
 class ResultApplicationError(PgLlmBatchError):
     """Report one bounded failure while applying a checkpointed result."""
 
-    def __init__(self, phase: str) -> None:
+    def __init__(self, application_phase: str) -> None:
         """Create fixed diagnostic evidence for one application phase."""
         super().__init__(
             message="Checkpointed result application failed",
             error_code="RESULT_APPLICATION_ERROR",
-            details={"phase": phase},
+            details={"phase": application_phase},
         )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class ResultApplicationOutcome:
-    """Describe whether one local record effect was newly applied."""
+    """Describe whether one local record effect was newly applied.
 
-    applied: bool
-    checkpoint: BatchResultCheckpoint
+    ``record_applied`` and ``result_checkpoint`` are the package-owned semantic
+    fields. The historical ``applied`` and ``checkpoint`` constructor keywords
+    and read-only properties remain as a compatibility boundary for released
+    callers.
+    """
+
+    record_applied: bool
+    result_checkpoint: BatchResultCheckpoint
+
+    def __init__(
+        self,
+        record_applied: bool | None = None,
+        result_checkpoint: BatchResultCheckpoint | None = None,
+        *,
+        applied: bool | None = None,
+        checkpoint: BatchResultCheckpoint | None = None,
+    ) -> None:
+        """Normalize semantic or legacy outcome arguments without ambiguity."""
+        if record_applied is not None and applied is not None:
+            raise TypeError("use record_applied or legacy applied, not both")
+        if result_checkpoint is not None and checkpoint is not None:
+            raise TypeError("use result_checkpoint or legacy checkpoint, not both")
+        normalized_record_applied = (
+            record_applied if record_applied is not None else applied
+        )
+        normalized_result_checkpoint = (
+            result_checkpoint if result_checkpoint is not None else checkpoint
+        )
+        if normalized_record_applied is None:
+            raise TypeError("record_applied is required")
+        if normalized_result_checkpoint is None:
+            raise TypeError("result_checkpoint is required")
+        object.__setattr__(self, "record_applied", normalized_record_applied)
+        object.__setattr__(self, "result_checkpoint", normalized_result_checkpoint)
+
+    @property
+    def applied(self) -> bool:
+        """Return the legacy applied flag for source compatibility."""
+        return self.record_applied
+
+    @property
+    def checkpoint(self) -> BatchResultCheckpoint:
+        """Return the legacy checkpoint attribute for source compatibility."""
+        return self.result_checkpoint
 
 
 class _ResultApplicationCursor:
@@ -102,83 +144,195 @@ class _ResultApplicationCursor:
         return self.__cursor.fetchall(*args, **kwargs)
 
 
-def _redacted_validation_error(field: str, reason: str) -> ValidationError:
+def _redacted_validation_error(
+    field_name: str,
+    validation_reason: str,
+) -> ValidationError:
     """Build a validation error without retaining caller-controlled content."""
-    return ValidationError(field=field, value="<redacted>", reason=reason)
+    return ValidationError(
+        field=field_name,
+        value="<redacted>",
+        reason=validation_reason,
+    )
 
 
-def _checkpoint_primitive_type_error(checkpoint: BatchResultCheckpoint) -> str | None:
+def _checkpoint_primitive_type_error(
+    result_checkpoint: BatchResultCheckpoint,
+) -> str | None:
     """Return the first checkpoint field whose primitive type can execute behavior."""
-    for field in (
+    for checkpoint_field_name in (
         "batch_id",
         "endpoint_alias",
         "file_kind",
         "file_id",
         "prefix_sha256",
     ):
-        if type(getattr(checkpoint, field)) is not str:
-            return field
-    for field in (
+        if type(getattr(result_checkpoint, checkpoint_field_name)) is not str:
+            return checkpoint_field_name
+    for checkpoint_field_name in (
         "schema_version",
         "file_line_number",
         "batch_line_count",
         "record_count",
     ):
-        if type(getattr(checkpoint, field)) is not int:
-            return field
+        if type(getattr(result_checkpoint, checkpoint_field_name)) is not int:
+            return checkpoint_field_name
     return None
 
 
 def _validate_item_and_effect(
-    item: Any,
-    apply_record: Any,
+    checkpointed_record: Any,
+    record_effect: Any,
 ) -> CheckpointedBatchResultRecord:
     """Validate the local application boundary before store or callback work."""
-    if type(item) is not CheckpointedBatchResultRecord:
+    if type(checkpointed_record) is not CheckpointedBatchResultRecord:
         raise _redacted_validation_error(
             "item", "must be an exact checkpointed batch result record"
         )
-    checkpoint = item.checkpoint
-    if type(checkpoint) is not BatchResultCheckpoint:
+    result_checkpoint = checkpointed_record.checkpoint
+    if type(result_checkpoint) is not BatchResultCheckpoint:
         raise _redacted_validation_error(
             "item.checkpoint", "must be an exact batch result checkpoint"
         )
-    checkpoint_field = _checkpoint_primitive_type_error(checkpoint)
-    if checkpoint_field is not None:
+    checkpoint_field_name = _checkpoint_primitive_type_error(result_checkpoint)
+    if checkpoint_field_name is not None:
         raise _redacted_validation_error(
-            f"item.checkpoint.{checkpoint_field}",
+            f"item.checkpoint.{checkpoint_field_name}",
             "must use an exact built-in primitive type",
         )
-    if type(item.batch_id) is not str:
+    if type(checkpointed_record.batch_id) is not str:
         raise _redacted_validation_error(
             "item.batch_id", "must be an exact built-in string"
         )
-    if type(item.file_kind) is not str:
+    if type(checkpointed_record.file_kind) is not str:
         raise _redacted_validation_error(
             "item.file_kind", "must be an exact built-in string"
         )
-    if not callable(apply_record):
+    if not callable(record_effect):
         raise _redacted_validation_error("apply_record", "must be callable")
-    static_call = inspect.getattr_static(apply_record, "__call__", None)
+    static_call = inspect.getattr_static(record_effect, "__call__", None)
     if isinstance(static_call, (staticmethod, classmethod)):
         static_call = static_call.__func__
-    if inspect.iscoroutinefunction(apply_record) or inspect.iscoroutinefunction(
+    if inspect.iscoroutinefunction(record_effect) or inspect.iscoroutinefunction(
         static_call
     ):
         raise _redacted_validation_error(
             "apply_record", "must complete synchronously in the caller transaction"
         )
-    if item.batch_id != checkpoint.batch_id:
+    if checkpointed_record.batch_id != result_checkpoint.batch_id:
         raise _redacted_validation_error(
             "item.batch_id", "must match the checkpoint batch identity"
         )
-    if item.file_kind != checkpoint.file_kind:
+    if checkpointed_record.file_kind != result_checkpoint.file_kind:
         raise _redacted_validation_error(
             "item.file_kind", "must match the checkpoint file kind"
         )
-    if type(item.record) is not dict:
+    if type(checkpointed_record.record) is not dict:
         raise _redacted_validation_error("item.record", "must be an exact JSON object")
-    return item
+    return checkpointed_record
+
+
+def _apply_checkpointed_record_in_transaction(
+    transaction_cursor: Any,
+    checkpoint_store: Any,
+    consumer_name: str,
+    checkpointed_record: CheckpointedBatchResultRecord,
+    record_effect: Callable[[Any, Mapping[str, Any]], None],
+) -> ResultApplicationOutcome:
+    """Apply one semantic checkpointed record within the caller transaction."""
+    validated_record = _validate_item_and_effect(checkpointed_record, record_effect)
+
+    checkpoint_load_failure: ResultApplicationError | None = None
+    previous_checkpoint: BatchResultCheckpoint | None = None
+    try:
+        previous_checkpoint = checkpoint_store.load_in_transaction(
+            transaction_cursor,
+            consumer_name,
+            validated_record.batch_id,
+            validated_record.checkpoint.endpoint_alias,
+        )
+    except CheckpointConflictError:
+        raise
+    except Exception:
+        checkpoint_load_failure = ResultApplicationError("checkpoint_load")
+    if checkpoint_load_failure is not None:
+        raise checkpoint_load_failure from None
+    if previous_checkpoint is not None:
+        if type(previous_checkpoint) is not BatchResultCheckpoint:
+            raise ResultApplicationError("checkpoint_load") from None
+        if _checkpoint_primitive_type_error(previous_checkpoint) is not None:
+            raise ResultApplicationError("checkpoint_load") from None
+        if (
+            previous_checkpoint.batch_id != validated_record.checkpoint.batch_id
+            or previous_checkpoint.endpoint_alias
+            != validated_record.checkpoint.endpoint_alias
+            or previous_checkpoint.file_kind != validated_record.checkpoint.file_kind
+            or previous_checkpoint.file_id != validated_record.checkpoint.file_id
+        ):
+            raise ResultApplicationError("checkpoint_load") from None
+
+    if previous_checkpoint == validated_record.checkpoint:
+        return ResultApplicationOutcome(
+            record_applied=False,
+            result_checkpoint=validated_record.checkpoint,
+        )
+    if previous_checkpoint is not None and (
+        validated_record.checkpoint.record_count <= previous_checkpoint.record_count
+        or validated_record.checkpoint.batch_line_count
+        <= previous_checkpoint.batch_line_count
+    ):
+        raise CheckpointConflictError(
+            consumer_name,
+            validated_record.batch_id,
+            "checkpoint_regression",
+        ) from None
+
+    record_effect_failure: ResultApplicationError | None = None
+    record_effect_cursor = _ResultApplicationCursor(transaction_cursor)
+    try:
+        try:
+            record_effect_result = record_effect(
+                record_effect_cursor,
+                validated_record.record,
+            )
+        finally:
+            record_effect_cursor._revoke()
+        if inspect.iscoroutine(record_effect_result):
+            record_effect_result.close()
+        elif isinstance(record_effect_result, (asyncio.Future, ConcurrentFuture)):
+            record_effect_result.cancel()
+        if record_effect_result is not None:
+            record_effect_failure = ResultApplicationError("record_effect")
+    except Exception:
+        record_effect_failure = ResultApplicationError("record_effect")
+    if record_effect_failure is not None:
+        raise record_effect_failure from None
+
+    checkpoint_save_failure: ResultApplicationError | None = None
+    try:
+        saved_checkpoint = checkpoint_store.save_in_transaction(
+            transaction_cursor,
+            consumer_name,
+            validated_record.checkpoint,
+            expected_previous=previous_checkpoint,
+        )
+        if type(saved_checkpoint) is not BatchResultCheckpoint:
+            checkpoint_save_failure = ResultApplicationError("checkpoint_save")
+        elif _checkpoint_primitive_type_error(saved_checkpoint) is not None:
+            checkpoint_save_failure = ResultApplicationError("checkpoint_save")
+        elif saved_checkpoint != validated_record.checkpoint:
+            checkpoint_save_failure = ResultApplicationError("checkpoint_save")
+    except CheckpointConflictError:
+        raise
+    except Exception:
+        checkpoint_save_failure = ResultApplicationError("checkpoint_save")
+    if checkpoint_save_failure is not None:
+        raise checkpoint_save_failure from None
+
+    return ResultApplicationOutcome(
+        record_applied=True,
+        result_checkpoint=validated_record.checkpoint,
+    )
 
 
 def apply_checkpointed_result_in_transaction(
@@ -189,6 +343,12 @@ def apply_checkpointed_result_in_transaction(
     apply_record: Callable[[Any, Mapping[str, Any]], None],
 ) -> ResultApplicationOutcome:
     """Apply one result and advance its checkpoint in the caller's transaction.
+
+    ``cursor``, ``item``, and ``apply_record`` are historical released keyword
+    names retained only at this compatibility boundary. Internally they are
+    translated immediately to ``transaction_cursor``, ``checkpointed_record``,
+    and ``record_effect`` so package-owned implementation vocabulary remains
+    semantically specific.
 
     The item, checkpoint, checkpoint primitive fields, JSON object, loaded
     predecessor, and save confirmation must use exact package-owned or built-in
@@ -226,88 +386,13 @@ def apply_checkpointed_result_in_transaction(
     after their exception scope has ended, preventing implicit traceback context
     from retaining provider or database diagnostics.
     """
-    candidate = _validate_item_and_effect(item, apply_record)
-
-    load_failure: ResultApplicationError | None = None
-    previous: BatchResultCheckpoint | None = None
-    try:
-        previous = checkpoint_store.load_in_transaction(
-            cursor,
-            consumer_name,
-            candidate.batch_id,
-            candidate.checkpoint.endpoint_alias,
-        )
-    except CheckpointConflictError:
-        raise
-    except Exception:
-        load_failure = ResultApplicationError("checkpoint_load")
-    if load_failure is not None:
-        raise load_failure from None
-    if previous is not None:
-        if type(previous) is not BatchResultCheckpoint:
-            raise ResultApplicationError("checkpoint_load") from None
-        if _checkpoint_primitive_type_error(previous) is not None:
-            raise ResultApplicationError("checkpoint_load") from None
-        if (
-            previous.batch_id != candidate.checkpoint.batch_id
-            or previous.endpoint_alias != candidate.checkpoint.endpoint_alias
-            or previous.file_kind != candidate.checkpoint.file_kind
-            or previous.file_id != candidate.checkpoint.file_id
-        ):
-            raise ResultApplicationError("checkpoint_load") from None
-
-    if previous == candidate.checkpoint:
-        return ResultApplicationOutcome(applied=False, checkpoint=candidate.checkpoint)
-    if previous is not None and (
-        candidate.checkpoint.record_count <= previous.record_count
-        or candidate.checkpoint.batch_line_count <= previous.batch_line_count
-    ):
-        raise CheckpointConflictError(
-            consumer_name,
-            candidate.batch_id,
-            "checkpoint_regression",
-        ) from None
-
-    effect_failure: ResultApplicationError | None = None
-    effect_cursor = _ResultApplicationCursor(cursor)
-    try:
-        try:
-            effect_result = apply_record(effect_cursor, candidate.record)
-        finally:
-            effect_cursor._revoke()
-        if inspect.iscoroutine(effect_result):
-            effect_result.close()
-        elif isinstance(effect_result, (asyncio.Future, ConcurrentFuture)):
-            effect_result.cancel()
-        if effect_result is not None:
-            effect_failure = ResultApplicationError("record_effect")
-    except Exception:
-        effect_failure = ResultApplicationError("record_effect")
-    if effect_failure is not None:
-        raise effect_failure from None
-
-    save_failure: ResultApplicationError | None = None
-    try:
-        saved_checkpoint = checkpoint_store.save_in_transaction(
-            cursor,
-            consumer_name,
-            candidate.checkpoint,
-            expected_previous=previous,
-        )
-        if type(saved_checkpoint) is not BatchResultCheckpoint:
-            save_failure = ResultApplicationError("checkpoint_save")
-        elif _checkpoint_primitive_type_error(saved_checkpoint) is not None:
-            save_failure = ResultApplicationError("checkpoint_save")
-        elif saved_checkpoint != candidate.checkpoint:
-            save_failure = ResultApplicationError("checkpoint_save")
-    except CheckpointConflictError:
-        raise
-    except Exception:
-        save_failure = ResultApplicationError("checkpoint_save")
-    if save_failure is not None:
-        raise save_failure from None
-
-    return ResultApplicationOutcome(applied=True, checkpoint=candidate.checkpoint)
+    return _apply_checkpointed_record_in_transaction(
+        transaction_cursor=cursor,
+        checkpoint_store=checkpoint_store,
+        consumer_name=consumer_name,
+        checkpointed_record=item,
+        record_effect=apply_record,
+    )
 
 
 __all__ = [
