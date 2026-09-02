@@ -196,6 +196,20 @@ def test_candidate_rejects_duplicate_vulnerability_identifiers() -> None:
         )
 
 
+def test_candidate_rejects_unbounded_python_version_evidence() -> None:
+    versions = FULL_PYTHON_VERSIONS + tuple(f"4.{minor}" for minor in range(28))
+
+    with pytest.raises(PostgresDriverCandidateEvidenceError, match="Python version"):
+        _evidence(python_versions=versions)
+
+
+def test_candidate_rejects_unbounded_vulnerability_evidence() -> None:
+    vulnerability_ids = tuple(f"CVE-2099-{index:04d}" for index in range(257))
+
+    with pytest.raises(PostgresDriverCandidateEvidenceError, match="vulnerability"):
+        _evidence(known_vulnerability_ids=vulnerability_ids)
+
+
 @pytest.mark.parametrize(
     ("field_name", "mutated_value"),
     [
