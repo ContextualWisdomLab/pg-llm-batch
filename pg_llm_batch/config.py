@@ -35,6 +35,8 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+# Default configuration tree. Mirrors the upstream batch tunables so behaviour
+# is preserved after extraction. Secrets are NOT stored here.
 DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
     "batch_size": {
         "min": 100,
@@ -43,7 +45,7 @@ DEFAULT_CONFIG_TREE: Dict[str, Dict[str, Any]] = {
         "description": "Batch request size limit",
     },
     "token_limits": {
-        "per_batch": 5_000_000_000,
+        "per_batch": 5_000_000_000,  # 5B tokens
         "per_request": 128_000,
         "buffer_percentage": 5,
         "description": "Token count limits",
@@ -222,7 +224,7 @@ class PostgresConfigStore:
     def _ensure_table(self) -> None:
         """Create the ``com_config`` table if it does not already exist."""
         with self._conn.cursor() as cur:
-            cur.execute(
+            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_config") is interpolated; every value is bound via %s placeholders.
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
                     config_key TEXT PRIMARY KEY,
@@ -237,7 +239,7 @@ class PostgresConfigStore:
         """Insert any missing default config rows without overwriting existing ones."""
         with self._conn.cursor() as cur:
             for item in DEFAULT_CONFIG_INDEX.values():
-                cur.execute(
+                cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
                     f"""
                     INSERT INTO {self.TABLE_NAME}
                         (config_key, config_value, config_description)
@@ -255,7 +257,7 @@ class PostgresConfigStore:
         """Reload the in-memory cache from every row in the config table."""
         self.cache.clear()
         with self._conn.cursor() as cur:
-            cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")
+            cur.execute(f"SELECT config_key, config_value FROM {self.TABLE_NAME}")  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; no user input reaches the query.
             for config_key, config_value in cur.fetchall():
                 category, key = _split_full_key(config_key)
                 value = _deserialize_value(config_key, config_value)
@@ -267,7 +269,7 @@ class PostgresConfigStore:
             return _isolated_cached_value(self.cache[category][key])
         full_key = f"{category}.{key}"
         with self._conn.cursor() as cur:
-            cur.execute(
+            cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; the lookup value is bound via a %s placeholder.
                 f"SELECT config_value FROM {self.TABLE_NAME} WHERE config_key = %s",
                 (full_key,),
             )
@@ -286,7 +288,7 @@ class PostgresConfigStore:
         item = DEFAULT_CONFIG_INDEX.get(full_key)
         description = item["description"] if item else full_key
         with self._conn.cursor() as cur:
-            cur.execute(
+            cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
                 f"""
                 INSERT INTO {self.TABLE_NAME}
                     (config_key, config_value, config_description)
@@ -374,7 +376,7 @@ class SecretStore:
     def _ensure_table(self) -> None:
         """Create the ``com_secrets`` table if it does not already exist."""
         with self._conn.cursor() as cur:
-            cur.execute(
+            cur.execute(  # nosemgrep -- formatted-sql-query / sqlalchemy-execute-raw-query FP: only the fixed class constant TABLE_NAME ("com_secrets") is interpolated; every value is bound via %s placeholders.
                 f"""
                 CREATE TABLE IF NOT EXISTS {self.TABLE_NAME} (
                     secret_key TEXT PRIMARY KEY,
@@ -389,7 +391,7 @@ class SecretStore:
         """Encode a secret for storage, returning the text and whether it is encrypted."""
         if self._fernet is not None:
             return self._fernet.encrypt(raw.encode("utf-8")).decode("utf-8"), True
-        logger.warning(
+        logger.warning(  # nosemgrep -- python-logger-credential-disclosure FP: the message text contains the word "secret", but the only logged argument is the literal mask "***"; no secret value is ever logged.
             "No Fernet key configured; secret '%s' stored base64-obfuscated only.",
             "***",
         )
@@ -409,7 +411,7 @@ class SecretStore:
         """Encrypt or obfuscate and persist a secret value."""
         encoded, is_encrypted = self._encode(value)
         with self._conn.cursor() as cur:
-            cur.execute(
+            cur.execute(  # nosemgrep -- sqlalchemy-execute-raw-query FP: only the fixed TABLE_NAME constant is interpolated; all values are bound via %s placeholders.
                 f"""
                 INSERT INTO {self.TABLE_NAME} (secret_key, secret_value, is_encrypted)
                 VALUES (%s, %s, %s)
