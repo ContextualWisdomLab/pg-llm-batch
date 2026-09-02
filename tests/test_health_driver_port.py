@@ -97,23 +97,27 @@ def test_check_health_uses_injected_driver_without_psycopg(
 def test_check_health_bounds_injected_driver_failures_without_psycopg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Replacement-driver failures remain a database readiness result, not a crash."""
+    """Replacement-driver failures remain bounded without reflecting connection data."""
     monkeypatch.setattr(health, "psycopg", None)
+    secret_sentinel = "postgresql://user:private-password@db.example/batch"
 
     class _BrokenDriver:
         def connect(self, _dsn: str, **_kwargs: Any) -> None:
-            raise OSError("replacement driver connection refused")
+            raise OSError(f"connection refused for {secret_sentinel}")
 
     report = health.check_health(
         "postgresql://example",
         postgres_driver=_BrokenDriver(),  # type: ignore[arg-type]
     )
 
-    assert report["ready"] is False
-    assert report["components"] == [
-        {
-            "component": "database",
-            "is_ready": False,
-            "detail": "replacement driver connection refused",
-        }
-    ]
+    assert report == {
+        "ready": False,
+        "components": [
+            {
+                "component": "database",
+                "is_ready": False,
+                "detail": "database readiness check failed",
+            }
+        ],
+    }
+    assert secret_sentinel not in repr(report)
