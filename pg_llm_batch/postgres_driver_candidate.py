@@ -21,7 +21,9 @@ REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
         "autocommit_state",
         "connection_closed_state",
         "connection_context",
-        "conninfo_parse_render",
+        "conninfo_keyword_parse_render",
+        "conninfo_service_selector",
+        "conninfo_uri_parse_render",
         "cursor_context",
         "finite_connect_timeout",
         "invalid_conninfo_classification",
@@ -257,8 +259,11 @@ def evaluate_postgres_driver_candidate(
     closed when the bound vulnerability report contains a known advisory, the
     SPDX identifier is not in the repository's explicitly reviewed permissive
     set, any repository-required Python runtime is not evidenced, or any runtime
-    capability required by the migration port is absent. Reasons are
-    deterministic so CI and acquisition diligence can compare exact evidence.
+    capability required by the migration port is absent. DSN evidence remains
+    split across URI, keyword, and service selectors so a driver cannot claim
+    generic conninfo support while silently dropping a shipped selector family.
+    Reasons are deterministic so CI and acquisition diligence can compare exact
+    evidence.
     """
     snapshot = _validated_candidate_snapshot(evidence)
     reasons = [
