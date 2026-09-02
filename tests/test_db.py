@@ -156,6 +156,22 @@ def test_model_metadata_normalizes_mode_and_handles_absence(monkeypatch):
     assert db.get_model_metadata("postgresql://x", "") is None
 
 
+def test_model_metadata_uses_injected_driver_without_psycopg(monkeypatch):
+    """Tokenizer metadata lookup must migrate through the same driver boundary."""
+    driver = _Psycopg((" CHAT ", "o200k_base"))
+    monkeypatch.setattr(db, "psycopg", None)
+
+    assert db.get_model_metadata(
+        "postgresql://x",
+        "gpt-4o",
+        postgres_driver=driver,
+    ) == {
+        "mode": "chat",
+        "tokenizer_model": "o200k_base",
+    }
+    assert driver.connections == ["postgresql://x"]
+
+
 def test_model_metadata_driver_failure_is_nonfatal(monkeypatch, caplog):
     monkeypatch.setattr(db, "psycopg", _Psycopg(error=OSError("database down")))
     with caplog.at_level("DEBUG"):
