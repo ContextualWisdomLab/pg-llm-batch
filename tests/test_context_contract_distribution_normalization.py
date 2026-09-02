@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from pg_llm_batch.context_contract_candidate import (
     ContextContractCandidatePin,
     ContextContractCandidateVerification,
@@ -14,11 +16,13 @@ from pg_llm_batch.context_contract_candidate import (
 from pg_llm_batch.context_contract_release import (
     ContextContractReleaseApproval,
     ContextContractReleasePin,
+    ContextContractReleasePinError,
     ContextContractReleaseTransitionVerification,
     ContextContractReleaseVerification,
     require_context_contract_release_compatibility,
     require_context_contract_release_ready,
     require_context_contract_release_transition_ready,
+    validate_context_contract_release_transition_verification,
 )
 
 
@@ -190,3 +194,25 @@ def test_release_transition_binding_uses_normalized_distribution_identity() -> N
     )
 
     assert admitted == target
+
+
+def test_release_transition_rejects_same_normalized_project_and_version_drift() -> None:
+    """Equivalent project spelling cannot disguise byte drift under one version."""
+    current = _release_pin(distribution_name="CWL.Context__Contracts")
+    drifted = replace(
+        current,
+        distribution_name="cwl-context-contracts",
+        source_commit="2" * 40,
+        distribution_sha256="3" * 64,
+    )
+    transition = ContextContractReleaseTransitionVerification(
+        source_release_pin=current,
+        target_release_pin=drifted,
+        migration_evidence_sha256="a" * 64,
+        rollback_evidence_sha256="b" * 64,
+        migration_verified=True,
+        rollback_verified=True,
+    )
+
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        validate_context_contract_release_transition_verification(transition)
