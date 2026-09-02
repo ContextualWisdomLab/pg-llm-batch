@@ -29,12 +29,12 @@ from .result_streaming import BatchResultCheckpoint, CheckpointedBatchResultReco
 class ResultApplicationError(PgLlmBatchError):
     """Report one bounded failure while applying a checkpointed result."""
 
-    def __init__(self, application_phase: str) -> None:
-        """Create fixed diagnostic evidence for one application phase."""
+    def __init__(self, phase: str) -> None:
+        """Create fixed diagnostic evidence for one public application phase."""
         super().__init__(
             message="Checkpointed result application failed",
             error_code="RESULT_APPLICATION_ERROR",
-            details={"phase": application_phase},
+            details={"phase": phase},
         )
 
 
