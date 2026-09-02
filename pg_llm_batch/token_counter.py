@@ -168,11 +168,12 @@ class TokenCounter:
         if self._pg_available:
             try:
                 return self._count_tokens_postgres(text, model)
-            except UndefinedFunction:
-                self._pg_available = False
-                logger.warning("pg_tiktoken extension/functions unavailable")
-            except Exception:  # pragma: no cover - runtime DB variance
-                logger.debug("PostgreSQL token counting failed")
+            except Exception as error:  # pragma: no cover - runtime DB variance
+                if self._is_undefined_function(error):
+                    self._pg_available = False
+                    logger.warning("pg_tiktoken extension/functions unavailable")
+                else:
+                    logger.debug("PostgreSQL token counting failed")
         raise RuntimeError(
             "Token counting requires pg_tiktoken. Enable the extension and pass a "
             "valid DSN."
@@ -327,6 +328,12 @@ class TokenCounter:
         self._pg_conn.autocommit = True
         return self._pg_conn
 
+    def _is_undefined_function(self, error: BaseException) -> bool:
+        """Classify undefined-function failures through the selected driver boundary."""
+        if self._postgres_driver is not None:
+            return self._postgres_driver.is_undefined_function(error)
+        return isinstance(error, UndefinedFunction)
+
     def _count_tokens_postgres(self, text: str, model: str) -> int:
         """Count tokens via pg_tiktoken while preserving driver error classification."""
         if self._postgres_driver is None and psycopg is None:
@@ -340,10 +347,7 @@ class TokenCounter:
                 if row and row[0] is not None:
                     return int(row[0])
             except Exception as error:
-                if self._postgres_driver is not None:
-                    if not self._postgres_driver.is_undefined_function(error):
-                        raise
-                elif not isinstance(error, UndefinedFunction):
+                if not self._is_undefined_function(error):
                     raise
                 cur.execute(
                     "SELECT COUNT(*) FROM tiktoken_encode(%s, %s)",
