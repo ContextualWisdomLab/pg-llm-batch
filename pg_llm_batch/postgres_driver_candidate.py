@@ -2,7 +2,7 @@
 
 The repository must replace its current LGPL-family Psycopg runtime dependency
 without turning an unverified alternative into production authority. This module
-keeps candidate package evidence immutable and decides only whether a candidate
+revalidates a bounded candidate snapshot and decides only whether a candidate
 has enough permissive-license, Python-version, artifact-identity, and capability
 evidence to enter parity validation. Production approval remains a later gate
 that requires a concrete adapter plus PostgreSQL/RLS/recovery/package evidence.
@@ -57,12 +57,14 @@ class PostgresDriverCandidateEvidenceError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PostgresDriverCandidateEvidence:
-    """Describe one immutable PostgreSQL-driver package candidate.
+    """Describe one validated PostgreSQL-driver package candidate.
 
     ``source_commit_sha`` identifies the reviewed source revision and
     ``artifact_sha256`` identifies the exact distributable under evaluation.
     ``python_versions`` and ``capabilities`` must contain explicit evidence rather
     than inferred support from a nearby release or similar database driver.
+    Evaluation revalidates a fresh snapshot because Python's frozen dataclasses do
+    not make ``object.__setattr__`` an authority boundary.
     """
 
     package_name: str
@@ -122,7 +124,7 @@ class PostgresDriverCandidateEvidence:
 
 @dataclass(frozen=True, slots=True)
 class PostgresDriverCandidateDecision:
-    """Record whether immutable evidence permits candidate parity validation.
+    """Record whether validated evidence permits candidate parity validation.
 
     ``production_approved`` is deliberately always false in this stage. A package
     that clears this evaluator still needs a concrete ``PostgresDriverPort``
@@ -134,22 +136,55 @@ class PostgresDriverCandidateDecision:
     reasons: tuple[str, ...]
 
 
+def _validated_candidate_snapshot(
+    evidence: PostgresDriverCandidateEvidence,
+) -> PostgresDriverCandidateEvidence:
+    """Capture and revalidate exact package evidence before policy evaluation.
+
+    Candidate evidence crosses a supply-chain decision boundary. Requiring the
+    exact package type before member access prevents candidate-shaped objects from
+    executing caller-controlled accessors, while reconstruction reapplies every
+    primitive/container invariant after any post-construction mutation. Deleted
+    slots are normalized to the package's fixed evidence error.
+    """
+    if type(evidence) is not PostgresDriverCandidateEvidence:
+        raise PostgresDriverCandidateEvidenceError(
+            "PostgreSQL driver candidate evidence is invalid"
+        )
+    try:
+        return PostgresDriverCandidateEvidence(
+            package_name=evidence.package_name,
+            package_version=evidence.package_version,
+            license_spdx=evidence.license_spdx,
+            python_versions=evidence.python_versions,
+            source_commit_sha=evidence.source_commit_sha,
+            artifact_sha256=evidence.artifact_sha256,
+            capabilities=evidence.capabilities,
+        )
+    except AttributeError:
+        raise PostgresDriverCandidateEvidenceError(
+            "PostgreSQL driver candidate evidence is invalid"
+        ) from None
+
+
 def evaluate_postgres_driver_candidate(
     evidence: PostgresDriverCandidateEvidence,
 ) -> PostgresDriverCandidateDecision:
     """Evaluate one candidate without promoting it to a production dependency.
 
-    The decision fails closed when the SPDX identifier is not in the repository's
-    explicitly reviewed permissive set, Python 3.14 support is not evidenced, or
-    any runtime capability required by the migration port is absent. Reasons are
-    deterministic so CI and acquisition diligence can compare exact evidence.
+    The decision first revalidates one exact package-owned snapshot, then fails
+    closed when the SPDX identifier is not in the repository's explicitly
+    reviewed permissive set, Python 3.14 support is not evidenced, or any runtime
+    capability required by the migration port is absent. Reasons are deterministic
+    so CI and acquisition diligence can compare exact evidence.
     """
+    snapshot = _validated_candidate_snapshot(evidence)
     reasons: list[str] = []
-    if evidence.license_spdx not in _APPROVED_PERMISSIVE_LICENSES:
+    if snapshot.license_spdx not in _APPROVED_PERMISSIVE_LICENSES:
         reasons.append("license_not_approved")
-    if "3.14" not in evidence.python_versions:
+    if "3.14" not in snapshot.python_versions:
         reasons.append("python_3_14_not_evidenced")
-    missing_capabilities = REQUIRED_POSTGRES_DRIVER_CAPABILITIES - evidence.capabilities
+    missing_capabilities = REQUIRED_POSTGRES_DRIVER_CAPABILITIES - snapshot.capabilities
     reasons.extend(
         f"missing_capability:{capability}"
         for capability in sorted(missing_capabilities)
