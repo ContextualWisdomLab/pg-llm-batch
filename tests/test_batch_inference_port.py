@@ -64,6 +64,12 @@ def test_batch_inference_port_accepts_non_http_adapter_without_routing_authority
     assert not hasattr(_ProviderNeutralAdapter(), "route_model")
 
 
+def test_batch_inference_port_requires_host_selected_upload_purpose() -> None:
+    """The neutral port must not choose an OpenAI-compatible file purpose by default."""
+    signature = inspect.signature(BatchInferencePort.upload_jsonl)
+    assert signature.parameters["purpose"].default is inspect.Parameter.empty
+
+
 def test_batch_inference_port_requires_host_selected_batch_operation() -> None:
     """The provider-neutral port must not choose an OpenAI wire endpoint by default."""
     signature = inspect.signature(BatchInferencePort.create_batch_job)
