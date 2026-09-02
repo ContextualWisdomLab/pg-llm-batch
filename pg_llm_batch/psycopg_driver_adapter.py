@@ -70,7 +70,9 @@ class PsycopgCursorAdapter(PostgresCursorPort):
         return self._cursor.fetchone()
 
     def fetchmany(self, size: int) -> list[object]:
-        """Return the finite row page requested by the owning bounded context."""
+        """Return a strictly positive finite row page through the retained cursor."""
+        if type(size) is not int or size <= 0:
+            raise PsycopgDriverAdapterError("PostgreSQL driver fetch size is invalid")
         return list(self._cursor.fetchmany(size))
 
     def fetchall(self) -> list[object]:
