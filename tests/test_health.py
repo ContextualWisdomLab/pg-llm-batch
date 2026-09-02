@@ -76,8 +76,8 @@ def test_missing_required_component_is_reported_not_ready(monkeypatch):
     }
 
 
-def test_health_dependency_and_database_failures_include_reason(monkeypatch):
-    """Dependency and connection failures are explicit rather than hidden."""
+def test_health_dependency_and_database_failures_are_bounded(monkeypatch):
+    """Dependency absence is explicit while runtime failures stay content-free."""
     monkeypatch.setattr(health, "psycopg", None)
     report = health.check_health("postgresql://example")
     assert report == {
@@ -90,12 +90,21 @@ def test_health_dependency_and_database_failures_include_reason(monkeypatch):
     class BrokenPsycopg:
         @staticmethod
         def connect(_dsn, *, connect_timeout):
-            raise OSError(f"connection refused after {connect_timeout}s")
+            raise OSError(f"private-dsn-sentinel after {connect_timeout}s")
 
     monkeypatch.setattr(health, "psycopg", BrokenPsycopg())
     report = health.check_health("postgresql://example")
-    assert report["ready"] is False
-    assert "connection refused after 5s" in report["components"][0]["detail"]
+    assert report == {
+        "ready": False,
+        "components": [
+            {
+                "component": "database",
+                "is_ready": False,
+                "detail": "database readiness check failed",
+            }
+        ],
+    }
+    assert "private-dsn-sentinel" not in repr(report)
 
 
 def test_health_requires_every_required_component(monkeypatch):
@@ -115,8 +124,10 @@ def test_health_requires_every_required_component(monkeypatch):
 
 
 def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
-    """The HTTP wrapper emits JSON readiness and a strict 404 elsewhere."""
+    """The HTTP wrapper emits JSON readiness and forwards the selected DB driver."""
     events = []
+    observed = {}
+    driver = object()
 
     class FakeHTTPServer:
         def __init__(self, address, handler_class):
@@ -142,13 +153,19 @@ def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
             handler = self.handler_class.__new__(self.handler_class)
             assert handler.log_message("ignored") is None
 
+    def fake_check_health(_dsn, *, postgres_driver=None):
+        observed["driver"] = postgres_driver
+        return {"ready": False, "components": []}
+
     monkeypatch.setattr("http.server.HTTPServer", FakeHTTPServer)
-    monkeypatch.setattr(
-        health,
-        "check_health",
-        lambda _dsn: {"ready": False, "components": []},
+    monkeypatch.setattr(health, "check_health", fake_check_health)
+    health.serve_healthz(
+        "postgresql://example",
+        host="127.0.0.1",
+        port=8090,
+        postgres_driver=driver,  # type: ignore[arg-type]
     )
-    health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
+    assert observed["driver"] is driver
     assert ("address", ("127.0.0.1", 8090)) in events
     assert ("/other", "status", 404) in events
     assert ("/healthz/", "status", 503) in events
