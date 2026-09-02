@@ -32,6 +32,7 @@ RELEASE_PIN = ContextContractReleasePin(
 VERIFICATION = ContextContractReleaseVerification(
     release_pin=RELEASE_PIN,
     release_published=True,
+    artifact_verified=True,
     conformance_passed=True,
     admission_passed=True,
     provenance_verified=True,
