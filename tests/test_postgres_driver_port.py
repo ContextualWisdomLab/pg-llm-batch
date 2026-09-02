@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from typing import get_type_hints
 
 import pytest
 
@@ -22,6 +23,18 @@ def test_cursor_port_covers_existing_database_interaction_surface() -> None:
         "fetchone",
         "row_count",
     }
+
+
+def test_cursor_port_declares_canonical_tuple_result_rows() -> None:
+    assert get_type_hints(PostgresCursorPort.fetchone)["return"] == (
+        tuple[object, ...] | None
+    )
+    assert get_type_hints(PostgresCursorPort.fetchmany)["return"] == list[
+        tuple[object, ...]
+    ]
+    assert get_type_hints(PostgresCursorPort.fetchall)["return"] == list[
+        tuple[object, ...]
+    ]
 
 
 def test_connection_port_covers_transaction_and_cursor_lifecycle() -> None:
@@ -67,13 +80,13 @@ class _Cursor(PostgresCursorPort):
         self.affected_rows = 2
         return self
 
-    def fetchone(self) -> object | None:
+    def fetchone(self) -> tuple[object, ...] | None:
         return ("row",)
 
-    def fetchmany(self, size: int) -> list[object]:
+    def fetchmany(self, size: int) -> list[tuple[object, ...]]:
         return [("row",)] * size
 
-    def fetchall(self) -> list[object]:
+    def fetchall(self) -> list[tuple[object, ...]]:
         return [("row",)]
 
     def row_count(self) -> int:
