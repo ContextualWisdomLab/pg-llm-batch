@@ -839,21 +839,31 @@ def get_remote_batch_state(
     )
 
 
-def get_model_metadata(dsn: Optional[str], model_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch model mode and tokenizer metadata for a model identifier.
+def get_model_metadata(
+    dsn: Optional[str],
+    model_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> Optional[Dict[str, Any]]:
+    """Fetch model metadata through the selected PostgreSQL driver boundary.
 
     Args:
         dsn: Optional PostgreSQL connection string.
         model_id: Provider model identifier to resolve.
+        postgres_driver: Optional migration driver retained only for database I/O.
 
     Returns:
         A dictionary containing normalized ``mode`` and ``tokenizer_model`` when
         found, otherwise ``None``.
     """
-    if not dsn or psycopg is None or not model_id:
+    if (
+        not dsn
+        or not model_id
+        or (postgres_driver is None and psycopg is None)
+    ):
         return None
     try:
-        with psycopg.connect(dsn) as conn:
+        with _connect_database(dsn, postgres_driver) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
