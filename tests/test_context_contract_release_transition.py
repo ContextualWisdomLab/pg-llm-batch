@@ -45,6 +45,7 @@ TARGET_PIN = replace(
 TARGET_VERIFICATION = ContextContractReleaseVerification(
     release_pin=TARGET_PIN,
     release_published=True,
+    artifact_verified=True,
     conformance_passed=True,
     admission_passed=True,
     provenance_verified=True,
