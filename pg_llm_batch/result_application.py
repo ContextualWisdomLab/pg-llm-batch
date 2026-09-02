@@ -49,6 +49,8 @@ _MAX_RECORD_JSON_DEPTH = 64
 _MAX_RECORD_JSON_NODES = DEFAULT_MAX_JSONL_RECORDS
 _MAX_RECORD_JSON_TEXT_CHARS = DEFAULT_MAX_JSONL_LINE_BYTES
 _UTF8_BUDGET_CHUNK_CHARACTERS = 4096
+_DECIMAL_DIGIT_LOWER_BOUND_NUMERATOR = 301029
+_DECIMAL_DIGIT_LOWER_BOUND_DENOMINATOR = 1_000_000
 
 
 class ResultApplicationError(PgLlmBatchError):
@@ -193,6 +195,34 @@ def _utf8_text_bytes_within_budget(text_value: str, remaining_bytes: int) -> int
     return text_byte_count
 
 
+def _integer_decimal_text_exceeds_budget(
+    integer_value: int,
+    remaining_bytes: int,
+) -> bool:
+    """Reject definitely oversized decimal integers before materializing text.
+
+    Python's process-wide integer-to-string digit limit can be raised or disabled
+    by a host. The result-application boundary therefore cannot rely on that
+    interpreter setting for its own memory bound. ``301029 / 1_000_000`` is a
+    conservative lower approximation of ``log10(2)``: when the derived minimum
+    decimal width already exceeds the remaining byte budget, calling ``str()``
+    would only allocate text that this package must reject anyway. Near the
+    boundary the exact conversion still decides the final width.
+    """
+    if remaining_bytes < 1:
+        return True
+    magnitude_bit_length = abs(integer_value).bit_length()
+    if magnitude_bit_length == 0:
+        minimum_decimal_bytes = 1
+    else:
+        minimum_decimal_bytes = (
+            (magnitude_bit_length - 1) * _DECIMAL_DIGIT_LOWER_BOUND_NUMERATOR
+        ) // _DECIMAL_DIGIT_LOWER_BOUND_DENOMINATOR + 1
+    if integer_value < 0:
+        minimum_decimal_bytes += 1
+    return minimum_decimal_bytes > remaining_bytes
+
+
 def _snapshot_json_record(record_object: dict[str, Any]) -> dict[str, Any]:
     """Deep-copy one exact-JSON object under finite structural and text budgets."""
     record_node_count = 0
@@ -225,14 +255,17 @@ def _snapshot_json_record(record_object: dict[str, Any]) -> dict[str, Any]:
             record_text_byte_count += text_byte_count
             return json_value
         if json_value_type is int:
+            remaining_text_bytes = _MAX_RECORD_JSON_TEXT_CHARS - record_text_byte_count
+            if _integer_decimal_text_exceeds_budget(
+                json_value,
+                remaining_text_bytes,
+            ):
+                raise reject_record()
             try:
                 integer_text_byte_count = len(str(json_value))
             except ValueError:
                 raise reject_record() from None
-            if (
-                record_text_byte_count + integer_text_byte_count
-                > _MAX_RECORD_JSON_TEXT_CHARS
-            ):
+            if integer_text_byte_count > remaining_text_bytes:
                 raise reject_record()
             record_text_byte_count += integer_text_byte_count
             return json_value
