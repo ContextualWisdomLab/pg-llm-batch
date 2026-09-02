@@ -12,10 +12,12 @@ from pg_llm_batch.context_contract_candidate import (
     ContextContractCandidatePin,
     ContextContractCandidateVerification,
     require_context_contract_candidate_compatibility,
+    require_context_contract_candidate_release_identity,
     validate_context_contract_candidate_pin,
     validate_context_contract_candidate_verification,
 )
 from pg_llm_batch.context_contract_release import (
+    ContextContractReleasePin,
     ContextContractReleasePinError,
     validate_context_contract_release_pin,
 )
@@ -39,6 +41,19 @@ VALID_CANDIDATE_VERIFICATION = ContextContractCandidateVerification(
     admission_passed=True,
     provenance_verified=True,
 )
+VALID_RELEASE = ContextContractReleasePin(
+    distribution_name="cwl-context-contracts",
+    release_version="0.1.0",
+    source_commit=VALID_CANDIDATE.source_commit,
+    distribution_sha256=VALID_CANDIDATE.candidate_artifact_sha256,
+    profile_name=VALID_CANDIDATE.profile_name,
+    profile_sha256=VALID_CANDIDATE.profile_sha256,
+    resource_name=VALID_CANDIDATE.resource_name,
+    resource_sha256=VALID_CANDIDATE.resource_sha256,
+    conformance_sha256=VALID_CANDIDATE.conformance_sha256,
+    admission_sha256=VALID_CANDIDATE.admission_sha256,
+    provenance_sha256=VALID_CANDIDATE.provenance_sha256,
+)
 
 
 def test_candidate_verification_accepts_exact_test_only_identity() -> None:
@@ -59,6 +74,46 @@ def test_candidate_compatibility_accepts_exact_expected_identity() -> None:
 
     assert admitted == VALID_CANDIDATE
     assert admitted is not VALID_CANDIDATE
+
+
+def test_candidate_release_identity_accepts_byte_identical_publication() -> None:
+    matched = require_context_contract_candidate_release_identity(
+        verification=VALID_CANDIDATE_VERIFICATION,
+        release=VALID_RELEASE,
+    )
+
+    assert matched == VALID_CANDIDATE
+    assert matched is not VALID_CANDIDATE
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("source_commit", "2" * 40),
+        ("distribution_sha256", "2" * 64),
+        ("profile_name", "different-profile.json"),
+        ("profile_sha256", "3" * 64),
+        ("resource_name", "different-resource.json"),
+        ("resource_sha256", "4" * 64),
+        ("conformance_sha256", "5" * 64),
+        ("admission_sha256", "6" * 64),
+        ("provenance_sha256", "7" * 64),
+    ],
+)
+def test_candidate_release_identity_rejects_publication_drift(
+    field: str,
+    value: str,
+) -> None:
+    release = replace(VALID_RELEASE, **{field: value})
+
+    with pytest.raises(ContextContractCandidateError) as raised:
+        require_context_contract_candidate_release_identity(
+            verification=VALID_CANDIDATE_VERIFICATION,
+            release=release,
+        )
+
+    assert str(raised.value) == "invalid contract candidate"
+    assert value not in str(raised.value)
 
 
 @pytest.mark.parametrize(
