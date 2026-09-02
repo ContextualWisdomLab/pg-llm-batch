@@ -12,8 +12,12 @@ from pg_llm_batch.context_contract_candidate import (
     require_context_contract_candidate_release_identity,
 )
 from pg_llm_batch.context_contract_release import (
+    ContextContractReleaseApproval,
     ContextContractReleasePin,
+    ContextContractReleaseTransitionVerification,
+    ContextContractReleaseVerification,
     require_context_contract_release_compatibility,
+    require_context_contract_release_transition_ready,
 )
 
 
@@ -107,3 +111,55 @@ def test_release_approval_compatibility_uses_normalized_distribution_identity() 
 
     assert admitted == candidate
     assert admitted is not candidate
+
+
+def test_release_transition_binding_uses_normalized_distribution_identity() -> None:
+    """Bind migration evidence by canonical project identity, not raw spelling."""
+    current = _release_pin(distribution_name="CWL.Context__Contracts")
+    target = replace(
+        current,
+        release_version="0.2.0",
+        source_commit="2" * 40,
+        distribution_sha256="3" * 64,
+        profile_sha256="4" * 64,
+        resource_sha256="5" * 64,
+        conformance_sha256="6" * 64,
+        admission_sha256="7" * 64,
+        provenance_sha256="8" * 64,
+    )
+    verification = ContextContractReleaseVerification(
+        release_pin=target,
+        release_published=True,
+        artifact_verified=True,
+        conformance_passed=True,
+        admission_passed=True,
+        provenance_verified=True,
+    )
+    approval = ContextContractReleaseApproval(
+        verification=verification,
+        approval_policy_sha256="9" * 64,
+    )
+    transition = ContextContractReleaseTransitionVerification(
+        source_release_pin=replace(
+            current,
+            distribution_name="cwl-context-contracts",
+        ),
+        target_release_pin=replace(
+            target,
+            distribution_name="cwl-context-contracts",
+        ),
+        migration_evidence_sha256="a" * 64,
+        rollback_evidence_sha256="b" * 64,
+        migration_verified=True,
+        rollback_verified=True,
+    )
+
+    admitted = require_context_contract_release_transition_ready(
+        current_release=current,
+        verification=verification,
+        approved=approval,
+        required_approval_policy_sha256="9" * 64,
+        transition=transition,
+    )
+
+    assert admitted == target
