@@ -77,11 +77,16 @@ def check_health(
                             "detail": detail,
                         }
                     )
-    except Exception as exc:
+    except Exception:
+        logger.debug("Database readiness check failed")
         return {
             "ready": False,
             "components": [
-                {"component": "database", "is_ready": False, "detail": str(exc)}
+                {
+                    "component": "database",
+                    "is_ready": False,
+                    "detail": "database readiness check failed",
+                }
             ],
         }
 
