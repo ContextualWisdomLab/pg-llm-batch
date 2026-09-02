@@ -400,6 +400,17 @@ class BatchAccumulator:
             )
         return value
 
+    @staticmethod
+    def _require_single_jsonl_record(json_line: Any) -> str:
+        """Reject shaped or multi-record text before JSONL accounting and mutation."""
+        if type(json_line) is not str or "\n" in json_line or "\r" in json_line:
+            raise ValidationError(
+                field="json_line",
+                value="<provided>",
+                reason="must be a single physical JSONL record without CR/LF",
+            )
+        return json_line
+
     def reset(self) -> None:
         """Clear all accumulated lines and counters."""
         self.entries: List[Tuple[str, str, int]] = []
@@ -438,6 +449,7 @@ class BatchAccumulator:
         """Append one valid record and update aggregate counters."""
         tokens = self._require_nonnegative_resource_count("tokens", tokens)
         byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
+        json_line = self._require_single_jsonl_record(json_line)
         accounted_byte_size = max(byte_size, self.compute_byte_size(json_line))
         if tokens > self.token_limit:
             raise TokenLimitExceededError(
