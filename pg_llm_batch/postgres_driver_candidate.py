@@ -22,6 +22,7 @@ REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
         "conninfo_parse_render",
         "cursor_context",
         "finite_connect_timeout",
+        "invalid_conninfo_classification",
         "jsonb",
         "parameterized_sql",
         "row_count",
