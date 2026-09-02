@@ -24,6 +24,7 @@ def _evidence(**overrides: object) -> PostgresDriverCandidateEvidence:
         "package_name": "candidate-driver",
         "package_version": "1.2.3",
         "license_spdx": "BSD-3-Clause",
+        "license_report_sha256": LICENSE_REPORT_SHA256,
         "python_versions": FULL_PYTHON_VERSIONS,
         "source_commit_sha": SOURCE_SHA,
         "artifact_sha256": ARTIFACT_SHA256,
