@@ -89,6 +89,7 @@ def test_candidate_release_identity_accepts_byte_identical_publication() -> None
 @pytest.mark.parametrize(
     ("field", "value"),
     [
+        ("distribution_name", "different-context-contracts"),
         ("source_commit", "2" * 40),
         ("distribution_sha256", "2" * 64),
         ("profile_name", "different-profile.json"),
