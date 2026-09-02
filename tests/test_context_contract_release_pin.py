@@ -34,6 +34,7 @@ VALID_PIN = ContextContractReleasePin(
 VALID_VERIFICATION = ContextContractReleaseVerification(
     release_pin=VALID_PIN,
     release_published=True,
+    artifact_verified=True,
     conformance_passed=True,
     admission_passed=True,
     provenance_verified=True,
@@ -200,6 +201,7 @@ def test_require_context_contract_release_ready_accepts_subject_bound_verificati
     "failed_gate",
     [
         "release_published",
+        "artifact_verified",
         "conformance_passed",
         "admission_passed",
         "provenance_verified",
