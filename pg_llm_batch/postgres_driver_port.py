@@ -1,8 +1,8 @@
 """Provider-neutral PostgreSQL driver contracts for runtime decoupling.
 
 The package currently has direct Psycopg coupling at several infrastructure
-boundaries.  These abstract ports describe the database capabilities those
-callers actually need without choosing a concrete PostgreSQL driver.  Concrete
+boundaries. These abstract ports describe the database capabilities those
+callers actually need without choosing a concrete PostgreSQL driver. Concrete
 adapters remain infrastructure concerns and must preserve parameterized SQL,
 transaction semantics, connection-string handling, JSONB adaptation, and
 PostgreSQL error classification.
@@ -18,7 +18,7 @@ class PostgresCursorPort(ABC):
     """Describe the synchronous cursor surface used by pg-llm-batch.
 
     Implementations must preserve parameter binding rather than interpolating
-    SQL text themselves.  The fetch methods intentionally expose driver-neutral
+    SQL text themselves. The fetch methods intentionally expose driver-neutral
     Python objects because individual bounded contexts validate row shapes at
     their own trust boundaries.
     """
@@ -64,7 +64,7 @@ class PostgresCursorPort(ABC):
     def fetchall(self) -> list[object]:
         """Return all rows for callers whose query already has a bounded result.
 
-        This method exists for compatibility with current package code.  New
+        This method exists for compatibility with current package code. New
         untrusted-result paths should prefer a bounded query and ``fetchmany``.
         """
 
@@ -93,9 +93,10 @@ class PostgresCursorPort(ABC):
 class PostgresConnectionPort(ABC):
     """Describe the synchronous PostgreSQL connection capability the package uses.
 
-    The port deliberately includes explicit commit and rollback operations so a
-    replacement driver cannot weaken the repository's transaction, RLS, replay,
-    or recovery contracts by hiding transaction ownership behind an adapter.
+    The port deliberately keeps transaction mode and closed-state inspection
+    explicit because current token-counting, configuration, and batch assembly
+    paths depend on those semantics. A replacement driver must not weaken RLS,
+    replay, or recovery behavior by hiding them behind an opaque wrapper.
     """
 
     @abstractmethod
@@ -135,6 +136,23 @@ class PostgresConnectionPort(ABC):
         """
 
     @abstractmethod
+    def set_autocommit(self, enabled: bool) -> None:
+        """Select explicit connection autocommit behavior without attribute leakage.
+
+        Existing runtime paths intentionally use both autocommit and explicit
+        transactions. Concrete adapters translate this operation into their
+        native API while preserving PostgreSQL transaction and session scope.
+        """
+
+    @abstractmethod
+    def is_closed(self) -> bool:
+        """Report whether this concrete connection can still execute work.
+
+        Cached connection owners use this signal to reconnect deterministically
+        instead of issuing work through a connection the driver has closed.
+        """
+
+    @abstractmethod
     def close(self) -> None:
         """Release the concrete database connection and its session authority.
 
@@ -168,7 +186,7 @@ class PostgresDriverPort(ABC):
     """Define the PostgreSQL-driver anti-corruption layer required by the package.
 
     This port owns no model discovery, provider routing, LLM credentials, or
-    batch-provider selection.  It exists solely to let pg-llm-batch replace a
+    batch-provider selection. It exists solely to let pg-llm-batch replace a
     concrete PostgreSQL client while keeping its database and tenant contracts
     stable and testable.
     """
