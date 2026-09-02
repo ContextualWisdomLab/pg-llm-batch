@@ -38,54 +38,37 @@ class ResultApplicationError(PgLlmBatchError):
         )
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class ResultApplicationOutcome:
-    """Describe whether one local record effect was newly applied.
+    """Preserve the released result-application outcome contract.
 
-    ``record_applied`` and ``result_checkpoint`` are the package-owned semantic
-    fields. The historical ``applied`` and ``checkpoint`` constructor keywords
-    and read-only properties remain as a compatibility boundary for released
-    callers.
+    ``applied`` and ``checkpoint`` are historical public dataclass fields. They
+    remain at this compatibility boundary because changing dataclass field names
+    would alter construction, introspection, and ``dataclasses.asdict`` output.
+    New package-owned implementation code uses the semantic
+    :class:`_SemanticResultApplicationOutcome` instead.
     """
+
+    applied: bool
+    checkpoint: BatchResultCheckpoint
+
+    @property
+    def record_applied(self) -> bool:
+        """Expose the semantic applied-state name to new callers."""
+        return self.applied
+
+    @property
+    def result_checkpoint(self) -> BatchResultCheckpoint:
+        """Expose the semantic checkpoint name to new callers."""
+        return self.checkpoint
+
+
+@dataclass(frozen=True)
+class _SemanticResultApplicationOutcome:
+    """Represent package-owned result-application state with semantic names."""
 
     record_applied: bool
     result_checkpoint: BatchResultCheckpoint
-
-    def __init__(
-        self,
-        record_applied: bool | None = None,
-        result_checkpoint: BatchResultCheckpoint | None = None,
-        *,
-        applied: bool | None = None,
-        checkpoint: BatchResultCheckpoint | None = None,
-    ) -> None:
-        """Normalize semantic or legacy outcome arguments without ambiguity."""
-        if record_applied is not None and applied is not None:
-            raise TypeError("use record_applied or legacy applied, not both")
-        if result_checkpoint is not None and checkpoint is not None:
-            raise TypeError("use result_checkpoint or legacy checkpoint, not both")
-        normalized_record_applied = (
-            record_applied if record_applied is not None else applied
-        )
-        normalized_result_checkpoint = (
-            result_checkpoint if result_checkpoint is not None else checkpoint
-        )
-        if normalized_record_applied is None:
-            raise TypeError("record_applied is required")
-        if normalized_result_checkpoint is None:
-            raise TypeError("result_checkpoint is required")
-        object.__setattr__(self, "record_applied", normalized_record_applied)
-        object.__setattr__(self, "result_checkpoint", normalized_result_checkpoint)
-
-    @property
-    def applied(self) -> bool:
-        """Return the legacy applied flag for source compatibility."""
-        return self.record_applied
-
-    @property
-    def checkpoint(self) -> BatchResultCheckpoint:
-        """Return the legacy checkpoint attribute for source compatibility."""
-        return self.result_checkpoint
 
 
 class _ResultApplicationCursor:
@@ -99,49 +82,53 @@ class _ResultApplicationCursor:
     is touched.
     """
 
-    __slots__ = ("__active", "__cursor", "__owner_thread_id")
+    __slots__ = (
+        "__capability_active",
+        "__transaction_cursor",
+        "__owner_thread_id",
+    )
 
-    def __init__(self, cursor: Any) -> None:
+    def __init__(self, transaction_cursor: Any) -> None:
         """Bind one raw cursor to the constructing thread for one callback."""
-        self.__cursor = cursor
+        self.__transaction_cursor = transaction_cursor
         self.__owner_thread_id = get_ident()
-        self.__active = True
+        self.__capability_active = True
 
-    def _revoke(self) -> None:
+    def _revoke_cursor_capability(self) -> None:
         """Remove package-supplied cursor authority after callback completion."""
-        self.__active = False
+        self.__capability_active = False
 
     def _assert_usable(self) -> None:
         """Reject expired or cross-thread use with bounded package evidence."""
-        if not self.__active or get_ident() != self.__owner_thread_id:
+        if not self.__capability_active or get_ident() != self.__owner_thread_id:
             raise ResultApplicationError("record_effect") from None
 
     def execute(self, *args: Any, **kwargs: Any) -> _ResultApplicationCursor:
         """Execute one statement synchronously without returning the raw cursor."""
         self._assert_usable()
-        self.__cursor.execute(*args, **kwargs)
+        self.__transaction_cursor.execute(*args, **kwargs)
         return self
 
     def executemany(self, *args: Any, **kwargs: Any) -> _ResultApplicationCursor:
         """Execute one parameter sequence without returning the raw cursor."""
         self._assert_usable()
-        self.__cursor.executemany(*args, **kwargs)
+        self.__transaction_cursor.executemany(*args, **kwargs)
         return self
 
     def fetchone(self, *args: Any, **kwargs: Any) -> Any:
         """Fetch one result while this callback owns the scoped capability."""
         self._assert_usable()
-        return self.__cursor.fetchone(*args, **kwargs)
+        return self.__transaction_cursor.fetchone(*args, **kwargs)
 
     def fetchmany(self, *args: Any, **kwargs: Any) -> Any:
         """Fetch a bounded result page while the scoped capability is active."""
         self._assert_usable()
-        return self.__cursor.fetchmany(*args, **kwargs)
+        return self.__transaction_cursor.fetchmany(*args, **kwargs)
 
     def fetchall(self, *args: Any, **kwargs: Any) -> Any:
         """Fetch remaining results while the scoped capability is active."""
         self._assert_usable()
-        return self.__cursor.fetchall(*args, **kwargs)
+        return self.__transaction_cursor.fetchall(*args, **kwargs)
 
 
 def _redacted_validation_error(
@@ -238,7 +225,7 @@ def _apply_checkpointed_record_in_transaction(
     consumer_name: str,
     checkpointed_record: CheckpointedBatchResultRecord,
     record_effect: Callable[[Any, Mapping[str, Any]], None],
-) -> ResultApplicationOutcome:
+) -> _SemanticResultApplicationOutcome:
     """Apply one semantic checkpointed record within the caller transaction."""
     validated_record = _validate_item_and_effect(checkpointed_record, record_effect)
 
@@ -272,7 +259,7 @@ def _apply_checkpointed_record_in_transaction(
             raise ResultApplicationError("checkpoint_load") from None
 
     if previous_checkpoint == validated_record.checkpoint:
-        return ResultApplicationOutcome(
+        return _SemanticResultApplicationOutcome(
             record_applied=False,
             result_checkpoint=validated_record.checkpoint,
         )
@@ -296,7 +283,7 @@ def _apply_checkpointed_record_in_transaction(
                 validated_record.record,
             )
         finally:
-            record_effect_cursor._revoke()
+            record_effect_cursor._revoke_cursor_capability()
         if inspect.iscoroutine(record_effect_result):
             record_effect_result.close()
         elif isinstance(record_effect_result, (asyncio.Future, ConcurrentFuture)):
@@ -329,7 +316,7 @@ def _apply_checkpointed_record_in_transaction(
     if checkpoint_save_failure is not None:
         raise checkpoint_save_failure from None
 
-    return ResultApplicationOutcome(
+    return _SemanticResultApplicationOutcome(
         record_applied=True,
         result_checkpoint=validated_record.checkpoint,
     )
@@ -386,12 +373,16 @@ def apply_checkpointed_result_in_transaction(
     after their exception scope has ended, preventing implicit traceback context
     from retaining provider or database diagnostics.
     """
-    return _apply_checkpointed_record_in_transaction(
+    semantic_outcome = _apply_checkpointed_record_in_transaction(
         transaction_cursor=cursor,
         checkpoint_store=checkpoint_store,
         consumer_name=consumer_name,
         checkpointed_record=item,
         record_effect=apply_record,
+    )
+    return ResultApplicationOutcome(
+        applied=semantic_outcome.record_applied,
+        checkpoint=semantic_outcome.result_checkpoint,
     )
 
 
