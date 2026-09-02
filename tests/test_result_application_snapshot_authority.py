@@ -315,6 +315,25 @@ def test_json_snapshot_enforces_depth_node_and_text_budgets(monkeypatch: Any) ->
     _assert_record_rejected({"ab": "cd"})
 
 
+def test_json_snapshot_rejects_huge_integer_before_decimal_materialization(
+    monkeypatch: Any,
+) -> None:
+    """The package byte budget must reject a huge int before allocating decimal text."""
+    oversized_integer = 1 << (4 * result_application._MAX_RECORD_JSON_TEXT_CHARS)
+
+    def fail_if_decimal_text_is_materialized(_value: object) -> str:
+        raise AssertionError("huge integer decimal text was materialized before rejection")
+
+    monkeypatch.setattr(
+        result_application,
+        "str",
+        fail_if_decimal_text_is_materialized,
+        raising=False,
+    )
+
+    _assert_record_rejected({"value": oversized_integer})
+
+
 def test_mutated_checkpoint_semantics_are_redacted_before_store_access() -> None:
     """Exact primitive mutation cannot leak its value through checkpoint validation."""
     checkpoint = _checkpoint()
