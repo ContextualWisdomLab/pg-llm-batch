@@ -295,8 +295,8 @@ The codebase supports submodule-style embedding mechanically, but the current
 runtime graph contains the unapproved LGPL-family Psycopg dependency. The
 commands below document existing developer integration only; do not incorporate
 this package into a commercial ContextualWisdomLab distribution until issue
-#322 removes/replaces that dependency and exact-head package/license evidence is
-clean.
+`#322` removes/replaces that dependency and exact-head package/license evidence
+is clean.
 
 ```bash
 git submodule add https://github.com/ContextualWisdomLab/pg-llm-batch.git \
