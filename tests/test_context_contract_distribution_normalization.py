@@ -8,6 +8,7 @@ from dataclasses import replace
 from pg_llm_batch.context_contract_candidate import (
     ContextContractCandidatePin,
     ContextContractCandidateVerification,
+    require_context_contract_candidate_compatibility,
     require_context_contract_candidate_release_identity,
 )
 from pg_llm_batch.context_contract_release import (
@@ -33,11 +34,14 @@ def _release_pin(*, distribution_name: str = "cwl-context-contracts") -> Context
     )
 
 
-def test_candidate_release_continuity_uses_normalized_distribution_identity() -> None:
-    """Treat PyPA-equivalent project names as one distribution during comparison."""
-    release = _release_pin()
-    candidate = ContextContractCandidatePin(
-        distribution_name="CWL.Context__Contracts",
+def _candidate_pin(
+    *,
+    distribution_name: str = "cwl-context-contracts",
+) -> ContextContractCandidatePin:
+    """Build one unreleased candidate identity for normalized-name comparisons."""
+    release = _release_pin(distribution_name=distribution_name)
+    return ContextContractCandidatePin(
+        distribution_name=distribution_name,
         source_commit=release.source_commit,
         candidate_artifact_sha256=release.distribution_sha256,
         profile_name=release.profile_name,
@@ -48,6 +52,33 @@ def test_candidate_release_continuity_uses_normalized_distribution_identity() ->
         admission_sha256=release.admission_sha256,
         provenance_sha256=release.provenance_sha256,
     )
+
+
+def test_candidate_expectation_uses_normalized_distribution_identity() -> None:
+    """Do not reject one candidate solely for equivalent project-name spelling."""
+    candidate = _candidate_pin(distribution_name="CWL.Context__Contracts")
+    expected = replace(candidate, distribution_name="cwl-context-contracts")
+    verification = ContextContractCandidateVerification(
+        candidate_pin=candidate,
+        artifact_verified=True,
+        conformance_passed=True,
+        admission_passed=True,
+        provenance_verified=True,
+    )
+
+    matched = require_context_contract_candidate_compatibility(
+        verification=verification,
+        expected=expected,
+    )
+
+    assert matched == candidate
+    assert matched is not candidate
+
+
+def test_candidate_release_continuity_uses_normalized_distribution_identity() -> None:
+    """Treat PyPA-equivalent project names as one distribution during comparison."""
+    release = _release_pin()
+    candidate = _candidate_pin(distribution_name="CWL.Context__Contracts")
     verification = ContextContractCandidateVerification(
         candidate_pin=candidate,
         artifact_verified=True,
