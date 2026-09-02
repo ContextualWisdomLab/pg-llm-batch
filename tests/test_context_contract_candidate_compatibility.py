@@ -15,7 +15,10 @@ from pg_llm_batch.context_contract_candidate import (
     validate_context_contract_candidate_pin,
     validate_context_contract_candidate_verification,
 )
-from pg_llm_batch.context_contract_release import validate_context_contract_release_pin
+from pg_llm_batch.context_contract_release import (
+    ContextContractReleasePinError,
+    validate_context_contract_release_pin,
+)
 
 
 VALID_CANDIDATE = ContextContractCandidatePin(
@@ -150,5 +153,5 @@ def test_candidate_pin_rejects_shaped_object_before_member_access() -> None:
 
 
 def test_candidate_pin_cannot_be_promoted_to_released_identity() -> None:
-    with pytest.raises(Exception, match="invalid release pin"):
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
         validate_context_contract_release_pin(VALID_CANDIDATE)  # type: ignore[arg-type]
