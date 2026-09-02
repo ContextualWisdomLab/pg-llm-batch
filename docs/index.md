@@ -21,17 +21,24 @@ The current compose/install commands document development and verification of to
 
 ## Development quick start
 
-Create a fresh development-only database password for this run. Docker Compose consumes the value through its named `postgres_password` secret, and the same generated value is used only as bootstrap transport for the local CLI DSN.
+For a **new disposable Compose project**, generate a development-only database password once, retain it in your normal local secret store, and reuse that same value for later starts of the existing `pgdata` volume. PostgreSQL applies the initialization password only when it first creates the data directory; changing the Compose secret later does not rotate the existing database role password.
+
+First-time initialization:
 
 ```bash
 export PG_LLM_BATCH_POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# Save this generated value outside the repository in your local secret manager.
 docker compose up -d --build
 export PG_LLM_BATCH_DSN="postgresql://pgllm:${PG_LLM_BATCH_POSTGRES_PASSWORD}@localhost:5432/pgllm"
 python -m pg_llm_batch init-db
 python -m pg_llm_batch health
 ```
 
-Do not replace the generated value with a shared example password. Production deployments should supply the Compose secret and application bootstrap credential through their reviewed secret-management path.
+For subsequent starts that reuse the same `pgdata` volume, restore the **same** development password into `PG_LLM_BATCH_POSTGRES_PASSWORD` before `docker compose up`, then build `PG_LLM_BATCH_DSN` from that value as above.
+
+If this is a disposable development database and the original password is intentionally unavailable, `docker compose down -v` removes the persisted database volume; the next start is a new initialization and permanently deletes the old local database contents. For a retained database, rotate the PostgreSQL role credential deliberately and update the Compose/application secret together instead of changing only the environment value.
+
+Do not use a shared example password. Production deployments should supply database credentials through their reviewed secret-management and rotation path.
 
 Use the [repository README](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/README.md) for gateway configuration, secret input, batch submission, durable lifecycle modes, the currently blocked embedding path, recovery, observability, and test instructions.
 
