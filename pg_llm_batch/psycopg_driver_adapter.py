@@ -61,10 +61,8 @@ class PsycopgCursorAdapter(PostgresCursorPort):
         self._cursor = cursor
 
     @staticmethod
-    def _normalize_result_row(row: object | None) -> tuple[object, ...] | None:
-        """Normalize one DB-API row to the package's positional tuple contract."""
-        if row is None:
-            return None
+    def _normalize_result_row(row: object) -> tuple[object, ...]:
+        """Normalize one materialized DB-API row to the positional tuple contract."""
         if type(row) is tuple:
             return row
         if type(row) is list:
@@ -90,26 +88,21 @@ class PsycopgCursorAdapter(PostgresCursorPort):
         return self
 
     def fetchone(self) -> tuple[object, ...] | None:
-        """Return the next row in the package's canonical tuple representation."""
-        return self._normalize_result_row(self._cursor.fetchone())
+        """Return one canonical tuple row, or ``None`` only for end-of-results."""
+        row = self._cursor.fetchone()
+        if row is None:
+            return None
+        return self._normalize_result_row(row)
 
     def fetchmany(self, size: int) -> list[tuple[object, ...]]:
-        """Return a finite page with every driver row normalized to a tuple."""
+        """Return a finite page while rejecting malformed materialized rows."""
         if type(size) is not int or size <= 0:
             raise PsycopgDriverAdapterError("PostgreSQL driver fetch size is invalid")
-        return [
-            normalized
-            for row in self._cursor.fetchmany(size)
-            if (normalized := self._normalize_result_row(row)) is not None
-        ]
+        return [self._normalize_result_row(row) for row in self._cursor.fetchmany(size)]
 
     def fetchall(self) -> list[tuple[object, ...]]:
-        """Return bounded query results with every row normalized to a tuple."""
-        return [
-            normalized
-            for row in self._cursor.fetchall()
-            if (normalized := self._normalize_result_row(row)) is not None
-        ]
+        """Return bounded query results while rejecting malformed rows."""
+        return [self._normalize_result_row(row) for row in self._cursor.fetchall()]
 
     def row_count(self) -> int:
         """Return Psycopg's exact integer affected-row result, including -1 unknown."""
