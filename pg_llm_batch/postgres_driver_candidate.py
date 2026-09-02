@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+import unicodedata
 
 
 REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
@@ -67,10 +68,10 @@ def _validate_identity_text(label: str, value: object) -> None:
     """Require one finite, exact package-identity token without normalization.
 
     Package name, version, and SPDX evidence participate in an acquisition
-    decision and can arrive from untrusted package metadata. Rejecting whitespace
-    and control characters keeps one evidence value from becoming multiple visual
-    or line-oriented identities, while the UTF-8 byte ceiling bounds malformed
-    metadata without inventing a package-manager-specific grammar.
+    decision and can arrive from untrusted package metadata. Rejecting whitespace,
+    controls, and Unicode format characters keeps one evidence value from becoming
+    multiple visual or line-oriented identities, while the UTF-8 byte ceiling
+    bounds malformed metadata without inventing a package-manager-specific grammar.
     """
     if type(value) is not str or not value:
         raise PostgresDriverCandidateEvidenceError(
@@ -82,6 +83,7 @@ def _validate_identity_text(label: str, value: object) -> None:
             character.isspace()
             or ord(character) < 32
             or ord(character) == 127
+            or unicodedata.category(character) == "Cf"
             for character in value
         )
     ):
