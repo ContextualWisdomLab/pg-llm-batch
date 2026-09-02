@@ -75,7 +75,12 @@ def _validate_identity_text(label: str, value: object) -> None:
         )
     if (
         len(value.encode("utf-8")) > _MAX_IDENTITY_EVIDENCE_BYTES
-        or any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in value)
+        or any(
+            character.isspace()
+            or ord(character) < 32
+            or ord(character) == 127
+            for character in value
+        )
     ):
         raise PostgresDriverCandidateEvidenceError(
             f"PostgreSQL driver {label} evidence is invalid"
