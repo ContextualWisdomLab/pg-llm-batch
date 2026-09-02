@@ -439,10 +439,7 @@ def require_context_contract_release_ready(
     )
     validated_approval = validate_context_contract_release_approval(approved)
     required_policy = _validate_sha256(required_approval_policy_sha256)
-    if (
-        validated_verification != validated_approval.verification
-        or validated_approval.approval_policy_sha256 != required_policy
-    ):
+    if validated_approval.approval_policy_sha256 != required_policy:
         raise _invalid_release_pin()
     return require_context_contract_release_compatibility(
         candidate=validated_verification.release_pin,
@@ -490,9 +487,12 @@ def require_context_contract_release_transition_ready(
     validated_transition = validate_context_contract_release_transition_verification(
         transition
     )
-    if (
-        validated_transition.source_release_pin != validated_current
-        or validated_transition.target_release_pin != admitted_target
-    ):
-        raise _invalid_release_pin()
+    require_context_contract_release_compatibility(
+        candidate=validated_transition.source_release_pin,
+        approved=validated_current,
+    )
+    require_context_contract_release_compatibility(
+        candidate=validated_transition.target_release_pin,
+        approved=admitted_target,
+    )
     return admitted_target
