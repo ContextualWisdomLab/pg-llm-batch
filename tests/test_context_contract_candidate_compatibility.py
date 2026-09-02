@@ -86,6 +86,14 @@ def test_candidate_pin_rejects_mutable_or_malformed_identity(
         validate_context_contract_candidate_pin(candidate)
 
 
+def test_candidate_pin_rejects_deleted_member() -> None:
+    candidate = replace(VALID_CANDIDATE)
+    object.__delattr__(candidate, "resource_sha256")
+
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
+        validate_context_contract_candidate_pin(candidate)
+
+
 @pytest.mark.parametrize(
     "failed_gate",
     [
@@ -116,6 +124,26 @@ def test_candidate_verification_rejects_non_boolean_evidence(
 
     with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
         validate_context_contract_candidate_verification(verification)
+
+
+def test_candidate_verification_rejects_deleted_member() -> None:
+    verification = replace(VALID_CANDIDATE_VERIFICATION)
+    object.__delattr__(verification, "provenance_verified")
+
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
+        validate_context_contract_candidate_verification(verification)
+
+
+def test_candidate_verification_rejects_shaped_object_before_member_access() -> None:
+    class HostileVerification:
+        @property
+        def candidate_pin(self) -> ContextContractCandidatePin:
+            raise AssertionError("untrusted verification member accessed")
+
+    with pytest.raises(ContextContractCandidateError, match="invalid contract candidate"):
+        validate_context_contract_candidate_verification(
+            HostileVerification()  # type: ignore[arg-type]
+        )
 
 
 def test_candidate_compatibility_rejects_exact_identity_drift() -> None:
