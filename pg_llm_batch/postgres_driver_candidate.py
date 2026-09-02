@@ -171,7 +171,11 @@ class PostgresDriverCandidateEvidence:
             ("license", self.license_spdx),
         ):
             _validate_identity_text(label, value)
-        if self.evidence_schema_version != POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION:
+        if (
+            type(self.evidence_schema_version) is not str
+            or self.evidence_schema_version
+            != POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION
+        ):
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver candidate evidence schema version is unsupported"
             )
