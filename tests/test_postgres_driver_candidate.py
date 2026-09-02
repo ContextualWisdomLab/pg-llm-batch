@@ -122,3 +122,39 @@ def test_candidate_rejects_non_string_python_version_tokens() -> None:
 def test_candidate_rejects_unknown_capability_names() -> None:
     with pytest.raises(PostgresDriverCandidateEvidenceError, match="capability"):
         _evidence(capabilities=FULL_CAPABILITIES | {"model_routing"})
+
+
+@pytest.mark.parametrize(
+    ("field_name", "mutated_value"),
+    [
+        ("python_versions", ["3.14"]),
+        ("capabilities", set(FULL_CAPABILITIES)),
+    ],
+)
+def test_candidate_evaluation_revalidates_post_construction_container_mutation(
+    field_name: str,
+    mutated_value: object,
+) -> None:
+    evidence = _evidence()
+    object.__setattr__(evidence, field_name, mutated_value)
+
+    with pytest.raises(PostgresDriverCandidateEvidenceError):
+        evaluate_postgres_driver_candidate(evidence)
+
+
+def test_candidate_evaluation_normalizes_deleted_authority_field() -> None:
+    evidence = _evidence()
+    object.__delattr__(evidence, "capabilities")
+
+    with pytest.raises(PostgresDriverCandidateEvidenceError):
+        evaluate_postgres_driver_candidate(evidence)
+
+
+def test_candidate_evaluation_rejects_shaped_object_before_member_access() -> None:
+    class CandidateShapedObject:
+        @property
+        def license_spdx(self) -> str:
+            raise AssertionError("candidate-shaped object member was evaluated")
+
+    with pytest.raises(PostgresDriverCandidateEvidenceError):
+        evaluate_postgres_driver_candidate(CandidateShapedObject())  # type: ignore[arg-type]
