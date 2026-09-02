@@ -50,6 +50,14 @@ def test_candidate_contract_covers_issue_322_type_and_parameter_parity() -> None
     } <= REQUIRED_POSTGRES_DRIVER_CAPABILITIES
 
 
+def test_candidate_contract_preserves_each_supported_dsn_selector_family() -> None:
+    assert {
+        "conninfo_keyword_parse_render",
+        "conninfo_service_selector",
+        "conninfo_uri_parse_render",
+    } <= REQUIRED_POSTGRES_DRIVER_CAPABILITIES
+
+
 def test_candidate_contract_requires_every_repository_ci_python_version() -> None:
     assert REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS == frozenset(
         {"3.10", "3.12", "3.14"}
