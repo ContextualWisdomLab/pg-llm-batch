@@ -15,6 +15,10 @@ class _UndefinedFunctionError(RuntimeError):
     """Represent one driver-classified undefined PostgreSQL function."""
 
 
+class _OtherDriverError(RuntimeError):
+    """Represent a database failure that must not disable pg_tiktoken availability."""
+
+
 class _Cursor:
     """Return deterministic pg_tiktoken probe and count rows."""
 
@@ -30,9 +34,10 @@ class _Cursor:
     def execute(self, query: str, params: object | None = None) -> _Cursor:
         self.driver.executions.append((query, params))
         if "tiktoken_count" in query and "to_regprocedure" not in query:
-            if self.driver.fail_primary_count:
-                self.driver.fail_primary_count = False
-                raise _UndefinedFunctionError("undefined function")
+            if self.driver.primary_error is not None:
+                error = self.driver.primary_error
+                self.driver.primary_error = None
+                raise error
             self.driver.rows.append((7,))
         elif "tiktoken_encode" in query and "to_regprocedure" not in query:
             self.driver.rows.append((9,))
@@ -68,8 +73,8 @@ class _Connection:
 class _Driver:
     """Minimal Psycopg-free driver implementing the token-counting port surface."""
 
-    def __init__(self, *, fail_primary_count: bool = False) -> None:
-        self.fail_primary_count = fail_primary_count
+    def __init__(self, *, primary_error: BaseException | None = None) -> None:
+        self.primary_error = primary_error
         self.executions: list[tuple[str, object | None]] = []
         self.rows: list[tuple[object, ...]] = [(True, True, True)]
         self.connections: list[_Connection] = []
@@ -117,7 +122,7 @@ def test_token_counter_uses_driver_error_classification_for_encode_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Undefined-function fallback must not depend on a Psycopg exception class."""
-    driver = _Driver(fail_primary_count=True)
+    driver = _Driver(primary_error=_UndefinedFunctionError("undefined function"))
     monkeypatch.setattr(token_counter_module, "psycopg", None)
     monkeypatch.setattr(
         token_counter_module,
@@ -129,3 +134,23 @@ def test_token_counter_uses_driver_error_classification_for_encode_fallback(
 
     assert counter.count_tokens("hello", "model-a") == 9
     assert any("tiktoken_encode" in query for query, _params in driver.executions)
+
+
+def test_non_undefined_driver_error_does_not_disable_token_counting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A transient candidate-driver failure must not masquerade as missing pg_tiktoken."""
+    driver = _Driver(primary_error=_OtherDriverError("temporary database failure"))
+    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    monkeypatch.setattr(
+        token_counter_module,
+        "get_model_metadata",
+        lambda _dsn, _model, *, postgres_driver=None: {"tokenizer_model": "o200k_base"},
+    )
+
+    counter = TokenCounter("postgresql://x", postgres_driver=driver)
+
+    with pytest.raises(RuntimeError, match="Token counting requires pg_tiktoken"):
+        counter.count_tokens("first", "model-a")
+    assert counter.count_tokens("second", "model-a") == 7
+    assert not any("tiktoken_encode" in query for query, _params in driver.executions)
