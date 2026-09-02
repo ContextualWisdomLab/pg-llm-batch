@@ -166,3 +166,22 @@ def test_candidate_evaluation_rejects_shaped_object_before_member_access() -> No
 
     with pytest.raises(PostgresDriverCandidateEvidenceError):
         evaluate_postgres_driver_candidate(CandidateShapedObject())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("field_name", ["package_name", "package_version", "license_spdx"])
+def test_candidate_rejects_surrounding_whitespace_in_identity_evidence(
+    field_name: str,
+) -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError):
+        _evidence(**{field_name: " candidate-driver "})
+
+
+@pytest.mark.parametrize("field_name", ["package_name", "package_version", "license_spdx"])
+def test_candidate_rejects_unbounded_identity_evidence(field_name: str) -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError):
+        _evidence(**{field_name: "x" * 257})
+
+
+def test_candidate_rejects_duplicate_python_version_evidence() -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError, match="Python version"):
+        _evidence(python_versions=("3.14", "3.14"))
