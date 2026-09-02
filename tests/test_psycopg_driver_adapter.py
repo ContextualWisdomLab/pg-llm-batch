@@ -117,6 +117,17 @@ def test_cursor_adapter_preserves_parameter_and_result_authority() -> None:
     assert cursor.row_count() == 2
 
 
+def test_cursor_adapter_rejects_none_inside_materialized_result_page() -> None:
+    raw = _RawCursor()
+    raw.rows = [["one"], None]
+    cursor = PsycopgCursorAdapter(raw)
+
+    with pytest.raises(PsycopgDriverAdapterError, match="result row"):
+        cursor.fetchmany(2)
+    with pytest.raises(PsycopgDriverAdapterError, match="result row"):
+        cursor.fetchall()
+
+
 @pytest.mark.parametrize("invalid_size", [True, 0, -1, 1.5])
 def test_cursor_adapter_rejects_non_positive_or_non_integer_fetch_budget(
     invalid_size: object,
