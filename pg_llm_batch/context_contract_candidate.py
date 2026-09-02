@@ -13,6 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 
+from .context_contract_release import (
+    ContextContractReleasePin,
+    validate_context_contract_release_pin,
+)
+
 
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z")
 _SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
@@ -223,3 +228,49 @@ def require_context_contract_candidate_compatibility(
     if validated_verification.candidate_pin != validated_expected:
         raise _invalid_candidate()
     return validated_verification.candidate_pin
+
+
+def require_context_contract_candidate_release_identity(
+    *,
+    verification: ContextContractCandidateVerification,
+    release: ContextContractReleasePin,
+) -> ContextContractCandidatePin:
+    """Require a later immutable publication to match the tested candidate bytes.
+
+    This is a continuity check, not release admission. It proves only that the exact
+    source, distribution bytes, semantic profile, resource, conformance, admission,
+    and provenance identities in a syntactically valid release pin match the exact
+    candidate that previously passed pre-release verification. Publication status,
+    deployment-policy approval, and production readiness still belong to the
+    separate release-admission boundary.
+
+    Args:
+        verification: Positive pre-release verification for the tested candidate.
+        release: Immutable released identity observed after publication appears.
+
+    Returns:
+        A fresh candidate-only pin when the release preserves the tested identities.
+
+    Raises:
+        ContextContractCandidateError: If the release drifts from the tested candidate.
+        ContextContractReleasePinError: If the supplied release identity is malformed.
+    """
+    validated_verification = validate_context_contract_candidate_verification(
+        verification
+    )
+    validated_release = validate_context_contract_release_pin(release)
+    candidate = validated_verification.candidate_pin
+    if (
+        candidate.source_commit != validated_release.source_commit
+        or candidate.candidate_artifact_sha256
+        != validated_release.distribution_sha256
+        or candidate.profile_name != validated_release.profile_name
+        or candidate.profile_sha256 != validated_release.profile_sha256
+        or candidate.resource_name != validated_release.resource_name
+        or candidate.resource_sha256 != validated_release.resource_sha256
+        or candidate.conformance_sha256 != validated_release.conformance_sha256
+        or candidate.admission_sha256 != validated_release.admission_sha256
+        or candidate.provenance_sha256 != validated_release.provenance_sha256
+    ):
+        raise _invalid_candidate()
+    return candidate
