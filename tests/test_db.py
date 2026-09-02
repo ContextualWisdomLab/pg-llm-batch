@@ -70,6 +70,21 @@ def test_apply_schema_executes_packaged_file(monkeypatch, tmp_path):
     assert driver.commits == 1
 
 
+def test_apply_schema_uses_injected_driver_without_psycopg(monkeypatch, tmp_path):
+    """Schema bootstrap must migrate through the driver port before manifest swap."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", None)
+    schema = tmp_path / "schema.sql"
+    schema.write_text("CREATE TABLE snake_case_name (id int);", encoding="utf-8")
+    monkeypatch.setattr(db, "SCHEMA_PATH", schema)
+
+    db.apply_schema("postgresql://x", postgres_driver=driver)
+
+    assert driver.connections == ["postgresql://x"]
+    assert driver.executions == [("CREATE TABLE snake_case_name (id int);", None)]
+    assert driver.commits == 1
+
+
 def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
     """Caller-controlled local files must not acquire arbitrary SQL authority."""
     driver = _Psycopg()
@@ -96,6 +111,24 @@ def test_load_virtual_payload_preserves_canonical_jsonl(monkeypatch, stored, exp
     driver = _Psycopg((stored,))
     monkeypatch.setattr(db, "psycopg", driver)
     assert db.load_virtual_payload("postgresql://x", "file-1") == expected
+    assert driver.executions[0][1] == ("file-1",)
+
+
+def test_load_virtual_payload_uses_injected_driver_without_psycopg(monkeypatch):
+    """Virtual payload reads must not require Psycopg once a driver port is injected."""
+    stored = {"text": '{"id":1}\n', "line_count": 1}
+    driver = _Psycopg((stored,))
+    monkeypatch.setattr(db, "psycopg", None)
+
+    assert (
+        db.load_virtual_payload(
+            "postgresql://x",
+            "file-1",
+            postgres_driver=driver,
+        )
+        == '{"id":1}\n'
+    )
+    assert driver.connections == ["postgresql://x"]
     assert driver.executions[0][1] == ("file-1",)
 
 
