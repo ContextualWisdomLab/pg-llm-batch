@@ -16,6 +16,7 @@ import re
 
 from .context_contract_release import (
     ContextContractReleasePin,
+    _canonical_distribution_name,
     validate_context_contract_release_pin,
 )
 
@@ -253,12 +254,12 @@ def require_context_contract_candidate_release_identity(
 ) -> ContextContractCandidatePin:
     """Require a later immutable publication to match the tested candidate identity.
 
-    This is a continuity check, not release admission. It proves only that the exact
-    distribution, source, distribution bytes, semantic profile, resource,
-    conformance, admission, and provenance identities in a syntactically valid
-    release pin match the exact candidate that previously passed pre-release
-    verification. Publication status, deployment-policy approval, and production
-    readiness still belong to the separate release-admission boundary.
+    This is a continuity check, not release admission. It proves only that the
+    normalized Python distribution identity plus exact source, distribution bytes,
+    semantic profile, resource, conformance, admission, and provenance identities in
+    a syntactically valid release pin match the candidate that previously passed
+    pre-release verification. Publication status, deployment-policy approval, and
+    production readiness still belong to the separate release-admission boundary.
 
     Args:
         verification: Positive pre-release verification for the tested candidate.
@@ -277,7 +278,8 @@ def require_context_contract_candidate_release_identity(
     validated_release = validate_context_contract_release_pin(release)
     candidate = validated_verification.candidate_pin
     if (
-        candidate.distribution_name != validated_release.distribution_name
+        _canonical_distribution_name(candidate.distribution_name)
+        != _canonical_distribution_name(validated_release.distribution_name)
         or candidate.source_commit != validated_release.source_commit
         or candidate.candidate_artifact_sha256
         != validated_release.distribution_sha256
