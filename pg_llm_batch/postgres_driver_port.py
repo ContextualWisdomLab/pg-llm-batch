@@ -243,6 +243,16 @@ class PostgresDriverPort(ABC):
         """
 
     @abstractmethod
+    def is_invalid_conninfo(self, error: BaseException) -> bool:
+        """Classify only a PostgreSQL connection-selector grammar failure.
+
+        CLI and bootstrap boundaries need to normalize malformed DSN syntax
+        without importing one concrete driver's exception type. Implementations
+        must not broaden this category to connection, authentication, or runtime
+        database failures.
+        """
+
+    @abstractmethod
     def is_undefined_function(self, error: BaseException) -> bool:
         """Classify the PostgreSQL undefined-function error without leaking it.
 
