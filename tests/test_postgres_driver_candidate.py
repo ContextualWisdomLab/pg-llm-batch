@@ -37,6 +37,14 @@ def test_complete_permissive_candidate_is_eligible_only_for_parity_validation() 
     assert decision.reasons == ()
 
 
+def test_candidate_contract_covers_issue_322_type_and_parameter_parity() -> None:
+    assert {
+        "result_row_semantics",
+        "sql_parameter_style_adaptation",
+        "uuid_timestamp_adaptation",
+    } <= REQUIRED_POSTGRES_DRIVER_CAPABILITIES
+
+
 @pytest.mark.parametrize(
     ("license_spdx", "expected_reason"),
     [
