@@ -50,16 +50,20 @@ def check_health(
     postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
     """Return a readiness report using the injected or retained database driver."""
-    connection = _connect_health_database(dsn, postgres_driver)
-    if connection is None:
-        return {
-            "ready": False,
-            "components": [
-                {"component": "psycopg", "is_ready": False, "detail": "not installed"}
-            ],
-        }
     components: List[Dict[str, Any]] = []
     try:
+        connection = _connect_health_database(dsn, postgres_driver)
+        if connection is None:
+            return {
+                "ready": False,
+                "components": [
+                    {
+                        "component": "psycopg",
+                        "is_ready": False,
+                        "detail": "not installed",
+                    }
+                ],
+            }
         with connection as conn:
             with conn.cursor() as cur:
                 cur.execute(
