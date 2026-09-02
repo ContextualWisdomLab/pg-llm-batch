@@ -23,20 +23,42 @@ The current compose/install commands document development and verification of to
 
 For a **new disposable Compose project**, generate a development-only database password once, retain it in your normal local secret store, and reuse that same value for later starts of the existing `pgdata` volume. PostgreSQL applies the initialization password only when it first creates the data directory; changing the Compose secret later does not rotate the existing database role password.
 
-First-time initialization:
+Create a mode-0600 libpq passfile for host-side CLI access so the password is not embedded in `PG_LLM_BATCH_DSN`. The passfile writer escapes libpq delimiters before Compose consumes the bootstrap environment secret.
 
 ```bash
 export PG_LLM_BATCH_POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 # Save this generated value outside the repository in your local secret manager.
+export PGPASSFILE="$(mktemp "${TMPDIR:-/tmp}/pg-llm-batch.pgpass.XXXXXX")"
+chmod 600 "$PGPASSFILE"
+python - <<'PY'
+import os
+from pathlib import Path
+
+password = os.environ["PG_LLM_BATCH_POSTGRES_PASSWORD"]
+escaped = password.replace("\\", "\\\\").replace(":", "\\:")
+Path(os.environ["PGPASSFILE"]).write_text(
+    f"localhost:5432:pgllm:pgllm:{escaped}\n",
+    encoding="utf-8",
+)
+PY
+
 docker compose up -d --build
-export PG_LLM_BATCH_DSN="postgresql://pgllm:${PG_LLM_BATCH_POSTGRES_PASSWORD}@localhost:5432/pgllm"
+unset PG_LLM_BATCH_POSTGRES_PASSWORD
+export PG_LLM_BATCH_DSN="postgresql://pgllm@localhost:5432/pgllm"
 python -m pg_llm_batch init-db
 python -m pg_llm_batch health
 ```
 
-For subsequent starts that reuse the same `pgdata` volume, restore the **same** development password into `PG_LLM_BATCH_POSTGRES_PASSWORD` before `docker compose up`, then build `PG_LLM_BATCH_DSN` from that value as above.
+For subsequent starts that reuse the same `pgdata` volume, restore the **same** development password from your local secret manager, recreate the mode-0600 passfile with the same escaping step, run `docker compose up`, and unset `PG_LLM_BATCH_POSTGRES_PASSWORD` again. The CLI then uses the credential-free DSN plus `PGPASSFILE`. Changing only the Compose secret does not rotate the existing database role password.
 
 If this is a disposable development database and the original password is intentionally unavailable, `docker compose down -v` removes the persisted database volume; the next start is a new initialization and permanently deletes the old local database contents. For a retained database, rotate the PostgreSQL role credential deliberately and update the Compose/application secret together instead of changing only the environment value.
+
+Remove the temporary passfile when the local CLI session ends:
+
+```bash
+rm -f "$PGPASSFILE"
+unset PGPASSFILE PG_LLM_BATCH_DSN
+```
 
 Do not use a shared example password. Production deployments should supply database credentials through their reviewed secret-management and rotation path.
 
