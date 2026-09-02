@@ -13,6 +13,7 @@ import re
 
 
 _NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}\Z")
+_DISTRIBUTION_SEPARATOR_PATTERN = re.compile(r"[-_.]+")
 _SOURCE_COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _MUTABLE_RELEASE_ALIASES = frozenset(
@@ -113,6 +114,11 @@ def _validate_name(value: object) -> str:
     if type(value) is not str or _NAME_PATTERN.fullmatch(value) is None:
         raise _invalid_release_pin()
     return value
+
+
+def _canonical_distribution_name(value: str) -> str:
+    """Return the normalized Python distribution identity used for comparison."""
+    return _DISTRIBUTION_SEPARATOR_PATTERN.sub("-", value).lower()
 
 
 def _validate_release_version(value: object) -> str:
@@ -287,10 +293,11 @@ def validate_context_contract_release_transition_verification(
 
     Exact package-owned evidence is required before any member is read. Source and
     target pins are independently snapshotted and must identify different immutable
-    releases. One distribution/version pair may identify only one immutable release,
-    so byte or source drift under the same version label fails closed. Evidence
-    identities are bounded to lowercase SHA-256 digests, and both forward-migration
-    and rollback gates must be exact built-in ``True`` values.
+    releases. One normalized Python distribution/version pair may identify only one
+    immutable release, so byte or source drift under the same version label fails
+    closed even when equivalent ``-``, ``_``, or ``.`` name spellings are supplied.
+    Evidence identities are bounded to lowercase SHA-256 digests, and both forward-
+    migration and rollback gates must be exact built-in ``True`` values.
 
     Args:
         transition: Transition evidence from a trusted migration verifier.
@@ -316,8 +323,11 @@ def validate_context_contract_release_transition_verification(
 
     validated_source = validate_context_contract_release_pin(source_release_pin)
     validated_target = validate_context_contract_release_pin(target_release_pin)
+    same_distribution = _canonical_distribution_name(
+        validated_source.distribution_name
+    ) == _canonical_distribution_name(validated_target.distribution_name)
     if validated_source == validated_target or (
-        validated_source.distribution_name == validated_target.distribution_name
+        same_distribution
         and validated_source.release_version == validated_target.release_version
     ):
         raise _invalid_release_pin()
