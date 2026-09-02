@@ -45,6 +45,7 @@ _APPROVED_PERMISSIVE_LICENSES = frozenset(
         "PostgreSQL",
     }
 )
+_MAX_IDENTITY_EVIDENCE_BYTES = 256
 _MINOR_PYTHON_VERSION = re.compile(r"^[1-9][0-9]*\.[0-9]+$")
 _SOURCE_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _ARTIFACT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
@@ -57,6 +58,26 @@ class PostgresDriverCandidateEvidenceError(ValueError):
     evaluator accepts only immutable primitive evidence with exact digest and
     version shapes. It never repairs or guesses malformed package metadata.
     """
+
+
+def _validate_identity_text(label: str, value: object) -> None:
+    """Require one finite, exact package-identity token without normalization.
+
+    Package name, version, and SPDX evidence participate in an acquisition
+    decision and can arrive from untrusted package metadata. Rejecting surrounding
+    whitespace prevents two textual identities from being treated as equivalent,
+    while the UTF-8 byte ceiling keeps malformed metadata from expanding an
+    otherwise tiny decision record without imposing a package-manager grammar.
+    """
+    if (
+        type(value) is not str
+        or not value
+        or value != value.strip()
+        or len(value.encode("utf-8")) > _MAX_IDENTITY_EVIDENCE_BYTES
+    ):
+        raise PostgresDriverCandidateEvidenceError(
+            f"PostgreSQL driver {label} evidence is invalid"
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,10 +107,7 @@ class PostgresDriverCandidateEvidence:
             ("package version", self.package_version),
             ("license", self.license_spdx),
         ):
-            if type(value) is not str or not value.strip():
-                raise PostgresDriverCandidateEvidenceError(
-                    f"PostgreSQL driver {label} evidence is invalid"
-                )
+            _validate_identity_text(label, value)
         if type(self.python_versions) is not tuple or not self.python_versions:
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver Python version evidence is invalid"
@@ -98,6 +116,10 @@ class PostgresDriverCandidateEvidence:
             type(version) is not str or _MINOR_PYTHON_VERSION.fullmatch(version) is None
             for version in self.python_versions
         ):
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver Python version evidence is invalid"
+            )
+        if len(set(self.python_versions)) != len(self.python_versions):
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver Python version evidence is invalid"
             )
