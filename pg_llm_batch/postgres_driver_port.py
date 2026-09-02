@@ -18,9 +18,10 @@ class PostgresCursorPort(ABC):
     """Describe the synchronous cursor surface used by pg-llm-batch.
 
     Implementations must preserve parameter binding rather than interpolating
-    SQL text themselves. The fetch methods intentionally expose driver-neutral
-    Python objects because individual bounded contexts validate row shapes at
-    their own trust boundaries.
+    SQL text themselves. Materialized result rows use positional tuples as the
+    canonical package representation because existing bounded contexts use tuple
+    indexing and equality. A concrete driver returning another row container must
+    normalize it inside its adapter before exposing it through this port.
     """
 
     @abstractmethod
@@ -45,24 +46,26 @@ class PostgresCursorPort(ABC):
         """
 
     @abstractmethod
-    def fetchone(self) -> object | None:
-        """Return the next driver row, or ``None`` when no row remains.
+    def fetchone(self) -> tuple[object, ...] | None:
+        """Return one canonical tuple row, or ``None`` when no row remains.
 
-        Domain code remains responsible for validating the returned row's exact
-        shape and primitive types before treating database evidence as trusted.
+        The adapter owns only the row-container normalization. The consuming
+        bounded context remains responsible for validating field count, primitive
+        types, and semantic meaning before database evidence becomes trusted.
         """
 
     @abstractmethod
-    def fetchmany(self, size: int) -> list[object]:
-        """Return at most ``size`` rows through a finite materialization call.
+    def fetchmany(self, size: int) -> list[tuple[object, ...]]:
+        """Return at most ``size`` canonical tuple rows.
 
         Bounded contexts use this operation when an explicit row budget is part
-        of the product contract; adapters must preserve that finite request.
+        of the product contract; adapters must preserve that finite request and
+        fail closed rather than silently dropping malformed materialized rows.
         """
 
     @abstractmethod
-    def fetchall(self) -> list[object]:
-        """Return all rows for callers whose query already has a bounded result.
+    def fetchall(self) -> list[tuple[object, ...]]:
+        """Return canonical tuple rows for an already bounded result set.
 
         This method exists for compatibility with current package code. New
         untrusted-result paths should prefer a bounded query and ``fetchmany``.
