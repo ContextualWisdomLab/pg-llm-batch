@@ -210,10 +210,14 @@ def test_driver_uses_psycopg_conninfo_and_jsonb_contracts() -> None:
     assert adapted.obj == {"count": 1}
 
 
-def test_driver_classifies_only_psycopg_conninfo_grammar_failures() -> None:
+def test_driver_classifies_only_adapter_owned_conninfo_grammar_failures() -> None:
     driver = PsycopgDriverAdapter()
 
-    assert driver.is_invalid_conninfo(ProgrammingError("invalid conninfo")) is True
+    with pytest.raises(PsycopgDriverAdapterError) as invalid_conninfo:
+        driver.parse_conninfo("host='unterminated")
+
+    assert driver.is_invalid_conninfo(invalid_conninfo.value) is True
+    assert driver.is_invalid_conninfo(ProgrammingError("syntax error")) is False
     assert driver.is_invalid_conninfo(RuntimeError("invalid conninfo")) is False
 
 
