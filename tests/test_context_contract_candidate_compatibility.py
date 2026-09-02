@@ -24,6 +24,7 @@ from pg_llm_batch.context_contract_release import (
 
 
 VALID_CANDIDATE = ContextContractCandidatePin(
+    distribution_name="cwl-context-contracts",
     source_commit="a" * 40,
     candidate_artifact_sha256="b" * 64,
     profile_name="context-assertion-event-semantics.v1.json",
@@ -120,6 +121,7 @@ def test_candidate_release_identity_rejects_publication_drift(
 @pytest.mark.parametrize(
     ("field", "value"),
     [
+        ("distribution_name", "../context-contracts"),
         ("source_commit", "main"),
         ("source_commit", "A" * 40),
         ("candidate_artifact_sha256", "b" * 63),
