@@ -4,6 +4,7 @@ import pytest
 
 from pg_llm_batch.postgres_driver_candidate import (
     REQUIRED_POSTGRES_DRIVER_CAPABILITIES,
+    REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS,
     PostgresDriverCandidateEvidence,
     PostgresDriverCandidateEvidenceError,
     evaluate_postgres_driver_candidate,
@@ -11,6 +12,7 @@ from pg_llm_batch.postgres_driver_candidate import (
 
 
 FULL_CAPABILITIES = frozenset(REQUIRED_POSTGRES_DRIVER_CAPABILITIES)
+FULL_PYTHON_VERSIONS = tuple(sorted(REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS))
 SOURCE_SHA = "a" * 40
 ARTIFACT_SHA256 = "b" * 64
 
@@ -20,7 +22,7 @@ def _evidence(**overrides: object) -> PostgresDriverCandidateEvidence:
         "package_name": "candidate-driver",
         "package_version": "1.2.3",
         "license_spdx": "BSD-3-Clause",
-        "python_versions": ("3.12", "3.13", "3.14"),
+        "python_versions": FULL_PYTHON_VERSIONS,
         "source_commit_sha": SOURCE_SHA,
         "artifact_sha256": ARTIFACT_SHA256,
         "capabilities": FULL_CAPABILITIES,
@@ -45,6 +47,12 @@ def test_candidate_contract_covers_issue_322_type_and_parameter_parity() -> None
     } <= REQUIRED_POSTGRES_DRIVER_CAPABILITIES
 
 
+def test_candidate_contract_requires_every_repository_ci_python_version() -> None:
+    assert REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS == frozenset(
+        {"3.10", "3.12", "3.14"}
+    )
+
+
 @pytest.mark.parametrize(
     ("license_spdx", "expected_reason"),
     [
@@ -65,13 +73,19 @@ def test_candidate_fails_closed_when_license_is_not_explicitly_permissive(
     assert expected_reason in decision.reasons
 
 
-def test_candidate_requires_explicit_python_314_support_evidence() -> None:
+@pytest.mark.parametrize("missing_version", ["3.10", "3.12", "3.14"])
+def test_candidate_requires_every_repository_ci_python_version(
+    missing_version: str,
+) -> None:
+    candidate_versions = tuple(
+        version for version in FULL_PYTHON_VERSIONS if version != missing_version
+    )
     decision = evaluate_postgres_driver_candidate(
-        _evidence(python_versions=("3.12", "3.13"))
+        _evidence(python_versions=candidate_versions)
     )
 
     assert decision.eligible_for_parity_validation is False
-    assert decision.reasons == ("python_3_14_not_evidenced",)
+    assert decision.reasons == (f"missing_python_version:{missing_version}",)
 
 
 def test_candidate_reports_every_missing_runtime_capability_deterministically() -> None:
