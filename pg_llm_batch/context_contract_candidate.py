@@ -219,14 +219,14 @@ def require_context_contract_candidate_compatibility(
     verification: ContextContractCandidateVerification,
     expected: ContextContractCandidatePin,
 ) -> ContextContractCandidatePin:
-    """Accept only a positively verified candidate matching an exact test expectation.
+    """Accept only a positively verified candidate matching one test expectation.
 
     This helper lets pg-llm-batch preflight a specific upstream PR-head artifact while
     Context Fabric has no immutable release. ``expected`` is test configuration, not
-    production authority. Exact equality binds distribution, source, artifact,
-    profile, resource, conformance, admission, and provenance identities. The
-    returned candidate type cannot satisfy the distinct production release-admission
-    API.
+    production authority. Python packaging-equivalent distribution spellings identify
+    the same project; source, artifact, profile, resource, conformance, admission, and
+    provenance identities remain exact. The returned candidate type cannot satisfy
+    the distinct production release-admission API.
 
     Args:
         verification: Positive evidence for the observed unreleased candidate.
@@ -242,9 +242,23 @@ def require_context_contract_candidate_compatibility(
         verification
     )
     validated_expected = validate_context_contract_candidate_pin(expected)
-    if validated_verification.candidate_pin != validated_expected:
+    candidate = validated_verification.candidate_pin
+    if (
+        _canonical_distribution_name(candidate.distribution_name)
+        != _canonical_distribution_name(validated_expected.distribution_name)
+        or candidate.source_commit != validated_expected.source_commit
+        or candidate.candidate_artifact_sha256
+        != validated_expected.candidate_artifact_sha256
+        or candidate.profile_name != validated_expected.profile_name
+        or candidate.profile_sha256 != validated_expected.profile_sha256
+        or candidate.resource_name != validated_expected.resource_name
+        or candidate.resource_sha256 != validated_expected.resource_sha256
+        or candidate.conformance_sha256 != validated_expected.conformance_sha256
+        or candidate.admission_sha256 != validated_expected.admission_sha256
+        or candidate.provenance_sha256 != validated_expected.provenance_sha256
+    ):
         raise _invalid_candidate()
-    return validated_verification.candidate_pin
+    return candidate
 
 
 def require_context_contract_candidate_release_identity(
