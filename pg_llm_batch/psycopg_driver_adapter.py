@@ -30,9 +30,10 @@ class PsycopgDriverAdapterError(RuntimeError):
     """Report a fixed adapter-contract failure without reflecting database data.
 
     The adapter uses this error only when a driver-facing primitive violates the
-    migration port itself, such as a non-boolean autocommit state or a row-count
-    value with the wrong Python type. PostgreSQL execution errors continue to
-    propagate through Psycopg so existing bounded contexts can classify them.
+    migration port itself, such as a non-boolean autocommit state, unsupported row
+    container, or a row-count value with the wrong Python type. PostgreSQL
+    execution errors continue to propagate through Psycopg so existing bounded
+    contexts can classify them.
     """
 
 
@@ -47,16 +48,28 @@ class PsycopgInvalidConninfoError(PsycopgDriverAdapterError):
 
 
 class PsycopgCursorAdapter(PostgresCursorPort):
-    """Wrap one Psycopg-compatible cursor without changing its transaction owner.
+    """Wrap one PostgreSQL cursor while preserving canonical tuple row semantics.
 
-    The wrapper deliberately performs no SQL rewriting. Package-authored query
-    text and bound parameters are handed to the retained cursor unchanged, while
-    row materialization remains subject to each caller's existing trust-boundary
-    validation.
+    Package-authored query text and bound parameters are handed to the retained
+    cursor unchanged. Result rows are normalized from exact tuple/list containers
+    to tuples because current pg-llm-batch bounded contexts use positional tuple
+    identity and equality. This keeps a future DB-API driver that returns list rows
+    from silently changing application behavior.
     """
 
     def __init__(self, cursor: Any) -> None:
         self._cursor = cursor
+
+    @staticmethod
+    def _normalize_result_row(row: object | None) -> tuple[object, ...] | None:
+        """Normalize one DB-API row to the package's positional tuple contract."""
+        if row is None:
+            return None
+        if type(row) is tuple:
+            return row
+        if type(row) is list:
+            return tuple(row)
+        raise PsycopgDriverAdapterError("PostgreSQL driver result row is invalid")
 
     def execute(
         self,
@@ -76,19 +89,27 @@ class PsycopgCursorAdapter(PostgresCursorPort):
         self._cursor.executemany(query, params_seq)
         return self
 
-    def fetchone(self) -> object | None:
-        """Return the next raw row for validation by the owning bounded context."""
-        return self._cursor.fetchone()
+    def fetchone(self) -> tuple[object, ...] | None:
+        """Return the next row in the package's canonical tuple representation."""
+        return self._normalize_result_row(self._cursor.fetchone())
 
-    def fetchmany(self, size: int) -> list[object]:
-        """Return a strictly positive finite row page through the retained cursor."""
+    def fetchmany(self, size: int) -> list[tuple[object, ...]]:
+        """Return a finite page with every driver row normalized to a tuple."""
         if type(size) is not int or size <= 0:
             raise PsycopgDriverAdapterError("PostgreSQL driver fetch size is invalid")
-        return list(self._cursor.fetchmany(size))
+        return [
+            normalized
+            for row in self._cursor.fetchmany(size)
+            if (normalized := self._normalize_result_row(row)) is not None
+        ]
 
-    def fetchall(self) -> list[object]:
-        """Return all rows only for callers whose query already bounds the result."""
-        return list(self._cursor.fetchall())
+    def fetchall(self) -> list[tuple[object, ...]]:
+        """Return bounded query results with every row normalized to a tuple."""
+        return [
+            normalized
+            for row in self._cursor.fetchall()
+            if (normalized := self._normalize_result_row(row)) is not None
+        ]
 
     def row_count(self) -> int:
         """Return Psycopg's exact integer affected-row result, including -1 unknown."""
