@@ -56,14 +56,15 @@ class ContextContractReleaseVerification:
     """Bind release-readiness outcomes to the exact release identity they verify.
 
     A trusted discovery and verification boundary constructs this receipt only after
-    checking one immutable publication. Keeping the release pin inside the same
-    value prevents callers from accidentally combining gate outcomes for one release
-    with the identity of another release at the pg-llm-batch admission boundary.
-    Construction alone grants no deployment approval.
+    checking one immutable publication and the pinned distribution bytes. Keeping the
+    release pin inside the same value prevents callers from accidentally combining
+    gate outcomes for one release with the identity of another release at the
+    pg-llm-batch admission boundary. Construction alone grants no deployment approval.
     """
 
     release_pin: ContextContractReleasePin
     release_published: bool
+    artifact_verified: bool
     conformance_passed: bool
     admission_passed: bool
     provenance_verified: bool
@@ -202,7 +203,7 @@ def validate_context_contract_release_verification(
     """Snapshot and validate subject-bound Context Fabric release verification.
 
     The package-owned receipt type is checked before any member is read. The release
-    identity and all four gate outcomes are then snapshotted and independently
+    identity and all five gate outcomes are then snapshotted and independently
     validated so shaped objects, mutable aliases, non-boolean truthy values, or a
     mutated frozen receipt fail through the same non-reflecting error boundary.
 
@@ -221,6 +222,7 @@ def validate_context_contract_release_verification(
     try:
         release_pin = verification.release_pin
         release_published = verification.release_published
+        artifact_verified = verification.artifact_verified
         conformance_passed = verification.conformance_passed
         admission_passed = verification.admission_passed
         provenance_verified = verification.provenance_verified
@@ -229,6 +231,7 @@ def validate_context_contract_release_verification(
 
     validated_pin = validate_context_contract_release_pin(release_pin)
     _require_verified_gate(release_published)
+    _require_verified_gate(artifact_verified)
     _require_verified_gate(conformance_passed)
     _require_verified_gate(admission_passed)
     _require_verified_gate(provenance_verified)
@@ -236,6 +239,7 @@ def validate_context_contract_release_verification(
     return ContextContractReleaseVerification(
         release_pin=validated_pin,
         release_published=release_published,
+        artifact_verified=artifact_verified,
         conformance_passed=conformance_passed,
         admission_passed=admission_passed,
         provenance_verified=provenance_verified,
@@ -364,16 +368,16 @@ def require_context_contract_release_ready(
     approved: ContextContractReleaseApproval,
     required_approval_policy_sha256: str,
 ) -> ContextContractReleasePin:
-    """Admit only verification approved by the configured deployment policy.
+    """Admit only artifact-verified release evidence approved by deployment policy.
 
     Release identity alone is insufficient authority because it cannot prove that
-    publication, executable conformance, admission, and provenance verification
-    actually succeeded. An observed verification receipt therefore cannot double as
-    policy approval. The trusted deployment/release-policy boundary must provide a
-    separate approval containing the exact verification plus a content-free policy
-    SHA-256 identity, and the deployment must independently require that exact policy
-    identity. This function neither discovers a release nor authenticates the
-    external policy boundary itself.
+    publication, pinned distribution integrity, executable conformance, admission,
+    and provenance verification actually succeeded. An observed verification receipt
+    therefore cannot double as policy approval. The trusted deployment/release-policy
+    boundary must provide a separate approval containing the exact verification plus
+    a content-free policy SHA-256 identity, and the deployment must independently
+    require that exact policy identity. This function neither discovers a release nor
+    authenticates the external policy boundary itself.
 
     Args:
         verification: Subject-bound release identity and positive gate outcomes.
@@ -414,12 +418,12 @@ def require_context_contract_release_transition_ready(
 ) -> ContextContractReleasePin:
     """Admit a release change only with exact migration and rollback evidence.
 
-    The target release must first pass the ordinary publication, conformance,
-    admission, provenance, and deployment-policy boundary. Transition evidence is
-    then independently validated and must name both the exact currently deployed
-    release and the exact admitted target. No semantic-version ordering is inferred:
-    upgrade, downgrade, or lateral compatibility remains an explicit operator-owned
-    migration and rollback decision represented by the supplied evidence.
+    The target release must first pass the ordinary publication, artifact integrity,
+    conformance, admission, provenance, and deployment-policy boundary. Transition
+    evidence is then independently validated and must name both the exact currently
+    deployed release and the exact admitted target. No semantic-version ordering is
+    inferred: upgrade, downgrade, or lateral compatibility remains an explicit
+    operator-owned migration and rollback decision represented by supplied evidence.
 
     Args:
         current_release: Exact immutable release identity currently in use.
