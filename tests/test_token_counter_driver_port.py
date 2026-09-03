@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier, Lock
+import time
 from typing import Any
 
 import pytest
@@ -34,11 +37,17 @@ class _Cursor:
     def execute(self, query: str, params: object | None = None) -> _Cursor:
         self.driver.executions.append((query, params))
         if "tiktoken_count" in query and "to_regprocedure" not in query:
-            if self.driver.primary_error is not None:
-                error = self.driver.primary_error
-                self.driver.primary_error = None
-                raise error
-            self.driver.rows.append((7,))
+            self.driver.enter_count_execution()
+            try:
+                if self.driver.execution_delay_seconds:
+                    time.sleep(self.driver.execution_delay_seconds)
+                if self.driver.primary_error is not None:
+                    error = self.driver.primary_error
+                    self.driver.primary_error = None
+                    raise error
+                self.driver.rows.append((7,))
+            finally:
+                self.driver.leave_count_execution()
         elif "tiktoken_encode" in query and "to_regprocedure" not in query:
             self.driver.rows.append((9,))
         return self
@@ -73,12 +82,21 @@ class _Connection:
 class _Driver:
     """Minimal Psycopg-free driver implementing the token-counting port surface."""
 
-    def __init__(self, *, primary_error: BaseException | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        primary_error: BaseException | None = None,
+        execution_delay_seconds: float = 0.0,
+    ) -> None:
         self.primary_error = primary_error
+        self.execution_delay_seconds = execution_delay_seconds
         self.executions: list[tuple[str, object | None]] = []
         self.rows: list[tuple[object, ...]] = [(True, True, True)]
         self.connections: list[_Connection] = []
         self.dsn_values: list[str] = []
+        self._execution_lock = Lock()
+        self.active_count_executions = 0
+        self.max_active_count_executions = 0
 
     def connect(
         self,
@@ -94,6 +112,20 @@ class _Driver:
 
     def is_undefined_function(self, error: BaseException) -> bool:
         return isinstance(error, _UndefinedFunctionError)
+
+    def enter_count_execution(self) -> None:
+        """Record concurrent use of the shared token-counting connection."""
+        with self._execution_lock:
+            self.active_count_executions += 1
+            self.max_active_count_executions = max(
+                self.max_active_count_executions,
+                self.active_count_executions,
+            )
+
+    def leave_count_execution(self) -> None:
+        """Release one deterministic concurrent-execution observation."""
+        with self._execution_lock:
+            self.active_count_executions -= 1
 
 
 def test_token_counter_uses_injected_driver_without_psycopg(
@@ -116,6 +148,32 @@ def test_token_counter_uses_injected_driver_without_psycopg(
     assert driver.dsn_values == ["postgresql://x"]
     assert driver.connections[0].autocommit_values == [True]
     assert metadata_calls == [("postgresql://x", "model-a", driver)]
+
+
+def test_token_counter_serializes_shared_driver_connection_use(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A DB-API level-1 candidate must never receive concurrent connection calls."""
+    driver = _Driver(execution_delay_seconds=0.03)
+    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    monkeypatch.setattr(
+        token_counter_module,
+        "get_model_metadata",
+        lambda _dsn, _model, *, postgres_driver=None: {"tokenizer_model": "o200k_base"},
+    )
+    counter = TokenCounter("postgresql://x", postgres_driver=driver)
+    counter.get_encoder("model-a")
+    start = Barrier(4)
+
+    def _count_one(index: int) -> int:
+        start.wait()
+        return counter.count_tokens(f"hello-{index}", "model-a")
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        results = list(executor.map(_count_one, range(4)))
+
+    assert results == [7, 7, 7, 7]
+    assert driver.max_active_count_executions == 1
 
 
 def test_token_counter_uses_driver_error_classification_for_encode_fallback(
