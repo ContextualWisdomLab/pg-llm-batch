@@ -112,10 +112,13 @@ def test_candidate_cursor_preserves_parameter_binding_and_wrapper_identity() -> 
 
 def test_candidate_cursor_normalizes_pg8000_list_rows_to_tuples() -> None:
     raw = _FakeCursor()
+    adapter = Pg8000CandidateCursorAdapter(raw)
+
+    assert adapter.fetchone() is None
+
     raw.fetchone_value = ["one", 1]
     raw.fetchmany_value = [["two", 2], ("three", 3)]
     raw.fetchall_value = [("four", 4), ["five", 5]]
-    adapter = Pg8000CandidateCursorAdapter(raw)
 
     assert adapter.fetchone() == ("one", 1)
     assert adapter.fetchmany(2) == [("two", 2), ("three", 3)]
@@ -191,6 +194,10 @@ def test_candidate_connection_validates_autocommit_and_closed_state() -> None:
         adapter.set_autocommit(1)  # type: ignore[arg-type]
 
     raw.closed = 0
+    with pytest.raises(Pg8000CandidateAdapterError, match="closed state is unavailable"):
+        adapter.is_closed()
+
+    del raw.closed
     with pytest.raises(Pg8000CandidateAdapterError, match="closed state is unavailable"):
         adapter.is_closed()
 
