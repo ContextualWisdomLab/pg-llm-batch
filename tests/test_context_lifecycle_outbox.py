@@ -19,7 +19,11 @@ from pg_llm_batch.context_lifecycle_outbox import (
 from pg_llm_batch.exceptions import ConfigError, ValidationError
 
 
-def evidence(*, evidence_id: str = "event-1", evidence_digest: str = "f" * 64) -> ContextLifecycleEvidenceSeed:
+def evidence(
+    *,
+    evidence_id: str = "event-1",
+    evidence_digest: str = "f" * 64,
+) -> ContextLifecycleEvidenceSeed:
     """Build one content-free lifecycle evidence value for outbox tests."""
     return ContextLifecycleEvidenceSeed(
         evidence_id=evidence_id,
@@ -36,12 +40,37 @@ def evidence(*, evidence_id: str = "event-1", evidence_digest: str = "f" * 64) -
     )
 
 
+def evidence_row(seed: ContextLifecycleEvidenceSeed) -> tuple[Any, ...]:
+    """Return the durable column order for one test evidence value."""
+    return (
+        seed.evidence_id,
+        seed.event_type,
+        seed.tenant_scope_sha256,
+        seed.subject_ref_sha256,
+        seed.authority_ref_sha256,
+        seed.origin_ref_sha256,
+        seed.truth_status,
+        seed.valid_time,
+        seed.system_time,
+        seed.provenance_ref_sha256,
+        seed.evidence_ref_sha256,
+    )
+
+
 class FakeCursor:
     """Execute the bounded outbox persistence statements in memory."""
 
     def __init__(self, database: "FakeDatabase") -> None:
         self.database = database
         self.result: Any = None
+
+    def __enter__(self) -> "FakeCursor":
+        """Enter the fake cursor context."""
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Exit the fake cursor context without swallowing exceptions."""
+        return None
 
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
         """Execute one expected tenant-qualified outbox statement."""
@@ -58,6 +87,15 @@ class FakeCursor:
             tenant = parameters[0]
             seed_values = parameters[1:]
             key = (tenant, seed_values[0])
+            if self.database.insert_conflict_without_row:
+                self.database.insert_conflict_without_row = False
+                self.result = None
+                return
+            if self.database.insert_race_row is not None:
+                self.database.rows[key] = self.database.insert_race_row
+                self.database.insert_race_row = None
+                self.result = None
+                return
             if key in self.database.rows:
                 self.result = None
                 return
@@ -113,10 +151,12 @@ class FakeDatabase:
     """Hold deterministic durable rows and SQL evidence for outbox tests."""
 
     def __init__(self) -> None:
-        self.rows: dict[tuple[str, str], tuple[Any, ...]] = {}
+        self.rows: dict[tuple[str, str], Any] = {}
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.dsns: list[str] = []
         self.commits = 0
+        self.insert_race_row: tuple[Any, ...] | None = None
+        self.insert_conflict_without_row = False
 
 
 @pytest.fixture
@@ -137,6 +177,8 @@ def test_schema_contract_is_rls_scoped_and_has_rollback() -> None:
     assert "ENABLE ROW LEVEL SECURITY" in migration
     assert "FORCE ROW LEVEL SECURITY" in migration
     assert "current_setting('pg_llm_batch.tenant_scope', true)" in migration
+    assert "valid_time TEXT NOT NULL" in migration
+    assert "valid_time::timestamptz IS NOT NULL" in migration
     assert "DROP TABLE IF EXISTS llm_context_lifecycle_outbox" in rollback
 
 
@@ -153,6 +195,22 @@ def test_store_validates_trusted_tenant_before_sql() -> None:
         PostgresContextLifecycleOutboxStore("postgresql://unit", tenant_scope=" bad")
 
 
+def test_enqueue_rejects_invalid_evidence_before_sql(database: FakeDatabase) -> None:
+    """Shaped or malformed evidence cannot reach the durable outbox."""
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    with pytest.raises(ValidationError):
+        store.enqueue("not-evidence")  # type: ignore[arg-type]
+    assert database.calls == []
+
+
+def test_load_rejects_invalid_event_id_before_sql(database: FakeDatabase) -> None:
+    """Malformed event identifiers fail before tenant state or SQL is touched."""
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    with pytest.raises(ValidationError):
+        store.load("bad/event")
+    assert database.calls == []
+
+
 def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
     """An identical event replay reuses the durable row without rewriting it."""
     store = PostgresContextLifecycleOutboxStore(
@@ -164,7 +222,13 @@ def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
     assert store.enqueue(seed) == seed
     assert database.commits == 2
     statements = [sql for sql, _ in database.calls]
-    assert sum(sql.startswith("INSERT INTO llm_context_lifecycle_outbox") for sql in statements) == 1
+    assert (
+        sum(
+            sql.startswith("INSERT INTO llm_context_lifecycle_outbox")
+            for sql in statements
+        )
+        == 1
+    )
 
 
 def test_enqueue_rejects_conflicting_replay(database: FakeDatabase) -> None:
@@ -188,6 +252,34 @@ def test_enqueue_in_transaction_does_not_commit_caller_work(database: FakeDataba
     assert database.commits == 0
 
 
+def test_enqueue_accepts_identical_initial_insert_race(database: FakeDatabase) -> None:
+    """A concurrent identical first writer remains an idempotent success."""
+    seed = evidence()
+    database.insert_race_row = evidence_row(seed)
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    assert store.enqueue(seed) == seed
+
+
+def test_enqueue_rejects_different_initial_insert_race(database: FakeDatabase) -> None:
+    """A concurrent conflicting first writer fails without overwriting its row."""
+    seed = evidence()
+    database.insert_race_row = evidence_row(
+        replace(seed, evidence_ref_sha256="0" * 64)
+    )
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    with pytest.raises(ContextLifecycleOutboxConflictError) as raised:
+        store.enqueue(seed)
+    assert raised.value.reason == "initial_event_race"
+
+
+def test_enqueue_rejects_disappearing_insert_conflict(database: FakeDatabase) -> None:
+    """A conflict with no visible durable row fails closed for reconciliation."""
+    database.insert_conflict_without_row = True
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    with pytest.raises(RuntimeError, match="conflict row disappeared"):
+        store.enqueue(evidence())
+
+
 def test_load_is_tenant_qualified_and_revalidates_rows(database: FakeDatabase) -> None:
     """Durable rows are isolated by local tenant scope and validated on read."""
     store = PostgresContextLifecycleOutboxStore(
@@ -197,8 +289,24 @@ def test_load_is_tenant_qualified_and_revalidates_rows(database: FakeDatabase) -
     seed = evidence()
     store.enqueue(seed)
     assert store.load(seed.evidence_id) == seed
-    select_params = [params for sql, params in database.calls if sql.startswith("SELECT evidence_id")]
+    select_params = [
+        params
+        for sql, params in database.calls
+        if sql.startswith("SELECT evidence_id")
+    ]
     assert ("tenant-a", seed.evidence_id) in select_params
+
+
+@pytest.mark.parametrize("malformed_row", (object(), ("bad",)))
+def test_load_rejects_malformed_durable_row(
+    database: FakeDatabase,
+    malformed_row: Any,
+) -> None:
+    """Malformed direct-database state cannot become application evidence."""
+    database.rows[("standalone", "event-1")] = malformed_row
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    with pytest.raises(RuntimeError, match="invalid shape"):
+        store.load("event-1")
 
 
 def test_apply_schema_uses_explicit_migration_and_commit(
@@ -211,4 +319,12 @@ def test_apply_schema_uses_explicit_migration_and_commit(
     apply_context_lifecycle_outbox_schema("postgresql://unit", str(sql_path))
     assert database.dsns == ["postgresql://unit"]
     assert database.calls == [("SELECT 1;", ())]
+    assert database.commits == 1
+
+
+def test_apply_schema_uses_packaged_migration_by_default(database: FakeDatabase) -> None:
+    """Default installation executes the package-owned reviewed migration."""
+    apply_context_lifecycle_outbox_schema("postgresql://unit")
+    assert database.dsns == ["postgresql://unit"]
+    assert database.calls[0][0].startswith("-- SPDX-License-Identifier: Apache-2.0")
     assert database.commits == 1
