@@ -243,16 +243,30 @@ def test_candidate_connection_validates_autocommit_and_closed_state() -> None:
         adapter.is_closed()
 
 
-def test_candidate_connection_close_and_context_delegate_to_raw_connection() -> None:
+def test_candidate_connection_context_commits_and_closes_without_raw_context_dependency() -> None:
+    raw = _FakeConnection()
+    adapter = Pg8000CandidateConnectionAdapter(raw)
+
+    assert adapter.__enter__() is adapter
+    assert raw.enter_count == 0
+    assert adapter.__exit__(None, None, None) is False
+    assert raw.commit_count == 1
+    assert raw.rollback_count == 0
+    assert raw.close_count == 1
+    assert raw.exit_args is None
+    assert adapter.is_closed() is True
+
+
+def test_candidate_connection_context_rolls_back_and_closes_on_exception() -> None:
     raw = _FakeConnection()
     adapter = Pg8000CandidateConnectionAdapter(raw)
     error = ValueError("bad")
 
     assert adapter.__enter__() is adapter
-    assert raw.enter_count == 1
+    assert raw.enter_count == 0
     assert adapter.__exit__(ValueError, error, None) is False
-    assert raw.exit_args == (ValueError, error, None)
-
-    adapter.close()
+    assert raw.commit_count == 0
+    assert raw.rollback_count == 1
     assert raw.close_count == 1
+    assert raw.exit_args is None
     assert adapter.is_closed() is True
