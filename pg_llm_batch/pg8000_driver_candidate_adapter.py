@@ -201,14 +201,21 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
         exc: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """Close the DB-API cursor and never suppress an application exception.
+        """Close the DB-API cursor without replacing an active application error.
 
         Cursor exit owns resource cleanup only; transaction commit or rollback
-        remains a connection-level responsibility. Returning ``False`` preserves
-        any active exception while avoiding dependence on driver-specific context
-        manager behavior that pg8000's public DB-API contract does not require.
+        remains a connection-level responsibility. If cleanup fails while an
+        application exception is already in flight, the application exception
+        remains primary. A close-only failure still propagates. Returning
+        ``False`` preserves ordinary context-manager exception propagation while
+        avoiding a driver-specific cursor context-manager dependency.
         """
-        self._cursor.close()
+        try:
+            self._cursor.close()
+        except BaseException:
+            if exc is not None:
+                raise exc from None
+            raise
         return False
 
 
