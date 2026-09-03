@@ -306,20 +306,31 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         exc: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """Commit or roll back, always close, and never suppress an exception.
+        """Commit or roll back, attempt close, and preserve transaction failures.
 
         pg8000's public DB-API contract documents ``commit``, ``rollback``, and
         ``close`` but does not require a connection context-manager extension.
         Owning the package policy here removes that undocumented dependency while
         retaining the transaction semantics required by candidate admission. A
-        commit or rollback failure still propagates, and ``finally`` ensures the
-        underlying session is closed on either success or failure.
+        commit or rollback failure remains the primary failure even if later
+        connection cleanup also fails; close-only failures still propagate.
         """
+        transaction_error: BaseException | None = None
         try:
             if exc_type is None:
                 self.commit()
             else:
                 self.rollback()
-        finally:
+        except BaseException as error:
+            transaction_error = error
+
+        try:
             self.close()
+        except BaseException:
+            if transaction_error is not None:
+                raise transaction_error from None
+            raise
+
+        if transaction_error is not None:
+            raise transaction_error
         return False
