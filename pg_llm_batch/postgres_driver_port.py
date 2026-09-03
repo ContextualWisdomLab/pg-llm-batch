@@ -106,10 +106,11 @@ class PostgresCursorPort(ABC):
 class PostgresConnectionPort(ABC):
     """Describe the synchronous PostgreSQL connection capability the package uses.
 
-    The port deliberately keeps transaction mode and closed-state inspection
-    explicit because current token-counting, configuration, and batch assembly
-    paths depend on those semantics. A replacement driver must not weaken RLS,
-    replay, or recovery behavior by hiding them behind an opaque wrapper.
+    The port deliberately keeps transaction mode and local closed-state
+    inspection explicit because current token-counting, configuration, and batch
+    assembly paths depend on those semantics. A replacement driver must not
+    weaken RLS, replay, or recovery behavior by hiding them behind an opaque
+    wrapper.
     """
 
     @abstractmethod
@@ -159,10 +160,13 @@ class PostgresConnectionPort(ABC):
 
     @abstractmethod
     def is_closed(self) -> bool:
-        """Report whether this concrete connection can still execute work.
+        """Report whether this adapter knows the connection was locally closed.
 
-        Cached connection owners use this signal to reconnect deterministically
-        instead of issuing work through a connection the driver has closed.
+        Cached owners use this signal to avoid intentionally reusing a connection
+        whose capability has already been released. This method is not a network
+        liveness probe: an unexpected transport or server failure must surface
+        from the attempted database operation and enter the bounded recovery path
+        rather than being guessed from driver-private state.
         """
 
     @abstractmethod
