@@ -103,8 +103,8 @@ def _persisted_remote_batch_row(
 def test_observation_order_reservation_uses_injected_driver_without_psycopg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Global lifecycle ordering must remain usable after the Psycopg graph is removed."""
-    driver = _Driver(rows=[(41,)])
+    """Driver migration must retain the default standalone tenant boundary."""
+    driver = _Driver(rows=[("standalone",), (41,)])
     monkeypatch.setattr(db, "psycopg", None)
 
     order = db.reserve_remote_batch_observation_order(
@@ -115,7 +115,11 @@ def test_observation_order_reservation_uses_injected_driver_without_psycopg(
     assert order == 41
     assert driver.connections == ["postgresql://x"]
     assert driver.executions == [
-        ("SELECT nextval('llm_remote_batch_observation_sequence')", None)
+        (
+            "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+            ("standalone",),
+        ),
+        ("SELECT nextval('llm_remote_batch_observation_sequence')", None),
     ]
 
 
