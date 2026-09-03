@@ -151,6 +151,24 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     _assert_external_actions_are_pinned(workflow)
 
 
+def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> None:
+    """Keep replacement-driver proof exact without creating another runner lane."""
+    workflow = _read(".github/workflows/ci.yml")
+    project = _read("pyproject.toml")
+
+    assert "pg8000-candidate-python314:" not in workflow
+    assert "pg8000==1.31.5" in workflow
+    assert (
+        "0af2c1926b153307639868d2ee5cef6cd3a7d07448e12736989b10e1d491e201"
+        in workflow
+    )
+    assert "tests/smoke_pg8000_candidate_postgres.py" in workflow
+    assert "pg8000-candidate-ci-password" in workflow
+    assert "PG8000_CANDIDATE_PASSWORD_FILE" in workflow
+    assert "Tear down candidate PostgreSQL runtime" in workflow
+    assert '"pg8000' not in project
+
+
 def test_workflow_step_field_matching_ignores_comments_and_unrelated_values() -> None:
     """Comment or nested text must not masquerade as workflow step fields."""
     decoy = """      - name: Decoy
