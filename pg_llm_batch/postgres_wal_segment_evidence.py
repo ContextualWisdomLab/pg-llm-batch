@@ -90,42 +90,86 @@ class PostgresWalSegmentBinding:
         return False
 
     def as_dict(self) -> dict[str, object]:
-        """Return stable content-free WAL segment evidence metadata."""
+        """Return one validated content-free WAL evidence snapshot.
+
+        Serialization fails closed if caller-accessible dataclass fields no longer
+        match the protected inspection evidence. The returned mapping is built
+        only from the scalar snapshot that passed validation, so later mutation
+        cannot mix unvalidated authority fields into a positive evidence receipt.
+        """
+        snapshot = _validated_binding_snapshot(self)
+        if snapshot is None:
+            raise PostgresWalSegmentEvidenceError(
+                "PostgreSQL WAL segment binding is invalid"
+            )
+        segment_name, wal_segment_size_bytes, sha256, size_bytes = snapshot
         return {
             "schema_version": 1,
-            "segment_name": self.segment_name,
-            "wal_segment_size_bytes": self.wal_segment_size_bytes,
-            "sha256": self.sha256,
-            "size_bytes": self.size_bytes,
-            "archive_bytes_hashed": self.archive_bytes_hashed,
-            "wal_header_identity_verified": self.wal_header_identity_verified,
-            "timeline_ancestry_verified": self.timeline_ancestry_verified,
-            "replay_verified": self.replay_verified,
+            "segment_name": segment_name,
+            "wal_segment_size_bytes": wal_segment_size_bytes,
+            "sha256": sha256,
+            "size_bytes": size_bytes,
+            "archive_bytes_hashed": True,
+            "wal_header_identity_verified": False,
+            "timeline_ancestry_verified": False,
+            "replay_verified": False,
         }
+
+
+def _validated_binding_snapshot(
+    binding: object,
+) -> tuple[str, int, str, int] | None:
+    """Return stable authority fields only when one validation window stays unchanged."""
+    if type(binding) is not PostgresWalSegmentBinding:
+        return None
+
+    segment_name = binding.segment_name
+    wal_segment_size_bytes = binding.wal_segment_size_bytes
+    sha256 = binding.sha256
+    size_bytes = binding.size_bytes
+    artifact_evidence = binding.artifact_evidence
+
+    if not _valid_segment_name(segment_name):
+        return None
+    if not _valid_wal_segment_size(wal_segment_size_bytes):
+        return None
+    if not _segment_name_matches_size(segment_name, wal_segment_size_bytes):
+        return None
+    if type(sha256) is not str or type(size_bytes) is not int:
+        return None
+    if type(artifact_evidence) is not PostgresBackupArtifactEvidence:
+        return None
+
+    artifact_sha256 = artifact_evidence.sha256
+    artifact_size_bytes = artifact_evidence.size_bytes
+    if type(artifact_sha256) is not str or type(artifact_size_bytes) is not int:
+        return None
+    if (
+        size_bytes != wal_segment_size_bytes
+        or sha256 != artifact_sha256
+        or size_bytes != artifact_size_bytes
+    ):
+        return None
+    if not postgres_backup_artifact_evidence_was_inspected(artifact_evidence):
+        return None
+
+    if (
+        binding.segment_name != segment_name
+        or binding.wal_segment_size_bytes != wal_segment_size_bytes
+        or binding.sha256 != sha256
+        or binding.size_bytes != size_bytes
+        or binding.artifact_evidence is not artifact_evidence
+        or artifact_evidence.sha256 != artifact_sha256
+        or artifact_evidence.size_bytes != artifact_size_bytes
+    ):
+        return None
+
+    return segment_name, wal_segment_size_bytes, sha256, size_bytes
 
 
 def postgres_wal_segment_binding_is_valid(binding: object) -> bool:
     """Return whether every authority-bearing field still matches inspected bytes."""
-    if type(binding) is not PostgresWalSegmentBinding:
-        return False
-    if not _valid_segment_name(binding.segment_name):
-        return False
-    if not _valid_wal_segment_size(binding.wal_segment_size_bytes):
-        return False
-    if not _segment_name_matches_size(
-        binding.segment_name,
-        binding.wal_segment_size_bytes,
-    ):
-        return False
-    if not postgres_backup_artifact_evidence_was_inspected(binding.artifact_evidence):
-        return False
-    return (
-        type(binding.sha256) is str
-        and type(binding.size_bytes) is int
-        and binding.size_bytes == binding.wal_segment_size_bytes
-        and binding.sha256 == binding.artifact_evidence.sha256
-        and binding.size_bytes == binding.artifact_evidence.size_bytes
-    )
+    return _validated_binding_snapshot(binding) is not None
 
 
 def bind_postgres_wal_segment_evidence(
