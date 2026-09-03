@@ -33,10 +33,8 @@ import re
 import sys
 import warnings
 from contextlib import ExitStack
+from functools import partial
 from typing import List, Optional
-
-from psycopg import ProgrammingError
-from psycopg.conninfo import conninfo_to_dict
 
 from . import db
 from .batch_api_client import BatchAPIClient, config_credentials_provider
@@ -44,6 +42,7 @@ from .bootstrap import resolve_dsn, resolve_secret_key
 from .config import PostgresConfigStore, SecretStore
 from .exceptions import ConfigError, PgLlmBatchError
 from .health import check_health, serve_healthz
+from .postgres_driver_port import PostgresDriverPort
 from .token_counter import TokenCounter
 
 MAX_SECRET_INPUT_CHARACTERS = 65_536
@@ -73,28 +72,50 @@ class _RedactingArgumentParser(argparse.ArgumentParser):
         super().error(redacted_message)
 
 
-def _validate_cli_dsn(value: str) -> str:
-    """Accept valid libpq selectors while refusing credential-bearing argv data."""
+def _default_postgres_driver() -> PostgresDriverPort:
+    """Load the retained Psycopg adapter only when a CLI parse needs the default."""
+    from .psycopg_driver_adapter import PsycopgDriverAdapter
+
+    return PsycopgDriverAdapter()
+
+
+def _validate_cli_dsn(
+    value: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> str:
+    """Accept valid PostgreSQL selectors without concrete-driver coupling."""
+    driver = (
+        postgres_driver
+        if postgres_driver is not None
+        else _default_postgres_driver()
+    )
     try:
-        parameters = conninfo_to_dict(value)
-    except ProgrammingError:
-        raise argparse.ArgumentTypeError(
-            "Postgres DSN must be valid libpq connection information"
-        ) from None
+        parameters = driver.parse_conninfo(value)
+    except Exception as exc:
+        if driver.is_invalid_conninfo(exc):
+            raise argparse.ArgumentTypeError(
+                "Postgres DSN must be valid connection information"
+            ) from None
+        raise
     if CLI_DSN_SENSITIVE_PARAMETERS.intersection(parameters):
         raise argparse.ArgumentTypeError(
             "Credential-bearing Postgres DSNs are not accepted in --dsn; "
-            "use libpq secret mechanisms outside process argv"
+            "use PostgreSQL secret mechanisms outside process argv"
         )
     return value
 
 
-def _add_common(parser: argparse.ArgumentParser) -> None:
+def _add_common(
+    parser: argparse.ArgumentParser,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> None:
     """Add the shared credential-free ``--dsn`` selector to a subcommand parser."""
     parser.add_argument(
         "--dsn",
         default=None,
-        type=_validate_cli_dsn,
+        type=partial(_validate_cli_dsn, postgres_driver=postgres_driver),
         help=(
             "Credential-free Postgres selector "
             "(else PG_LLM_BATCH_DSN bootstrap env var)"
@@ -186,8 +207,11 @@ def _read_token_input() -> str:
         raise ConfigError("Token input must be valid UTF-8") from None
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the command-line parser and all supported subcommands."""
+def build_parser(
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> argparse.ArgumentParser:
+    """Build the command-line parser with an injectable PostgreSQL DSN parser."""
     parser = _RedactingArgumentParser(
         prog="pg_llm_batch",
         description="Standalone Postgres LLM batch engine",
@@ -195,31 +219,31 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init-db", help="Apply batch schema (idempotent)")
-    _add_common(p_init)
+    _add_common(p_init, postgres_driver=postgres_driver)
 
     p_cfg = sub.add_parser("config", help="Manage KV config and secrets")
     cfg_sub = p_cfg.add_subparsers(dest="config_command", required=True)
     p_set = cfg_sub.add_parser("set", help="Set a config value")
-    _add_common(p_set)
+    _add_common(p_set, postgres_driver=postgres_driver)
     p_set.add_argument("category")
     p_set.add_argument("key")
     p_set.add_argument("value")
     p_get = cfg_sub.add_parser("get", help="Get a config value")
-    _add_common(p_get)
+    _add_common(p_get, postgres_driver=postgres_driver)
     p_get.add_argument("category")
     p_get.add_argument("key")
     p_secret = cfg_sub.add_parser(
         "set-secret",
         help="Store a secret from a no-echo prompt or standard input",
     )
-    _add_common(p_secret)
+    _add_common(p_secret, postgres_driver=postgres_driver)
     p_secret.add_argument("secret_key")
 
     p_count = sub.add_parser(
         "count-tokens",
         help="Count bounded UTF-8 stdin content without exposing it in argv",
     )
-    _add_common(p_count)
+    _add_common(p_count, postgres_driver=postgres_driver)
     p_count.add_argument("--model", required=True)
     p_count.add_argument(
         "--stdin",
@@ -229,38 +253,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     p_submit = sub.add_parser("submit", help="Upload payload + create batch job")
-    _add_common(p_submit)
+    _add_common(p_submit, postgres_driver=postgres_driver)
     p_submit.add_argument("--endpoint", required=True, help="Endpoint alias")
     p_submit.add_argument("--file-path", required=True, help="memory://<file_id>")
     p_submit.add_argument("--batch-endpoint", default="/v1/chat/completions")
 
     p_poll = sub.add_parser("poll", help="Poll a batch job status once")
-    _add_common(p_poll)
+    _add_common(p_poll, postgres_driver=postgres_driver)
     p_poll.add_argument("--endpoint", required=True)
     p_poll.add_argument("--batch-id", required=True)
 
     p_wait = sub.add_parser("wait", help="Wait for a terminal batch status")
-    _add_common(p_wait)
+    _add_common(p_wait, postgres_driver=postgres_driver)
     p_wait.add_argument("--endpoint", required=True)
     p_wait.add_argument("--batch-id", required=True)
     p_wait.add_argument("--poll-interval", type=float, default=5.0)
     p_wait.add_argument("--timeout", type=float, default=3600.0)
 
     p_retrieve = sub.add_parser("retrieve", help="Download batch results")
-    _add_common(p_retrieve)
+    _add_common(p_retrieve, postgres_driver=postgres_driver)
     p_retrieve.add_argument("--endpoint", required=True)
     p_retrieve.add_argument("--batch-id", required=True)
 
     p_cancel = sub.add_parser("cancel", help="Cancel a provider batch job")
-    _add_common(p_cancel)
+    _add_common(p_cancel, postgres_driver=postgres_driver)
     p_cancel.add_argument("--endpoint", required=True)
     p_cancel.add_argument("--batch-id", required=True)
 
     p_health = sub.add_parser("health", help="Print readiness report")
-    _add_common(p_health)
+    _add_common(p_health, postgres_driver=postgres_driver)
 
     p_serve = sub.add_parser("serve-healthz", help="Serve GET /healthz")
-    _add_common(p_serve)
+    _add_common(p_serve, postgres_driver=postgres_driver)
     p_serve.add_argument("--host", default="127.0.0.1")
     p_serve.add_argument("--port", type=int, default=8080)
 

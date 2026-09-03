@@ -21,6 +21,7 @@ from copy import deepcopy
 from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
 from .exceptions import ConfigError
+from .postgres_driver_port import PostgresDriverPort
 
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
@@ -155,23 +156,63 @@ def _split_full_key(full_key: str) -> Tuple[str, str]:
     return "global", full_key
 
 
+def _connect_store_database(
+    dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+    *,
+    missing_dependency_message: str,
+) -> Any:
+    """Open one config-store connection through the selected driver boundary.
+
+    Explicit driver injection lets these durable stores migrate independently of
+    the retained Psycopg runtime while preserving the same connection identity
+    for table setup, reads, and writes. Autocommit setup stays outside this helper
+    so a constructor can close the already-opened connection if setup fails.
+    """
+    if postgres_driver is not None:
+        return postgres_driver.connect(dsn)
+    if psycopg is None:
+        raise ConfigError(missing_dependency_message)
+    return psycopg.connect(dsn)
+
+
+def _set_store_autocommit(
+    connection: Any,
+    postgres_driver: PostgresDriverPort | None,
+) -> None:
+    """Enable explicit store autocommit through the selected connection contract."""
+    if postgres_driver is not None:
+        connection.set_autocommit(True)
+        return
+    connection.autocommit = True
+
+
 class PostgresConfigStore:
     """PostgreSQL-backed KV configuration store (``com_config`` table)."""
 
     TABLE_NAME = "com_config"
 
-    def __init__(self, dsn: str) -> None:
-        """Connect to PostgreSQL and initialize the configuration cache."""
-        if psycopg is None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        postgres_driver: PostgresDriverPort | None = None,
+    ) -> None:
+        """Connect through the selected driver and initialize the config cache."""
+        if postgres_driver is None and psycopg is None:
             raise ConfigError("psycopg is required for PostgresConfigStore")
         if not dsn:
             raise ConfigError(
                 "A Postgres DSN must be provided explicitly (no os.getenv for config)"
             )
         self.dsn = dsn
-        self._conn = psycopg.connect(self.dsn)
+        self._conn = _connect_store_database(
+            self.dsn,
+            postgres_driver,
+            missing_dependency_message="psycopg is required for PostgresConfigStore",
+        )
         try:
-            self._conn.autocommit = True
+            _set_store_autocommit(self._conn, postgres_driver)
             self.cache: Dict[str, Dict[str, Any]] = {}
             self._ensure_table()
             self._ensure_defaults()
@@ -301,9 +342,10 @@ class SecretStore:
         fernet_key: Optional[str] = None,
         *,
         require_encryption: bool = False,
+        postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Connect using optional Fernet encryption or fail when it is required."""
-        if psycopg is None:
+        """Connect through the selected driver with the requested secret policy."""
+        if postgres_driver is None and psycopg is None:
             raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
@@ -316,9 +358,13 @@ class SecretStore:
                 "Fernet encryption requires the optional cryptography dependency"
             )
         self.dsn = dsn
-        self._conn = psycopg.connect(self.dsn)
+        self._conn = _connect_store_database(
+            self.dsn,
+            postgres_driver,
+            missing_dependency_message="psycopg is required for SecretStore",
+        )
         try:
-            self._conn.autocommit = True
+            _set_store_autocommit(self._conn, postgres_driver)
             self._fernet = None
             if fernet_key and Fernet is not None:
                 self._fernet = Fernet(fernet_key.encode("utf-8"))

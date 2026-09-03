@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .exceptions import ValidationError
+from .postgres_driver_port import PostgresDriverPort
 
 try:  # pragma: no cover - optional dependency
     import psycopg  # type: ignore
@@ -96,20 +97,44 @@ def _require_psycopg() -> None:
         raise RuntimeError("psycopg is required for database access")
 
 
-def apply_schema(dsn: str) -> None:
-    """Apply the package-owned idempotent schema to one PostgreSQL database."""
+def _connect_database(
+    dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+) -> Any:
+    """Open one connection through an injected migration driver when supplied.
+
+    The default remains Psycopg until a permissively licensed adapter has passed
+    the repository's parity and release gates. Injected candidates can therefore
+    exercise package SQL without making the current runtime dependency an
+    unavoidable prerequisite for every persistence consumer.
+    """
+    if postgres_driver is not None:
+        return postgres_driver.connect(dsn)
     _require_psycopg()
+    return psycopg.connect(dsn)
+
+
+def apply_schema(
+    dsn: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> None:
+    """Apply the package-owned schema through the selected PostgreSQL driver."""
     sql = SCHEMA_PATH.read_text(encoding="utf-8")
-    with psycopg.connect(dsn) as conn:
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
         conn.commit()
 
 
-def load_virtual_payload(dsn: str, file_id: str) -> Optional[str]:
-    """Load one canonical package-owned JSONL payload or fail closed."""
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+def load_virtual_payload(
+    dsn: str,
+    file_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> Optional[str]:
+    """Load canonical package JSONL through the selected PostgreSQL driver."""
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT content FROM llm_batch_file_payloads WHERE file_id = %s",
@@ -395,11 +420,17 @@ def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
     return _provider_metadata(value)[0]
 
 
-def reserve_remote_batch_observation_order(dsn: str) -> int:
-    """Reserve and return one positive database-owned lifecycle order."""
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+def reserve_remote_batch_observation_order(
+    dsn: str,
+    *,
+    tenant_scope: str = DEFAULT_TENANT_SCOPE,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> int:
+    """Reserve one positive lifecycle order after binding validated tenant scope."""
+    normalized_tenant_scope = validate_tenant_scope(tenant_scope)
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
+            _set_transaction_tenant_scope(cur, normalized_tenant_scope)
             cur.execute("SELECT nextval('llm_remote_batch_observation_sequence')")
             row = cur.fetchone()
     if (
@@ -420,6 +451,23 @@ def _set_transaction_tenant_scope(cursor: Any, tenant_scope: str) -> None:
         "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
         (tenant_scope,),
     )
+
+
+def _cursor_row_count(
+    cursor: Any,
+    postgres_driver: PostgresDriverPort | None,
+) -> int | None:
+    """Read an exact affected-row count, normalizing unknown driver evidence."""
+    value = (
+        cursor.row_count()
+        if postgres_driver is not None
+        else getattr(cursor, "rowcount", None)
+    )
+    if value is None or value == -1:
+        return None
+    if type(value) is not int or value < 0:
+        return None
+    return value
 
 
 def _normalize_remote_batch_snapshot(
@@ -525,8 +573,9 @@ def _persist_remote_batch_state(
     observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
-    """Persist one validated tenant-qualified lifecycle projection."""
+    """Persist one validated tenant lifecycle projection through the driver port."""
     snapshot, metadata_json = _normalize_remote_batch_snapshot(
         tenant_scope,
         endpoint_alias,
@@ -651,12 +700,12 @@ def _persist_remote_batch_state(
         terminal_at,
         observed,
     )
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
-            if getattr(cur, "rowcount", None) == 0:
+            affected_rows = _cursor_row_count(cur, postgres_driver)
+            if affected_rows in (None, 0):
                 cur.execute(
                     """
                     SELECT tenant_scope,
@@ -707,8 +756,9 @@ def persist_remote_batch_state(
     observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
-    """Persist one standalone projection without changing its return shape."""
+    """Persist one standalone projection through the selected PostgreSQL driver."""
     snapshot = _persist_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
@@ -716,6 +766,7 @@ def persist_remote_batch_state(
         provider_batch,
         observation_order,
         observed_at=observed_at,
+        postgres_driver=postgres_driver,
     )
     snapshot.pop("tenant_scope", None)
     snapshot.pop("total_requests_known", None)
@@ -730,8 +781,9 @@ def persist_tenant_remote_batch_state(
     observation_order: int,
     *,
     observed_at: Optional[datetime] = None,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Dict[str, Any]:
-    """Persist one lifecycle projection for an explicit trusted tenant scope."""
+    """Persist one trusted-tenant lifecycle projection through the driver port."""
     snapshot = _persist_remote_batch_state(
         dsn,
         tenant_scope,
@@ -739,6 +791,7 @@ def persist_tenant_remote_batch_state(
         provider_batch,
         observation_order,
         observed_at=observed_at,
+        postgres_driver=postgres_driver,
     )
     snapshot.pop("total_requests_known", None)
     return snapshot
@@ -749,8 +802,10 @@ def get_tenant_remote_batch_state(
     tenant_scope: str,
     endpoint_alias: str,
     remote_batch_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return one lifecycle projection visible to a validated tenant scope."""
+    """Return one tenant-visible lifecycle projection through the driver port."""
     normalized_tenant_scope = validate_tenant_scope(tenant_scope)
     normalized_alias = validate_endpoint_alias(endpoint_alias)
     normalized_remote_batch_id = validate_remote_resource_id(
@@ -780,8 +835,7 @@ def get_tenant_remote_batch_state(
           AND endpoint_alias = %s
           AND remote_batch_id = %s
     """
-    _require_psycopg()
-    with psycopg.connect(dsn) as conn:
+    with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, normalized_tenant_scope)
             cur.execute(
@@ -804,31 +858,44 @@ def get_remote_batch_state(
     dsn: str,
     endpoint_alias: str,
     remote_batch_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> Optional[Dict[str, Any]]:
-    """Return one lifecycle projection from the standalone tenant scope."""
+    """Return one standalone lifecycle projection through the driver port."""
     return get_tenant_remote_batch_state(
         dsn,
         DEFAULT_TENANT_SCOPE,
         endpoint_alias,
         remote_batch_id,
+        postgres_driver=postgres_driver,
     )
 
 
-def get_model_metadata(dsn: Optional[str], model_id: str) -> Optional[Dict[str, Any]]:
-    """Fetch model mode and tokenizer metadata for a model identifier.
+def get_model_metadata(
+    dsn: Optional[str],
+    model_id: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> Optional[Dict[str, Any]]:
+    """Fetch model metadata through the selected PostgreSQL driver boundary.
 
     Args:
         dsn: Optional PostgreSQL connection string.
         model_id: Provider model identifier to resolve.
+        postgres_driver: Optional migration driver retained only for database I/O.
 
     Returns:
         A dictionary containing normalized ``mode`` and ``tokenizer_model`` when
         found, otherwise ``None``.
     """
-    if not dsn or psycopg is None or not model_id:
+    if (
+        not dsn
+        or not model_id
+        or (postgres_driver is None and psycopg is None)
+    ):
         return None
     try:
-        with psycopg.connect(dsn) as conn:
+        with _connect_database(dsn, postgres_driver) as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """

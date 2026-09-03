@@ -70,6 +70,21 @@ def test_apply_schema_executes_packaged_file(monkeypatch, tmp_path):
     assert driver.commits == 1
 
 
+def test_apply_schema_uses_injected_driver_without_psycopg(monkeypatch, tmp_path):
+    """Schema bootstrap must migrate through the driver port before manifest swap."""
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "psycopg", None)
+    schema = tmp_path / "schema.sql"
+    schema.write_text("CREATE TABLE snake_case_name (id int);", encoding="utf-8")
+    monkeypatch.setattr(db, "SCHEMA_PATH", schema)
+
+    db.apply_schema("postgresql://x", postgres_driver=driver)
+
+    assert driver.connections == ["postgresql://x"]
+    assert driver.executions == [("CREATE TABLE snake_case_name (id int);", None)]
+    assert driver.commits == 1
+
+
 def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
     """Caller-controlled local files must not acquire arbitrary SQL authority."""
     driver = _Psycopg()
@@ -99,6 +114,24 @@ def test_load_virtual_payload_preserves_canonical_jsonl(monkeypatch, stored, exp
     assert driver.executions[0][1] == ("file-1",)
 
 
+def test_load_virtual_payload_uses_injected_driver_without_psycopg(monkeypatch):
+    """Virtual payload reads must not require Psycopg once a driver port is injected."""
+    stored = {"text": '{"id":1}\n', "line_count": 1}
+    driver = _Psycopg((stored,))
+    monkeypatch.setattr(db, "psycopg", None)
+
+    assert (
+        db.load_virtual_payload(
+            "postgresql://x",
+            "file-1",
+            postgres_driver=driver,
+        )
+        == '{"id":1}\n'
+    )
+    assert driver.connections == ["postgresql://x"]
+    assert driver.executions[0][1] == ("file-1",)
+
+
 def test_load_virtual_payload_returns_none_when_missing(monkeypatch):
     monkeypatch.setattr(db, "psycopg", _Psycopg(None))
     assert db.load_virtual_payload("postgresql://x", "missing") is None
@@ -121,6 +154,22 @@ def test_model_metadata_normalizes_mode_and_handles_absence(monkeypatch):
     assert db.get_model_metadata("postgresql://x", "unknown") is None
     assert db.get_model_metadata(None, "gpt-4o") is None
     assert db.get_model_metadata("postgresql://x", "") is None
+
+
+def test_model_metadata_uses_injected_driver_without_psycopg(monkeypatch):
+    """Tokenizer metadata lookup must migrate through the same driver boundary."""
+    driver = _Psycopg((" CHAT ", "o200k_base"))
+    monkeypatch.setattr(db, "psycopg", None)
+
+    assert db.get_model_metadata(
+        "postgresql://x",
+        "gpt-4o",
+        postgres_driver=driver,
+    ) == {
+        "mode": "chat",
+        "tokenizer_model": "o200k_base",
+    }
+    assert driver.connections == ["postgresql://x"]
 
 
 def test_model_metadata_driver_failure_is_nonfatal(monkeypatch, caplog):

@@ -16,11 +16,13 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from io import StringIO
+from threading import RLock
 from typing import Any, Dict, List, Optional, Tuple
 
 from .db import get_model_metadata
 from .exceptions import TokenLimitExceededError, ValidationError
 from .models import BatchRequest
+from .postgres_driver_port import PostgresDriverPort
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +59,9 @@ class TokenCounter:
         *,
         config: Optional[Any] = None,
         buffer_percentage: Optional[int] = None,
+        postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Initialize PostgreSQL token counting and configured batch limits."""
+        """Initialize token counting with an optional PostgreSQL migration driver."""
         if not postgres_dsn:
             raise ValidationError(
                 field="postgres_dsn",
@@ -67,7 +70,9 @@ class TokenCounter:
             )
         self.postgres_dsn = postgres_dsn
         self.config = config
-        self._pg_conn: Optional["psycopg.Connection"] = None
+        self._postgres_driver = postgres_driver
+        self._pg_conn: Optional[Any] = None
+        self._pg_connection_lock = RLock()
         self._pg_available: bool = False
         self._encoder_cache: Dict[str, _EncoderInfo] = {}
 
@@ -119,7 +124,7 @@ class TokenCounter:
             ),
         )
 
-        if psycopg is not None:
+        if self._postgres_driver is not None or psycopg is not None:
             self._pg_available = self._ensure_pg_tiktoken()
 
     @staticmethod
@@ -159,17 +164,27 @@ class TokenCounter:
         return info
 
     def count_tokens(self, text: str, model: str) -> int:
-        """Count tokens through pg_tiktoken or fail when it is unavailable."""
+        """Count tokens while serializing use of the retained PostgreSQL session.
+
+        A replacement DB-API driver may permit module sharing without permitting
+        concurrent use of one connection. The counter intentionally retains one
+        autocommit session for repeated pg_tiktoken calls, so the lock protects
+        that exact session through execution, error classification, and cleanup
+        rather than assuming stronger driver thread semantics.
+        """
         if not text:
             return 0
-        if self._pg_available:
-            try:
-                return self._count_tokens_postgres(text, model)
-            except UndefinedFunction:
-                self._pg_available = False
-                logger.warning("pg_tiktoken extension/functions unavailable")
-            except Exception:  # pragma: no cover - runtime DB variance
-                logger.debug("PostgreSQL token counting failed")
+        with self._pg_connection_lock:
+            if self._pg_available:
+                try:
+                    return self._count_tokens_postgres(text, model)
+                except Exception as error:  # pragma: no cover - runtime DB variance
+                    if self._is_undefined_function(error):
+                        self._pg_available = False
+                        logger.warning("pg_tiktoken extension/functions unavailable")
+                    else:
+                        self.close()
+                        logger.debug("PostgreSQL token counting failed")
         raise RuntimeError(
             "Token counting requires pg_tiktoken. Enable the extension and pass a "
             "valid DSN."
@@ -262,15 +277,16 @@ class TokenCounter:
         return batches
 
     def close(self) -> None:
-        """Close and clear the cached PostgreSQL token-counting connection."""
-        conn = self._pg_conn
-        self._pg_conn = None
-        if conn is None:
-            return
-        try:
-            conn.close()
-        except Exception:
-            pass
+        """Close and clear the cached PostgreSQL token-counting connection safely."""
+        with self._pg_connection_lock:
+            conn = self._pg_conn
+            self._pg_conn = None
+            if conn is None:
+                return
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
         """Read a config value from the KV store, returning the default on any failure."""
@@ -284,63 +300,90 @@ class TokenCounter:
 
     def _ensure_pg_tiktoken(self) -> bool:
         """Verify the pre-provisioned pg_tiktoken extension and functions read-only."""
-        if psycopg is None:
+        if self._postgres_driver is None and psycopg is None:
             return False
-        try:
-            conn = self._get_pg_conn()
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT EXISTS (
-                               SELECT 1
-                               FROM pg_extension
-                               WHERE extname = %s
-                           ),
-                           to_regprocedure('tiktoken_count(text,text)') IS NOT NULL,
-                           to_regprocedure('tiktoken_encode(text,text)') IS NOT NULL
-                    """,
-                    ("pg_tiktoken",),
-                )
-                row = cur.fetchone()
-            return bool(row and row == (True, True, True))
-        except Exception:
-            self.close()
-            return False
+        with self._pg_connection_lock:
+            try:
+                conn = self._get_pg_conn()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                                   SELECT 1
+                                   FROM pg_extension
+                                   WHERE extname = %s
+                               ),
+                               to_regprocedure('tiktoken_count(text,text)') IS NOT NULL,
+                               to_regprocedure('tiktoken_encode(text,text)') IS NOT NULL
+                        """,
+                        ("pg_tiktoken",),
+                    )
+                    row = cur.fetchone()
+                return bool(row and row == (True, True, True))
+            except Exception:
+                self.close()
+                return False
 
-    def _get_pg_conn(self) -> "psycopg.Connection":
-        """Return a cached autocommit PostgreSQL connection, reconnecting if closed."""
-        assert psycopg is not None
-        if self._pg_conn is None or self._pg_conn.closed:
+    def _get_pg_conn(self) -> Any:
+        """Return a cached autocommit connection under the session reuse lock."""
+        with self._pg_connection_lock:
+            if self._pg_conn is not None:
+                if self._postgres_driver is not None:
+                    if not self._pg_conn.is_closed():
+                        return self._pg_conn
+                elif not self._pg_conn.closed:
+                    return self._pg_conn
+            if self._postgres_driver is not None:
+                self._pg_conn = self._postgres_driver.connect(self.postgres_dsn)
+                self._pg_conn.set_autocommit(True)
+                return self._pg_conn
+            assert psycopg is not None
             self._pg_conn = psycopg.connect(self.postgres_dsn)
             self._pg_conn.autocommit = True
-        return self._pg_conn
+            return self._pg_conn
+
+    def _is_undefined_function(self, error: BaseException) -> bool:
+        """Classify undefined-function failures through the selected driver boundary."""
+        if self._postgres_driver is not None:
+            return self._postgres_driver.is_undefined_function(error)
+        return isinstance(error, UndefinedFunction)
 
     def _count_tokens_postgres(self, text: str, model: str) -> int:
-        """Count tokens for text via pg_tiktoken, falling back to tiktoken_encode."""
-        if psycopg is None:
+        """Count tokens while retaining one non-concurrent PostgreSQL session."""
+        if self._postgres_driver is None and psycopg is None:
             raise RuntimeError("PostgreSQL integration is unavailable")
-        conn = self._get_pg_conn()
-        tiktoken_name = self.get_encoder(model).tokenizer_name
-        with conn.cursor() as cur:
-            try:
-                cur.execute("SELECT tiktoken_count(%s, %s)", (tiktoken_name, text))
-                row = cur.fetchone()
-                if row and row[0] is not None:
-                    return int(row[0])
-            except UndefinedFunction:
-                cur.execute(
-                    "SELECT COUNT(*) FROM tiktoken_encode(%s, %s)",
-                    (tiktoken_name, text),
-                )
-                row = cur.fetchone()
-                if row and row[0] is not None:
-                    return int(row[0])
-                raise
-        return 0
+        with self._pg_connection_lock:
+            conn = self._get_pg_conn()
+            tiktoken_name = self.get_encoder(model).tokenizer_name
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("SELECT tiktoken_count(%s, %s)", (tiktoken_name, text))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        return int(row[0])
+                except Exception as error:
+                    if not self._is_undefined_function(error):
+                        raise
+                    cur.execute(
+                        "SELECT COUNT(*) FROM tiktoken_encode(%s, %s)",
+                        (tiktoken_name, text),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        return int(row[0])
+                    raise
+            return 0
 
     def _get_tokenizer_from_db(self, model: str) -> Optional[str]:
         """Return the tokenizer model recorded in model metadata, or None if unset."""
-        metadata = get_model_metadata(self.postgres_dsn, model)
+        if self._postgres_driver is None:
+            metadata = get_model_metadata(self.postgres_dsn, model)
+        else:
+            metadata = get_model_metadata(
+                self.postgres_dsn,
+                model,
+                postgres_driver=self._postgres_driver,
+            )
         if metadata and metadata.get("tokenizer_model"):
             return str(metadata["tokenizer_model"])
         return None
@@ -390,72 +433,43 @@ class BatchAccumulator:
         self.entries: List[Tuple[str, str, int]] = []
         self.total_tokens = 0
         self.record_count = 0
-        self.byte_size = 0
+        self.total_bytes = 0
+        self._payload = StringIO()
 
-    def compute_tokens(
-        self, system_prompt: str, user_prompt: str
-    ) -> Tuple[int, int, int]:
-        """Return total, system, and user token counts for one prompt pair."""
-        system_tokens = self.token_counter.count_tokens(system_prompt or "", self.model)
-        user_tokens = self.token_counter.count_tokens(user_prompt or "", self.model)
-        return system_tokens + user_tokens, system_tokens, user_tokens
-
-    @staticmethod
-    def compute_byte_size(json_line: str) -> int:
-        """Return the UTF-8 byte size including the JSONL newline."""
-        return len(json_line.encode("utf-8")) + 1
-
-    def would_exceed(self, tokens: int, byte_size: int) -> bool:
-        """Report whether adding a line would exceed any active limit."""
-        if self.record_count == 0:
+    def can_add(self, jsonl_line: str, tokens: int) -> bool:
+        """Return whether an entry would fit every configured resource ceiling."""
+        if type(jsonl_line) is not str:
             return False
-        if self.total_tokens + tokens > self.token_limit:
-            return True
-        if self.byte_size + byte_size > self.max_bytes:
-            return True
+        if type(tokens) is not int or tokens < 0:
+            return False
+        line_bytes = len((jsonl_line + "\n").encode("utf-8"))
         if self.record_count + 1 > self.max_records:
-            return True
-        return False
+            return False
+        if self.total_bytes + line_bytes > self.max_bytes:
+            return False
+        return self.total_tokens + tokens <= self.token_limit
 
-    def add_entry(
-        self, request_id: str, json_line: str, tokens: int, byte_size: int
-    ) -> None:
-        """Append one valid record and update aggregate counters."""
-        if tokens > self.token_limit:
-            raise TokenLimitExceededError(
-                current_tokens=tokens,
-                limit_tokens=self.token_limit,
-                batch_id=request_id,
-            )
-        if byte_size > self.max_bytes:
-            raise ValidationError(
-                field="byte_size",
-                value=byte_size,
-                reason=f"single JSONL record exceeds max_bytes={self.max_bytes}",
-            )
-        self.entries.append((request_id, json_line, tokens))
+    def add(self, request_id: str, jsonl_line: str, tokens: int) -> bool:
+        """Append one validated JSONL line when all resource ceilings permit it."""
+        if not self.can_add(jsonl_line, tokens):
+            return False
+        line_bytes = len((jsonl_line + "\n").encode("utf-8"))
+        self.entries.append((request_id, jsonl_line, tokens))
+        self._payload.write(jsonl_line)
+        self._payload.write("\n")
         self.total_tokens += tokens
         self.record_count += 1
-        self.byte_size += byte_size
+        self.total_bytes += line_bytes
+        return True
 
-    def drain(self) -> Dict[str, Any]:
-        """Return accumulated metadata and reset the accumulator."""
-        if not self.entries:
-            return {}
-        metadata = {
-            "record_count": self.record_count,
-            "total_tokens": self.total_tokens,
-            "request_ids": [rid for rid, _, _ in self.entries],
-            "lines": [line for _, line, _ in self.entries],
-            "byte_size": self.byte_size,
-        }
-        self.reset()
-        return metadata
+    def content(self) -> str:
+        """Return the canonical newline-terminated JSONL payload."""
+        return self._payload.getvalue()
 
-    def to_jsonl(self) -> str:
-        """Return accumulated lines as newline-terminated JSONL text (in-memory)."""
-        buffer = StringIO()
-        for _, line, _ in self.entries:
-            buffer.write(line)
-            buffer.write("\n")
-        return buffer.getvalue()
+    def is_empty(self) -> bool:
+        """Return whether no request has been accumulated."""
+        return not self.entries
+
+    def __len__(self) -> int:
+        """Return the number of accumulated requests."""
+        return self.record_count
