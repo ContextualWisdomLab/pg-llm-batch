@@ -4,10 +4,10 @@ This module intentionally stops short of a production ``PostgresDriverPort``.
 pg8000 1.31.5 documents the DB-API cursor, transaction, autocommit, parameter
 binding, and ``-1`` unknown-row-count behavior needed by part of the current
 port, but pg-llm-batch has not yet proved its full conninfo/service-selector,
-JSONB adaptation, closed-state, PostgreSQL error-classification, Python 3.14,
-RLS, recovery, concurrency, package, SBOM, and provenance contract on one exact
-artifact. Keeping this adapter candidate-only lets those portable semantics be
-exercised without making an unreleased or unverified runtime dependency
+JSONB adaptation, PostgreSQL error-classification, Python 3.14, RLS, transport
+failure recovery, concurrency, package, SBOM, and provenance contract on one
+exact artifact. Keeping this adapter candidate-only lets those portable semantics
+be exercised without making an unreleased or unverified runtime dependency
 canonical.
 """
 
@@ -202,6 +202,7 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
 
     def __init__(self, connection: Any) -> None:
         self._connection = connection
+        self._closed = False
 
     def cursor(self) -> Pg8000CandidateCursorAdapter:
         """Create a candidate cursor on this exact retained database connection.
@@ -254,34 +255,26 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         self._connection.autocommit = enabled
 
     def is_closed(self) -> bool:
-        """Return an exact public closed-state signal or fail candidate admission.
+        """Report whether this adapter has successfully closed its raw connection.
 
-        The current PostgreSQL port requires deterministic cached-connection
-        recovery, while pg8000's public DB-API documentation reviewed for this
-        slice does not establish a portable closed-state attribute. Candidate
-        runtime tests must therefore supply and prove an exact boolean signal;
-        absence or an ambiguous value is a compatibility failure, not ``False``.
+        DB-API 2.0 requires ``close()`` but not a portable public liveness flag.
+        The anti-corruption layer therefore tracks only the state it owns instead
+        of reading a pg8000 implementation detail. This is intentionally not a
+        network health probe; unexpected transport failure remains an operation
+        error that recovery tests must prove is discarded and reconnected.
         """
-        try:
-            value = self._connection.closed
-        except AttributeError:
-            raise Pg8000CandidateAdapterError(
-                "PostgreSQL driver closed state is unavailable"
-            ) from None
-        if type(value) is not bool:
-            raise Pg8000CandidateAdapterError(
-                "PostgreSQL driver closed state is unavailable"
-            )
-        return value
+        return self._closed
 
     def close(self) -> None:
-        """Close the retained raw connection and release its session authority.
+        """Close the retained raw connection and record successful local cleanup.
 
-        The candidate does not retain or recreate a hidden connection after this
-        call; later real-driver recovery tests must prove cleanup and reconnect
-        behavior under process and database failures.
+        The state flips only after the raw close returns successfully. A close
+        failure therefore remains visible and cannot be misrepresented as a
+        released session authority; transport-failure recovery is still a later
+        candidate acceptance gate.
         """
         self._connection.close()
+        self._closed = True
 
     def __enter__(self) -> Pg8000CandidateConnectionAdapter:
         """Enter the package transaction context without a driver-only extension.
