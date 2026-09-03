@@ -139,13 +139,14 @@ jobs:
           /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl
       - name: Start candidate PostgreSQL runtime
         shell: bash
-        env:
-          PG_LLM_BATCH_POSTGRES_PASSWORD: pg8000-candidate-ci-password
         run: |
+          candidate_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$candidate_password"
           password_file="$(mktemp)"
-          printf '%s' "$PG_LLM_BATCH_POSTGRES_PASSWORD" > "$password_file"
+          printf '%s' "$candidate_password" > "$password_file"
           chmod 600 "$password_file"
           container="pg-llm-batch-pg8000-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "PG_LLM_BATCH_POSTGRES_PASSWORD=$candidate_password" >> "$GITHUB_ENV"
           echo "PG8000_CANDIDATE_PASSWORD_FILE=$password_file" >> "$GITHUB_ENV"
           echo "PG8000_CANDIDATE_CONTAINER=$container" >> "$GITHUB_ENV"
           docker run --detach --name "$container" \
@@ -174,8 +175,6 @@ jobs:
           docker logs "$PG8000_CANDIDATE_CONTAINER"
           exit 1
       - name: Run real pg8000 candidate PostgreSQL smoke
-        env:
-          PG_LLM_BATCH_POSTGRES_PASSWORD: pg8000-candidate-ci-password
         run: uv run --no-sync python tests/smoke_pg8000_candidate_postgres.py
       - name: Tear down candidate PostgreSQL runtime
         if: ${{ always() }}
