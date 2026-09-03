@@ -72,14 +72,13 @@ class PostgresCursorPort(ABC):
         """
 
     @abstractmethod
-    def row_count(self) -> int:
-        """Return the concrete driver's affected-row count for the last operation.
+    def row_count(self) -> int | None:
+        """Return an exact affected-row count or ``None`` when it is unknown.
 
         Existing persistence paths use the count to detect missing updates and
-        partial batch membership writes. The adapter must preserve the driver's
-        integer semantics rather than guessing success when the count is unknown;
-        consumers that require an exact count remain responsible for failing
-        closed on a driver-specific unknown sentinel.
+        partial batch membership writes. Concrete adapters must normalize native
+        unknown sentinels at this boundary so consumers never mistake a
+        driver-specific integer such as ``-1`` for exact success evidence.
         """
 
     @abstractmethod

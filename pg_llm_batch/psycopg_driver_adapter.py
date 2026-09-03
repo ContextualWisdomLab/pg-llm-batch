@@ -104,10 +104,14 @@ class PsycopgCursorAdapter(PostgresCursorPort):
         """Return bounded query results while rejecting malformed rows."""
         return [self._normalize_result_row(row) for row in self._cursor.fetchall()]
 
-    def row_count(self) -> int:
-        """Return Psycopg's exact integer affected-row result, including -1 unknown."""
+    def row_count(self) -> int | None:
+        """Return an exact non-negative count or normalize Psycopg's unknown sentinel."""
         value = self._cursor.rowcount
         if type(value) is not int:
+            raise PsycopgDriverAdapterError("PostgreSQL driver row count is invalid")
+        if value == -1:
+            return None
+        if value < 0:
             raise PsycopgDriverAdapterError("PostgreSQL driver row count is invalid")
         return value
 

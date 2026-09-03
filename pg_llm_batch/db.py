@@ -423,11 +423,14 @@ def normalize_provider_metadata(value: Any) -> Dict[str, Any]:
 def reserve_remote_batch_observation_order(
     dsn: str,
     *,
+    tenant_scope: str = DEFAULT_TENANT_SCOPE,
     postgres_driver: PostgresDriverPort | None = None,
 ) -> int:
-    """Reserve one positive database-owned lifecycle order through the driver port."""
+    """Reserve one positive lifecycle order after binding validated tenant scope."""
+    normalized_tenant_scope = validate_tenant_scope(tenant_scope)
     with _connect_database(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
+            _set_transaction_tenant_scope(cur, normalized_tenant_scope)
             cur.execute("SELECT nextval('llm_remote_batch_observation_sequence')")
             row = cur.fetchone()
     if (
@@ -454,10 +457,17 @@ def _cursor_row_count(
     cursor: Any,
     postgres_driver: PostgresDriverPort | None,
 ) -> int | None:
-    """Read affected-row evidence without leaking a candidate driver's raw cursor API."""
-    if postgres_driver is not None:
-        return cursor.row_count()
-    return getattr(cursor, "rowcount", None)
+    """Read an exact affected-row count, normalizing unknown driver evidence."""
+    value = (
+        cursor.row_count()
+        if postgres_driver is not None
+        else getattr(cursor, "rowcount", None)
+    )
+    if value is None or value == -1:
+        return None
+    if type(value) is not int or value < 0:
+        return None
+    return value
 
 
 def _normalize_remote_batch_snapshot(
@@ -694,7 +704,8 @@ def _persist_remote_batch_state(
         with conn.cursor() as cur:
             _set_transaction_tenant_scope(cur, snapshot["tenant_scope"])
             cur.execute(sql, params)
-            if _cursor_row_count(cur, postgres_driver) == 0:
+            affected_rows = _cursor_row_count(cur, postgres_driver)
+            if affected_rows in (None, 0):
                 cur.execute(
                     """
                     SELECT tenant_scope,
