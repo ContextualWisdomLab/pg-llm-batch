@@ -153,14 +153,30 @@ def _validated_binding_snapshot(
     if not postgres_backup_artifact_evidence_was_inspected(artifact_evidence):
         return None
 
+    current_segment_name = binding.segment_name
+    current_wal_segment_size_bytes = binding.wal_segment_size_bytes
+    current_sha256 = binding.sha256
+    current_size_bytes = binding.size_bytes
+    current_artifact_evidence = binding.artifact_evidence
+    current_artifact_sha256 = artifact_evidence.sha256
+    current_artifact_size_bytes = artifact_evidence.size_bytes
     if (
-        binding.segment_name != segment_name
-        or binding.wal_segment_size_bytes != wal_segment_size_bytes
-        or binding.sha256 != sha256
-        or binding.size_bytes != size_bytes
-        or binding.artifact_evidence is not artifact_evidence
-        or artifact_evidence.sha256 != artifact_sha256
-        or artifact_evidence.size_bytes != artifact_size_bytes
+        type(current_segment_name) is not str
+        or type(current_wal_segment_size_bytes) is not int
+        or type(current_sha256) is not str
+        or type(current_size_bytes) is not int
+        or current_artifact_evidence is not artifact_evidence
+        or type(current_artifact_sha256) is not str
+        or type(current_artifact_size_bytes) is not int
+    ):
+        return None
+    if (
+        current_segment_name != segment_name
+        or current_wal_segment_size_bytes != wal_segment_size_bytes
+        or current_sha256 != sha256
+        or current_size_bytes != size_bytes
+        or current_artifact_sha256 != artifact_sha256
+        or current_artifact_size_bytes != artifact_size_bytes
     ):
         return None
 
@@ -203,11 +219,34 @@ def bind_postgres_wal_segment_evidence(
         raise PostgresWalSegmentEvidenceError(
             "invalid PostgreSQL WAL segment identity"
         )
+    if type(artifact_evidence) is not PostgresBackupArtifactEvidence:
+        raise PostgresWalSegmentEvidenceError(
+            "PostgreSQL WAL segment artifact evidence was not inspected"
+        )
+
+    artifact_sha256 = artifact_evidence.sha256
+    artifact_size_bytes = artifact_evidence.size_bytes
+    if type(artifact_sha256) is not str or type(artifact_size_bytes) is not int:
+        raise PostgresWalSegmentEvidenceError(
+            "PostgreSQL WAL segment artifact evidence was not inspected"
+        )
     if not postgres_backup_artifact_evidence_was_inspected(artifact_evidence):
         raise PostgresWalSegmentEvidenceError(
             "PostgreSQL WAL segment artifact evidence was not inspected"
         )
-    if artifact_evidence.size_bytes != wal_segment_size_bytes:
+
+    current_artifact_sha256 = artifact_evidence.sha256
+    current_artifact_size_bytes = artifact_evidence.size_bytes
+    if (
+        type(current_artifact_sha256) is not str
+        or type(current_artifact_size_bytes) is not int
+        or current_artifact_sha256 != artifact_sha256
+        or current_artifact_size_bytes != artifact_size_bytes
+    ):
+        raise PostgresWalSegmentEvidenceError(
+            "PostgreSQL WAL segment artifact evidence changed during binding"
+        )
+    if artifact_size_bytes != wal_segment_size_bytes:
         raise PostgresWalSegmentEvidenceError(
             "PostgreSQL WAL segment artifact size does not match configured segment size"
         )
@@ -215,7 +254,7 @@ def bind_postgres_wal_segment_evidence(
     return PostgresWalSegmentBinding(
         segment_name=segment_name,
         wal_segment_size_bytes=wal_segment_size_bytes,
-        sha256=artifact_evidence.sha256,
-        size_bytes=artifact_evidence.size_bytes,
+        sha256=artifact_sha256,
+        size_bytes=artifact_size_bytes,
         artifact_evidence=artifact_evidence,
     )
