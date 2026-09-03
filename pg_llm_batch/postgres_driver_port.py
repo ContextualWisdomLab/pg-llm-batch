@@ -175,10 +175,12 @@ class PostgresConnectionPort(ABC):
 
     @abstractmethod
     def __enter__(self) -> PostgresConnectionPort:
-        """Enter the connection context using the concrete driver's semantics.
+        """Enter the package-owned transaction context on this exact connection.
 
-        The adapter must preserve whether normal context exit commits or rolls
-        back rather than inventing a different transaction policy.
+        Entry must not open a second session, implicitly commit, or change the
+        caller's transaction mode. The canonical context policy is defined at
+        this port so a replacement driver need not expose a proprietary context
+        manager extension merely to preserve pg-llm-batch behavior.
         """
 
     @abstractmethod
@@ -188,10 +190,12 @@ class PostgresConnectionPort(ABC):
         exc: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """Leave the connection context and preserve driver error propagation.
+        """Commit normal exit, roll back exceptional exit, close, and propagate.
 
-        Concrete adapters remain responsible for matching their documented
-        commit, rollback, and cleanup behavior on normal and exceptional exit.
+        Adapters must preserve these package transaction semantics even when the
+        concrete DB-API does not supply a connection context manager. Commit or
+        rollback failures remain visible, cleanup still runs, and application
+        exceptions must not be suppressed.
         """
 
 
