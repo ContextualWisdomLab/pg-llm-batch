@@ -284,13 +284,13 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         self._connection.close()
 
     def __enter__(self) -> Pg8000CandidateConnectionAdapter:
-        """Enter the raw connection context without changing transaction policy.
+        """Enter the package transaction context without a driver-only extension.
 
-        Real pg8000 acceptance must verify its DB-API context manager has the
-        commit/rollback semantics required by the port before this candidate can
-        become a production driver.
+        The anti-corruption layer owns the existing pg-llm-batch connection
+        context contract: successful exit commits, exceptional exit rolls back,
+        and both paths close the physical connection. Entry itself must not open a
+        second session or mutate transaction policy.
         """
-        self._connection.__enter__()
         return self
 
     def __exit__(
@@ -299,10 +299,20 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         exc: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """Delegate connection-context exit without suppressing raw-driver errors.
+        """Commit or roll back, always close, and never suppress an exception.
 
-        Returning the raw value preserves its transaction and exception behavior
-        for later parity tests instead of making the candidate look compatible by
-        changing failure semantics in the wrapper.
+        pg8000's public DB-API contract documents ``commit``, ``rollback``, and
+        ``close`` but does not require a connection context-manager extension.
+        Owning the package policy here removes that undocumented dependency while
+        retaining the transaction semantics required by candidate admission. A
+        commit or rollback failure still propagates, and ``finally`` ensures the
+        underlying session is closed on either success or failure.
         """
-        return self._connection.__exit__(exc_type, exc, traceback)
+        try:
+            if exc_type is None:
+                self.commit()
+            else:
+                self.rollback()
+        finally:
+            self.close()
+        return False
