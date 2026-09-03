@@ -129,14 +129,28 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
         return self._normalize_result_row(row)
 
     def fetchmany(self, size: int) -> list[tuple[object, ...]]:
-        """Return a bounded result page and reject invalid caller size values.
+        """Return a bounded result page and reject invalid caller or driver budgets.
 
         ``bool`` is rejected even though it subclasses ``int`` because an
-        accidental truth value must not become a one-row resource budget.
+        accidental truth value must not become a one-row resource budget. The
+        adapter also verifies that the concrete DB-API candidate honors that
+        budget; over-delivery is a candidate-contract failure rather than extra
+        data the application may silently materialize.
         """
         if type(size) is not int or size <= 0:
             raise Pg8000CandidateAdapterError("PostgreSQL driver fetch size is invalid")
-        return [self._normalize_result_row(row) for row in self._cursor.fetchmany(size)]
+        rows = self._cursor.fetchmany(size)
+        try:
+            returned_count = len(rows)
+        except (TypeError, ValueError, OverflowError):
+            raise Pg8000CandidateAdapterError(
+                "PostgreSQL driver fetch result is invalid"
+            ) from None
+        if returned_count > size:
+            raise Pg8000CandidateAdapterError(
+                "PostgreSQL driver fetch result exceeds requested size"
+            )
+        return [self._normalize_result_row(row) for row in rows]
 
     def fetchall(self) -> list[tuple[object, ...]]:
         """Normalize all rows from an already bounded package-authored query.
