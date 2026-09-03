@@ -173,6 +173,7 @@ class TokenCounter:
                     self._pg_available = False
                     logger.warning("pg_tiktoken extension/functions unavailable")
                 else:
+                    self.close()
                     logger.debug("PostgreSQL token counting failed")
         raise RuntimeError(
             "Token counting requires pg_tiktoken. Enable the extension and pass a "
@@ -418,72 +419,43 @@ class BatchAccumulator:
         self.entries: List[Tuple[str, str, int]] = []
         self.total_tokens = 0
         self.record_count = 0
-        self.byte_size = 0
+        self.total_bytes = 0
+        self._payload = StringIO()
 
-    def compute_tokens(
-        self, system_prompt: str, user_prompt: str
-    ) -> Tuple[int, int, int]:
-        """Return total, system, and user token counts for one prompt pair."""
-        system_tokens = self.token_counter.count_tokens(system_prompt or "", self.model)
-        user_tokens = self.token_counter.count_tokens(user_prompt or "", self.model)
-        return system_tokens + user_tokens, system_tokens, user_tokens
-
-    @staticmethod
-    def compute_byte_size(json_line: str) -> int:
-        """Return the UTF-8 byte size including the JSONL newline."""
-        return len(json_line.encode("utf-8")) + 1
-
-    def would_exceed(self, tokens: int, byte_size: int) -> bool:
-        """Report whether adding a line would exceed any active limit."""
-        if self.record_count == 0:
+    def can_add(self, jsonl_line: str, tokens: int) -> bool:
+        """Return whether an entry would fit every configured resource ceiling."""
+        if type(jsonl_line) is not str:
             return False
-        if self.total_tokens + tokens > self.token_limit:
-            return True
-        if self.byte_size + byte_size > self.max_bytes:
-            return True
+        if type(tokens) is not int or tokens < 0:
+            return False
+        line_bytes = len((jsonl_line + "\n").encode("utf-8"))
         if self.record_count + 1 > self.max_records:
-            return True
-        return False
+            return False
+        if self.total_bytes + line_bytes > self.max_bytes:
+            return False
+        return self.total_tokens + tokens <= self.token_limit
 
-    def add_entry(
-        self, request_id: str, json_line: str, tokens: int, byte_size: int
-    ) -> None:
-        """Append one valid record and update aggregate counters."""
-        if tokens > self.token_limit:
-            raise TokenLimitExceededError(
-                current_tokens=tokens,
-                limit_tokens=self.token_limit,
-                batch_id=request_id,
-            )
-        if byte_size > self.max_bytes:
-            raise ValidationError(
-                field="byte_size",
-                value=byte_size,
-                reason=f"single JSONL record exceeds max_bytes={self.max_bytes}",
-            )
-        self.entries.append((request_id, json_line, tokens))
+    def add(self, request_id: str, jsonl_line: str, tokens: int) -> bool:
+        """Append one validated JSONL line when all resource ceilings permit it."""
+        if not self.can_add(jsonl_line, tokens):
+            return False
+        line_bytes = len((jsonl_line + "\n").encode("utf-8"))
+        self.entries.append((request_id, jsonl_line, tokens))
+        self._payload.write(jsonl_line)
+        self._payload.write("\n")
         self.total_tokens += tokens
         self.record_count += 1
-        self.byte_size += byte_size
+        self.total_bytes += line_bytes
+        return True
 
-    def drain(self) -> Dict[str, Any]:
-        """Return accumulated metadata and reset the accumulator."""
-        if not self.entries:
-            return {}
-        metadata = {
-            "record_count": self.record_count,
-            "total_tokens": self.total_tokens,
-            "request_ids": [rid for rid, _, _ in self.entries],
-            "lines": [line for _, line, _ in self.entries],
-            "byte_size": self.byte_size,
-        }
-        self.reset()
-        return metadata
+    def content(self) -> str:
+        """Return the canonical newline-terminated JSONL payload."""
+        return self._payload.getvalue()
 
-    def to_jsonl(self) -> str:
-        """Return accumulated lines as newline-terminated JSONL text (in-memory)."""
-        buffer = StringIO()
-        for _, line, _ in self.entries:
-            buffer.write(line)
-            buffer.write("\n")
-        return buffer.getvalue()
+    def is_empty(self) -> bool:
+        """Return whether no request has been accumulated."""
+        return not self.entries
+
+    def __len__(self) -> int:
+        """Return the number of accumulated requests."""
+        return self.record_count
