@@ -17,6 +17,13 @@ def test_candidate_evidence_has_explicit_schema_version() -> None:
     assert "evidence_schema_version" in evidence_fields
 
 
+def test_candidate_evidence_binds_capability_report_identity() -> None:
+    """Capability claims need immutable report identity before parity admission."""
+    evidence_fields = {field.name for field in fields(PostgresDriverCandidateEvidence)}
+
+    assert "capability_report_sha256" in evidence_fields
+
+
 def test_candidate_schema_version_rejects_equality_spoofing() -> None:
     """Untrusted receipt objects cannot impersonate the current schema by equality."""
 
