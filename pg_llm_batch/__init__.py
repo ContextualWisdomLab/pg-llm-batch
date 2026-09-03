@@ -6,6 +6,7 @@ Public API:
     TokenCounter, BatchAccumulator      -- pg_tiktoken token counting
     PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
     BatchInferencePort                  -- provider-neutral batch lifecycle seam
+    ContextLifecycleEvidenceSeed        -- privacy-minimized Context ACL input
     BatchAPIClient                      -- submit, poll, and retrieve
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultRecord                   -- immutable streamed result/error record
@@ -31,6 +32,13 @@ from .checkpoint_store import (
     validate_checkpoint_consumer_name,
 )
 from .config import PostgresConfigStore, SecretStore, get_config_store
+from .context_lifecycle_evidence import (
+    ContextLifecycleEvidenceError,
+    ContextLifecycleEvidenceSeed,
+    require_context_lifecycle_replay_identity,
+    require_context_lifecycle_scope_continuity,
+    validate_context_lifecycle_evidence_seed,
+)
 from .db import (
     DEFAULT_TENANT_SCOPE,
     get_remote_batch_state,
@@ -60,6 +68,11 @@ __version__ = "0.1.0"
 
 __all__ = [
     "BatchInferencePort",
+    "ContextLifecycleEvidenceError",
+    "ContextLifecycleEvidenceSeed",
+    "validate_context_lifecycle_evidence_seed",
+    "require_context_lifecycle_replay_identity",
+    "require_context_lifecycle_scope_continuity",
     "BatchAPIClient",
     "StreamingBatchAPIClient",
     "BatchResultRecord",
