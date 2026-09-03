@@ -164,13 +164,13 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
         return value
 
     def __enter__(self) -> Pg8000CandidateCursorAdapter:
-        """Enter the raw cursor context while keeping this adapter's identity.
+        """Enter the package cursor context without requiring a driver extension.
 
-        Candidate acceptance must later prove the real pg8000 cursor implements
-        compatible context-manager cleanup; this wrapper does not synthesize that
-        behavior when it is absent.
+        Python DB-API 2.0 standardizes ``Cursor.close()`` but not a cursor context
+        manager. The anti-corruption adapter therefore owns context entry instead
+        of making an undocumented pg8000 ``__enter__`` method part of the product
+        contract.
         """
-        self._cursor.__enter__()
         return self
 
     def __exit__(
@@ -179,12 +179,15 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
         exc: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """Delegate raw cursor cleanup and preserve exception propagation policy.
+        """Close the DB-API cursor and never suppress an application exception.
 
-        The return value is forwarded exactly because changing it could suppress
-        a database or application exception and create false transaction success.
+        Cursor exit owns resource cleanup only; transaction commit or rollback
+        remains a connection-level responsibility. Returning ``False`` preserves
+        any active exception while avoiding dependence on driver-specific context
+        manager behavior that pg8000's public DB-API contract does not require.
         """
-        return self._cursor.__exit__(exc_type, exc, traceback)
+        self._cursor.close()
+        return False
 
 
 class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
