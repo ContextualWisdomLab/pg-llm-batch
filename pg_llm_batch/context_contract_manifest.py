@@ -74,13 +74,7 @@ def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def _decode_manifest(payload: bytes) -> dict[str, Any]:
-    """Decode one bounded UTF-8 JSON object with an exact closed field set."""
-    if (
-        type(payload) is not bytes
-        or not payload
-        or len(payload) > _MAX_RELEASE_MANIFEST_BYTES
-    ):
-        raise _invalid_manifest()
+    """Decode validated bounded UTF-8 JSON bytes with an exact closed field set."""
     try:
         text = payload.decode("utf-8", errors="strict")
         decoded = json.loads(text, object_pairs_hook=_unique_object)
