@@ -25,8 +25,6 @@ from pg_llm_batch.pg8000_driver_candidate_adapter import (
 _EXPECTED_VERSION = "1.31.5"
 _EXPECTED_DATABASE = "pgllm"
 _EXPECTED_USER = "pgllm"
-_TEST_TABLE = "pg8000_candidate_contract"
-_TEST_ROLE = "pg8000_candidate_reader"
 
 
 def _raw_connection() -> object:
@@ -51,8 +49,8 @@ def _cleanup() -> None:
         raw.autocommit = True
         cursor = raw.cursor()
         try:
-            cursor.execute(f"DROP TABLE IF EXISTS {_TEST_TABLE}")
-            cursor.execute(f"DROP ROLE IF EXISTS {_TEST_ROLE}")
+            cursor.execute("DROP TABLE IF EXISTS pg8000_candidate_contract")
+            cursor.execute("DROP ROLE IF EXISTS pg8000_candidate_reader")
         finally:
             cursor.close()
     finally:
@@ -68,10 +66,10 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
         raw.autocommit = True
         connection = Pg8000CandidateConnectionAdapter(raw)
         with connection.cursor() as cursor:
-            cursor.execute(f"CREATE ROLE {_TEST_ROLE} NOLOGIN")
+            cursor.execute("CREATE ROLE pg8000_candidate_reader NOLOGIN")
             cursor.execute(
-                f"""
-                CREATE TABLE {_TEST_TABLE} (
+                """
+                CREATE TABLE pg8000_candidate_contract (
                     tenant_scope TEXT NOT NULL,
                     evidence_uuid UUID NOT NULL,
                     evidence_time TIMESTAMPTZ NOT NULL,
@@ -79,11 +77,15 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
                 )
                 """
             )
-            cursor.execute(f"ALTER TABLE {_TEST_TABLE} ENABLE ROW LEVEL SECURITY")
-            cursor.execute(f"ALTER TABLE {_TEST_TABLE} FORCE ROW LEVEL SECURITY")
             cursor.execute(
-                f"""
-                CREATE POLICY candidate_tenant_scope ON {_TEST_TABLE}
+                "ALTER TABLE pg8000_candidate_contract ENABLE ROW LEVEL SECURITY"
+            )
+            cursor.execute(
+                "ALTER TABLE pg8000_candidate_contract FORCE ROW LEVEL SECURITY"
+            )
+            cursor.execute(
+                """
+                CREATE POLICY candidate_tenant_scope ON pg8000_candidate_contract
                 USING (
                     tenant_scope = current_setting(
                         'pg_llm_batch.tenant_scope', true
@@ -91,10 +93,12 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
                 )
                 """
             )
-            cursor.execute(f"GRANT SELECT ON {_TEST_TABLE} TO {_TEST_ROLE}")
             cursor.execute(
-                f"""
-                INSERT INTO {_TEST_TABLE}
+                "GRANT SELECT ON pg8000_candidate_contract TO pg8000_candidate_reader"
+            )
+            cursor.execute(
+                """
+                INSERT INTO pg8000_candidate_contract
                     (tenant_scope, evidence_uuid, evidence_time, evidence_json)
                 VALUES (%s, %s, %s, %s), (%s, %s, %s, %s)
                 """,
@@ -124,7 +128,11 @@ def _assert_transaction_rollback() -> None:
         with adapter as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
-                    f"UPDATE {_TEST_TABLE} SET evidence_json = %s WHERE tenant_scope = %s",
+                    """
+                    UPDATE pg8000_candidate_contract
+                    SET evidence_json = %s
+                    WHERE tenant_scope = %s
+                    """,
                     ({"rolled_back": True}, "tenant-a"),
                 )
                 if cursor.row_count() != 1:
@@ -144,15 +152,15 @@ def _assert_typed_rls_read(
     adapter = Pg8000CandidateConnectionAdapter(raw)
     with adapter as connection:
         with connection.cursor() as cursor:
-            cursor.execute(f"SET ROLE {_TEST_ROLE}")
+            cursor.execute("SET ROLE pg8000_candidate_reader")
             cursor.execute(
                 "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
                 ("tenant-a",),
             )
             cursor.execute(
-                f"""
+                """
                 SELECT tenant_scope, evidence_uuid, evidence_time, evidence_json
-                FROM {_TEST_TABLE}
+                FROM pg8000_candidate_contract
                 ORDER BY tenant_scope
                 """
             )
