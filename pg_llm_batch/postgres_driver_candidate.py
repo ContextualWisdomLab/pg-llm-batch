@@ -84,16 +84,23 @@ def _validate_identity_text(label: str, value: object) -> None:
 
     Package name, version, and SPDX evidence participate in an acquisition
     decision and can arrive from untrusted package metadata. Rejecting whitespace,
-    controls, and Unicode format characters keeps one evidence value from becoming
-    multiple visual or line-oriented identities, while the UTF-8 byte ceiling
-    bounds malformed metadata without inventing a package-manager-specific grammar.
+    controls, malformed Unicode, and Unicode format characters keeps one evidence
+    value from becoming multiple visual or line-oriented identities, while the
+    UTF-8 byte ceiling bounds malformed metadata without inventing a
+    package-manager-specific grammar.
     """
     if type(value) is not str or not value:
         raise PostgresDriverCandidateEvidenceError(
             f"PostgreSQL driver {label} evidence is invalid"
         )
+    try:
+        encoded_value = value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise PostgresDriverCandidateEvidenceError(
+            f"PostgreSQL driver {label} evidence is invalid"
+        ) from None
     if (
-        len(value.encode("utf-8")) > _MAX_IDENTITY_EVIDENCE_BYTES
+        len(encoded_value) > _MAX_IDENTITY_EVIDENCE_BYTES
         or any(
             character.isspace()
             or ord(character) < 32
