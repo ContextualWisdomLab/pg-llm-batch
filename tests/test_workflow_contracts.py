@@ -137,7 +137,7 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
 
     assert "pull_request:" in workflow
     assert "branches: [main]" in workflow
-    assert 'python-version: ["3.10", "3.12", "3.14"]' in workflow
+    assert 'python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]' in workflow
     assert "uv sync --locked" in workflow
     assert "uv run ruff check pg_llm_batch tests" in workflow
     assert "interrogate --fail-under 100 pg_llm_batch" in workflow
