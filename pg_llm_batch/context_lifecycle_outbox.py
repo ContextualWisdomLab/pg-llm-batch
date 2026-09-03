@@ -93,10 +93,18 @@ def _evidence_values(evidence: ContextLifecycleEvidenceSeed) -> tuple[Any, ...]:
 
 
 def _evidence_from_row(row: Any) -> ContextLifecycleEvidenceSeed:
-    """Revalidate one durable row before returning it to the application boundary."""
-    if not isinstance(row, (tuple, list)) or len(row) != 11:
+    """Snapshot and revalidate one durable row before returning application evidence."""
+    if type(row) is tuple:
+        snapshot = row
+    elif type(row) is list:
+        snapshot = tuple(row)
+    else:
         raise RuntimeError("context lifecycle outbox row has an invalid shape")
-    return validate_context_lifecycle_evidence_seed(ContextLifecycleEvidenceSeed(*row))
+    if len(snapshot) != 11:
+        raise RuntimeError("context lifecycle outbox row has an invalid shape")
+    return validate_context_lifecycle_evidence_seed(
+        ContextLifecycleEvidenceSeed(*snapshot)
+    )
 
 
 def apply_context_lifecycle_outbox_schema(
