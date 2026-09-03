@@ -29,7 +29,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
-from .db import load_virtual_payload
+from .db import MAX_ENDPOINT_ALIAS_CHARACTERS, load_virtual_payload
 from .exceptions import GatewayError, ValidationError
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,9 @@ LOOPBACK_HOSTNAMES = frozenset({"localhost"})
 REMOTE_RESOURCE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,255}\Z")
 BATCH_ENDPOINT_PATTERN = re.compile(
     r"/[A-Za-z0-9_~-]+(?:/[A-Za-z0-9._~-]+){0,15}\Z"
+)
+ENDPOINT_ALIAS_PATTERN = re.compile(
+    rf"[A-Za-z0-9][A-Za-z0-9._:-]{{0,{MAX_ENDPOINT_ALIAS_CHARACTERS - 1}}}\Z"
 )
 
 
@@ -153,6 +156,29 @@ def _validate_batch_endpoint(value: Any) -> str:
     return value
 
 
+def _validate_credential_endpoint_alias(value: Any) -> str:
+    """Normalize one bounded ASCII endpoint alias before credential resolution.
+
+    Credential aliases are configuration selectors, not diagnostic payloads. This
+    boundary trims surrounding whitespace and then accepts only the same finite
+    identifier alphabet used by durable remote identities. Rejected input is never
+    reflected through ``ValidationError`` or handed to configuration/secret stores.
+    """
+    if type(value) is str:
+        normalized = value.strip()
+        if ENDPOINT_ALIAS_PATTERN.fullmatch(normalized) is not None:
+            return normalized
+    raise ValidationError(
+        field="endpoint_alias",
+        value="<redacted>",
+        reason=(
+            "must be 1-128 ASCII characters beginning with an alphanumeric "
+            "character and containing only letters, digits, dot, underscore, "
+            "colon, or hyphen"
+        ),
+    )
+
+
 def _is_loopback_host(hostname: str) -> bool:
     """Return whether a hostname is an explicit local-loopback destination."""
     if hostname.lower() in LOOPBACK_HOSTNAMES:
@@ -221,16 +247,15 @@ def config_credentials_provider(
     """
 
     def _provider(endpoint_alias: str) -> GatewayCredentials:
-        """Resolve the base URL and API key for one endpoint alias from the stores."""
-        url = config_store.get("gateway", endpoint_alias, None)
+        """Resolve one validated endpoint alias from configuration and secret stores."""
+        normalized_alias = _validate_credential_endpoint_alias(endpoint_alias)
+        url = config_store.get("gateway", normalized_alias, None)
         if url is None:
             url = config_store.get("gateway", "base_url", None)
         if url is None:
-            raise GatewayError(
-                f"No gateway base_url configured for alias '{endpoint_alias}'"
-            )
+            raise GatewayError("No gateway base_url configured for endpoint alias")
         normalized_url = _normalize_gateway_url(url)
-        api_key = secret_store.require_secret(f"gateway_api_key.{endpoint_alias}")
+        api_key = secret_store.require_secret(f"gateway_api_key.{normalized_alias}")
         return GatewayCredentials(url=normalized_url, api_key=api_key)
 
     return _provider
@@ -317,8 +342,9 @@ class BatchAPIClient:
         self.postgres_dsn = postgres_dsn
 
         def _validated_credentials(endpoint_alias: str) -> GatewayCredentials:
-            """Revalidate custom credential destinations before authenticated I/O."""
-            resolved = credentials(endpoint_alias)
+            """Validate alias authority and custom destinations before authenticated I/O."""
+            normalized_alias = _validate_credential_endpoint_alias(endpoint_alias)
+            resolved = credentials(normalized_alias)
             return GatewayCredentials(
                 url=_normalize_gateway_url(resolved.url),
                 api_key=resolved.api_key,
