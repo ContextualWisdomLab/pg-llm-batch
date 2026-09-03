@@ -13,7 +13,8 @@ canonical.
 
 from __future__ import annotations
 
-from typing import Any
+from types import ModuleType
+from typing import Any, cast
 
 from .postgres_driver_port import PostgresConnectionPort, PostgresCursorPort
 
@@ -26,6 +27,36 @@ class Pg8000CandidateAdapterError(RuntimeError):
     exceptions so callers cannot mistake missing adapter evidence for a server
     or application failure.
     """
+
+
+def validate_pg8000_dbapi_module(dbapi_module: object) -> None:
+    """Fail closed unless the imported pg8000 DB-API mode matches package SQL.
+
+    pg8000 exposes ``paramstyle`` as mutable module state. pg-llm-batch's current
+    SQL uses DB-API ``format`` placeholders, so a future production candidate
+    factory must run this guard immediately after importing the exact admitted
+    pg8000 artifact and before creating adapters or executing SQL. Metadata is
+    read from an exact ``ModuleType`` dictionary rather than through arbitrary
+    shaped objects whose attribute access could execute caller-controlled code.
+
+    Raises:
+        Pg8000CandidateAdapterError: If DB-API 2.0 or ``format`` parameter style
+            is not the exact active module contract.
+    """
+    if type(dbapi_module) is not ModuleType:
+        raise Pg8000CandidateAdapterError("PostgreSQL driver module identity is invalid")
+
+    module = cast(ModuleType, dbapi_module)
+    metadata = vars(module)
+    api_level = metadata.get("apilevel")
+    parameter_style = metadata.get("paramstyle")
+
+    if type(api_level) is not str or api_level != "2.0":
+        raise Pg8000CandidateAdapterError("PostgreSQL driver API level is incompatible")
+    if type(parameter_style) is not str or parameter_style != "format":
+        raise Pg8000CandidateAdapterError(
+            "PostgreSQL driver parameter style is incompatible"
+        )
 
 
 class Pg8000CandidateCursorAdapter(PostgresCursorPort):
