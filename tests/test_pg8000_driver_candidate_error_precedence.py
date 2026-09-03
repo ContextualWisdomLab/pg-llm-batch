@@ -2,8 +2,10 @@
 
 The pg8000 anti-corruption adapter must attempt connection cleanup after a
 transaction failure without letting a later close failure replace the earlier
-commit or rollback failure. These tests keep that recovery contract independent
-from the real-driver PostgreSQL smoke gate.
+commit or rollback failure. Direct connection execution must likewise close the
+internally created cursor when execution fails, because the caller never receives
+that cursor and therefore cannot release it. These tests keep that recovery
+contract independent from the real-driver PostgreSQL smoke gate.
 """
 
 from __future__ import annotations
@@ -39,6 +41,38 @@ class _TransactionAndCloseFailureConnection:
         raise OSError("close failed")
 
 
+class _ExecuteAndCloseFailureCursor:
+    """Fail direct execution and optionally fail the required cursor cleanup."""
+
+    def __init__(self, *, fail_close: bool) -> None:
+        self.fail_close = fail_close
+        self.execute_count = 0
+        self.close_count = 0
+
+    def execute(self, query: str, params: object | None = None) -> None:
+        """Raise the primary execution failure after recording one attempt."""
+        del query, params
+        self.execute_count += 1
+        raise RuntimeError("execute failed")
+
+    def close(self) -> None:
+        """Record cleanup and optionally expose a secondary cleanup failure."""
+        self.close_count += 1
+        if self.fail_close:
+            raise OSError("cursor close failed")
+
+
+class _ExecuteFailureConnection:
+    """Return one retained failing cursor to the connection adapter."""
+
+    def __init__(self, cursor: _ExecuteAndCloseFailureCursor) -> None:
+        self.cursor_value = cursor
+
+    def cursor(self) -> _ExecuteAndCloseFailureCursor:
+        """Return the exact cursor whose ownership transfers to direct execute."""
+        return self.cursor_value
+
+
 def test_candidate_context_preserves_commit_failure_when_close_also_fails() -> None:
     raw = _TransactionAndCloseFailureConnection(fail_commit=True)
     adapter = Pg8000CandidateConnectionAdapter(raw)
@@ -64,3 +98,17 @@ def test_candidate_context_preserves_rollback_failure_when_close_also_fails() ->
     assert raw.rollback_count == 1
     assert raw.close_count == 1
     assert adapter.is_closed() is False
+
+
+@pytest.mark.parametrize("fail_close", [False, True])
+def test_candidate_direct_execute_closes_cursor_and_preserves_primary_failure(
+    fail_close: bool,
+) -> None:
+    raw_cursor = _ExecuteAndCloseFailureCursor(fail_close=fail_close)
+    adapter = Pg8000CandidateConnectionAdapter(_ExecuteFailureConnection(raw_cursor))
+
+    with pytest.raises(RuntimeError, match="execute failed"):
+        adapter.execute("SELECT %s", (1,))
+
+    assert raw_cursor.execute_count == 1
+    assert raw_cursor.close_count == 1
