@@ -67,6 +67,7 @@ def test_context_lifecycle_seed_accepts_bounded_content_free_identity() -> None:
         ("truth_status", "trusted"),
         ("valid_time", "2026-09-03 07:00:00Z"),
         ("system_time", "2026-09-03T07:00:00+09:00"),
+        ("system_time", "2026-02-31T07:00:00Z"),
         ("provenance_ref_sha256", "secret-value"),
         ("evidence_ref_sha256", "6" * 65),
     ],
@@ -99,6 +100,17 @@ def test_context_lifecycle_seed_rejects_shaped_object_before_member_access() -> 
         )
 
 
+def test_context_lifecycle_seed_rejects_deleted_required_member() -> None:
+    candidate = replace(VALID)
+    object.__delattr__(candidate, "origin_ref_sha256")
+
+    with pytest.raises(
+        ContextLifecycleEvidenceError,
+        match="invalid context lifecycle evidence",
+    ):
+        validate_context_lifecycle_evidence_seed(candidate)
+
+
 def test_context_lifecycle_replay_accepts_only_exact_duplicate_identity() -> None:
     replay = require_context_lifecycle_replay_identity(
         existing=VALID,
@@ -107,6 +119,22 @@ def test_context_lifecycle_replay_accepts_only_exact_duplicate_identity() -> Non
 
     assert replay == VALID
     assert replay is not VALID
+
+
+def test_context_lifecycle_replay_rejects_different_event_identity() -> None:
+    different_event = replace(
+        VALID,
+        evidence_id="batch.lifecycle.01J00000000000000000000000",
+    )
+
+    with pytest.raises(
+        ContextLifecycleEvidenceError,
+        match="invalid context lifecycle evidence",
+    ):
+        require_context_lifecycle_replay_identity(
+            existing=VALID,
+            candidate=different_event,
+        )
 
 
 def test_context_lifecycle_replay_rejects_same_id_with_conflicting_evidence() -> None:
