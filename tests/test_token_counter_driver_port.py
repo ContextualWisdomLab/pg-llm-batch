@@ -136,10 +136,10 @@ def test_token_counter_uses_driver_error_classification_for_encode_fallback(
     assert any("tiktoken_encode" in query for query, _params in driver.executions)
 
 
-def test_non_undefined_driver_error_does_not_disable_token_counting(
+def test_non_undefined_driver_error_discards_cached_connection_before_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A transient candidate-driver failure must not masquerade as missing pg_tiktoken."""
+    """A transient DB failure must retry on a fresh connection without disabling pg_tiktoken."""
     driver = _Driver(primary_error=_OtherDriverError("temporary database failure"))
     monkeypatch.setattr(token_counter_module, "psycopg", None)
     monkeypatch.setattr(
@@ -152,5 +152,10 @@ def test_non_undefined_driver_error_does_not_disable_token_counting(
 
     with pytest.raises(RuntimeError, match="Token counting requires pg_tiktoken"):
         counter.count_tokens("first", "model-a")
+
+    assert len(driver.connections) == 1
+    assert driver.connections[0].closed is True
     assert counter.count_tokens("second", "model-a") == 7
+    assert len(driver.connections) == 2
+    assert driver.connections[1].autocommit_values == [True]
     assert not any("tiktoken_encode" in query for query, _params in driver.executions)
