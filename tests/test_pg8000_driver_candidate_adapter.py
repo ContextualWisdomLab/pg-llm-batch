@@ -8,8 +8,6 @@ before any runtime dependency or default-driver change.
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
 from pg_llm_batch.pg8000_driver_candidate_adapter import (
