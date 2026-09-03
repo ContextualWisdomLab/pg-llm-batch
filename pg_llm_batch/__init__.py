@@ -7,6 +7,7 @@ Public API:
     PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
     BatchInferencePort                  -- provider-neutral batch lifecycle seam
     ContextLifecycleEvidenceSeed        -- privacy-minimized Context ACL input
+    PostgresContextLifecycleOutboxStore -- durable tenant publication intent
     BatchAPIClient                      -- submit, poll, and retrieve
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultRecord                   -- immutable streamed result/error record
@@ -38,6 +39,11 @@ from .context_lifecycle_evidence import (
     require_context_lifecycle_replay_identity,
     require_context_lifecycle_scope_continuity,
     validate_context_lifecycle_evidence_seed,
+)
+from .context_lifecycle_outbox import (
+    ContextLifecycleOutboxConflictError,
+    PostgresContextLifecycleOutboxStore,
+    apply_context_lifecycle_outbox_schema,
 )
 from .db import (
     DEFAULT_TENANT_SCOPE,
@@ -73,6 +79,9 @@ __all__ = [
     "validate_context_lifecycle_evidence_seed",
     "require_context_lifecycle_replay_identity",
     "require_context_lifecycle_scope_continuity",
+    "ContextLifecycleOutboxConflictError",
+    "PostgresContextLifecycleOutboxStore",
+    "apply_context_lifecycle_outbox_schema",
     "BatchAPIClient",
     "StreamingBatchAPIClient",
     "BatchResultRecord",
