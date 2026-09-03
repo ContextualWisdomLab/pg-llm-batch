@@ -2,10 +2,12 @@
 
 The pg8000 anti-corruption adapter must attempt connection cleanup after a
 transaction failure without letting a later close failure replace the earlier
-commit or rollback failure. Direct connection execution must likewise close the
-internally created cursor when execution fails, because the caller never receives
-that cursor and therefore cannot release it. These tests keep that recovery
-contract independent from the real-driver PostgreSQL smoke gate.
+commit or rollback failure. An application exception also remains primary when
+rollback succeeds but later connection cleanup fails. Direct connection
+execution must likewise close the internally created cursor when execution
+fails, because the caller never receives that cursor and therefore cannot
+release it. These tests keep that recovery contract independent from the
+real-driver PostgreSQL smoke gate.
 """
 
 from __future__ import annotations
@@ -35,6 +37,21 @@ class _TransactionAndCloseFailureConnection:
         self.rollback_count += 1
         if not self.fail_commit:
             raise RuntimeError("rollback failed")
+
+    def close(self) -> None:
+        self.close_count += 1
+        raise OSError("close failed")
+
+
+class _RollbackSuccessCloseFailureConnection:
+    """Succeed rollback but fail cleanup after an application exception."""
+
+    def __init__(self) -> None:
+        self.rollback_count = 0
+        self.close_count = 0
+
+    def rollback(self) -> None:
+        self.rollback_count += 1
 
     def close(self) -> None:
         self.close_count += 1
@@ -95,6 +112,21 @@ def test_candidate_context_preserves_rollback_failure_when_close_also_fails() ->
         adapter.__exit__(ValueError, application_error, None)
 
     assert raw.commit_count == 0
+    assert raw.rollback_count == 1
+    assert raw.close_count == 1
+    assert adapter.is_closed() is False
+
+
+def test_candidate_context_preserves_application_error_when_only_close_fails() -> None:
+    """Cleanup failure must not replace an application error after rollback."""
+    raw = _RollbackSuccessCloseFailureConnection()
+    adapter = Pg8000CandidateConnectionAdapter(raw)
+    application_error = ValueError("application failed")
+
+    with pytest.raises(ValueError) as caught:
+        adapter.__exit__(ValueError, application_error, None)
+
+    assert caught.value is application_error
     assert raw.rollback_count == 1
     assert raw.close_count == 1
     assert adapter.is_closed() is False
