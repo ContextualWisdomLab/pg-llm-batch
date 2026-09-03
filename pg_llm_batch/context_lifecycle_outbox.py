@@ -55,8 +55,8 @@ class ContextLifecycleOutboxConflictError(PgLlmBatchError):
 
 
 def _validated_postgres_dsn(value: Any) -> str:
-    """Require an explicit nonblank database target without ambient fallback."""
-    if not isinstance(value, str) or not value.strip():
+    """Require one exact built-in nonblank database target without ambient fallback."""
+    if type(value) is not str or not value.strip():
         raise ConfigError(
             "A Postgres DSN must be provided explicitly for lifecycle outbox persistence"
         )
