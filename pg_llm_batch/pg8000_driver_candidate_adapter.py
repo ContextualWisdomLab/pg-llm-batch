@@ -2,13 +2,13 @@
 
 This module intentionally stops short of a production ``PostgresDriverPort``.
 pg8000 1.31.5 documents the DB-API cursor, transaction, autocommit, parameter
-binding, and ``-1`` unknown-row-count behavior needed by part of the current
-port, but pg-llm-batch has not yet proved its full conninfo/service-selector,
-JSONB adaptation, PostgreSQL error-classification, Python 3.14, RLS, transport
-failure recovery, concurrency, package, SBOM, and provenance contract on one
-exact artifact. Keeping this adapter candidate-only lets those portable semantics
-be exercised without making an unreleased or unverified runtime dependency
-canonical.
+binding, module-only connection thread sharing, and ``-1`` unknown-row-count
+behavior needed by part of the current port, but pg-llm-batch has not yet proved
+its full conninfo/service-selector, JSONB adaptation, PostgreSQL
+error-classification, Python 3.14, RLS, transport failure recovery, package,
+SBOM, and provenance contract on one exact artifact. Keeping this adapter
+candidate-only lets those portable semantics be exercised without making an
+unreleased or unverified runtime dependency canonical.
 """
 
 from __future__ import annotations
@@ -30,18 +30,21 @@ class Pg8000CandidateAdapterError(RuntimeError):
 
 
 def validate_pg8000_dbapi_module(dbapi_module: object) -> None:
-    """Fail closed unless the imported pg8000 DB-API mode matches package SQL.
+    """Fail closed unless imported pg8000 DB-API metadata matches package use.
 
     pg8000 exposes ``paramstyle`` as mutable module state. pg-llm-batch's current
     SQL uses DB-API ``format`` placeholders, so a future production candidate
     factory must run this guard immediately after importing the exact admitted
-    pg8000 artifact and before creating adapters or executing SQL. Metadata is
-    read from an exact ``ModuleType`` dictionary rather than through arbitrary
-    shaped objects whose attribute access could execute caller-controlled code.
+    pg8000 artifact and before creating adapters or executing SQL. The documented
+    ``threadsafety == 1`` value is also part of this boundary: code may share the
+    module across threads but must not infer that one connection is shareable.
+    Metadata is read from an exact ``ModuleType`` dictionary rather than through
+    arbitrary shaped objects whose attribute access could execute caller-controlled
+    code.
 
     Raises:
-        Pg8000CandidateAdapterError: If DB-API 2.0 or ``format`` parameter style
-            is not the exact active module contract.
+        Pg8000CandidateAdapterError: If DB-API level, parameter style, or thread
+            sharing semantics differ from the exact reviewed candidate contract.
     """
     if type(dbapi_module) is not ModuleType:
         raise Pg8000CandidateAdapterError("PostgreSQL driver module identity is invalid")
@@ -50,12 +53,17 @@ def validate_pg8000_dbapi_module(dbapi_module: object) -> None:
     metadata = vars(module)
     api_level = metadata.get("apilevel")
     parameter_style = metadata.get("paramstyle")
+    thread_safety = metadata.get("threadsafety")
 
     if type(api_level) is not str or api_level != "2.0":
         raise Pg8000CandidateAdapterError("PostgreSQL driver API level is incompatible")
     if type(parameter_style) is not str or parameter_style != "format":
         raise Pg8000CandidateAdapterError(
             "PostgreSQL driver parameter style is incompatible"
+        )
+    if type(thread_safety) is not int or thread_safety != 1:
+        raise Pg8000CandidateAdapterError(
+            "PostgreSQL driver thread safety is incompatible"
         )
 
 
@@ -211,7 +219,9 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
     It never opens a connection itself and therefore cannot bypass the still-open
     DSN/conninfo/service-selector admission problem. All operations stay on the
     injected raw connection so transaction-local RLS state cannot migrate to an
-    implicit second session.
+    implicit second session. The candidate's DB-API thread level does not permit
+    callers to infer that this retained connection is safe to share across threads;
+    that package-level concurrency boundary remains a separate admission gate.
     """
 
     def __init__(self, connection: Any) -> None:
