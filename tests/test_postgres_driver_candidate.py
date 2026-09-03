@@ -17,6 +17,7 @@ SOURCE_SHA = "a" * 40
 ARTIFACT_SHA256 = "b" * 64
 VULNERABILITY_REPORT_SHA256 = "c" * 64
 LICENSE_REPORT_SHA256 = "d" * 64
+CAPABILITY_REPORT_SHA256 = "e" * 64
 
 
 def _evidence(**overrides: object) -> PostgresDriverCandidateEvidence:
@@ -29,6 +30,7 @@ def _evidence(**overrides: object) -> PostgresDriverCandidateEvidence:
         "source_commit_sha": SOURCE_SHA,
         "artifact_sha256": ARTIFACT_SHA256,
         "vulnerability_report_sha256": VULNERABILITY_REPORT_SHA256,
+        "capability_report_sha256": CAPABILITY_REPORT_SHA256,
         "known_vulnerability_ids": (),
         "capabilities": FULL_CAPABILITIES,
     }
@@ -62,6 +64,17 @@ def test_candidate_rejects_malformed_license_report_identity(
 ) -> None:
     with pytest.raises(PostgresDriverCandidateEvidenceError, match="license report"):
         _evidence(license_report_sha256=license_report_sha256)
+
+
+@pytest.mark.parametrize(
+    "capability_report_sha256",
+    ["e" * 63, "z" * 64, 64],
+)
+def test_candidate_rejects_malformed_capability_report_identity(
+    capability_report_sha256: object,
+) -> None:
+    with pytest.raises(PostgresDriverCandidateEvidenceError, match="capability report"):
+        _evidence(capability_report_sha256=capability_report_sha256)
 
 
 def test_candidate_contract_covers_issue_322_type_and_parameter_parity() -> None:
@@ -138,9 +151,7 @@ def test_candidate_reports_every_missing_runtime_capability_deterministically() 
         _evidence(capabilities=frozenset({"parameterized_sql", "jsonb"}))
     )
 
-    expected_missing = sorted(
-        FULL_CAPABILITIES - {"parameterized_sql", "jsonb"}
-    )
+    expected_missing = sorted(FULL_CAPABILITIES - {"parameterized_sql", "jsonb"})
     assert decision.eligible_for_parity_validation is False
     assert decision.reasons == tuple(
         f"missing_capability:{capability}" for capability in expected_missing
@@ -167,6 +178,9 @@ def test_candidate_reports_every_missing_runtime_capability_deterministically() 
         ("vulnerability_report_sha256", "c" * 63),
         ("vulnerability_report_sha256", "z" * 64),
         ("vulnerability_report_sha256", 64),
+        ("capability_report_sha256", "e" * 63),
+        ("capability_report_sha256", "z" * 64),
+        ("capability_report_sha256", 64),
         ("known_vulnerability_ids", ["CVE-2025-61385"]),
         ("capabilities", frozenset()),
         ("capabilities", {"parameterized_sql"}),
@@ -213,9 +227,7 @@ def test_candidate_rejects_malformed_vulnerability_identifiers(
 
 def test_candidate_rejects_duplicate_vulnerability_identifiers() -> None:
     with pytest.raises(PostgresDriverCandidateEvidenceError, match="vulnerability"):
-        _evidence(
-            known_vulnerability_ids=("CVE-2025-61385", "CVE-2025-61385")
-        )
+        _evidence(known_vulnerability_ids=("CVE-2025-61385", "CVE-2025-61385"))
 
 
 def test_candidate_rejects_unbounded_python_version_evidence() -> None:
