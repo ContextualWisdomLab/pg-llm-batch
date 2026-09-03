@@ -153,3 +153,14 @@ def test_release_manifest_resolver_requires_exact_bytes_and_digest_types() -> No
             payload,
             expected_manifest_sha256=object(),  # type: ignore[arg-type]
         )
+
+
+def test_release_manifest_resolver_contains_recursive_json_failure() -> None:
+    """Parser recursion exhaustion is contained behind the fixed admission error."""
+    nested = b'{' + b'"distribution_name":' + (b"[" * 1100) + b"0" + (b"]" * 1100) + b"}"
+
+    with pytest.raises(ContextContractReleaseManifestError, match="^invalid release manifest$"):
+        resolve_context_contract_release_manifest(
+            nested,
+            expected_manifest_sha256=_digest(nested),
+        )
