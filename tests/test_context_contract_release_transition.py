@@ -132,6 +132,30 @@ def test_release_transition_binds_the_policy_approved_target_release() -> None:
         _admit(verification=other_verification)
 
 
+def test_release_transition_accepts_canonical_distribution_spelling() -> None:
+    """Equivalent packaging spellings retain the same distribution authority."""
+    equivalent_target = replace(
+        TARGET_PIN,
+        distribution_name="Future_Context.Contract_Package",
+    )
+    equivalent_verification = replace(
+        TARGET_VERIFICATION,
+        release_pin=equivalent_target,
+    )
+    equivalent_transition = replace(
+        TRANSITION,
+        target_release_pin=equivalent_target,
+    )
+
+    assert (
+        _admit(
+            equivalent_transition,
+            verification=equivalent_verification,
+        )
+        == equivalent_target
+    )
+
+
 def test_release_transition_rejects_distribution_replacement() -> None:
     """Release migration cannot replace the contract distribution authority."""
     replacement_target = replace(
