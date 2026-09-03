@@ -337,14 +337,16 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         exc: BaseException | None,
         traceback: object | None,
     ) -> bool | None:
-        """Commit or roll back, attempt close, and preserve transaction failures.
+        """Commit or roll back, close, and preserve the highest-priority failure.
 
         pg8000's public DB-API contract documents ``commit``, ``rollback``, and
         ``close`` but does not require a connection context-manager extension.
         Owning the package policy here removes that undocumented dependency while
         retaining the transaction semantics required by candidate admission. A
-        commit or rollback failure remains the primary failure even if later
-        connection cleanup also fails; close-only failures still propagate.
+        commit or rollback failure remains primary over both an application error
+        and later cleanup failure. If rollback succeeds, the application error
+        remains primary over a later close failure. A close-only failure still
+        propagates on an otherwise successful exit.
         """
         transaction_error: BaseException | None = None
         try:
@@ -360,6 +362,8 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         except BaseException:
             if transaction_error is not None:
                 raise transaction_error from None
+            if exc is not None:
+                raise exc from None
             raise
 
         if transaction_error is not None:
