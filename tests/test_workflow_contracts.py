@@ -155,6 +155,12 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     """Keep replacement-driver proof exact without creating another runner lane."""
     workflow = _read(".github/workflows/ci.yml")
     project = _read("pyproject.toml")
+    current_setup_uv = (
+        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
+    )
+    stale_setup_uv = (
+        "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"
+    )
 
     assert "pg8000-candidate-python314:" not in workflow
     assert "pg8000==1.31.5" in workflow
@@ -163,6 +169,8 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
         in workflow
     )
     assert "tests/smoke_pg8000_candidate_postgres.py" in workflow
+    assert workflow.count(current_setup_uv) == 3
+    assert stale_setup_uv not in workflow
     assert "pg8000-candidate-ci-password" not in workflow
     assert "secrets.token_urlsafe(32)" in workflow
     assert "::add-mask::$candidate_password" in workflow
