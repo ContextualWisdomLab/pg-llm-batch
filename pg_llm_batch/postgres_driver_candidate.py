@@ -45,7 +45,7 @@ REQUIRED_POSTGRES_DRIVER_PYTHON_VERSIONS = frozenset(
 )
 """Repository-supported Python minors a replacement driver must evidence explicitly."""
 
-POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION = "1"
+POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION = "2"
 """Version of the candidate-evidence receipt interpreted by this evaluator."""
 
 _APPROVED_PERMISSIVE_LICENSES = frozenset(
@@ -150,10 +150,12 @@ class PostgresDriverCandidateEvidence:
 
     ``source_commit_sha`` identifies the reviewed source revision,
     ``license_report_sha256`` binds the exact license evidence used for
-    ``license_spdx``, ``artifact_sha256`` identifies the exact distributable, and
+    ``license_spdx``, ``artifact_sha256`` identifies the exact distributable,
     ``vulnerability_report_sha256`` binds the exact vulnerability evidence used
-    for the decision. ``known_vulnerability_ids`` records unresolved advisories
-    from that report. ``python_versions`` and ``capabilities`` must contain
+    for the decision, and ``capability_report_sha256`` binds the exact parity
+    capability report from which ``capabilities`` is derived.
+    ``known_vulnerability_ids`` records unresolved advisories from the bound
+    vulnerability report. ``python_versions`` and ``capabilities`` must contain
     explicit evidence rather than inferred support from a nearby release or
     similar database driver. ``evidence_schema_version`` prevents a future
     receipt shape from being silently interpreted under today's semantics.
@@ -169,6 +171,7 @@ class PostgresDriverCandidateEvidence:
     source_commit_sha: str
     artifact_sha256: str
     vulnerability_report_sha256: str
+    capability_report_sha256: str
     known_vulnerability_ids: tuple[str, ...]
     capabilities: frozenset[str]
     evidence_schema_version: str = POSTGRES_DRIVER_CANDIDATE_EVIDENCE_SCHEMA_VERSION
@@ -240,6 +243,13 @@ class PostgresDriverCandidateEvidence:
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver vulnerability report evidence is invalid"
             )
+        if (
+            type(self.capability_report_sha256) is not str
+            or _ARTIFACT_SHA256.fullmatch(self.capability_report_sha256) is None
+        ):
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver capability report evidence is invalid"
+            )
         _validate_vulnerability_ids(self.known_vulnerability_ids)
         if type(self.capabilities) is not frozenset or not self.capabilities:
             raise PostgresDriverCandidateEvidenceError(
@@ -295,6 +305,7 @@ def _validated_candidate_snapshot(
             source_commit_sha=evidence.source_commit_sha,
             artifact_sha256=evidence.artifact_sha256,
             vulnerability_report_sha256=evidence.vulnerability_report_sha256,
+            capability_report_sha256=evidence.capability_report_sha256,
             known_vulnerability_ids=evidence.known_vulnerability_ids,
             capabilities=evidence.capabilities,
             evidence_schema_version=evidence.evidence_schema_version,
