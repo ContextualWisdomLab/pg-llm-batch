@@ -180,6 +180,43 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     assert '"pg8000' not in project.casefold()
 
 
+def test_ci_pg8000_candidate_pins_and_hashes_full_dependency_closure() -> None:
+    """Candidate proof must not resolve mutable transitive wheels at install time."""
+    workflow = _read(".github/workflows/ci.yml")
+
+    exact_artifacts = {
+        "pg8000==1.31.5": (
+            "0af2c1926b153307639868d2ee5cef6cd3a7d07448e12736989b10e1d491e201"
+        ),
+        "python-dateutil==2.9.0.post0": (
+            "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427"
+        ),
+        "scramp==1.4.17": (
+            "a4e3fd2e8169461a28a13777a166d3da94274454f0714a7d3023fee124474ac8"
+        ),
+        "asn1crypto==1.5.1": (
+            "db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67"
+        ),
+        "six==1.17.0": (
+            "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+        ),
+    }
+    for requirement, digest in exact_artifacts.items():
+        assert requirement in workflow
+        assert digest in workflow
+
+    assert "pip download --no-deps --only-binary=:all:" in workflow
+    assert "uv pip install --python .venv/bin/python --no-deps" in workflow
+    assert "/tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl" in workflow
+    assert (
+        "/tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl"
+        in workflow
+    )
+    assert "/tmp/pg8000-candidate/scramp-1.4.17-py3-none-any.whl" in workflow
+    assert "/tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl" in workflow
+    assert "/tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl" in workflow
+
+
 def test_workflow_step_field_matching_ignores_comments_and_unrelated_values() -> None:
     """Comment or nested text must not masquerade as workflow step fields."""
     decoy = """      - name: Decoy
