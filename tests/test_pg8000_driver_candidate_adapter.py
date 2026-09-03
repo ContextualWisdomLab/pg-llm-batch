@@ -100,11 +100,17 @@ class _FakeConnection:
         return False
 
 
-def _dbapi_module(*, apilevel: object = "2.0", paramstyle: object = "format") -> ModuleType:
+def _dbapi_module(
+    *,
+    apilevel: object = "2.0",
+    paramstyle: object = "format",
+    threadsafety: object = 1,
+) -> ModuleType:
     """Build one exact module-shaped DB-API authority for candidate contract tests."""
     module = ModuleType("pg8000.dbapi")
     module.apilevel = apilevel
     module.paramstyle = paramstyle
+    module.threadsafety = threadsafety
     return module
 
 
@@ -121,6 +127,18 @@ def test_candidate_dbapi_module_requires_dbapi_2_and_format_parameter_style() ->
     module.apilevel = "1.0"
     with pytest.raises(Pg8000CandidateAdapterError, match="API level is incompatible"):
         validate_pg8000_dbapi_module(module)
+
+
+def test_candidate_dbapi_module_requires_module_only_connection_thread_safety() -> None:
+    """Reject metadata that would misstate pg8000 connection-sharing semantics."""
+    validate_pg8000_dbapi_module(_dbapi_module(threadsafety=1))
+
+    for invalid in (0, 2, 3, True, "1"):
+        with pytest.raises(
+            Pg8000CandidateAdapterError,
+            match="thread safety is incompatible",
+        ):
+            validate_pg8000_dbapi_module(_dbapi_module(threadsafety=invalid))
 
 
 def test_candidate_dbapi_module_rejects_shaped_or_behavior_bearing_metadata() -> None:
