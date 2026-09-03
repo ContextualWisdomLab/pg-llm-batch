@@ -31,6 +31,7 @@ class _FakeCursor:
         self.fetchmany_value: list[object] = []
         self.fetchall_value: list[object] = []
         self.rowcount: object = 0
+        self.close_count = 0
         self.enter_count = 0
         self.exit_args: tuple[object, object, object] | None = None
 
@@ -51,6 +52,9 @@ class _FakeCursor:
 
     def fetchall(self) -> list[object]:
         return self.fetchall_value
+
+    def close(self) -> None:
+        self.close_count += 1
 
     def __enter__(self) -> _FakeCursor:
         self.enter_count += 1
@@ -190,15 +194,16 @@ def test_candidate_cursor_normalizes_unknown_row_count_and_rejects_bad_sentinels
         adapter.row_count()
 
 
-def test_candidate_cursor_context_delegates_cleanup_without_suppressing_errors() -> None:
+def test_candidate_cursor_context_owns_dbapi_cleanup_without_raw_context_dependency() -> None:
     raw = _FakeCursor()
     adapter = Pg8000CandidateCursorAdapter(raw)
     error = RuntimeError("boom")
 
     assert adapter.__enter__() is adapter
-    assert raw.enter_count == 1
+    assert raw.enter_count == 0
     assert adapter.__exit__(RuntimeError, error, None) is False
-    assert raw.exit_args == (RuntimeError, error, None)
+    assert raw.close_count == 1
+    assert raw.exit_args is None
 
 
 def test_candidate_connection_uses_one_raw_connection_for_execution_and_transactions() -> None:
