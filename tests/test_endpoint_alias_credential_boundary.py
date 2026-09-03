@@ -12,7 +12,7 @@ from pg_llm_batch.batch_api_client import (
     GatewayCredentials,
     config_credentials_provider,
 )
-from pg_llm_batch.db import MAX_ENDPOINT_ALIAS_CHARACTERS, validate_endpoint_alias
+from pg_llm_batch.db import MAX_ENDPOINT_ALIAS_CHARACTERS
 from pg_llm_batch.exceptions import GatewayError, ValidationError
 
 
@@ -51,13 +51,21 @@ class _SecretStore:
         "a" * (MAX_ENDPOINT_ALIAS_CHARACTERS + 1),
     ],
 )
-def test_endpoint_alias_rejects_noncanonical_values_without_reflection(alias: str) -> None:
-    """Reject aliases outside the bounded ASCII identifier grammar without echoing them."""
+def test_config_provider_rejects_noncanonical_alias_before_store_access(
+    alias: str,
+) -> None:
+    """Reject aliases outside the bounded ASCII grammar before any store can observe them."""
+    config = _ConfigStore()
+    secrets = _SecretStore()
+    provider = config_credentials_provider(config, secrets)
+
     with pytest.raises(ValidationError) as raised:
-        validate_endpoint_alias(alias)
+        provider(alias)
 
     assert alias not in str(raised.value)
     assert raised.value.details["value"] == "<redacted>"
+    assert config.calls == []
+    assert secrets.calls == []
 
 
 async def test_batch_client_rejects_alias_before_custom_credential_resolution() -> None:
