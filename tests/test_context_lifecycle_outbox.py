@@ -309,6 +309,26 @@ def test_load_rejects_malformed_durable_row(
         store.load("event-1")
 
 
+def test_load_rejects_behavior_bearing_row_before_member_access(
+    database: FakeDatabase,
+) -> None:
+    """A row subclass must not execute caller behavior before trust is established."""
+
+    class BehaviorBearingRow(tuple):
+        def __len__(self) -> int:
+            raise AssertionError("behavior-bearing row length executed")
+
+        def __iter__(self):
+            raise AssertionError("behavior-bearing row iteration executed")
+
+    database.rows[("standalone", "event-1")] = BehaviorBearingRow(
+        evidence_row(evidence())
+    )
+    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    with pytest.raises(RuntimeError, match="invalid shape"):
+        store.load("event-1")
+
+
 def test_apply_schema_uses_explicit_migration_and_commit(
     database: FakeDatabase,
     tmp_path: Path,
