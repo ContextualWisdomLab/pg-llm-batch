@@ -66,3 +66,19 @@ def test_validator_rejects_authority_mutation_during_provenance_check(
     )
 
     assert postgres_wal_segment_binding_is_valid(binding) is False
+
+
+def test_validator_rejects_non_artifact_evidence_reference(tmp_path: Path) -> None:
+    """A caller cannot replace the inspected artifact authority with an arbitrary object."""
+    binding = _binding(tmp_path)
+    object.__setattr__(binding, "artifact_evidence", object())
+
+    assert postgres_wal_segment_binding_is_valid(binding) is False
+
+
+def test_validator_rejects_malformed_artifact_scalar_types(tmp_path: Path) -> None:
+    """Artifact digest fields must retain exact primitive types before provenance checks."""
+    binding = _binding(tmp_path)
+    object.__setattr__(binding.artifact_evidence, "sha256", b"not-text")
+
+    assert postgres_wal_segment_binding_is_valid(binding) is False
