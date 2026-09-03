@@ -132,6 +132,28 @@ def test_release_transition_binds_the_policy_approved_target_release() -> None:
         _admit(verification=other_verification)
 
 
+def test_release_transition_rejects_distribution_replacement() -> None:
+    """Release migration cannot replace the contract distribution authority."""
+    replacement_target = replace(
+        TARGET_PIN,
+        distribution_name="unrelated-contract-package",
+    )
+    replacement_verification = replace(
+        TARGET_VERIFICATION,
+        release_pin=replacement_target,
+    )
+    replacement_transition = replace(
+        TRANSITION,
+        target_release_pin=replacement_target,
+    )
+
+    with pytest.raises(ContextContractReleasePinError, match="invalid release pin"):
+        _admit(
+            replacement_transition,
+            verification=replacement_verification,
+        )
+
+
 def test_release_transition_rejects_noop_release_identity() -> None:
     """Migration evidence cannot manufacture a release change when source equals target."""
     noop_verification = replace(TARGET_VERIFICATION, release_pin=CURRENT_PIN)
