@@ -162,7 +162,6 @@ jobs:
           printf '%s' "$candidate_password" > "$password_file"
           chmod 600 "$password_file"
           container="pg-llm-batch-pg8000-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "PG_LLM_BATCH_POSTGRES_PASSWORD=$candidate_password" >> "$GITHUB_ENV"
           echo "PG8000_CANDIDATE_PASSWORD_FILE=$password_file" >> "$GITHUB_ENV"
           echo "PG8000_CANDIDATE_CONTAINER=$container" >> "$GITHUB_ENV"
           docker run --detach --name "$container" \
