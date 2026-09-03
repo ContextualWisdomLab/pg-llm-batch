@@ -232,14 +232,28 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         query: str,
         params: object | None = None,
     ) -> Pg8000CandidateCursorAdapter:
-        """Execute through a cursor created from this retained connection only.
+        """Execute on this connection and release the owned cursor on failure.
 
-        DB-API does not require ``Connection.execute``. Creating a cursor here
-        keeps the canonical convenience method while preserving parameter binding
-        and session identity instead of depending on a non-portable extension.
+        DB-API does not require ``Connection.execute``. The adapter therefore
+        creates the cursor itself and owns it until a successful execution hands
+        the cursor back to the caller. If execution fails before that handoff,
+        cleanup is attempted immediately so a database error cannot strand an
+        unreachable cursor. A secondary close failure never replaces the primary
+        execution failure.
         """
         cursor = self.cursor()
-        cursor.execute(query, params)
+        try:
+            cursor.execute(query, params)
+        except BaseException as execution_error:
+            try:
+                cursor.__exit__(
+                    type(execution_error),
+                    execution_error,
+                    execution_error.__traceback__,
+                )
+            except BaseException:
+                raise execution_error from None
+            raise
         return cursor
 
     def commit(self) -> None:
