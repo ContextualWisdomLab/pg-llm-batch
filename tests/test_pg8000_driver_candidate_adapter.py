@@ -32,6 +32,7 @@ class _FakeCursor:
         self.fetchall_value: list[object] = []
         self.rowcount: object = 0
         self.close_count = 0
+        self.close_error: BaseException | None = None
         self.enter_count = 0
         self.exit_args: tuple[object, object, object] | None = None
 
@@ -55,6 +56,8 @@ class _FakeCursor:
 
     def close(self) -> None:
         self.close_count += 1
+        if self.close_error is not None:
+            raise self.close_error
 
     def __enter__(self) -> _FakeCursor:
         self.enter_count += 1
@@ -222,6 +225,34 @@ def test_candidate_cursor_context_owns_dbapi_cleanup_without_raw_context_depende
     assert adapter.__exit__(RuntimeError, error, None) is False
     assert raw.close_count == 1
     assert raw.exit_args is None
+
+
+def test_candidate_cursor_context_preserves_application_error_over_cleanup_failure() -> None:
+    """Cleanup failure must not replace the application error already in flight."""
+    raw = _FakeCursor()
+    adapter = Pg8000CandidateCursorAdapter(raw)
+    application_error = ValueError("application")
+    raw.close_error = RuntimeError("cleanup")
+
+    with pytest.raises(ValueError) as caught:
+        adapter.__exit__(ValueError, application_error, None)
+
+    assert caught.value is application_error
+    assert raw.close_count == 1
+
+
+def test_candidate_cursor_context_propagates_cleanup_failure_without_application_error() -> None:
+    """A close-only failure remains visible when no earlier error has priority."""
+    raw = _FakeCursor()
+    adapter = Pg8000CandidateCursorAdapter(raw)
+    cleanup_error = RuntimeError("cleanup")
+    raw.close_error = cleanup_error
+
+    with pytest.raises(RuntimeError) as caught:
+        adapter.__exit__(None, None, None)
+
+    assert caught.value is cleanup_error
+    assert raw.close_count == 1
 
 
 def test_candidate_connection_uses_one_raw_connection_for_execution_and_transactions() -> None:
