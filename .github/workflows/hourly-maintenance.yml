@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: hourly-commercial-maintenance-${{ github.repository }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -16,20 +16,15 @@ jobs:
   review-fix:
     name: Repair actionable pull-request feedback
     permissions:
-      actions: write
       contents: read
-      issues: write
-      pull-requests: read
-      statuses: read
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@5983b41ace75040c1d81818171ca7d0f3653254e # main
+      id-token: write
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-fix-scheduler.yml@c47afc2dc68488292c1db7c9d6f82dcd5360f181 # protected central main
     with:
       target_repository: ContextualWisdomLab/pg-llm-batch
       base_branch: main
       max_prs: "100"
       max_dispatches: "1"
       retry_hours: "1"
-      canonical_ref: 5983b41ace75040c1d81818171ca7d0f3653254e
-    secrets: inherit
 
   review-merge:
     name: Revalidate and merge eligible pull requests
@@ -41,7 +36,7 @@ jobs:
       contents: write
       id-token: write
       pull-requests: write
-    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-merge-scheduler.yml@5983b41ace75040c1d81818171ca7d0f3653254e # main
+    uses: ContextualWisdomLab/.github/.github/workflows/pr-review-merge-scheduler.yml@c47afc2dc68488292c1db7c9d6f82dcd5360f181 # protected central main
     with:
       base_branch: main
       max_prs: "100"
@@ -53,4 +48,3 @@ jobs:
       update_branches: true
       stale_opencode_minutes: "90"
       project_flow: github-flow
-    secrets: inherit
