@@ -104,7 +104,7 @@ def test_observation_order_reservation_uses_injected_driver_without_psycopg(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Driver migration must retain the default standalone tenant boundary."""
-    driver = _Driver(rows=[("standalone",), (41,)])
+    driver = _Driver(rows=[(41,)])
     monkeypatch.setattr(db, "psycopg", None)
 
     order = db.reserve_remote_batch_observation_order(
