@@ -112,10 +112,7 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
             if cursor.row_count() != 2:
                 raise AssertionError("pg8000 candidate row-count evidence is not exact")
     finally:
-        # Pg8000CandidateConnectionAdapter owns no context here because fixture
-        # setup uses explicit autocommit. Close the exact raw capability once.
-        if not getattr(raw, "_usock", None) is None:
-            raw.close()
+        raw.close()
     return evidence_uuid, evidence_time
 
 
