@@ -62,6 +62,9 @@ _MAX_IDENTITY_EVIDENCE_BYTES = 256
 _MAX_PYTHON_VERSION_EVIDENCE_ITEMS = 32
 _MAX_VULNERABILITY_EVIDENCE_ITEMS = 256
 _MINOR_PYTHON_VERSION = re.compile(r"^[1-9][0-9]*\.[0-9]+$")
+_PYPA_DISTRIBUTION_NAME = re.compile(
+    r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?\Z"
+)
 _SOURCE_COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _ARTIFACT_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _VULNERABILITY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -171,6 +174,10 @@ class PostgresDriverCandidateEvidence:
             ("license", self.license_spdx),
         ):
             _validate_identity_text(label, value)
+        if _PYPA_DISTRIBUTION_NAME.fullmatch(self.package_name) is None:
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver package name evidence is invalid"
+            )
         if (
             type(self.evidence_schema_version) is not str
             or self.evidence_schema_version
