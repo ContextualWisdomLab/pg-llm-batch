@@ -223,7 +223,7 @@ def test_candidate_connection_uses_one_raw_connection_for_execution_and_transact
     assert raw.rollback_count == 1
 
 
-def test_candidate_connection_validates_autocommit_and_closed_state() -> None:
+def test_candidate_connection_validates_autocommit_and_owns_closed_state() -> None:
     raw = _FakeConnection()
     adapter = Pg8000CandidateConnectionAdapter(raw)
 
@@ -235,12 +235,13 @@ def test_candidate_connection_validates_autocommit_and_closed_state() -> None:
         adapter.set_autocommit(1)  # type: ignore[arg-type]
 
     raw.closed = 0
-    with pytest.raises(Pg8000CandidateAdapterError, match="closed state is unavailable"):
-        adapter.is_closed()
-
+    assert adapter.is_closed() is False
     del raw.closed
-    with pytest.raises(Pg8000CandidateAdapterError, match="closed state is unavailable"):
-        adapter.is_closed()
+    assert adapter.is_closed() is False
+
+    adapter.close()
+    assert raw.close_count == 1
+    assert adapter.is_closed() is True
 
 
 def test_candidate_connection_context_commits_and_closes_without_raw_context_dependency() -> None:
