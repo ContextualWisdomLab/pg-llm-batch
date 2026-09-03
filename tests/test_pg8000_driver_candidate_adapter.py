@@ -8,12 +8,15 @@ before any runtime dependency or default-driver change.
 
 from __future__ import annotations
 
+from types import ModuleType
+
 import pytest
 
 from pg_llm_batch.pg8000_driver_candidate_adapter import (
     Pg8000CandidateAdapterError,
     Pg8000CandidateConnectionAdapter,
     Pg8000CandidateCursorAdapter,
+    validate_pg8000_dbapi_module,
 )
 from pg_llm_batch.postgres_driver_port import PostgresConnectionPort, PostgresCursorPort
 
@@ -91,6 +94,41 @@ class _FakeConnection:
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> bool:
         self.exit_args = (exc_type, exc, traceback)
         return False
+
+
+def _dbapi_module(*, apilevel: object = "2.0", paramstyle: object = "format") -> ModuleType:
+    """Build one exact module-shaped DB-API authority for candidate contract tests."""
+    module = ModuleType("pg8000.dbapi")
+    module.apilevel = apilevel
+    module.paramstyle = paramstyle
+    return module
+
+
+def test_candidate_dbapi_module_requires_dbapi_2_and_format_parameter_style() -> None:
+    module = _dbapi_module()
+
+    validate_pg8000_dbapi_module(module)
+
+    module.paramstyle = "named"
+    with pytest.raises(Pg8000CandidateAdapterError, match="parameter style is incompatible"):
+        validate_pg8000_dbapi_module(module)
+
+    module.paramstyle = "format"
+    module.apilevel = "1.0"
+    with pytest.raises(Pg8000CandidateAdapterError, match="API level is incompatible"):
+        validate_pg8000_dbapi_module(module)
+
+
+def test_candidate_dbapi_module_rejects_shaped_or_behavior_bearing_metadata() -> None:
+    class _StringSubclass(str):
+        pass
+
+    with pytest.raises(Pg8000CandidateAdapterError, match="module identity is invalid"):
+        validate_pg8000_dbapi_module(object())
+    with pytest.raises(Pg8000CandidateAdapterError, match="API level is incompatible"):
+        validate_pg8000_dbapi_module(_dbapi_module(apilevel=_StringSubclass("2.0")))
+    with pytest.raises(Pg8000CandidateAdapterError, match="parameter style is incompatible"):
+        validate_pg8000_dbapi_module(_dbapi_module(paramstyle=_StringSubclass("format")))
 
 
 def test_candidate_cursor_preserves_parameter_binding_and_wrapper_identity() -> None:
