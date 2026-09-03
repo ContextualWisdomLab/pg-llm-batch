@@ -41,6 +41,7 @@ def test_candidate_schema_version_rejects_equality_spoofing() -> None:
             source_commit_sha="a" * 40,
             artifact_sha256="b" * 64,
             vulnerability_report_sha256="c" * 64,
+            capability_report_sha256="e" * 64,
             known_vulnerability_ids=(),
             capabilities=frozenset({"parameterized_sql"}),
             evidence_schema_version=PretendsToBeCurrent(),  # type: ignore[arg-type]
