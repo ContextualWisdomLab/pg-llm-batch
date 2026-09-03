@@ -82,3 +82,39 @@ def test_validator_rejects_malformed_artifact_scalar_types(tmp_path: Path) -> No
     object.__setattr__(binding.artifact_evidence, "sha256", b"not-text")
 
     assert postgres_wal_segment_binding_is_valid(binding) is False
+
+
+def test_bind_rejects_artifact_mutation_during_provenance_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Binding cannot copy artifact fields changed during the provenance decision."""
+    artifact_path = tmp_path / "wal-segment-bind-race"
+    artifact_path.write_bytes(b"W" * _MIB)
+    artifact = inspect_postgres_backup_artifact(
+        str(artifact_path),
+        maximum_size_bytes=_MIB,
+    )
+    original_check = wal_evidence.postgres_backup_artifact_evidence_was_inspected
+
+    def mutate_after_inspection(evidence: object) -> bool:
+        inspected = original_check(evidence)
+        assert inspected is True
+        object.__setattr__(artifact, "sha256", "F" * 64)
+        return True
+
+    monkeypatch.setattr(
+        wal_evidence,
+        "postgres_backup_artifact_evidence_was_inspected",
+        mutate_after_inspection,
+    )
+
+    with pytest.raises(
+        PostgresWalSegmentEvidenceError,
+        match="^PostgreSQL WAL segment artifact evidence changed during binding$",
+    ):
+        bind_postgres_wal_segment_evidence(
+            segment_name=_SEGMENT_NAME,
+            wal_segment_size_bytes=_MIB,
+            artifact_evidence=artifact,
+        )
