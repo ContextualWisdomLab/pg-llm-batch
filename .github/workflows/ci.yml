@@ -88,6 +88,73 @@ jobs:
       - name: Build distribution artifacts without workspace sources
         run: uv build --no-sources
 
+  pg8000-candidate-python314:
+    name: pg8000 1.31.5 candidate parity (Python 3.14 + PostgreSQL)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      PG_LLM_BATCH_POSTGRES_PASSWORD: pg8000-candidate-ci-password
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source head
+        run: test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          prune-cache: true
+      - name: Install locked project dependencies
+        run: uv sync --locked
+      - name: Download exact pg8000 candidate artifact
+        run: >-
+          python -m pip download --no-deps --only-binary=:all:
+          --dest /tmp/pg8000-candidate pg8000==1.31.5
+      - name: Verify pg8000 candidate artifact digest
+        run: >-
+          echo
+          "0af2c1926b153307639868d2ee5cef6cd3a7d07448e12736989b10e1d491e201  /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl"
+          | sha256sum --check --strict
+      - name: Install candidate only into the CI environment
+        run: >-
+          uv pip install --python .venv/bin/python
+          /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl
+      - name: Start repository PostgreSQL image
+        run: docker compose up --build --detach postgres
+      - name: Wait for PostgreSQL health contract
+        shell: bash
+        run: |
+          container_id="$(docker compose ps --quiet postgres)"
+          test -n "$container_id"
+          for attempt in $(seq 1 90); do
+            status="$(docker inspect --format='{{.State.Health.Status}}' "$container_id")"
+            if [ "$status" = "healthy" ]; then
+              exit 0
+            fi
+            if [ "$status" = "unhealthy" ]; then
+              docker compose logs postgres
+              exit 1
+            fi
+            sleep 2
+          done
+          docker compose logs postgres
+          exit 1
+      - name: Run real pg8000 candidate PostgreSQL smoke
+        run: uv run --no-sync python tests/smoke_pg8000_candidate_postgres.py
+      - name: Tear down candidate database
+        if: ${{ always() }}
+        run: docker compose down --volumes --remove-orphans
+
   container-builds:
     name: Container builds and PostgreSQL runtime smokes
     runs-on: ubuntu-latest
