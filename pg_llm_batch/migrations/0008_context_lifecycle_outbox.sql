@@ -13,8 +13,8 @@ BEGIN
         authority_ref_sha256 TEXT NOT NULL,
         origin_ref_sha256 TEXT NOT NULL,
         truth_status TEXT NOT NULL,
-        valid_time TIMESTAMPTZ NOT NULL,
-        system_time TIMESTAMPTZ NOT NULL,
+        valid_time TEXT NOT NULL,
+        system_time TEXT NOT NULL,
         provenance_ref_sha256 TEXT NOT NULL,
         evidence_ref_sha256 TEXT NOT NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -42,6 +42,18 @@ BEGIN
                     'superseded',
                     'rejected'
                 )
+            ),
+        CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time
+            CHECK (
+                valid_time ~
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{1,6})?Z$'
+                AND valid_time::timestamptz IS NOT NULL
+            ),
+        CONSTRAINT ck_llm_context_lifecycle_outbox_system_time
+            CHECK (
+                system_time ~
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{1,6})?Z$'
+                AND system_time::timestamptz IS NOT NULL
             ),
         CONSTRAINT ck_llm_context_lifecycle_outbox_provenance_sha256
             CHECK (provenance_ref_sha256 ~ '^[0-9a-f]{64}$'),
