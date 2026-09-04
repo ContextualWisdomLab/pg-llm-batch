@@ -29,6 +29,9 @@ def test_outbox_rejects_behavior_bearing_dsn_before_caller_code() -> None:
     hostile_dsn = BehaviorBearingDsn("postgresql://unit")
 
     with pytest.raises(ConfigError, match="Postgres DSN"):
-        PostgresContextLifecycleOutboxStore(hostile_dsn)
+        PostgresContextLifecycleOutboxStore(
+            hostile_dsn,
+            tenant_scope_sha256="a" * 64,
+        )
 
     assert hostile_dsn.strip_calls == 0
