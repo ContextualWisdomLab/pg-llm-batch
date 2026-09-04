@@ -1,7 +1,7 @@
 """Candidate driver-port regressions for the permissive PostgreSQL migration.
 
 These tests pin the bounded URI and keyword-conninfo selector slices that pg8000
-can exercise without libpq. Service selectors and libpq-only options remain
+can exercise without libpq. Service-file I/O and libpq-only options remain
 explicit fail-closed gaps; passing this suite must not be interpreted as full
 issue #322 admission or production dependency approval.
 """
@@ -100,6 +100,65 @@ def test_candidate_keyword_conninfo_supports_bare_escaped_and_empty_values() -> 
     assert driver.parse_conninfo(driver.make_conninfo(params)) == params
 
 
+def test_candidate_service_selector_uses_injected_resolver_and_direct_overrides() -> None:
+    """Resolve service authority outside the driver and preserve direct overrides."""
+    module, _ = _candidate_module()
+    resolved_names: list[str] = []
+
+    def resolve_service(service_name: str) -> dict[str, str]:
+        resolved_names.append(service_name)
+        return {
+            "host": "service.example",
+            "port": "5432",
+            "dbname": "service_db",
+            "user": "service_user",
+            "password": "service-secret",
+        }
+
+    driver = Pg8000CandidateDriverAdapter(module, service_resolver=resolve_service)
+
+    params = driver.parse_conninfo(
+        "service=analytics port=6543 dbname='override db'"
+    )
+
+    assert resolved_names == ["analytics"]
+    assert params == {
+        "host": "service.example",
+        "port": "6543",
+        "dbname": "override db",
+        "user": "service_user",
+        "password": "service-secret",
+    }
+
+
+def test_candidate_service_connect_uses_resolved_parameters_not_raw_selector() -> None:
+    """Keep service-file transport outside pg8000 while connecting with resolved values."""
+    module, captured = _candidate_module()
+
+    def resolve_service(service_name: str) -> dict[str, str]:
+        assert service_name == "analytics"
+        return {
+            "host": "127.0.0.1",
+            "port": "5544",
+            "dbname": "queue",
+            "user": "batch",
+        }
+
+    driver = Pg8000CandidateDriverAdapter(module, service_resolver=resolve_service)
+    connection = driver.connect("service=analytics", connect_timeout_seconds=5)
+
+    assert isinstance(connection, Pg8000ThreadAffineCandidateConnectionAdapter)
+    assert captured == {
+        "user": "batch",
+        "host": "127.0.0.1",
+        "port": 5544,
+        "database": "queue",
+        "timeout": 5,
+    }
+    assert "service" not in captured
+    assert "dsn" not in captured
+
+
 def test_candidate_conninfo_rejects_unproved_service_and_libpq_options() -> None:
     """Keep selectors outside the proved portable subset fail closed instead of guessing."""
     module, _ = _candidate_module()
@@ -116,6 +175,36 @@ def test_candidate_conninfo_rejects_unproved_service_and_libpq_options() -> None
             match="PostgreSQL connection selector is unsupported",
         ):
             driver.parse_conninfo(dsn)
+
+
+def test_candidate_service_resolution_rejects_empty_or_unproved_parameters() -> None:
+    """Do not let a service resolver expand the candidate beyond admitted fields."""
+    module, _ = _candidate_module()
+
+    with pytest.raises(Pg8000CandidateInvalidConninfoError):
+        Pg8000CandidateDriverAdapter(
+            module,
+            service_resolver=lambda _: {
+                "host": "db.example",
+                "dbname": "batch",
+                "user": "batch",
+            },
+        ).parse_conninfo("service=''")
+
+    driver = Pg8000CandidateDriverAdapter(
+        module,
+        service_resolver=lambda _: {
+            "host": "db.example",
+            "dbname": "batch",
+            "user": "batch",
+            "sslmode": "verify-full",
+        },
+    )
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is unsupported",
+    ):
+        driver.parse_conninfo("service=production")
 
 
 def test_candidate_keyword_conninfo_rejects_ambiguous_or_malformed_grammar() -> None:

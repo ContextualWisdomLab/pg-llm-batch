@@ -4,9 +4,11 @@ The commercial migration needs a connection factory, not only cursor wrappers.
 pg8000 1.31.5 accepts explicit DB-API connection keyword arguments but does not
 provide libpq conninfo or service-file parsing. This adapter therefore owns a
 bounded anti-corruption parser for the single-host PostgreSQL URI and keyword
-conninfo forms already needed by pg-llm-batch. Service selectors, query options,
-multi-host/socket forms, and other libpq-only semantics remain fail closed until
-they have separate compatibility evidence.
+conninfo forms already needed by pg-llm-batch. A caller may inject a service
+resolver so service-file I/O and precedence remain outside the concrete driver;
+only the resolved parameter subset already admitted by this candidate reaches
+pg8000. Query options, multi-host/socket forms, and other libpq-only semantics
+remain fail closed until they have separate compatibility evidence.
 
 The module does not import pg8000. An exact candidate DB-API module must be
 injected after artifact, license, integrity, and environment admission, keeping
@@ -16,7 +18,7 @@ open.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from types import ModuleType
 from typing import cast
 from urllib.parse import quote, unquote, urlsplit
@@ -37,11 +39,14 @@ from .postgres_driver_port import PostgresConnectionPort, PostgresDriverPort
 
 _HEX_DIGITS = frozenset("0123456789abcdefABCDEF")
 _ALLOWED_PARAMETER_KEYS = frozenset({"user", "password", "host", "port", "dbname"})
+_KEYWORD_PARAMETER_KEYS = _ALLOWED_PARAMETER_KEYS | frozenset({"service"})
 _DEFAULT_PORT = 5432
 _MIN_PORT = 1
 _MAX_PORT = 65_535
 _AMBIGUOUS_HOST_TOKENS = frozenset("/?,#@[]\\%")
 _KEYWORD_SEPARATOR = " "
+
+ServiceResolver = Callable[[str], Mapping[str, str]]
 
 
 class Pg8000CandidateInvalidConninfoError(Pg8000CandidateAdapterError):
@@ -211,15 +216,10 @@ def _read_keyword_value(dsn: str, start: int) -> tuple[str, int]:
             index += 1
             if index >= len(dsn):
                 raise _invalid_selector()
-            escaped = dsn[index]
-            if _contains_control(escaped):
-                raise _invalid_selector()
-            characters.append(escaped)
+            characters.append(dsn[index])
             index += 1
             continue
         if character == "'" and not quoted:
-            raise _invalid_selector()
-        if _contains_control(character) or character == "\x00":
             raise _invalid_selector()
         characters.append(character)
         index += 1
@@ -229,13 +229,13 @@ def _read_keyword_value(dsn: str, start: int) -> tuple[str, int]:
     return "".join(characters), index
 
 
-def _parse_keyword_conninfo(dsn: str) -> dict[str, str]:
-    """Parse the reviewed single-host subset of PostgreSQL keyword conninfo.
+def _parse_keyword_fields(dsn: str) -> dict[str, str]:
+    """Parse the reviewed keyword grammar without yet resolving service authority.
 
-    Only ``user``, ``password``, ``host``, ``port``, and ``dbname`` are admitted.
-    Duplicate keys are rejected rather than relying on libpq's last-value-wins
+    ``service`` is grammar-recognized so a separately injected resolver can own
+    service-file I/O and precedence. Other unknown parameters remain unsupported;
+    duplicate keys are rejected instead of relying on libpq's last-value-wins
     behavior because duplicated authority is ambiguous at the migration boundary.
-    Service-file selectors and transport options remain explicit unsupported gaps.
     """
     if type(dsn) is not str or not dsn or _contains_control(dsn):
         raise _invalid_selector()
@@ -264,7 +264,7 @@ def _parse_keyword_conninfo(dsn: str) -> dict[str, str]:
         while index < len(dsn) and dsn[index] == _KEYWORD_SEPARATOR:
             index += 1
 
-        if key not in _ALLOWED_PARAMETER_KEYS:
+        if key not in _KEYWORD_PARAMETER_KEYS:
             raise _invalid_selector(unsupported=True)
         if key in params:
             raise _invalid_selector()
@@ -272,11 +272,11 @@ def _parse_keyword_conninfo(dsn: str) -> dict[str, str]:
         value, index = _read_keyword_value(dsn, index)
         params[key] = value
 
-    return _validate_parameter_mapping(params)
+    return params
 
 
-def _validate_parameter_mapping(params: Mapping[str, str]) -> dict[str, str]:
-    """Copy exact built-in string values from the candidate parameter set."""
+def _copy_parameter_mapping(params: Mapping[str, str]) -> dict[str, str]:
+    """Copy exact built-in values while rejecting non-candidate parameters."""
     if not isinstance(params, Mapping):
         raise _invalid_selector()
     copied: dict[str, str] = {}
@@ -286,6 +286,12 @@ def _validate_parameter_mapping(params: Mapping[str, str]) -> dict[str, str]:
         if type(value) is not str or _contains_control(value) or "\x00" in value:
             raise _invalid_selector()
         copied[key] = value
+    return copied
+
+
+def _validate_parameter_mapping(params: Mapping[str, str]) -> dict[str, str]:
+    """Normalize the complete candidate connection parameter set."""
+    copied = _copy_parameter_mapping(params)
     if "user" not in copied or "host" not in copied or "dbname" not in copied:
         raise _invalid_selector()
     if not copied["user"] or not copied["dbname"]:
@@ -303,16 +309,23 @@ def _render_host(host: str) -> str:
 
 
 class Pg8000CandidateDriverAdapter(PostgresDriverPort):
-    """Prove the pg8000 driver port on bounded single-host PostgreSQL selectors.
+    """Prove pg8000 on bounded single-host PostgreSQL connection selectors.
 
     The injected module must already be the exact candidate artifact. This class
     supplies no artifact discovery, dependency installation, or fallback. It
-    converts only reviewed URI/keyword fields to pg8000 DB-API keyword arguments
-    and wraps the resulting connection in the existing thread-affine candidate
-    ACL.
+    converts only reviewed URI/keyword fields to pg8000 DB-API keyword arguments.
+    Service-file lookup is deliberately an injected anti-corruption boundary: the
+    driver never reads process environment variables or filesystem service files
+    itself, and direct conninfo values override resolver-provided values before
+    the merged parameter set is validated.
     """
 
-    def __init__(self, dbapi_module: ModuleType) -> None:
+    def __init__(
+        self,
+        dbapi_module: ModuleType,
+        *,
+        service_resolver: ServiceResolver | None = None,
+    ) -> None:
         validate_pg8000_dbapi_module(dbapi_module)
         connect = vars(dbapi_module).get("connect")
         if not callable(connect):
@@ -321,6 +334,7 @@ class Pg8000CandidateDriverAdapter(PostgresDriverPort):
             )
         self._dbapi_module = dbapi_module
         self._connect = connect
+        self._service_resolver = service_resolver
 
     def connect(
         self,
@@ -355,12 +369,31 @@ class Pg8000CandidateDriverAdapter(PostgresDriverPort):
         return Pg8000ThreadAffineCandidateConnectionAdapter(raw_connection)
 
     def parse_conninfo(self, dsn: str) -> Mapping[str, str]:
-        """Parse only the currently proved URI or keyword selector subsets."""
+        """Parse admitted URI/keyword selectors and resolve service authority.
+
+        A service selector is accepted only when a resolver was explicitly
+        injected. The resolver returns ordinary connection parameters; this
+        adapter then applies any direct conninfo overrides and validates the final
+        merged subset. This mirrors PostgreSQL's service-then-direct precedence
+        without silently acquiring service-file or environment authority.
+        """
         if type(dsn) is not str or not dsn:
             raise _invalid_selector()
         if dsn.startswith("postgresql://") or dsn.startswith("postgres://"):
             return _parse_postgresql_uri(dsn)
-        return _parse_keyword_conninfo(dsn)
+
+        parsed = _parse_keyword_fields(dsn)
+        service_name = parsed.pop("service", None)
+        if service_name is None:
+            return _validate_parameter_mapping(parsed)
+        if not service_name:
+            raise _invalid_selector()
+        if self._service_resolver is None:
+            raise _invalid_selector(unsupported=True)
+
+        resolved = _copy_parameter_mapping(self._service_resolver(service_name))
+        resolved.update(parsed)
+        return _validate_parameter_mapping(resolved)
 
     def make_conninfo(self, params: Mapping[str, str]) -> str:
         """Render the proved parameter subset as a safely percent-encoded URI."""
