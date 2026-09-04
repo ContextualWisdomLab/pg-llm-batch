@@ -42,12 +42,14 @@ CMD ["postgres"]
 HEALTHCHECK --interval=15s --timeout=5s --start-period=40s --retries=10 \
     CMD pg_isready -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-postgres}" || exit 1
 
-# Init order: extensions -> schema -> cron retrieval -> result checkpoints.
+# Init order: extensions -> schema -> cron retrieval -> result checkpoints ->
+# Context lifecycle outbox. Package migrations mirrored here must stay byte-identical.
 # init/02_schema.sql mirrors pg_llm_batch/schema.sql (see that file's header).
 COPY init/01_extensions.sql /docker-entrypoint-initdb.d/01_extensions.sql
 COPY init/02_schema.sql /docker-entrypoint-initdb.d/02_schema.sql
 COPY init/03_cron_batch_retrieval.sql /docker-entrypoint-initdb.d/03_cron_batch_retrieval.sql
 COPY init/03_result_stream_checkpoints.sql /docker-entrypoint-initdb.d/04_result_stream_checkpoints.sql
+COPY init/04_context_lifecycle_outbox.sql /docker-entrypoint-initdb.d/05_context_lifecycle_outbox.sql
 
 # Compose selects this target. Every executable input is immutable and an
 # enabled tokenizer build is fail-closed, leaving the failing command visible.
