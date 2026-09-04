@@ -3,11 +3,11 @@
 This script is intentionally outside pytest discovery. CI installs one immutable
 pg8000 candidate artifact and runs this smoke against the repository PostgreSQL
 image without adding the candidate to the production dependency graph. The
-checks cover the candidate URI connection factory, portable connection/cursor
-ACL, thread-affine connection use, transaction, parameter, JSONB, UUID/timestamp,
-affected-row, narrow PostgreSQL error classification, restore-catalog inspection,
-and transaction-local tenant semantics that must be proven before candidate
-promotion.
+checks cover the candidate URI, keyword, and explicit service connection
+selectors, portable connection/cursor ACL, thread-affine connection use,
+transaction, parameter, JSONB, UUID/timestamp, affected-row, narrow PostgreSQL
+error classification, restore-catalog inspection, and transaction-local tenant
+semantics that must be proven before candidate promotion.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import uuid
 from pg8000 import dbapi
 
 from pg_llm_batch.pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
+from pg_llm_batch.pg8000_candidate_service_file import Pg8000CandidateServiceFileResolver
 from pg_llm_batch.pg8000_driver_candidate_jsonb import adapt_pg8000_jsonb
 from pg_llm_batch.postgres_restore_acceptance import inspect_postgres_restore_catalog
 
@@ -35,8 +36,8 @@ def _candidate_driver() -> Pg8000CandidateDriverAdapter:
     return Pg8000CandidateDriverAdapter(dbapi)
 
 
-def _connection() -> object:
-    """Open one finite candidate connection from a private in-memory URI selector."""
+def _candidate_password() -> str:
+    """Read the ephemeral CI credential without placing it in process arguments."""
     password_file = os.environ.get("PG8000_CANDIDATE_PASSWORD_FILE")
     if not password_file:
         raise RuntimeError("PG8000_CANDIDATE_PASSWORD_FILE is required")
@@ -46,12 +47,79 @@ def _connection() -> object:
         raise RuntimeError("PG8000 candidate password file could not be read") from None
     if not password:
         raise RuntimeError("PG8000 candidate password file is empty")
+    return password
 
+
+def _connection() -> object:
+    """Open one finite candidate connection from a private in-memory URI selector."""
     driver = _candidate_driver()
     parameters = dict(driver.parse_conninfo(_CREDENTIAL_FREE_DSN))
-    parameters["password"] = password
+    parameters["password"] = _candidate_password()
     private_dsn = driver.make_conninfo(parameters)
     return driver.connect(private_dsn, connect_timeout_seconds=5)
+
+
+def _assert_keyword_and_service_selector_connections() -> None:
+    """Prove exact-artifact connection parity beyond the URI-only happy path.
+
+    Unit tests establish grammar and precedence, but issue #322 requires the
+    replacement to preserve the selectors used by deployed PostgreSQL clients.
+    This probe therefore opens real PostgreSQL sessions through both the bounded
+    keyword grammar and the explicit caller-selected service-file resolver. The
+    temporary service file remains credential-free; the ephemeral password is
+    injected by the trusted in-process resolver so it is never written to disk.
+    """
+    password = _candidate_password()
+    keyword_driver = _candidate_driver()
+    keyword_connection = keyword_driver.connect(
+        "host=127.0.0.1 port=5432 dbname=pgllm user=pgllm "
+        f"password={password}",
+        connect_timeout_seconds=5,
+    )
+    try:
+        with keyword_connection.cursor() as cursor:
+            cursor.execute("SELECT current_database(), current_user")
+            if cursor.fetchone() != (_EXPECTED_DATABASE, _EXPECTED_USER):
+                raise AssertionError("candidate keyword selector connection changed")
+    finally:
+        keyword_connection.close()
+
+    service_file = Path(os.environ["PG8000_CANDIDATE_PASSWORD_FILE"]).with_name(
+        "pg8000_candidate_service.conf"
+    )
+    service_file.write_text(
+        "[candidate]\n"
+        "host=127.0.0.1\n"
+        "port=5432\n"
+        "dbname=pgllm\n"
+        "user=pgllm\n",
+        encoding="utf-8",
+    )
+    try:
+        file_resolver = Pg8000CandidateServiceFileResolver(service_file)
+
+        def resolve_service(service_name: str) -> dict[str, str]:
+            parameters = file_resolver(service_name)
+            parameters["password"] = password
+            return parameters
+
+        service_driver = Pg8000CandidateDriverAdapter(
+            dbapi,
+            service_resolver=resolve_service,
+        )
+        service_connection = service_driver.connect(
+            "service=candidate",
+            connect_timeout_seconds=5,
+        )
+        try:
+            with service_connection.cursor() as cursor:
+                cursor.execute("SELECT current_database(), current_user")
+                if cursor.fetchone() != (_EXPECTED_DATABASE, _EXPECTED_USER):
+                    raise AssertionError("candidate service selector connection changed")
+        finally:
+            service_connection.close()
+    finally:
+        service_file.unlink(missing_ok=True)
 
 
 def _cleanup() -> None:
@@ -233,6 +301,7 @@ def main() -> None:
     if metadata.version("pg8000") != _EXPECTED_VERSION:
         raise AssertionError("unexpected pg8000 candidate version")
     _candidate_driver()
+    _assert_keyword_and_service_selector_connections()
 
     connection = _connection()
     with connection as transaction:
