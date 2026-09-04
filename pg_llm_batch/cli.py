@@ -36,7 +36,7 @@ from contextlib import ExitStack
 from functools import partial
 from typing import List, Optional
 
-from . import db
+from . import db, postgres_driver_runtime
 from .batch_api_client import BatchAPIClient, config_credentials_provider
 from .bootstrap import resolve_dsn, resolve_secret_key
 from .config import PostgresConfigStore, SecretStore
@@ -73,10 +73,13 @@ class _RedactingArgumentParser(argparse.ArgumentParser):
 
 
 def _default_postgres_driver() -> PostgresDriverPort:
-    """Load the retained Psycopg adapter only when a CLI parse needs the default."""
-    from .psycopg_driver_adapter import PsycopgDriverAdapter
+    """Delegate concrete-driver construction to the canonical runtime selector.
 
-    return PsycopgDriverAdapter()
+    CLI parsing owns credential-safe argument validation, not the concrete
+    PostgreSQL client choice. A single selector keeps migration cutover atomic
+    across CLI, service, persistence, and Compose surfaces.
+    """
+    return postgres_driver_runtime.retained_postgres_driver()
 
 
 def _validate_cli_dsn(
@@ -217,7 +220,6 @@ def build_parser(
         description="Standalone Postgres LLM batch engine",
     )
     sub = parser.add_subparsers(dest="command", required=True)
-
     p_init = sub.add_parser("init-db", help="Apply batch schema (idempotent)")
     _add_common(p_init, postgres_driver=postgres_driver)
 
