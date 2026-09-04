@@ -39,6 +39,7 @@ _ALLOWED_PARAMETER_KEYS = frozenset({"user", "password", "host", "port", "dbname
 _DEFAULT_PORT = 5432
 _MIN_PORT = 1
 _MAX_PORT = 65_535
+_AMBIGUOUS_HOST_TOKENS = frozenset("/?,#@[]\\%")
 
 
 class Pg8000CandidateInvalidConninfoError(Pg8000CandidateAdapterError):
@@ -109,8 +110,20 @@ def _parse_port(value: object) -> int:
 
 
 def _validate_host(host: str) -> str:
-    """Keep a single TCP host and reject URI delimiters or framing characters."""
-    if not host or _contains_control(host) or any(token in host for token in "/?#@[]"):
+    """Keep one TCP host while rejecting forms that imply unsupported selectors.
+
+    Commas would turn PostgreSQL URI authority into a multi-host selector;
+    percent escapes can encode Unix-socket paths or IPv6 zone identifiers; and
+    whitespace/backslashes or URI delimiters make rendering ambiguous. Those
+    contracts require separate compatibility evidence and therefore fail closed
+    instead of being passed to pg8000 as a misleading single hostname.
+    """
+    if (
+        not host
+        or _contains_control(host)
+        or any(character.isspace() for character in host)
+        or any(token in host for token in _AMBIGUOUS_HOST_TOKENS)
+    ):
         raise _invalid_selector()
     return host
 
