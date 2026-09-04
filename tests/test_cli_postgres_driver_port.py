@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 from pg_llm_batch import cli
+from pg_llm_batch import postgres_driver_runtime
 
 
 class _CandidateConninfoError(Exception):
@@ -70,6 +71,18 @@ def test_cli_parser_rejects_candidate_reported_credential_fields() -> None:
         parser.parse_args(["health", "--dsn", "credential-bearing"])
 
     assert exc_info.value.code == 2
+
+
+def test_cli_default_driver_delegates_to_runtime_owner(monkeypatch) -> None:
+    """The CLI must not retain a second concrete-driver construction authority."""
+    driver = _CandidateDriver()
+    monkeypatch.setattr(
+        postgres_driver_runtime,
+        "retained_postgres_driver",
+        lambda: driver,
+    )
+
+    assert cli._default_postgres_driver() is driver
 
 
 def test_cli_module_has_no_eager_psycopg_import() -> None:
