@@ -173,7 +173,7 @@ def verify_candidate_wheel_licenses(directory: Path) -> None:
     exact set prevents an unreviewed extra artifact from entering license evidence
     without a corresponding digest and policy decision.
     """
-    if type(directory) is not Path or not directory.is_dir():
+    if not isinstance(directory, Path) or not directory.is_dir():
         raise CandidateWheelLicenseError("candidate wheel directory is invalid")
     wheel_names = {path.name for path in directory.glob("*.whl")}
     if wheel_names != set(_EXPECTED_WHEELS):
