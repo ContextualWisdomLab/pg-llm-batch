@@ -57,8 +57,11 @@ def test_invalid_batch_endpoints_raise_structured_validation_errors(endpoint):
         _validate_batch_endpoint(endpoint)
 
     assert exc_info.value.details["field"] == "endpoint"
-    assert exc_info.value.details["value"] == endpoint
+    assert exc_info.value.details["value"] == "<redacted>"
     assert "queries" in exc_info.value.details["reason"]
+    if isinstance(endpoint, str) and endpoint:
+        assert endpoint not in str(exc_info.value)
+        assert endpoint not in repr(exc_info.value.details)
 
 
 class Credentials:
