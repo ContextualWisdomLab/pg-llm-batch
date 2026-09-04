@@ -1,10 +1,10 @@
 """Concurrency regressions for the candidate pg8000 DB-API boundary.
 
 pg8000 1.31.5 declares DB-API ``threadsafety == 1``: threads may share the
-module, but not connections. The candidate adapter must therefore fail before
-raw driver access when a connection or cursor capability crosses its creating
-thread. This is candidate-admission evidence only; it does not promote pg8000
-into the production dependency graph.
+module, but not connections. The admitted candidate boundary must therefore fail
+before raw driver access when a connection or cursor capability crosses its
+creating thread. This is candidate-admission evidence only; it does not promote
+pg8000 into the production dependency graph.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from typing import Callable
 
 import pytest
 
-from pg_llm_batch.pg8000_driver_candidate_adapter import (
-    Pg8000CandidateAdapterError,
-    Pg8000CandidateConnectionAdapter,
-    Pg8000CandidateCursorAdapter,
+from pg_llm_batch.pg8000_driver_candidate_adapter import Pg8000CandidateAdapterError
+from pg_llm_batch.pg8000_thread_affine_candidate_adapter import (
+    Pg8000ThreadAffineCandidateConnectionAdapter,
+    Pg8000ThreadAffineCandidateCursorAdapter,
 )
 
 
@@ -87,7 +87,7 @@ def _run_on_worker(operation: Callable[[], object]) -> object:
 )
 def test_candidate_connection_rejects_cross_thread_driver_access(operation: str) -> None:
     raw = _RawConnection()
-    adapter = Pg8000CandidateConnectionAdapter(raw)
+    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
 
     callbacks: dict[str, Callable[[], object]] = {
         "cursor": adapter.cursor,
@@ -112,7 +112,7 @@ def test_candidate_connection_rejects_cross_thread_driver_access(operation: str)
 )
 def test_candidate_cursor_rejects_cross_thread_driver_access(operation: str) -> None:
     raw = _RawCursor()
-    adapter = Pg8000CandidateCursorAdapter(raw)
+    adapter = Pg8000ThreadAffineCandidateCursorAdapter(raw)
 
     callbacks: dict[str, Callable[[], object]] = {
         "execute": lambda: adapter.execute("SELECT %s", (1,)),
