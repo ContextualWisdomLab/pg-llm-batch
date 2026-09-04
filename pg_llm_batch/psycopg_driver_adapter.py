@@ -95,10 +95,21 @@ class PsycopgCursorAdapter(PostgresCursorPort):
         return self._normalize_result_row(row)
 
     def fetchmany(self, size: int) -> list[tuple[object, ...]]:
-        """Return a finite page while rejecting malformed materialized rows."""
+        """Return at most the requested finite page and reject malformed results."""
         if type(size) is not int or size <= 0:
             raise PsycopgDriverAdapterError("PostgreSQL driver fetch size is invalid")
-        return [self._normalize_result_row(row) for row in self._cursor.fetchmany(size)]
+        rows = self._cursor.fetchmany(size)
+        try:
+            returned_count = len(rows)
+        except (TypeError, ValueError, OverflowError):
+            raise PsycopgDriverAdapterError(
+                "PostgreSQL driver fetch result is invalid"
+            ) from None
+        if returned_count > size:
+            raise PsycopgDriverAdapterError(
+                "PostgreSQL driver fetch result exceeds requested size"
+            )
+        return [self._normalize_result_row(row) for row in rows]
 
     def fetchall(self) -> list[tuple[object, ...]]:
         """Return bounded query results while rejecting malformed rows."""

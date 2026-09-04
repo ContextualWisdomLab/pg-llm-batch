@@ -138,6 +138,20 @@ def test_cursor_adapter_rejects_non_positive_or_non_integer_fetch_budget(
         PsycopgCursorAdapter(raw).fetchmany(invalid_size)  # type: ignore[arg-type]
 
 
+def test_cursor_adapter_rejects_driver_overdelivery_beyond_fetch_budget() -> None:
+    """Fail closed if a concrete driver violates the port's finite fetch budget."""
+
+    class _OverdeliveringCursor(_RawCursor):
+        def fetchmany(self, size: int) -> list[object]:
+            assert size == 1
+            return list(self.rows)
+
+    raw = _OverdeliveringCursor()
+
+    with pytest.raises(PsycopgDriverAdapterError, match="exceeds requested size"):
+        PsycopgCursorAdapter(raw).fetchmany(1)
+
+
 def test_cursor_adapter_rejects_non_integer_row_count() -> None:
     raw = _RawCursor()
     raw.rowcount = True
