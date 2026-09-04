@@ -92,20 +92,34 @@ def _read_metadata(wheel_path: Path) -> str:
         raise CandidateWheelLicenseError("candidate wheel metadata is not UTF-8") from None
 
 
-def _license_evidence(metadata_text: str) -> str:
-    """Collect declared license fields and classifiers into bounded evidence text."""
+def _license_evidence(metadata_text: str) -> tuple[str, ...]:
+    """Collect declared license fields and classifiers as separate evidence lines."""
     message = Parser().parsestr(metadata_text)
     evidence_values: list[str] = []
     for header in ("License-Expression", "License"):
         value = message.get(header)
         if value:
-            evidence_values.append(value)
+            evidence_values.append(value.casefold())
     evidence_values.extend(
-        classifier
+        classifier.casefold()
         for classifier in message.get_all("Classifier", [])
         if classifier.casefold().startswith("license ::")
     )
-    return "\n".join(evidence_values).casefold()
+    return tuple(evidence_values)
+
+
+def _contains_marker(evidence_lines: tuple[str, ...], marker: str) -> bool:
+    """Match one approved marker on non-alphanumeric boundaries only.
+
+    License metadata is untrusted decision input. Substring matching would accept
+    an unrelated word such as ``limited`` for the reviewed ``MIT`` marker. The
+    boundary check still accepts SPDX identifiers and classifier phrases while
+    preventing a permissive token from being smuggled inside another word.
+    """
+    marker_pattern = re.compile(
+        rf"(?<![a-z0-9]){re.escape(marker.casefold())}(?![a-z0-9])"
+    )
+    return any(marker_pattern.search(line) is not None for line in evidence_lines)
 
 
 def _verify_one_wheel(
@@ -133,16 +147,19 @@ def _verify_one_wheel(
         raise CandidateWheelLicenseError(
             "candidate wheel lacks approved license evidence"
         )
+    joined_evidence = "\n".join(license_evidence)
     if (
-        _GPL_FAMILY.search(license_evidence) is not None
-        or "gnu general public license" in license_evidence
-        or "gnu lesser general public license" in license_evidence
-        or "gnu affero general public license" in license_evidence
+        _GPL_FAMILY.search(joined_evidence) is not None
+        or "gnu general public license" in joined_evidence
+        or "gnu lesser general public license" in joined_evidence
+        or "gnu affero general public license" in joined_evidence
     ):
         raise CandidateWheelLicenseError(
             "candidate wheel contains a disallowed license"
         )
-    if not any(marker in license_evidence for marker in approved_markers):
+    if not any(
+        _contains_marker(license_evidence, marker) for marker in approved_markers
+    ):
         raise CandidateWheelLicenseError(
             "candidate wheel lacks approved license evidence"
         )
