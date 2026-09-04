@@ -143,6 +143,8 @@ jobs:
           db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67  /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl
           4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274  /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
           EOF
+      - name: Verify pg8000 candidate dependency licenses
+        run: python tools/verify_candidate_wheel_licenses.py /tmp/pg8000-candidate
       - name: Install exact candidate closure into the CI environment
         run: >-
           uv pip install --python .venv/bin/python --no-deps
