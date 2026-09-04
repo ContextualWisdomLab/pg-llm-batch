@@ -14,14 +14,15 @@ from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.orchestrator import BatchPayload, PostgresBatchOrchestrator
 from pg_llm_batch.token_counter import TokenCounter
 from tests.conftest import FakePsycopg
+from tests.fake_postgres_driver_port import FakePsycopgDriverPort
 
 
 @pytest.fixture()
 def fake_pg(monkeypatch):
     fake = FakePsycopg()
-    monkeypatch.setattr(tc_mod, "psycopg", fake)
-    monkeypatch.setattr(tc_mod, "UndefinedFunction", fake.errors.UndefinedFunction)
-    monkeypatch.setattr(db_mod, "psycopg", fake)
+    driver = FakePsycopgDriverPort(fake)
+    monkeypatch.setattr(tc_mod, "retained_postgres_driver", lambda: driver)
+    monkeypatch.setattr(db_mod, "retained_postgres_driver", lambda: driver)
     monkeypatch.setattr(orch_mod, "psycopg", fake)
     monkeypatch.setattr(db_mod, "get_model_metadata", lambda dsn, model: None)
     return fake
