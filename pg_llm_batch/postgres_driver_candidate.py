@@ -255,6 +255,10 @@ class PostgresDriverCandidateEvidence:
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver capability evidence is invalid"
             )
+        if any(type(capability) is not str for capability in self.capabilities):
+            raise PostgresDriverCandidateEvidenceError(
+                "PostgreSQL driver capability evidence is invalid"
+            )
         if len(self.capabilities) > len(REQUIRED_POSTGRES_DRIVER_CAPABILITIES):
             raise PostgresDriverCandidateEvidenceError(
                 "PostgreSQL driver capability evidence contains an unknown capability"
