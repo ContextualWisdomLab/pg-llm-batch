@@ -75,6 +75,33 @@ def _validated_evidence(value: Any) -> ContextLifecycleEvidenceSeed:
         ) from exc
 
 
+def _validated_tenant_scope_sha256(value: Any) -> str:
+    """Validate the content-free tenant identity bound to one RLS store instance."""
+    try:
+        probe = validate_context_lifecycle_evidence_seed(
+            ContextLifecycleEvidenceSeed(
+                evidence_id="tenant-scope-binding",
+                event_type="tenant.scope.binding",
+                tenant_scope_sha256=value,
+                subject_ref_sha256="0" * 64,
+                authority_ref_sha256="0" * 64,
+                origin_ref_sha256="0" * 64,
+                truth_status="observed",
+                valid_time="1970-01-01T00:00:00Z",
+                system_time="1970-01-01T00:00:00Z",
+                provenance_ref_sha256="0" * 64,
+                evidence_ref_sha256="0" * 64,
+            )
+        )
+    except ValueError as exc:
+        raise ValidationError(
+            field="tenant_scope_sha256",
+            value="<redacted>",
+            reason="must be an exact lowercase SHA-256 tenant identity",
+        ) from exc
+    return probe.tenant_scope_sha256
+
+
 def _evidence_values(evidence: ContextLifecycleEvidenceSeed) -> tuple[Any, ...]:
     """Return the stable SQL value order for one validated evidence snapshot."""
     return (
@@ -136,6 +163,11 @@ class PostgresContextLifecycleOutboxStore:
     when no upstream immutable release exists. Reusing an ``evidence_id`` is accepted
     only for an exact replay; semantic drift fails closed instead of overwriting the
     durable intent.
+
+    The local RLS tenant and the content-free tenant identity used by future Context
+    Fabric evidence are separate representations of the same authorized scope. The
+    host therefore supplies both explicitly, and every write/read is checked against
+    that binding so a tenant-qualified row cannot claim another tenant identity.
     """
 
     def __init__(
@@ -143,8 +175,9 @@ class PostgresContextLifecycleOutboxStore:
         postgres_dsn: str,
         *,
         tenant_scope: str = DEFAULT_TENANT_SCOPE,
+        tenant_scope_sha256: str,
     ) -> None:
-        """Bind one explicit PostgreSQL target and trusted local tenant scope."""
+        """Bind explicit PostgreSQL, RLS-tenant, and external evidence identities."""
         self.postgres_dsn = _validated_postgres_dsn(postgres_dsn)
         try:
             self.tenant_scope = validate_tenant_scope(tenant_scope)
@@ -154,6 +187,26 @@ class PostgresContextLifecycleOutboxStore:
                 value=tenant_scope,
                 reason="must be a supported trusted tenant scope",
             ) from exc
+        self.tenant_scope_sha256 = _validated_tenant_scope_sha256(
+            tenant_scope_sha256
+        )
+
+    def _require_tenant_binding(
+        self,
+        evidence: ContextLifecycleEvidenceSeed,
+        *,
+        durable_row: bool,
+    ) -> ContextLifecycleEvidenceSeed:
+        """Reject lifecycle evidence whose tenant identity differs from this store."""
+        if evidence.tenant_scope_sha256 == self.tenant_scope_sha256:
+            return evidence
+        if durable_row:
+            raise RuntimeError("context lifecycle outbox tenant scope binding mismatch")
+        raise ValidationError(
+            field="evidence",
+            value="<redacted>",
+            reason="tenant scope identity does not match outbox tenant scope binding",
+        )
 
     def load(self, evidence_id: str) -> Optional[ContextLifecycleEvidenceSeed]:
         """Load one durable event through a package-owned read transaction."""
@@ -174,6 +227,8 @@ class PostgresContextLifecycleOutboxStore:
         The identifier is validated through the same evidence contract before SQL is
         executed, avoiding a second, subtly different event-id grammar. ``for_update``
         is reserved for compare-and-swap writers and keeps row locking explicit.
+        Durable evidence is revalidated and must retain the tenant identity explicitly
+        bound to this store before it can return to application code.
         """
         probe = _validated_evidence(
             ContextLifecycleEvidenceSeed(
@@ -198,7 +253,12 @@ class PostgresContextLifecycleOutboxStore:
             (self.tenant_scope, probe.evidence_id),
         )
         row = cursor.fetchone()
-        return None if row is None else _evidence_from_row(row)
+        if row is None:
+            return None
+        return self._require_tenant_binding(
+            _evidence_from_row(row),
+            durable_row=True,
+        )
 
     def enqueue(
         self,
@@ -222,9 +282,14 @@ class PostgresContextLifecycleOutboxStore:
         Exact duplicate retries are idempotent. If the same tenant/event identity is
         already bound to different content-free lifecycle evidence, the write fails
         with ``ContextLifecycleOutboxConflictError`` and does not replace durable
-        state. The caller owns commit and rollback.
+        state. The evidence tenant identity must match the explicit tenant binding of
+        this store before any transaction-local SQL is executed. The caller owns
+        commit and rollback.
         """
-        candidate = _validated_evidence(evidence)
+        candidate = self._require_tenant_binding(
+            _validated_evidence(evidence),
+            durable_row=False,
+        )
         existing = self.load_in_transaction(
             cursor,
             candidate.evidence_id,
