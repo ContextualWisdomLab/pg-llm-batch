@@ -1,9 +1,9 @@
 """Candidate driver-port regressions for the permissive PostgreSQL migration.
 
-These tests pin the smallest URI-based connection-selector slice that pg8000 can
-exercise without libpq. Keyword conninfo and service selectors remain explicit
-fail-closed gaps; passing this suite must not be interpreted as full issue #322
-admission or production dependency approval.
+These tests pin the bounded URI and keyword-conninfo selector slices that pg8000
+can exercise without libpq. Service selectors and libpq-only options remain
+explicit fail-closed gaps; passing this suite must not be interpreted as full
+issue #322 admission or production dependency approval.
 """
 
 from __future__ import annotations
@@ -61,14 +61,34 @@ def test_candidate_uri_conninfo_round_trip_preserves_encoded_identity() -> None:
     assert driver.parse_conninfo(driver.make_conninfo(params)) == params
 
 
-def test_candidate_conninfo_rejects_unproved_keyword_service_and_query_options() -> None:
-    """Keep selectors outside the proved URI subset fail closed instead of guessing."""
+def test_candidate_keyword_conninfo_round_trip_preserves_quoted_identity() -> None:
+    """Accept the bounded libpq keyword form needed by existing CLI deployments."""
+    module, _ = _candidate_module()
+    driver = Pg8000CandidateDriverAdapter(module)
+
+    params = driver.parse_conninfo(
+        "host=db.example port=6543 dbname='batch queue' "
+        "user='batch user' password='p@ss word'"
+    )
+
+    assert params == {
+        "host": "db.example",
+        "port": "6543",
+        "dbname": "batch queue",
+        "user": "batch user",
+        "password": "p@ss word",
+    }
+    assert driver.parse_conninfo(driver.make_conninfo(params)) == params
+
+
+def test_candidate_conninfo_rejects_unproved_service_and_libpq_options() -> None:
+    """Keep selectors outside the proved portable subset fail closed instead of guessing."""
     module, _ = _candidate_module()
     driver = Pg8000CandidateDriverAdapter(module)
 
     for dsn in (
         "service=production",
-        "host=db.example dbname=batch user=batch",
+        "host=db.example dbname=batch user=batch sslmode=require",
         "postgresql://batch@db.example/batch?sslmode=require",
         "postgresql://batch@db.example/batch#fragment",
     ):
