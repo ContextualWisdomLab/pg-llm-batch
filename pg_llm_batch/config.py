@@ -22,11 +22,10 @@ from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
 from .exceptions import ConfigError
 from .postgres_driver_port import PostgresDriverPort
-
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
+from .postgres_driver_runtime import (
+    PostgresDriverUnavailableError,
+    retained_postgres_driver,
+)
 
 try:  # pragma: no cover - optional dependency
     from cryptography.fernet import Fernet  # type: ignore
@@ -162,29 +161,24 @@ def _connect_store_database(
     *,
     missing_dependency_message: str,
 ) -> Any:
-    """Open one config-store connection through the selected driver boundary.
+    """Open one config-store connection through the shared driver selector.
 
-    Explicit driver injection lets these durable stores migrate independently of
-    the retained Psycopg runtime while preserving the same connection identity
-    for table setup, reads, and writes. Autocommit setup stays outside this helper
-    so a constructor can close the already-opened connection if setup fails.
+    Explicit driver injection remains authoritative for candidate or host-owned
+    adapters. Otherwise the centralized runtime boundary selects the retained
+    concrete implementation. Missing retained-driver support is translated to
+    the store's existing bounded ``ConfigError`` contract.
     """
-    if postgres_driver is not None:
-        return postgres_driver.connect(dsn)
-    if psycopg is None:
-        raise ConfigError(missing_dependency_message)
-    return psycopg.connect(dsn)
+    if postgres_driver is None:
+        try:
+            postgres_driver = retained_postgres_driver()
+        except PostgresDriverUnavailableError as exc:
+            raise ConfigError(missing_dependency_message) from exc
+    return postgres_driver.connect(dsn)
 
 
-def _set_store_autocommit(
-    connection: Any,
-    postgres_driver: PostgresDriverPort | None,
-) -> None:
-    """Enable explicit store autocommit through the selected connection contract."""
-    if postgres_driver is not None:
-        connection.set_autocommit(True)
-        return
-    connection.autocommit = True
+def _set_store_autocommit(connection: Any) -> None:
+    """Enable explicit store autocommit through the driver-neutral connection."""
+    connection.set_autocommit(True)
 
 
 class PostgresConfigStore:
@@ -199,8 +193,6 @@ class PostgresConfigStore:
         postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
         """Connect through the selected driver and initialize the config cache."""
-        if postgres_driver is None and psycopg is None:
-            raise ConfigError("psycopg is required for PostgresConfigStore")
         if not dsn:
             raise ConfigError(
                 "A Postgres DSN must be provided explicitly (no os.getenv for config)"
@@ -212,7 +204,7 @@ class PostgresConfigStore:
             missing_dependency_message="psycopg is required for PostgresConfigStore",
         )
         try:
-            _set_store_autocommit(self._conn, postgres_driver)
+            _set_store_autocommit(self._conn)
             self.cache: Dict[str, Dict[str, Any]] = {}
             self._ensure_table()
             self._ensure_defaults()
@@ -345,8 +337,6 @@ class SecretStore:
         postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
         """Connect through the selected driver with the requested secret policy."""
-        if postgres_driver is None and psycopg is None:
-            raise ConfigError("psycopg is required for SecretStore")
         if not dsn:
             raise ConfigError("A Postgres DSN must be provided explicitly")
         if require_encryption and not fernet_key:
@@ -364,7 +354,7 @@ class SecretStore:
             missing_dependency_message="psycopg is required for SecretStore",
         )
         try:
-            _set_store_autocommit(self._conn, postgres_driver)
+            _set_store_autocommit(self._conn)
             self._fernet = None
             if fernet_key and Fernet is not None:
                 self._fernet = Fernet(fernet_key.encode("utf-8"))

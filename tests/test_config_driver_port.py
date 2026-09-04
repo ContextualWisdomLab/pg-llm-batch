@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from pg_llm_batch import config
 from pg_llm_batch.config import PostgresConfigStore, SecretStore
 from tests.conftest import FakeCursor, FakeKVStore
 
@@ -49,11 +48,8 @@ class _ConfigDriver:
         return connection
 
 
-def test_config_store_uses_injected_driver_without_psycopg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Configuration CRUD must not require Psycopg when a replacement port is supplied."""
-    monkeypatch.setattr(config, "psycopg", None)
+def test_config_store_uses_injected_driver_without_concrete_import() -> None:
+    """Configuration CRUD must not require the retained concrete client when injected."""
     driver = _ConfigDriver()
 
     store = PostgresConfigStore(
@@ -71,11 +67,8 @@ def test_config_store_uses_injected_driver_without_psycopg(
     assert driver.connections[0].closed is True
 
 
-def test_secret_store_uses_injected_driver_without_psycopg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Secret persistence must retain the same DB seam without a concrete driver import."""
-    monkeypatch.setattr(config, "psycopg", None)
+def test_secret_store_uses_injected_driver_without_concrete_import() -> None:
+    """Secret persistence must retain the same DB seam without concrete imports."""
     driver = _ConfigDriver()
 
     store = SecretStore(
@@ -93,12 +86,8 @@ def test_secret_store_uses_injected_driver_without_psycopg(
     assert driver.connections[0].closed is True
 
 
-def test_config_store_closes_connection_when_autocommit_setup_fails(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_config_store_closes_connection_when_autocommit_setup_fails() -> None:
     """A replacement-driver setup failure must not leak the opened DB connection."""
-    monkeypatch.setattr(config, "psycopg", None)
-
     class _BrokenConnection(_ConfigConnection):
         def set_autocommit(self, enabled: bool) -> None:
             """Fail after connection creation to exercise constructor cleanup."""
