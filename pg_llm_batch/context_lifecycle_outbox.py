@@ -11,6 +11,7 @@ or arbitrary metadata is accepted by this module.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
@@ -154,6 +155,7 @@ def apply_context_lifecycle_outbox_schema(
         conn.commit()
 
 
+@dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
 class PostgresContextLifecycleOutboxStore:
     """Persist content-free lifecycle publication intent with tenant RLS isolation.
 
@@ -169,6 +171,10 @@ class PostgresContextLifecycleOutboxStore:
     host therefore supplies both explicitly, and every write/read is checked against
     that binding so a tenant-qualified row cannot claim another tenant identity.
     """
+
+    _postgres_dsn: str
+    _tenant_scope: str
+    _tenant_scope_sha256: str
 
     def __init__(
         self,
@@ -190,9 +196,9 @@ class PostgresContextLifecycleOutboxStore:
         validated_tenant_scope_sha256 = _validated_tenant_scope_sha256(
             tenant_scope_sha256
         )
-        self._postgres_dsn = validated_postgres_dsn
-        self._tenant_scope = validated_tenant_scope
-        self._tenant_scope_sha256 = validated_tenant_scope_sha256
+        object.__setattr__(self, "_postgres_dsn", validated_postgres_dsn)
+        object.__setattr__(self, "_tenant_scope", validated_tenant_scope)
+        object.__setattr__(self, "_tenant_scope_sha256", validated_tenant_scope_sha256)
 
     @property
     def postgres_dsn(self) -> str:
