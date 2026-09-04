@@ -93,6 +93,13 @@ def test_exact_candidate_closure_requires_permissive_license_evidence(tmp_path: 
     verifier.verify_candidate_wheel_licenses(tmp_path)
 
 
+def test_candidate_license_cli_accepts_platform_path_subclass(tmp_path: Path) -> None:
+    verifier = _load_verifier()
+    _write_valid_closure(tmp_path)
+
+    assert verifier.main([str(tmp_path)]) == 0
+
+
 def test_candidate_closure_rejects_gpl_family_metadata_even_with_permissive_marker(tmp_path: Path) -> None:
     verifier = _load_verifier()
     _write_valid_closure(tmp_path)
