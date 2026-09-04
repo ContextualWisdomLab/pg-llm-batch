@@ -79,6 +79,22 @@ def test_candidate_conninfo_rejects_unproved_keyword_service_and_query_options()
             driver.parse_conninfo(dsn)
 
 
+def test_candidate_conninfo_rejects_ambiguous_or_unproved_host_forms() -> None:
+    """Reject multi-host, socket, zone-id, whitespace, and delimiter host forms."""
+    module, _ = _candidate_module()
+    driver = Pg8000CandidateDriverAdapter(module)
+
+    for dsn in (
+        "postgresql://batch@db-a.example,db-b.example/batch",
+        "postgresql://batch@db%20name.example/batch",
+        "postgresql://batch@%2Fvar%2Frun%2Fpostgresql/batch",
+        "postgresql://batch@[fe80::1%25eth0]/batch",
+        "postgresql://batch@db\\name.example/batch",
+    ):
+        with pytest.raises(Pg8000CandidateInvalidConninfoError):
+            driver.parse_conninfo(dsn)
+
+
 def test_candidate_conninfo_rejects_malformed_percent_port_and_control_data() -> None:
     """Reject malformed selectors through one non-content-bearing error contract."""
     module, _ = _candidate_module()
