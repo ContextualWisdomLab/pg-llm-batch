@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
+from weakref import WeakKeyDictionary
 
 from .context_lifecycle_evidence import (
     ContextLifecycleEvidenceSeed,
@@ -38,6 +39,9 @@ _OUTBOX_COLUMNS = (
     "evidence_id, event_type, tenant_scope_sha256, subject_ref_sha256, "
     "authority_ref_sha256, origin_ref_sha256, truth_status, valid_time, "
     "system_time, provenance_ref_sha256, evidence_ref_sha256"
+)
+_OUTBOX_STORE_BINDINGS: WeakKeyDictionary[object, tuple[str, str, str]] = (
+    WeakKeyDictionary()
 )
 
 
@@ -155,7 +159,14 @@ def apply_context_lifecycle_outbox_schema(
         conn.commit()
 
 
-@dataclass(frozen=True, slots=True, init=False, repr=False, eq=False)
+@dataclass(
+    frozen=True,
+    slots=True,
+    weakref_slot=True,
+    init=False,
+    repr=False,
+    eq=False,
+)
 class PostgresContextLifecycleOutboxStore:
     """Persist content-free lifecycle publication intent with tenant RLS isolation.
 
@@ -170,11 +181,12 @@ class PostgresContextLifecycleOutboxStore:
     Fabric evidence are separate representations of the same authorized scope. The
     host therefore supplies both explicitly, and every write/read is checked against
     that binding so a tenant-qualified row cannot claim another tenant identity.
-    """
 
-    _postgres_dsn: str
-    _tenant_scope: str
-    _tenant_scope_sha256: str
+    Validated database and tenant authority lives in a package-owned weak registry,
+    not caller-writable instance slots. This keeps later SQL/RLS decisions bound to
+    construction-time authority even if a hostile caller invokes ``object.__setattr__``
+    or ``object.__delattr__`` directly against the admitted store object.
+    """
 
     def __init__(
         self,
@@ -196,24 +208,26 @@ class PostgresContextLifecycleOutboxStore:
         validated_tenant_scope_sha256 = _validated_tenant_scope_sha256(
             tenant_scope_sha256
         )
-        object.__setattr__(self, "_postgres_dsn", validated_postgres_dsn)
-        object.__setattr__(self, "_tenant_scope", validated_tenant_scope)
-        object.__setattr__(self, "_tenant_scope_sha256", validated_tenant_scope_sha256)
+        _OUTBOX_STORE_BINDINGS[self] = (
+            validated_postgres_dsn,
+            validated_tenant_scope,
+            validated_tenant_scope_sha256,
+        )
 
     @property
     def postgres_dsn(self) -> str:
         """Return the explicit database target fixed when this store was admitted."""
-        return self._postgres_dsn
+        return _OUTBOX_STORE_BINDINGS[self][0]
 
     @property
     def tenant_scope(self) -> str:
         """Return the trusted local RLS tenant fixed when this store was admitted."""
-        return self._tenant_scope
+        return _OUTBOX_STORE_BINDINGS[self][1]
 
     @property
     def tenant_scope_sha256(self) -> str:
         """Return the external content-free tenant identity fixed at admission."""
-        return self._tenant_scope_sha256
+        return _OUTBOX_STORE_BINDINGS[self][2]
 
     def _require_tenant_binding(
         self,
