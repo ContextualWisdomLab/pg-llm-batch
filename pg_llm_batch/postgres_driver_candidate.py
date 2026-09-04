@@ -22,6 +22,7 @@ REQUIRED_POSTGRES_DRIVER_CAPABILITIES = frozenset(
         "connection_closed_state",
         "connection_context",
         "connection_context_commit_rollback",
+        "connection_thread_affinity",
         "conninfo_keyword_parse_render",
         "conninfo_service_selector",
         "conninfo_uri_parse_render",
