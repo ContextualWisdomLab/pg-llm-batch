@@ -21,7 +21,7 @@ Both properties matter, but they require different permissions and review gates.
 PEP 517 build-system requirements are resolved independently from ordinary
 project dependencies: build-system requirements are not pinned by `uv.lock`.
 The acceptance path therefore pins the build frontend to `uv` 0.12.3 and the
-backend requirement to `uv_build==0.12.1`. The exact frontend can use its
+backend requirement to `uv_build==0.12.7`. The exact frontend can use its
 compatible bundled backend, while external PEP 517 frontends are constrained to
 the same backend version instead of silently selecting a later patch release.
 
@@ -45,7 +45,7 @@ Every release-relevant pull request runs a read-only acceptance workflow that:
 2. derives `SOURCE_DATE_EPOCH` from that exact commit;
 3. creates two clean source trees from the same Git object;
 4. performs two clean exact-head builds with the exact `uv` 0.12.3 frontend and
-   `uv_build==0.12.1` backend contract;
+   `uv_build==0.12.7` backend contract;
 5. reads at most three output-directory entries, requires exactly one wheel and
    one source distribution, and uses a fixed filesystem-order-independent
    diagnostic for missing or extra counts;
