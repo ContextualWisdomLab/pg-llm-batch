@@ -20,11 +20,7 @@ class _ProtocolCloseFailureConnection:
         """Release the underlying capability, then report the protocol failure."""
         self.close_count += 1
         self.closed = True
-        raise Runtime_Limit_Close_Error("protocol close failed")
-
-
-class Runtime_Limit_Close_Error(RuntimeError):
-    """Distinguish the synthetic protocol-close failure from assertion failures."""
+        raise RuntimeError("protocol close failed")
 
 
 def test_candidate_marks_connection_closed_when_protocol_close_reports_failure() -> None:
