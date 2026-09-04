@@ -174,7 +174,7 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     assert "pg8000-candidate-ci-password" not in workflow
     assert "secrets.token_urlsafe(32)" in workflow
     assert "::add-mask::$candidate_password" in workflow
-    assert "PG_LLM_BATCH_POSTGRES_PASSWORD=$candidate_password" in workflow
+    assert "PG_LLM_BATCH_POSTGRES_PASSWORD=$candidate_password" not in workflow
     assert "PG8000_CANDIDATE_PASSWORD_FILE" in workflow
     assert "Tear down candidate PostgreSQL runtime" in workflow
     assert '"pg8000' not in project.casefold()

@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from importlib import metadata
 import os
+from pathlib import Path
 import uuid
 
 from pg8000 import dbapi
@@ -28,10 +29,16 @@ _EXPECTED_USER = "pgllm"
 
 
 def _raw_connection() -> object:
-    """Open one finite local candidate connection using only CI-owned credentials."""
-    password = os.environ.get("PG_LLM_BATCH_POSTGRES_PASSWORD")
+    """Open one finite local candidate connection using the CI-owned password file."""
+    password_file = os.environ.get("PG8000_CANDIDATE_PASSWORD_FILE")
+    if not password_file:
+        raise RuntimeError("PG8000_CANDIDATE_PASSWORD_FILE is required")
+    try:
+        password = Path(password_file).read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        raise RuntimeError("PG8000 candidate password file could not be read") from None
     if not password:
-        raise RuntimeError("PG_LLM_BATCH_POSTGRES_PASSWORD is required")
+        raise RuntimeError("PG8000 candidate password file is empty")
     return dbapi.connect(
         user=_EXPECTED_USER,
         password=password,
