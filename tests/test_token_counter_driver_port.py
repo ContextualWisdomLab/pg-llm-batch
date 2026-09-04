@@ -80,7 +80,7 @@ class _Connection:
 
 
 class _Driver:
-    """Minimal Psycopg-free driver implementing the token-counting port surface."""
+    """Minimal concrete-driver-free port fake for token counting."""
 
     def __init__(
         self,
@@ -128,12 +128,25 @@ class _Driver:
             self.active_count_executions -= 1
 
 
-def test_token_counter_uses_injected_driver_without_psycopg(
+def _deny_default_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail if explicit token-counter injection silently reacquires the runtime default."""
+
+    def fail_default_driver():
+        raise AssertionError("default PostgreSQL runtime driver was reached")
+
+    monkeypatch.setattr(
+        token_counter_module,
+        "retained_postgres_driver",
+        fail_default_driver,
+    )
+
+
+def test_token_counter_uses_injected_driver_without_default_driver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A replacement candidate must exercise pg_tiktoken without Psycopg authority."""
+    """A replacement candidate must exercise pg_tiktoken through its own port."""
     driver = _Driver()
-    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
     metadata_calls: list[tuple[str, str, object]] = []
 
     def _metadata(dsn: str, model: str, *, postgres_driver: object = None) -> dict[str, str]:
@@ -155,7 +168,7 @@ def test_token_counter_serializes_shared_driver_connection_use(
 ) -> None:
     """A DB-API level-1 candidate must never receive concurrent connection calls."""
     driver = _Driver(execution_delay_seconds=0.03)
-    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
     monkeypatch.setattr(
         token_counter_module,
         "get_model_metadata",
@@ -179,9 +192,9 @@ def test_token_counter_serializes_shared_driver_connection_use(
 def test_token_counter_uses_driver_error_classification_for_encode_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Undefined-function fallback must not depend on a Psycopg exception class."""
+    """Undefined-function fallback must depend only on the driver-port classifier."""
     driver = _Driver(primary_error=_UndefinedFunctionError("undefined function"))
-    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
     monkeypatch.setattr(
         token_counter_module,
         "get_model_metadata",
@@ -199,7 +212,7 @@ def test_non_undefined_driver_error_discards_cached_connection_before_retry(
 ) -> None:
     """A transient DB failure must retry on a fresh connection without disabling pg_tiktoken."""
     driver = _Driver(primary_error=_OtherDriverError("temporary database failure"))
-    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
     monkeypatch.setattr(
         token_counter_module,
         "get_model_metadata",
