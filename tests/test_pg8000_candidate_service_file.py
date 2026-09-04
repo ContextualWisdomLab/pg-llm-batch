@@ -153,7 +153,8 @@ def test_candidate_service_file_uses_nonblocking_descriptor_open(
 
     monkeypatch.setattr(os, "open", recording_open)
 
-    assert Pg8000CandidateServiceFileResolver(service_file)("analytics")["host"] == "db.example"
+    resolved = Pg8000CandidateServiceFileResolver(service_file)("analytics")
+    assert resolved["host"] == "db.example"
     assert observed_flags
     if hasattr(os, "O_NONBLOCK"):
         assert observed_flags[0] & os.O_NONBLOCK
@@ -177,4 +178,72 @@ def test_candidate_service_file_rejects_non_regular_opened_descriptor(
     monkeypatch.setattr(os, "fstat", fifo_fstat)
 
     with pytest.raises(Pg8000CandidateInvalidConninfoError):
+        Pg8000CandidateServiceFileResolver(service_file)("analytics")
+
+
+def test_candidate_service_file_normalizes_descriptor_read_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normalize descriptor read failure without exposing path or content details."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
+
+    def failing_read(_fd: int, _size: int) -> bytes:
+        raise OSError("synthetic descriptor read failure")
+
+    monkeypatch.setattr(os, "read", failing_read)
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        Pg8000CandidateServiceFileResolver(service_file)("analytics")
+
+
+def test_candidate_service_file_normalizes_close_only_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed when descriptor cleanup is the only failed operation."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
+    real_close = os.close
+
+    def failing_close(fd: int) -> None:
+        real_close(fd)
+        raise OSError("synthetic descriptor close failure")
+
+    monkeypatch.setattr(os, "close", failing_close)
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        Pg8000CandidateServiceFileResolver(service_file)("analytics")
+
+
+def test_candidate_service_file_preserves_primary_failure_when_close_also_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not let a cleanup failure replace an existing descriptor failure."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
+    real_close = os.close
+
+    def failing_fstat(_fd: int) -> os.stat_result:
+        raise OSError("synthetic descriptor metadata failure")
+
+    def failing_close(fd: int) -> None:
+        real_close(fd)
+        raise OSError("synthetic descriptor close failure")
+
+    monkeypatch.setattr(os, "fstat", failing_fstat)
+    monkeypatch.setattr(os, "close", failing_close)
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
         Pg8000CandidateServiceFileResolver(service_file)("analytics")
