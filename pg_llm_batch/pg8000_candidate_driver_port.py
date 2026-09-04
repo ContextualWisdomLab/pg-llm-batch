@@ -2,10 +2,11 @@
 
 The commercial migration needs a connection factory, not only cursor wrappers.
 pg8000 1.31.5 accepts explicit DB-API connection keyword arguments but does not
-provide libpq conninfo or service-file parsing. This adapter therefore proves a
-small PostgreSQL URI subset and fails closed on keyword conninfo, service
-selectors, query options, and fragments until those product contracts have their
-own reviewed compatibility evidence.
+provide libpq conninfo or service-file parsing. This adapter therefore owns a
+bounded anti-corruption parser for the single-host PostgreSQL URI and keyword
+conninfo forms already needed by pg-llm-batch. Service selectors, query options,
+multi-host/socket forms, and other libpq-only semantics remain fail closed until
+they have separate compatibility evidence.
 
 The module does not import pg8000. An exact candidate DB-API module must be
 injected after artifact, license, integrity, and environment admission, keeping
@@ -40,6 +41,7 @@ _DEFAULT_PORT = 5432
 _MIN_PORT = 1
 _MAX_PORT = 65_535
 _AMBIGUOUS_HOST_TOKENS = frozenset("/?,#@[]\\%")
+_KEYWORD_SEPARATOR = " "
 
 
 class Pg8000CandidateInvalidConninfoError(Pg8000CandidateAdapterError):
@@ -47,8 +49,8 @@ class Pg8000CandidateInvalidConninfoError(Pg8000CandidateAdapterError):
 
     The error message never reflects the supplied selector or credentials. A
     failure means the candidate cannot represent that PostgreSQL selector under
-    the currently proved URI contract; it does not mean the database rejected a
-    connection attempt.
+    the currently proved URI/keyword contract; it does not mean the database
+    rejected a connection attempt.
     """
 
 
@@ -131,10 +133,9 @@ def _validate_host(host: str) -> str:
 def _parse_postgresql_uri(dsn: str) -> dict[str, str]:
     """Parse the candidate's reviewed single-host PostgreSQL URI subset.
 
-    PostgreSQL keyword conninfo, service selectors, query parameters, fragments,
-    multi-host forms, Unix-socket selectors, and libpq-specific options remain
-    outside this bounded slice. They fail closed rather than being approximated
-    by pg8000 connection arguments.
+    Service selectors, query parameters, fragments, multi-host forms, Unix-socket
+    selectors, and libpq-specific options remain outside this bounded slice. They
+    fail closed rather than being approximated by pg8000 connection arguments.
     """
     if type(dsn) is not str or not dsn or _contains_control(dsn):
         raise _invalid_selector()
@@ -183,8 +184,99 @@ def _parse_postgresql_uri(dsn: str) -> dict[str, str]:
     return result
 
 
+def _read_keyword_value(dsn: str, start: int) -> tuple[str, int]:
+    """Read one bounded libpq-style keyword value and return the next offset.
+
+    The candidate deliberately accepts only ASCII-space separators. Single-quoted
+    values and backslash escaping follow the portable conninfo forms needed by
+    current deployments, while tabs/newlines and unterminated escapes fail closed
+    instead of acquiring implicit libpq parser semantics.
+    """
+    if start >= len(dsn):
+        return "", start
+
+    quoted = dsn[start] == "'"
+    index = start + 1 if quoted else start
+    characters: list[str] = []
+    while index < len(dsn):
+        character = dsn[index]
+        if quoted and character == "'":
+            index += 1
+            if index < len(dsn) and dsn[index] != _KEYWORD_SEPARATOR:
+                raise _invalid_selector()
+            return "".join(characters), index
+        if not quoted and character == _KEYWORD_SEPARATOR:
+            return "".join(characters), index
+        if character == "\\":
+            index += 1
+            if index >= len(dsn):
+                raise _invalid_selector()
+            escaped = dsn[index]
+            if _contains_control(escaped):
+                raise _invalid_selector()
+            characters.append(escaped)
+            index += 1
+            continue
+        if character == "'" and not quoted:
+            raise _invalid_selector()
+        if _contains_control(character) or character == "\x00":
+            raise _invalid_selector()
+        characters.append(character)
+        index += 1
+
+    if quoted:
+        raise _invalid_selector()
+    return "".join(characters), index
+
+
+def _parse_keyword_conninfo(dsn: str) -> dict[str, str]:
+    """Parse the reviewed single-host subset of PostgreSQL keyword conninfo.
+
+    Only ``user``, ``password``, ``host``, ``port``, and ``dbname`` are admitted.
+    Duplicate keys are rejected rather than relying on libpq's last-value-wins
+    behavior because duplicated authority is ambiguous at the migration boundary.
+    Service-file selectors and transport options remain explicit unsupported gaps.
+    """
+    if type(dsn) is not str or not dsn or _contains_control(dsn):
+        raise _invalid_selector()
+    if any(character.isspace() and character != _KEYWORD_SEPARATOR for character in dsn):
+        raise _invalid_selector()
+
+    index = 0
+    params: dict[str, str] = {}
+    while index < len(dsn):
+        while index < len(dsn) and dsn[index] == _KEYWORD_SEPARATOR:
+            index += 1
+        if index >= len(dsn):
+            break
+
+        key_start = index
+        while index < len(dsn) and dsn[index] not in {_KEYWORD_SEPARATOR, "="}:
+            index += 1
+        key = dsn[key_start:index]
+        if not key:
+            raise _invalid_selector()
+        while index < len(dsn) and dsn[index] == _KEYWORD_SEPARATOR:
+            index += 1
+        if index >= len(dsn) or dsn[index] != "=":
+            raise _invalid_selector()
+        index += 1
+        while index < len(dsn) and dsn[index] == _KEYWORD_SEPARATOR:
+            index += 1
+
+        if key not in _ALLOWED_PARAMETER_KEYS:
+            raise _invalid_selector(unsupported=True)
+        if key in params:
+            raise _invalid_selector()
+
+        value, index = _read_keyword_value(dsn, index)
+        params[key] = value
+
+    return _validate_parameter_mapping(params)
+
+
 def _validate_parameter_mapping(params: Mapping[str, str]) -> dict[str, str]:
-    """Copy exact built-in string values from the candidate URI parameter set."""
+    """Copy exact built-in string values from the candidate parameter set."""
     if not isinstance(params, Mapping):
         raise _invalid_selector()
     copied: dict[str, str] = {}
@@ -211,12 +303,13 @@ def _render_host(host: str) -> str:
 
 
 class Pg8000CandidateDriverAdapter(PostgresDriverPort):
-    """Prove the pg8000 driver port on a strict single-host PostgreSQL URI subset.
+    """Prove the pg8000 driver port on bounded single-host PostgreSQL selectors.
 
     The injected module must already be the exact candidate artifact. This class
     supplies no artifact discovery, dependency installation, or fallback. It
-    converts only reviewed URI fields to pg8000 DB-API keyword arguments and
-    wraps the resulting connection in the existing thread-affine candidate ACL.
+    converts only reviewed URI/keyword fields to pg8000 DB-API keyword arguments
+    and wraps the resulting connection in the existing thread-affine candidate
+    ACL.
     """
 
     def __init__(self, dbapi_module: ModuleType) -> None:
@@ -235,7 +328,7 @@ class Pg8000CandidateDriverAdapter(PostgresDriverPort):
         *,
         connect_timeout_seconds: int | None = None,
     ) -> PostgresConnectionPort:
-        """Open one candidate connection from the proved URI and finite timeout.
+        """Open one candidate connection from a proved selector and finite timeout.
 
         The original DSN is never forwarded to pg8000. Parsed values are supplied
         as explicit DB-API keywords so unsupported libpq selector semantics cannot
@@ -262,8 +355,12 @@ class Pg8000CandidateDriverAdapter(PostgresDriverPort):
         return Pg8000ThreadAffineCandidateConnectionAdapter(raw_connection)
 
     def parse_conninfo(self, dsn: str) -> Mapping[str, str]:
-        """Parse only the currently proved PostgreSQL URI selector subset."""
-        return _parse_postgresql_uri(dsn)
+        """Parse only the currently proved URI or keyword selector subsets."""
+        if type(dsn) is not str or not dsn:
+            raise _invalid_selector()
+        if dsn.startswith("postgresql://") or dsn.startswith("postgres://"):
+            return _parse_postgresql_uri(dsn)
+        return _parse_keyword_conninfo(dsn)
 
     def make_conninfo(self, params: Mapping[str, str]) -> str:
         """Render the proved parameter subset as a safely percent-encoded URI."""
@@ -275,9 +372,7 @@ class Pg8000CandidateDriverAdapter(PostgresDriverPort):
             credentials += f":{quote(password, safe='')}"
         host = _render_host(copied["host"])
         database = quote(copied["dbname"], safe="")
-        return (
-            f"postgresql://{credentials}@{host}:{copied['port']}/{database}"
-        )
+        return f"postgresql://{credentials}@{host}:{copied['port']}/{database}"
 
     def jsonb(self, value: object) -> object:
         """Use the separately admitted candidate JSONB serialization boundary."""

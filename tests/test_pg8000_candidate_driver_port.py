@@ -1,9 +1,9 @@
 """Candidate driver-port regressions for the permissive PostgreSQL migration.
 
-These tests pin the smallest URI-based connection-selector slice that pg8000 can
-exercise without libpq. Keyword conninfo and service selectors remain explicit
-fail-closed gaps; passing this suite must not be interpreted as full issue #322
-admission or production dependency approval.
+These tests pin the bounded URI and keyword-conninfo selector slices that pg8000
+can exercise without libpq. Service selectors and libpq-only options remain
+explicit fail-closed gaps; passing this suite must not be interpreted as full
+issue #322 admission or production dependency approval.
 """
 
 from __future__ import annotations
@@ -61,14 +61,53 @@ def test_candidate_uri_conninfo_round_trip_preserves_encoded_identity() -> None:
     assert driver.parse_conninfo(driver.make_conninfo(params)) == params
 
 
-def test_candidate_conninfo_rejects_unproved_keyword_service_and_query_options() -> None:
-    """Keep selectors outside the proved URI subset fail closed instead of guessing."""
+def test_candidate_keyword_conninfo_round_trip_preserves_quoted_identity() -> None:
+    """Accept the bounded libpq keyword form needed by existing CLI deployments."""
+    module, _ = _candidate_module()
+    driver = Pg8000CandidateDriverAdapter(module)
+
+    params = driver.parse_conninfo(
+        "host=db.example port=6543 dbname='batch queue' "
+        "user='batch user' password='p@ss word'"
+    )
+
+    assert params == {
+        "host": "db.example",
+        "port": "6543",
+        "dbname": "batch queue",
+        "user": "batch user",
+        "password": "p@ss word",
+    }
+    assert driver.parse_conninfo(driver.make_conninfo(params)) == params
+
+
+def test_candidate_keyword_conninfo_supports_bare_escaped_and_empty_values() -> None:
+    """Preserve bounded libpq escaping without delegating parsing back to libpq."""
+    module, _ = _candidate_module()
+    driver = Pg8000CandidateDriverAdapter(module)
+
+    params = driver.parse_conninfo(
+        r"  host = db.example user=batch dbname=batch\ queue password=   "
+    )
+
+    assert params == {
+        "host": "db.example",
+        "user": "batch",
+        "dbname": "batch queue",
+        "password": "",
+        "port": "5432",
+    }
+    assert driver.parse_conninfo(driver.make_conninfo(params)) == params
+
+
+def test_candidate_conninfo_rejects_unproved_service_and_libpq_options() -> None:
+    """Keep selectors outside the proved portable subset fail closed instead of guessing."""
     module, _ = _candidate_module()
     driver = Pg8000CandidateDriverAdapter(module)
 
     for dsn in (
         "service=production",
-        "host=db.example dbname=batch user=batch",
+        "host=db.example dbname=batch user=batch sslmode=require",
         "postgresql://batch@db.example/batch?sslmode=require",
         "postgresql://batch@db.example/batch#fragment",
     ):
@@ -77,6 +116,30 @@ def test_candidate_conninfo_rejects_unproved_keyword_service_and_query_options()
             match="PostgreSQL connection selector is unsupported",
         ):
             driver.parse_conninfo(dsn)
+
+
+def test_candidate_keyword_conninfo_rejects_ambiguous_or_malformed_grammar() -> None:
+    """Reject duplicated authority, malformed quoting, and unproved separators."""
+    module, _ = _candidate_module()
+    driver = Pg8000CandidateDriverAdapter(module)
+
+    for dsn in (
+        "host=db.example user=batch dbname=queue host=other.example",
+        "host=db.example user=batch dbname=queue password='unterminated",
+        "host=db.example user=batch dbname=queue password=trailing\\",
+        "host=db.example user=batch dbname=que'ue",
+        "host=db.example user=batch dbname='queue'x",
+        "host db.example user=batch dbname=queue",
+        "=db.example user=batch dbname=queue",
+        "host=db.example\u00a0user=batch dbname=queue",
+    ):
+        with pytest.raises(Pg8000CandidateInvalidConninfoError):
+            driver.parse_conninfo(dsn)
+
+    with pytest.raises(Pg8000CandidateInvalidConninfoError):
+        driver.parse_conninfo(123)  # type: ignore[arg-type]
+    with pytest.raises(Pg8000CandidateInvalidConninfoError):
+        driver.parse_conninfo("")
 
 
 def test_candidate_conninfo_rejects_ambiguous_or_unproved_host_forms() -> None:
@@ -144,6 +207,23 @@ def test_candidate_connect_maps_uri_and_finite_timeout_without_raw_dsn_forwardin
         "port": 5544,
         "database": "queue",
         "timeout": 5,
+    }
+    assert "dsn" not in captured
+
+
+def test_candidate_connect_maps_keyword_conninfo_without_raw_dsn_forwarding() -> None:
+    """Translate keyword conninfo through the same explicit pg8000 argument boundary."""
+    module, captured = _candidate_module()
+    driver = Pg8000CandidateDriverAdapter(module)
+
+    connection = driver.connect("host=127.0.0.1 user=batch dbname=queue")
+
+    assert isinstance(connection, Pg8000ThreadAffineCandidateConnectionAdapter)
+    assert captured == {
+        "user": "batch",
+        "host": "127.0.0.1",
+        "port": 5432,
+        "database": "queue",
     }
     assert "dsn" not in captured
 
