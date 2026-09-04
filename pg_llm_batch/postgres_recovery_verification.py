@@ -29,14 +29,25 @@ def _positive_bigint(value: object) -> bool:
     return type(value) is int and 0 < value <= _MAX_SIGNED_BIGINT
 
 
-def _receipt_is_verifiable(receipt: object) -> bool:
-    """Return whether a receipt is the exact stored type with comparable fields."""
-    return (
-        type(receipt) is PostgresRecoveryReceipt
-        and _content_free_digest(receipt.schema_sha256)
-        and _content_free_digest(receipt.backup_sha256)
-        and _positive_bigint(receipt.backup_size_bytes)
-    )
+def _snapshot_receipt_identity(
+    receipt: object,
+) -> tuple[str, str, int] | None:
+    """Capture one validated receipt identity before any live inspection occurs."""
+    if type(receipt) is not PostgresRecoveryReceipt:
+        return None
+    try:
+        schema_sha256 = receipt.schema_sha256
+        backup_sha256 = receipt.backup_sha256
+        backup_size_bytes = receipt.backup_size_bytes
+    except AttributeError:
+        return None
+    if not (
+        _content_free_digest(schema_sha256)
+        and _content_free_digest(backup_sha256)
+        and _positive_bigint(backup_size_bytes)
+    ):
+        return None
+    return schema_sha256, backup_sha256, backup_size_bytes
 
 
 def verify_postgres_recovery_receipt(
@@ -46,7 +57,8 @@ def verify_postgres_recovery_receipt(
 ) -> None:
     """Fail closed unless live inspection still matches one stored receipt.
 
-    The verifier always calls ``inspect_postgres_schema()`` and
+    The verifier snapshots the receipt's comparable content-free identity before
+    any live inspection, then always calls ``inspect_postgres_schema()`` and
     ``inspect_postgres_backup_artifact(backup_artifact_path)``. It does not
     accept preconstructed ``PostgresSchemaEvidence`` or
     ``PostgresBackupArtifactEvidence`` objects, because those public
@@ -55,21 +67,23 @@ def verify_postgres_recovery_receipt(
     tenant scope, or backup-byte argument. A mismatch tells the operator to
     stop before restore and re-inspect the disagreeing object.
     """
-    if not _receipt_is_verifiable(receipt) or type(backup_artifact_path) is not str:
+    receipt_identity = _snapshot_receipt_identity(receipt)
+    if receipt_identity is None or type(backup_artifact_path) is not str:
         raise PostgresRecoveryVerificationError(
             "invalid PostgreSQL recovery verification inputs"
         )
+    stored_schema_digest, stored_backup_digest, stored_backup_size = receipt_identity
 
     schema_evidence = inspect_postgres_schema()
     backup_evidence = inspect_postgres_backup_artifact(backup_artifact_path)
 
-    if not secrets.compare_digest(receipt.schema_sha256, schema_evidence.sha256):
+    if not secrets.compare_digest(stored_schema_digest, schema_evidence.sha256):
         raise PostgresRecoveryVerificationError(
             "inspected schema does not match recovery receipt"
         )
     if (
-        not secrets.compare_digest(receipt.backup_sha256, backup_evidence.sha256)
-        or receipt.backup_size_bytes != backup_evidence.size_bytes
+        not secrets.compare_digest(stored_backup_digest, backup_evidence.sha256)
+        or stored_backup_size != backup_evidence.size_bytes
     ):
         raise PostgresRecoveryVerificationError(
             "inspected backup does not match recovery receipt"
