@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pg_llm_batch.checkpoint_store as checkpoint_store
+import pg_llm_batch.config as config
 import pg_llm_batch.db as db
 import pg_llm_batch.health as health
 from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver
@@ -69,6 +70,22 @@ def test_health_default_connection_uses_runtime_driver_selector(monkeypatch) -> 
     assert connection is driver.connection
     assert driver.dsns == ["postgresql://unit"]
     assert driver.connection_kwargs == [{"connect_timeout_seconds": 5}]
+
+
+def test_config_default_connection_uses_runtime_driver_selector(monkeypatch) -> None:
+    """Configuration persistence must not retain a second concrete-client authority."""
+    driver = _Driver()
+    monkeypatch.setattr(config, "retained_postgres_driver", lambda: driver)
+
+    connection = config._connect_store_database(
+        "postgresql://unit",
+        None,
+        missing_dependency_message="driver unavailable",
+    )
+
+    assert connection is driver.connection
+    assert driver.dsns == ["postgresql://unit"]
+    assert driver.connection_kwargs == [{}]
 
 
 def test_runtime_selector_returns_postgres_driver_port() -> None:
