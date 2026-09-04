@@ -5,8 +5,9 @@ pg8000 candidate artifact and runs this smoke against the repository PostgreSQL
 image without adding the candidate to the production dependency graph. The
 checks cover the candidate URI connection factory, portable connection/cursor
 ACL, thread-affine connection use, transaction, parameter, JSONB, UUID/timestamp,
-affected-row, narrow PostgreSQL error classification, and transaction-local
-tenant semantics that must be proven before candidate promotion.
+affected-row, narrow PostgreSQL error classification, restore-catalog inspection,
+and transaction-local tenant semantics that must be proven before candidate
+promotion.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from pg8000 import dbapi
 
 from pg_llm_batch.pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
 from pg_llm_batch.pg8000_driver_candidate_jsonb import adapt_pg8000_jsonb
+from pg_llm_batch.postgres_restore_acceptance import inspect_postgres_restore_catalog
 
 _EXPECTED_VERSION = "1.31.5"
 _EXPECTED_DATABASE = "pgllm"
@@ -60,6 +62,28 @@ def _cleanup() -> None:
         with connection.cursor() as cursor:
             cursor.execute("DROP TABLE IF EXISTS pg8000_candidate_contract")
             cursor.execute("DROP ROLE IF EXISTS pg8000_candidate_reader")
+    finally:
+        connection.close()
+
+
+def _assert_restore_catalog_inspection() -> None:
+    """Prove the candidate can inspect the packaged restore catalog exactly.
+
+    The production restore acceptance query binds finite Python lists through
+    ``ANY(%s)`` and consumes catalog booleans and tuple rows. Running that exact
+    query through pg8000 closes a driver-parity gap that unit adapters cannot
+    prove, without turning the candidate into the production runtime.
+    """
+    connection = _connection()
+    try:
+        connection.set_autocommit(True)
+        evidence = inspect_postgres_restore_catalog(connection)
+        if evidence.required_table_count != 11:
+            raise AssertionError("candidate restore catalog table evidence changed")
+        if evidence.required_index_count != 2:
+            raise AssertionError("candidate restore catalog index evidence changed")
+        if evidence.lifecycle_rls_forced is not True:
+            raise AssertionError("candidate restore catalog RLS evidence changed")
     finally:
         connection.close()
 
@@ -217,6 +241,7 @@ def main() -> None:
             if cursor.fetchone() != (_EXPECTED_DATABASE, _EXPECTED_USER, "bound"):
                 raise AssertionError("candidate parameter/result semantics changed")
 
+    _assert_restore_catalog_inspection()
     _assert_undefined_function_classification()
     _cleanup()
     try:
