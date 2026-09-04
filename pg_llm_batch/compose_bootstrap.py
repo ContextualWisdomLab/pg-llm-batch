@@ -20,13 +20,21 @@ from .exceptions import ConfigError
 from .health import serve_healthz
 from .postgres_driver_port import PostgresDriverPort
 
-try:  # pragma: no cover - retained optional dependency during migration
-    from psycopg.conninfo import make_conninfo as _psycopg_make_conninfo
-except ImportError:  # pragma: no cover
-    _psycopg_make_conninfo = None
-
 _DEFAULT_PASSWORD_FILE = Path("/run/secrets/postgres_password")
 _MAX_PASSWORD_BYTES = 65_536
+
+
+def _default_postgres_driver() -> PostgresDriverPort:
+    """Load the retained default through the same PostgreSQL anti-corruption port.
+
+    Compose secret assembly must not import a concrete driver's conninfo helper
+    independently from the runtime database boundary. Keeping this lazy loader
+    behind ``PostgresDriverPort`` makes the retained Psycopg default replaceable
+    without creating a second connection-selector authority in the bootstrap.
+    """
+    from .psycopg_driver_adapter import PsycopgDriverAdapter
+
+    return PsycopgDriverAdapter()
 
 
 def _load_database_password(password_file: Path) -> str:
@@ -62,20 +70,22 @@ def _build_private_dsn(
 ) -> str:
     """Add the mounted password through the selected reviewed conninfo renderer.
 
-    An injected replacement driver parses the credential-free selector and then
-    renders a fresh parameter snapshot containing the mounted password. The
-    retained Psycopg renderer remains the default only while the commercial
-    migration is incomplete. Parser or renderer diagnostics are normalized so
-    secret material never escapes this bootstrap boundary.
+    The selected driver parses the credential-free selector and renders a fresh
+    parameter snapshot containing the mounted password. The retained Psycopg
+    implementation is loaded only through ``PostgresDriverPort`` while the
+    commercial migration is incomplete, so this module has no independent
+    concrete-driver conninfo authority. Parser or renderer diagnostics are
+    normalized so secret material never escapes this bootstrap boundary.
     """
+    driver = (
+        postgres_driver
+        if postgres_driver is not None
+        else _default_postgres_driver()
+    )
     try:
-        if postgres_driver is not None:
-            parameters = dict(postgres_driver.parse_conninfo(base_dsn))
-            parameters["password"] = password
-            return postgres_driver.make_conninfo(parameters)
-        if _psycopg_make_conninfo is None:
-            raise ConfigError("The PostgreSQL bootstrap driver is unavailable.")
-        return _psycopg_make_conninfo(base_dsn, password=password)
+        parameters = dict(driver.parse_conninfo(base_dsn))
+        parameters["password"] = password
+        return driver.make_conninfo(parameters)
     except ConfigError:
         raise
     except Exception:
