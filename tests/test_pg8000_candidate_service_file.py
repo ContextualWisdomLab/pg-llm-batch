@@ -247,3 +247,33 @@ def test_candidate_service_file_preserves_primary_failure_when_close_also_fails(
         match="PostgreSQL connection selector is invalid",
     ):
         Pg8000CandidateServiceFileResolver(service_file)("analytics")
+
+
+def test_candidate_service_file_rejects_metadata_drift_during_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject bytes if retained service-file metadata changes during inspection."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
+    real_fstat = os.fstat
+    fstat_calls = 0
+
+    def drifting_fstat(fd: int) -> os.stat_result:
+        nonlocal fstat_calls
+        fstat_calls += 1
+        observed = real_fstat(fd)
+        if fstat_calls == 1:
+            return observed
+        values = list(observed)
+        values[6] = observed.st_size + 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(os, "fstat", drifting_fstat)
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        Pg8000CandidateServiceFileResolver(service_file)("analytics")
+    assert fstat_calls >= 2

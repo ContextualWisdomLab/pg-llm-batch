@@ -59,13 +59,26 @@ def _validate_service_name(service_name: object) -> str:
     return service_name
 
 
+def _service_file_snapshot(observed: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Capture metadata that must remain stable while service bytes are retained."""
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_size,
+        observed.st_mtime_ns,
+        observed.st_ctime_ns,
+    )
+
+
 def _read_bounded_utf8(path: Path) -> str:
     """Read one explicit regular service file under a finite UTF-8 byte budget.
 
     The caller-selected path is opened nonblocking where the platform supports
-    it, then the retained descriptor is required to name a regular file before
-    any bytes are consumed. This prevents a FIFO or device path from bypassing
-    the resolver's finite read contract before parsing begins.
+    it, then the retained descriptor is required to name one stable regular
+    file before and after the bounded read. This prevents a FIFO/device path or
+    in-place mutation from becoming connection-selector authority while bytes
+    are being inspected.
     """
     flags = (
         os.O_RDONLY
@@ -80,8 +93,10 @@ def _read_bounded_utf8(path: Path) -> str:
 
     primary_error: BaseException | None = None
     try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
             raise _invalid_service_file()
+        before_snapshot = _service_file_snapshot(before)
 
         chunks: list[bytes] = []
         remaining = _MAX_SERVICE_FILE_BYTES + 1
@@ -92,6 +107,13 @@ def _read_bounded_utf8(path: Path) -> str:
             chunks.append(chunk)
             remaining -= len(chunk)
         payload = b"".join(chunks)
+
+        after = os.fstat(descriptor)
+        if (
+            _service_file_snapshot(after) != before_snapshot
+            or len(payload) != after.st_size
+        ):
+            raise _invalid_service_file()
     except Pg8000CandidateInvalidConninfoError as exc:
         primary_error = exc
         raise
