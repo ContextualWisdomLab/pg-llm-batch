@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -125,3 +127,54 @@ def test_candidate_service_file_rejects_non_file_and_non_string_service(
     resolver = Pg8000CandidateServiceFileResolver(service_file)
     with pytest.raises(Pg8000CandidateInvalidConninfoError):
         resolver(7)  # type: ignore[arg-type]
+
+
+def test_candidate_service_file_uses_nonblocking_descriptor_open(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reach the service-file byte budget without a blocking special-file open."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
+    observed_flags: list[int] = []
+    real_open = os.open
+
+    def recording_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        observed_flags.append(flags)
+        if dir_fd is None:
+            return real_open(path, flags, mode)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "open", recording_open)
+
+    assert Pg8000CandidateServiceFileResolver(service_file)("analytics")["host"] == "db.example"
+    assert observed_flags
+    if hasattr(os, "O_NONBLOCK"):
+        assert observed_flags[0] & os.O_NONBLOCK
+
+
+def test_candidate_service_file_rejects_non_regular_opened_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not treat pipes or devices as caller-selected service-file authority."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
+    real_fstat = os.fstat
+
+    def fifo_fstat(fd: int) -> os.stat_result:
+        observed = real_fstat(fd)
+        values = list(observed)
+        values[0] = stat.S_IFIFO | 0o600
+        return os.stat_result(values)
+
+    monkeypatch.setattr(os, "fstat", fifo_fstat)
+
+    with pytest.raises(Pg8000CandidateInvalidConninfoError):
+        Pg8000CandidateServiceFileResolver(service_file)("analytics")

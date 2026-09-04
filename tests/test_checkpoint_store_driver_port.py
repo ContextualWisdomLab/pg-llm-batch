@@ -81,25 +81,24 @@ class _DriverPortFake:
         return connection
 
 
-def _deny_legacy_psycopg_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Make accidental fallback to the retained Psycopg path fail immediately."""
+def _deny_default_driver_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail if an explicitly injected driver silently reacquires the runtime default."""
 
-    def fail_require_psycopg() -> None:
-        raise AssertionError("legacy Psycopg availability check was reached")
+    def fail_default_driver() -> None:
+        raise AssertionError("default PostgreSQL runtime driver was reached")
 
-    class _ForbiddenPsycopg:
-        def connect(self, *_args: object, **_kwargs: object) -> None:
-            raise AssertionError("legacy Psycopg connection path was reached")
+    monkeypatch.setattr(
+        checkpoint_store,
+        "retained_postgres_driver",
+        fail_default_driver,
+    )
 
-    monkeypatch.setattr(checkpoint_store, "_require_psycopg", fail_require_psycopg)
-    monkeypatch.setattr(checkpoint_store, "psycopg", _ForbiddenPsycopg())
 
-
-def test_checkpoint_store_load_uses_injected_driver_port_without_psycopg(
+def test_checkpoint_store_load_uses_injected_driver_port_without_default_driver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A migrated store must reach tenant SQL through the injected database port."""
-    _deny_legacy_psycopg_path(monkeypatch)
+    """A migrated store must reach tenant SQL only through its injected driver."""
+    _deny_default_driver_path(monkeypatch)
     driver = _DriverPortFake()
     store = PostgresBatchResultCheckpointStore(
         "postgresql://unit",
@@ -113,12 +112,12 @@ def test_checkpoint_store_load_uses_injected_driver_port_without_psycopg(
     assert driver.calls[1][1] == ("tenant-a", "worker-a", "default", "batch-1")
 
 
-def test_checkpoint_schema_application_uses_injected_driver_port_without_psycopg(
+def test_checkpoint_schema_application_uses_injected_driver_port_without_default_driver(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """Schema migration must be able to run through the same replacement seam."""
-    _deny_legacy_psycopg_path(monkeypatch)
+    """Schema migration must run through the injected driver without fallback."""
+    _deny_default_driver_path(monkeypatch)
     migration = tmp_path / "checkpoint.sql"
     migration.write_text("CREATE TABLE checkpoint_probe (probe_id BIGINT);", encoding="utf-8")
     driver = _DriverPortFake()

@@ -94,7 +94,7 @@ class _Connection:
 
 
 class _Driver:
-    """Minimal Psycopg-free driver for the orchestrator's database boundary."""
+    """Minimal concrete-driver-free port fake for the orchestrator boundary."""
 
     def __init__(self) -> None:
         self.executions: list[tuple[str, object | None]] = []
@@ -120,12 +120,25 @@ class _Driver:
         return ("jsonb", value)
 
 
-def test_orchestrator_accepts_injected_driver_without_psycopg(
+def _deny_default_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail if explicit orchestrator injection silently reacquires runtime default."""
+
+    def fail_default_driver():
+        raise AssertionError("default PostgreSQL runtime driver was reached")
+
+    monkeypatch.setattr(
+        orchestrator_module,
+        "retained_postgres_driver",
+        fail_default_driver,
+    )
+
+
+def test_orchestrator_accepts_injected_driver_without_default_driver(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Batch lookup must remain usable after the Psycopg runtime is removed."""
+    """Batch lookup must remain usable through an explicit replacement driver."""
     driver = _Driver()
-    monkeypatch.setattr(orchestrator_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
 
     orchestrator = PostgresBatchOrchestrator(
         "postgresql://x",
@@ -141,9 +154,9 @@ def test_orchestrator_accepts_injected_driver_without_psycopg(
 def test_assemble_payloads_passes_driver_to_model_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Model metadata reads must not silently reacquire the legacy driver."""
+    """Model metadata reads must preserve the explicitly selected driver."""
     driver = _Driver()
-    monkeypatch.setattr(orchestrator_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
     metadata_calls: list[tuple[str, str, object]] = []
 
     def _metadata(
@@ -183,7 +196,7 @@ def test_prepare_batches_propagates_driver_to_store_and_token_counter(
 ) -> None:
     """Preparation must keep one explicit driver boundary across its DB helpers."""
     driver = _Driver()
-    monkeypatch.setattr(orchestrator_module, "psycopg", None)
+    _deny_default_driver(monkeypatch)
     calls: list[tuple[str, object]] = []
 
     class _Config:
@@ -254,10 +267,9 @@ def test_prepare_batches_propagates_driver_to_store_and_token_counter(
 def test_persist_payloads_uses_driver_jsonb_transaction_and_row_count(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Persistence must not leak Psycopg JSONB or rowcount semantics past the port."""
+    """Persistence must use only the selected driver's JSONB and row-count seams."""
     driver = _Driver()
-    monkeypatch.setattr(orchestrator_module, "psycopg", None)
-    monkeypatch.setattr(orchestrator_module, "Jsonb", None)
+    _deny_default_driver(monkeypatch)
     orchestrator = PostgresBatchOrchestrator(
         "postgresql://x",
         postgres_driver=driver,

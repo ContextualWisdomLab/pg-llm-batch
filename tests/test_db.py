@@ -42,7 +42,9 @@ class _Connection:
         self.driver.commits += 1
 
 
-class _Psycopg:
+class _Driver:
+    """Minimal database driver fake for default and injected port paths."""
+
     def __init__(self, row=None, error=None):
         self.row = row
         self.error = error
@@ -57,9 +59,23 @@ class _Psycopg:
         return _Connection(self)
 
 
+def _use_default_driver(monkeypatch: pytest.MonkeyPatch, driver: _Driver) -> None:
+    """Route the package default through the canonical runtime selector seam."""
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
+
+
+def _deny_default_driver(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail if an explicitly injected database operation reacquires the default."""
+
+    def fail_default_driver():
+        raise AssertionError("default PostgreSQL runtime driver was reached")
+
+    monkeypatch.setattr(db, "retained_postgres_driver", fail_default_driver)
+
+
 def test_apply_schema_executes_packaged_file(monkeypatch, tmp_path):
-    driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    driver = _Driver()
+    _use_default_driver(monkeypatch, driver)
     schema = tmp_path / "schema.sql"
     schema.write_text("CREATE TABLE snake_case_name (id int);", encoding="utf-8")
     monkeypatch.setattr(db, "SCHEMA_PATH", schema)
@@ -70,10 +86,10 @@ def test_apply_schema_executes_packaged_file(monkeypatch, tmp_path):
     assert driver.commits == 1
 
 
-def test_apply_schema_uses_injected_driver_without_psycopg(monkeypatch, tmp_path):
-    """Schema bootstrap must migrate through the driver port before manifest swap."""
-    driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", None)
+def test_apply_schema_uses_injected_driver_without_default_driver(monkeypatch, tmp_path):
+    """Schema bootstrap must honor an injected driver without hidden reacquisition."""
+    driver = _Driver()
+    _deny_default_driver(monkeypatch)
     schema = tmp_path / "schema.sql"
     schema.write_text("CREATE TABLE snake_case_name (id int);", encoding="utf-8")
     monkeypatch.setattr(db, "SCHEMA_PATH", schema)
@@ -87,8 +103,8 @@ def test_apply_schema_uses_injected_driver_without_psycopg(monkeypatch, tmp_path
 
 def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
     """Caller-controlled local files must not acquire arbitrary SQL authority."""
-    driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    driver = _Driver()
+    _use_default_driver(monkeypatch, driver)
     untrusted_schema = tmp_path / "untrusted.sql"
     untrusted_schema.write_text("DROP TABLE llm_requests;", encoding="utf-8")
 
@@ -108,17 +124,17 @@ def test_apply_schema_refuses_caller_selected_sql(monkeypatch, tmp_path):
     ],
 )
 def test_load_virtual_payload_preserves_canonical_jsonl(monkeypatch, stored, expected):
-    driver = _Psycopg((stored,))
-    monkeypatch.setattr(db, "psycopg", driver)
+    driver = _Driver((stored,))
+    _use_default_driver(monkeypatch, driver)
     assert db.load_virtual_payload("postgresql://x", "file-1") == expected
     assert driver.executions[0][1] == ("file-1",)
 
 
-def test_load_virtual_payload_uses_injected_driver_without_psycopg(monkeypatch):
-    """Virtual payload reads must not require Psycopg once a driver port is injected."""
+def test_load_virtual_payload_uses_injected_driver_without_default_driver(monkeypatch):
+    """Virtual payload reads must honor the explicit driver boundary."""
     stored = {"text": '{"id":1}\n', "line_count": 1}
-    driver = _Psycopg((stored,))
-    monkeypatch.setattr(db, "psycopg", None)
+    driver = _Driver((stored,))
+    _deny_default_driver(monkeypatch)
 
     assert (
         db.load_virtual_payload(
@@ -133,13 +149,14 @@ def test_load_virtual_payload_uses_injected_driver_without_psycopg(monkeypatch):
 
 
 def test_load_virtual_payload_returns_none_when_missing(monkeypatch):
-    monkeypatch.setattr(db, "psycopg", _Psycopg(None))
+    driver = _Driver(None)
+    _use_default_driver(monkeypatch, driver)
     assert db.load_virtual_payload("postgresql://x", "missing") is None
 
 
 def test_model_metadata_normalizes_mode_and_handles_absence(monkeypatch):
-    driver = _Psycopg((" CHAT ", "o200k_base"))
-    monkeypatch.setattr(db, "psycopg", driver)
+    driver = _Driver((" CHAT ", "o200k_base"))
+    _use_default_driver(monkeypatch, driver)
     assert db.get_model_metadata("postgresql://x", "gpt-4o") == {
         "mode": "chat",
         "tokenizer_model": "o200k_base",
@@ -156,10 +173,10 @@ def test_model_metadata_normalizes_mode_and_handles_absence(monkeypatch):
     assert db.get_model_metadata("postgresql://x", "") is None
 
 
-def test_model_metadata_uses_injected_driver_without_psycopg(monkeypatch):
-    """Tokenizer metadata lookup must migrate through the same driver boundary."""
-    driver = _Psycopg((" CHAT ", "o200k_base"))
-    monkeypatch.setattr(db, "psycopg", None)
+def test_model_metadata_uses_injected_driver_without_default_driver(monkeypatch):
+    """Tokenizer metadata lookup must honor the explicit driver boundary."""
+    driver = _Driver((" CHAT ", "o200k_base"))
+    _deny_default_driver(monkeypatch)
 
     assert db.get_model_metadata(
         "postgresql://x",
@@ -173,13 +190,19 @@ def test_model_metadata_uses_injected_driver_without_psycopg(monkeypatch):
 
 
 def test_model_metadata_driver_failure_is_nonfatal(monkeypatch, caplog):
-    monkeypatch.setattr(db, "psycopg", _Psycopg(error=OSError("database down")))
+    driver = _Driver(error=OSError("database down"))
+    _use_default_driver(monkeypatch, driver)
     with caplog.at_level("DEBUG"):
         assert db.get_model_metadata("postgresql://x", "gpt-4o") is None
     assert "database down" in caplog.text
 
 
-def test_database_access_requires_psycopg(monkeypatch):
-    monkeypatch.setattr(db, "psycopg", None)
-    with pytest.raises(RuntimeError, match="psycopg is required"):
+def test_database_access_requires_runtime_driver(monkeypatch):
+    """Default database access must fail when the canonical runtime selector fails."""
+
+    def fail_default_driver():
+        raise RuntimeError("PostgreSQL runtime driver is required")
+
+    monkeypatch.setattr(db, "retained_postgres_driver", fail_default_driver)
+    with pytest.raises(RuntimeError, match="runtime driver is required"):
         db.load_virtual_payload("postgresql://x", "file")
