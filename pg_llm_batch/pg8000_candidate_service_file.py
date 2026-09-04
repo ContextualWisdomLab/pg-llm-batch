@@ -86,7 +86,7 @@ class Pg8000CandidateServiceFileResolver:
     """
 
     def __init__(self, service_file: Path) -> None:
-        if type(service_file) is not Path:
+        if not isinstance(service_file, Path):
             raise _invalid_service_file()
         self._service_file = service_file
 
@@ -107,7 +107,11 @@ class Pg8000CandidateServiceFileResolver:
                 continue
 
             if stripped.startswith("["):
-                if not stripped.endswith("]") or stripped.count("[") != 1 or stripped.count("]") != 1:
+                if (
+                    not stripped.endswith("]")
+                    or stripped.count("[") != 1
+                    or stripped.count("]") != 1
+                ):
                     raise _invalid_service_file()
                 section_name = stripped[1:-1].strip()
                 if (
