@@ -16,6 +16,9 @@ from uuid import uuid4
 from .exceptions import ValidationError
 
 
+_EXACT_STRING_REQUEST_FIELDS = frozenset({"user_prompt", "model", "id"})
+
+
 class ModelMode(str, Enum):
     """Model invocation mode used when assembling JSONL request lines."""
 
@@ -51,29 +54,23 @@ class BatchRequest:
     system_prompt: Optional[str] = field(default=None, repr=False)
     id: str = field(default_factory=lambda: uuid4().hex, repr=False)
 
-    def __post_init__(self) -> None:
-        """Reject non-string values before they reach counting or gateway seams."""
-        if type(self.user_prompt) is not str:
+    def __setattr__(self, name: str, value: object) -> None:
+        """Keep validated request-field types intact across ordinary assignment."""
+        if name in _EXACT_STRING_REQUEST_FIELDS:
+            if type(value) is not str:
+                raise ValidationError(
+                    field=name,
+                    value="<redacted>",
+                    reason="must be an exact string",
+                )
+        elif (
+            name == "system_prompt"
+            and value is not None
+            and type(value) is not str
+        ):
             raise ValidationError(
-                field="user_prompt",
-                value="<redacted>",
-                reason="must be an exact string",
-            )
-        if type(self.model) is not str:
-            raise ValidationError(
-                field="model",
-                value="<redacted>",
-                reason="must be an exact string",
-            )
-        if self.system_prompt is not None and type(self.system_prompt) is not str:
-            raise ValidationError(
-                field="system_prompt",
+                field=name,
                 value="<redacted>",
                 reason="must be None or an exact string",
             )
-        if type(self.id) is not str:
-            raise ValidationError(
-                field="id",
-                value="<redacted>",
-                reason="must be an exact string",
-            )
+        object.__setattr__(self, name, value)
