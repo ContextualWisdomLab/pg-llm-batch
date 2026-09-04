@@ -56,6 +56,31 @@ def test_build_private_dsn_uses_injected_driver_without_legacy_renderer() -> Non
     ]
 
 
+def test_build_private_dsn_uses_default_driver_boundary_without_direct_renderer(
+    monkeypatch,
+) -> None:
+    """Default secret assembly must select the driver port rather than Psycopg helpers."""
+    driver = _BootstrapDriver()
+    monkeypatch.setattr(compose_bootstrap, "_default_postgres_driver", lambda: driver)
+
+    private_dsn = compose_bootstrap._build_private_dsn(
+        "postgresql://pgllm@postgres:5432/pgllm",
+        "private-password",
+    )
+
+    assert private_dsn == "driver-private-dsn"
+    assert driver.parsed == ["postgresql://pgllm@postgres:5432/pgllm"]
+    assert driver.rendered == [
+        {
+            "user": "pgllm",
+            "host": "postgres",
+            "port": "5432",
+            "dbname": "pgllm",
+            "password": "private-password",
+        }
+    ]
+
+
 def test_run_compose_health_forwards_one_driver_to_dsn_and_health_boundaries(
     tmp_path: Path,
     monkeypatch,
