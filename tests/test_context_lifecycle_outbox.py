@@ -19,6 +19,9 @@ from pg_llm_batch.context_lifecycle_outbox import (
 from pg_llm_batch.exceptions import ConfigError, ValidationError
 
 
+TENANT_SCOPE_SHA256 = "a" * 64
+
+
 def evidence(
     *,
     evidence_id: str = "event-1",
@@ -28,7 +31,7 @@ def evidence(
     return ContextLifecycleEvidenceSeed(
         evidence_id=evidence_id,
         event_type="batch.lifecycle.observed",
-        tenant_scope_sha256="a" * 64,
+        tenant_scope_sha256=TENANT_SCOPE_SHA256,
         subject_ref_sha256="b" * 64,
         authority_ref_sha256="c" * 64,
         origin_ref_sha256="d" * 64,
@@ -168,6 +171,15 @@ def database(monkeypatch: pytest.MonkeyPatch) -> FakeDatabase:
     return fake_database
 
 
+def store(*, tenant_scope: str = "standalone") -> PostgresContextLifecycleOutboxStore:
+    """Create a store with an explicit trusted tenant/evidence identity binding."""
+    return PostgresContextLifecycleOutboxStore(
+        "postgresql://unit",
+        tenant_scope=tenant_scope,
+        tenant_scope_sha256=TENANT_SCOPE_SHA256,
+    )
+
+
 def test_schema_contract_is_rls_scoped_and_has_rollback() -> None:
     """The durable outbox migration must be tenant-scoped and reversible."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
@@ -186,40 +198,69 @@ def test_schema_contract_is_rls_scoped_and_has_rollback() -> None:
 def test_store_requires_explicit_postgres_target(postgres_dsn: Any) -> None:
     """The durable store must never fall through to ambient libpq defaults."""
     with pytest.raises(ConfigError, match="Postgres DSN"):
-        PostgresContextLifecycleOutboxStore(postgres_dsn)
+        PostgresContextLifecycleOutboxStore(
+            postgres_dsn,
+            tenant_scope_sha256=TENANT_SCOPE_SHA256,
+        )
 
 
 def test_store_validates_trusted_tenant_before_sql() -> None:
     """Malformed local tenant scope fails before any database interaction."""
     with pytest.raises(ValidationError):
-        PostgresContextLifecycleOutboxStore("postgresql://unit", tenant_scope=" bad")
+        PostgresContextLifecycleOutboxStore(
+            "postgresql://unit",
+            tenant_scope=" bad",
+            tenant_scope_sha256=TENANT_SCOPE_SHA256,
+        )
+
+
+@pytest.mark.parametrize("tenant_scope_sha256", (None, "", "A" * 64, "a" * 63))
+def test_store_requires_exact_tenant_scope_evidence_identity(
+    tenant_scope_sha256: Any,
+) -> None:
+    """The RLS tenant must be bound to one explicit content-free tenant identity."""
+    with pytest.raises(ValidationError):
+        PostgresContextLifecycleOutboxStore(
+            "postgresql://unit",
+            tenant_scope_sha256=tenant_scope_sha256,
+        )
 
 
 def test_enqueue_rejects_invalid_evidence_before_sql(database: FakeDatabase) -> None:
     """Shaped or malformed evidence cannot reach the durable outbox."""
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     with pytest.raises(ValidationError):
-        store.enqueue("not-evidence")  # type: ignore[arg-type]
+        bound_store.enqueue("not-evidence")  # type: ignore[arg-type]
+    assert database.calls == []
+
+
+def test_enqueue_rejects_mismatched_tenant_evidence_before_sql(
+    database: FakeDatabase,
+) -> None:
+    """A tenant row cannot enqueue evidence claiming another tenant identity."""
+    bound_store = store(tenant_scope="tenant-a")
+    mismatched = replace(evidence(), tenant_scope_sha256="9" * 64)
+
+    with pytest.raises(ValidationError, match="tenant scope"):
+        bound_store.enqueue(mismatched)
+
     assert database.calls == []
 
 
 def test_load_rejects_invalid_event_id_before_sql(database: FakeDatabase) -> None:
     """Malformed event identifiers fail before tenant state or SQL is touched."""
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     with pytest.raises(ValidationError):
-        store.load("bad/event")
+        bound_store.load("bad/event")
     assert database.calls == []
 
 
 def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
     """An identical event replay reuses the durable row without rewriting it."""
-    store = PostgresContextLifecycleOutboxStore(
-        "postgresql://unit",
-        tenant_scope="tenant-a",
-    )
+    bound_store = store(tenant_scope="tenant-a")
     seed = evidence()
-    assert store.enqueue(seed) == seed
-    assert store.enqueue(seed) == seed
+    assert bound_store.enqueue(seed) == seed
+    assert bound_store.enqueue(seed) == seed
     assert database.commits == 2
     statements = [sql for sql, _ in database.calls]
     assert (
@@ -233,21 +274,21 @@ def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
 
 def test_enqueue_rejects_conflicting_replay(database: FakeDatabase) -> None:
     """Reusing an event id with changed evidence fails closed instead of overwriting."""
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     first = evidence()
-    store.enqueue(first)
+    bound_store.enqueue(first)
     with pytest.raises(ContextLifecycleOutboxConflictError) as raised:
-        store.enqueue(replace(first, evidence_ref_sha256="0" * 64))
+        bound_store.enqueue(replace(first, evidence_ref_sha256="0" * 64))
     assert raised.value.reason == "conflicting_replay"
-    assert store.load(first.evidence_id) == first
+    assert bound_store.load(first.evidence_id) == first
 
 
 def test_enqueue_in_transaction_does_not_commit_caller_work(database: FakeDatabase) -> None:
     """A caller can atomically persist domain work and outbox evidence together."""
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     cursor = FakeCursor(database)
     seed = evidence()
-    assert store.enqueue_in_transaction(cursor, seed) == seed
+    assert bound_store.enqueue_in_transaction(cursor, seed) == seed
     assert database.dsns == []
     assert database.commits == 0
 
@@ -256,8 +297,8 @@ def test_enqueue_accepts_identical_initial_insert_race(database: FakeDatabase) -
     """A concurrent identical first writer remains an idempotent success."""
     seed = evidence()
     database.insert_race_row = evidence_row(seed)
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
-    assert store.enqueue(seed) == seed
+    bound_store = store()
+    assert bound_store.enqueue(seed) == seed
 
 
 def test_enqueue_rejects_different_initial_insert_race(database: FakeDatabase) -> None:
@@ -266,35 +307,42 @@ def test_enqueue_rejects_different_initial_insert_race(database: FakeDatabase) -
     database.insert_race_row = evidence_row(
         replace(seed, evidence_ref_sha256="0" * 64)
     )
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     with pytest.raises(ContextLifecycleOutboxConflictError) as raised:
-        store.enqueue(seed)
+        bound_store.enqueue(seed)
     assert raised.value.reason == "initial_event_race"
 
 
 def test_enqueue_rejects_disappearing_insert_conflict(database: FakeDatabase) -> None:
     """A conflict with no visible durable row fails closed for reconciliation."""
     database.insert_conflict_without_row = True
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     with pytest.raises(RuntimeError, match="conflict row disappeared"):
-        store.enqueue(evidence())
+        bound_store.enqueue(evidence())
 
 
 def test_load_is_tenant_qualified_and_revalidates_rows(database: FakeDatabase) -> None:
     """Durable rows are isolated by local tenant scope and validated on read."""
-    store = PostgresContextLifecycleOutboxStore(
-        "postgresql://unit",
-        tenant_scope="tenant-a",
-    )
+    bound_store = store(tenant_scope="tenant-a")
     seed = evidence()
-    store.enqueue(seed)
-    assert store.load(seed.evidence_id) == seed
+    bound_store.enqueue(seed)
+    assert bound_store.load(seed.evidence_id) == seed
     select_params = [
         params
         for sql, params in database.calls
         if sql.startswith("SELECT evidence_id")
     ]
     assert ("tenant-a", seed.evidence_id) in select_params
+
+
+def test_load_rejects_durable_tenant_binding_mismatch(database: FakeDatabase) -> None:
+    """Direct database drift cannot relabel another tenant as local evidence."""
+    corrupt = replace(evidence(), tenant_scope_sha256="9" * 64)
+    database.rows[("tenant-a", corrupt.evidence_id)] = evidence_row(corrupt)
+    bound_store = store(tenant_scope="tenant-a")
+
+    with pytest.raises(RuntimeError, match="tenant scope binding"):
+        bound_store.load(corrupt.evidence_id)
 
 
 @pytest.mark.parametrize("malformed_row", (object(), ("bad",)))
@@ -304,9 +352,9 @@ def test_load_rejects_malformed_durable_row(
 ) -> None:
     """Malformed direct-database state cannot become application evidence."""
     database.rows[("standalone", "event-1")] = malformed_row
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     with pytest.raises(RuntimeError, match="invalid shape"):
-        store.load("event-1")
+        bound_store.load("event-1")
 
 
 def test_load_rejects_behavior_bearing_row_before_member_access(
@@ -324,9 +372,9 @@ def test_load_rejects_behavior_bearing_row_before_member_access(
     database.rows[("standalone", "event-1")] = BehaviorBearingRow(
         evidence_row(evidence())
     )
-    store = PostgresContextLifecycleOutboxStore("postgresql://unit")
+    bound_store = store()
     with pytest.raises(RuntimeError, match="invalid shape"):
-        store.load("event-1")
+        bound_store.load("event-1")
 
 
 def test_apply_schema_uses_explicit_migration_and_commit(
