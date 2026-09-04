@@ -43,24 +43,25 @@ class _Connection:
         return _Cursor(self._rows)
 
 
-class _Psycopg:
-    """Minimal psycopg facade returning fixed health rows."""
+class _Driver:
+    """Minimal retained-driver facade returning fixed health rows."""
 
     def __init__(self, rows):
         self._rows = rows
 
-    def connect(self, _dsn, *, connect_timeout):
-        assert connect_timeout == 5
+    def connect(self, _dsn, *, connect_timeout_seconds):
+        assert connect_timeout_seconds == 5
         return _Connection(self._rows)
+
+
+def _select_driver(monkeypatch, driver) -> None:
+    """Bind one retained readiness driver without exposing concrete-client imports."""
+    monkeypatch.setattr(health, "retained_postgres_driver", lambda: driver)
 
 
 def test_missing_required_component_is_reported_not_ready(monkeypatch):
     """A partial health function result must never pass by vacuous truth."""
-    monkeypatch.setattr(
-        health,
-        "psycopg",
-        _Psycopg([("database", True, "connected")]),
-    )
+    _select_driver(monkeypatch, _Driver([("database", True, "connected")]))
 
     report = health.check_health("postgresql://example")
 
@@ -78,7 +79,12 @@ def test_missing_required_component_is_reported_not_ready(monkeypatch):
 
 def test_health_dependency_and_database_failures_are_bounded(monkeypatch):
     """Dependency absence is explicit while runtime failures stay content-free."""
-    monkeypatch.setattr(health, "psycopg", None)
+    def unavailable_driver():
+        raise health.PostgresDriverUnavailableError(
+            "Retained PostgreSQL driver is unavailable"
+        )
+
+    monkeypatch.setattr(health, "retained_postgres_driver", unavailable_driver)
     report = health.check_health("postgresql://example")
     assert report == {
         "ready": False,
@@ -87,12 +93,14 @@ def test_health_dependency_and_database_failures_are_bounded(monkeypatch):
         ],
     }
 
-    class BrokenPsycopg:
+    class BrokenDriver:
         @staticmethod
-        def connect(_dsn, *, connect_timeout):
-            raise OSError(f"private-dsn-sentinel after {connect_timeout}s")
+        def connect(_dsn, *, connect_timeout_seconds):
+            raise OSError(
+                f"private-dsn-sentinel after {connect_timeout_seconds}s"
+            )
 
-    monkeypatch.setattr(health, "psycopg", BrokenPsycopg())
+    _select_driver(monkeypatch, BrokenDriver())
     report = health.check_health("postgresql://example")
     assert report == {
         "ready": False,
@@ -115,11 +123,11 @@ def test_health_requires_every_required_component(monkeypatch):
         ("com_config", True, "ready"),
         ("optional_metrics", False, "disabled"),
     ]
-    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
+    _select_driver(monkeypatch, _Driver(rows))
     assert health.check_health("postgresql://example")["ready"] is True
 
     rows[1] = ("pg_tiktoken", False, "extension unavailable")
-    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
+    _select_driver(monkeypatch, _Driver(rows))
     assert health.check_health("postgresql://example")["ready"] is False
 
 

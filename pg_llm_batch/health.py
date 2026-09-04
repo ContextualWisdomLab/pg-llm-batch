@@ -14,11 +14,10 @@ import logging
 from typing import Any, Dict, List
 
 from .postgres_driver_port import PostgresDriverPort
-
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
+from .postgres_driver_runtime import (
+    PostgresDriverUnavailableError,
+    retained_postgres_driver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,18 +29,19 @@ def _connect_health_database(
     dsn: str,
     postgres_driver: PostgresDriverPort | None,
 ) -> Any:
-    """Open the bounded readiness connection through the selected database seam.
+    """Open a bounded readiness connection through the shared driver selector.
 
-    An explicitly injected driver is authoritative for this call and receives the
-    same five-second connection budget as the retained Psycopg path. Omitting the
-    port preserves the current optional-dependency behavior until a replacement
-    driver has passed the repository's commercial parity gates.
+    An explicitly injected driver remains authoritative for candidate and
+    degraded-mode checks. Otherwise the centralized runtime boundary selects the
+    retained concrete client. Both paths receive the same five-second connection
+    budget so migration cannot silently weaken readiness liveness semantics.
     """
-    if postgres_driver is not None:
-        return postgres_driver.connect(dsn, connect_timeout_seconds=5)
-    if psycopg is None:
-        return None
-    return psycopg.connect(dsn, connect_timeout=5)
+    if postgres_driver is None:
+        try:
+            postgres_driver = retained_postgres_driver()
+        except PostgresDriverUnavailableError:
+            return None
+    return postgres_driver.connect(dsn, connect_timeout_seconds=5)
 
 
 def check_health(
