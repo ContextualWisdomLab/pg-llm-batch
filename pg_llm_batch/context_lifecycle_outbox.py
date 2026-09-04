@@ -11,7 +11,6 @@ or arbitrary metadata is accepted by this module.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 from weakref import WeakKeyDictionary
@@ -159,14 +158,6 @@ def apply_context_lifecycle_outbox_schema(
         conn.commit()
 
 
-@dataclass(
-    frozen=True,
-    slots=True,
-    weakref_slot=True,
-    init=False,
-    repr=False,
-    eq=False,
-)
 class PostgresContextLifecycleOutboxStore:
     """Persist content-free lifecycle publication intent with tenant RLS isolation.
 
@@ -187,6 +178,8 @@ class PostgresContextLifecycleOutboxStore:
     construction-time authority even if a hostile caller invokes ``object.__setattr__``
     or ``object.__delattr__`` directly against the admitted store object.
     """
+
+    __slots__ = ("__weakref__",)
 
     def __init__(
         self,
