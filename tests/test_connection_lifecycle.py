@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from threading import RLock
 from types import SimpleNamespace
 from typing import Any
 
@@ -54,7 +55,7 @@ class _InitializationConnection:
     """Expose whether a partially initialized store releases its connection."""
 
     def __init__(self) -> None:
-        """Start open with autocommit disabled like a new psycopg connection."""
+        """Start open with autocommit disabled like a new database connection."""
         self.autocommit = False
         self.closed = False
 
@@ -63,14 +64,43 @@ class _InitializationConnection:
         self.closed = True
 
 
+class _InitializationConnectionPort:
+    """Expose initialization cleanup through the driver-neutral connection API."""
+
+    def __init__(self, connection: _InitializationConnection) -> None:
+        self._connection = connection
+
+    def set_autocommit(self, enabled: bool) -> None:
+        self._connection.autocommit = enabled
+
+    def close(self) -> None:
+        self._connection.close()
+
+
+class _InitializationDriver:
+    """Return one observable initialization connection through the runtime port."""
+
+    def __init__(self, connection: _InitializationConnection) -> None:
+        self._connection = connection
+
+    def connect(self, _dsn: str, **_kwargs: Any) -> _InitializationConnectionPort:
+        return _InitializationConnectionPort(self._connection)
+
+
 class _OwnedConfig:
     """Record whether the orchestrator closes its owned config store."""
 
     instances: list["_OwnedConfig"] = []
 
-    def __init__(self, dsn: str) -> None:
-        """Record the explicit DSN and register this owned store."""
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        postgres_driver: object | None = None,
+    ) -> None:
+        """Record the explicit DSN, shared driver, and owned store lifecycle."""
         self.dsn = dsn
+        self.postgres_driver = postgres_driver
         self.closed = False
         self.instances.append(self)
 
@@ -84,10 +114,17 @@ class _OwnedCounter:
 
     instances: list["_OwnedCounter"] = []
 
-    def __init__(self, dsn: str, *, config: _OwnedConfig) -> None:
+    def __init__(
+        self,
+        dsn: str,
+        *,
+        config: _OwnedConfig,
+        postgres_driver: object | None = None,
+    ) -> None:
         """Record constructor ownership and expose the runtime token limit."""
         self.dsn = dsn
         self.config = config
+        self.postgres_driver = postgres_driver
         self.effective_limit = 100
         self.closed = False
         self.instances.append(self)
@@ -102,7 +139,7 @@ def _prepare_owned_orchestrator(monkeypatch: Any) -> PostgresBatchOrchestrator:
     _OwnedConfig.instances = []
     _OwnedCounter.instances = []
     driver = SimpleNamespace(connect=lambda _dsn: _QueryConnection())
-    monkeypatch.setattr(orchestrator_module, "psycopg", driver)
+    monkeypatch.setattr(orchestrator_module, "retained_postgres_driver", lambda: driver)
     monkeypatch.setattr(orchestrator_module, "PostgresConfigStore", _OwnedConfig)
     monkeypatch.setattr(orchestrator_module, "TokenCounter", _OwnedCounter)
     orchestrator = PostgresBatchOrchestrator("postgresql://example")
@@ -154,8 +191,14 @@ def test_prepare_batches_closes_config_when_counter_construction_fails(
     """Config ownership must be released even when token setup cannot finish."""
     orchestrator = _prepare_owned_orchestrator(monkeypatch)
 
-    def fail_counter(_dsn: str, *, config: _OwnedConfig) -> _OwnedCounter:
+    def fail_counter(
+        _dsn: str,
+        *,
+        config: _OwnedConfig,
+        postgres_driver: object | None = None,
+    ) -> _OwnedCounter:
         assert config is _OwnedConfig.instances[0]
+        assert postgres_driver is orchestrator._postgres_driver
         raise RuntimeError("counter construction failed")
 
     monkeypatch.setattr(orchestrator_module, "TokenCounter", fail_counter)
@@ -172,11 +215,8 @@ def test_config_store_constructor_closes_connection_after_setup_failure(
 ) -> None:
     """A failed config-store setup must release the connection it already acquired."""
     connection = _InitializationConnection()
-    monkeypatch.setattr(
-        config_module,
-        "psycopg",
-        SimpleNamespace(connect=lambda _dsn: connection),
-    )
+    driver = _InitializationDriver(connection)
+    monkeypatch.setattr(config_module, "retained_postgres_driver", lambda: driver)
 
     def fail_table_setup(_store: PostgresConfigStore) -> None:
         raise RuntimeError("config setup failed")
@@ -194,11 +234,8 @@ def test_secret_store_constructor_closes_connection_after_setup_failure(
 ) -> None:
     """A failed secret-store setup must release the connection it already acquired."""
     connection = _InitializationConnection()
-    monkeypatch.setattr(
-        config_module,
-        "psycopg",
-        SimpleNamespace(connect=lambda _dsn: connection),
-    )
+    driver = _InitializationDriver(connection)
+    monkeypatch.setattr(config_module, "retained_postgres_driver", lambda: driver)
 
     def fail_table_setup(_store: SecretStore) -> None:
         raise RuntimeError("secret setup failed")
@@ -215,6 +252,7 @@ def test_token_counter_close_releases_cached_connection() -> None:
     """Closing a counter must release and clear its cached PostgreSQL connection."""
     closed: list[str] = []
     counter = object.__new__(TokenCounter)
+    counter._pg_connection_lock = RLock()
     counter._pg_conn = SimpleNamespace(close=lambda: closed.append("closed"))
 
     counter.close()
@@ -227,6 +265,7 @@ def test_token_counter_close_releases_cached_connection() -> None:
 def test_token_counter_close_clears_connection_after_driver_failure() -> None:
     """Driver cleanup failure must not retain the unusable cached connection."""
     counter = object.__new__(TokenCounter)
+    counter._pg_connection_lock = RLock()
 
     def fail_close() -> None:
         raise RuntimeError("driver close failed")
