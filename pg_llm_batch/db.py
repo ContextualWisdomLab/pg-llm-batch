@@ -20,11 +20,7 @@ from typing import Any, Dict, Optional
 
 from .exceptions import ValidationError
 from .postgres_driver_port import PostgresDriverPort
-
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
+from .postgres_driver_runtime import retained_postgres_driver
 
 logger = logging.getLogger(__name__)
 
@@ -91,27 +87,19 @@ class VirtualPayloadIntegrityError(RuntimeError):
         super().__init__("Stored virtual payload failed integrity validation")
 
 
-def _require_psycopg() -> None:
-    """Raise a clear error when the optional psycopg dependency is unavailable."""
-    if psycopg is None:  # pragma: no cover
-        raise RuntimeError("psycopg is required for database access")
-
-
 def _connect_database(
     dsn: str,
     postgres_driver: PostgresDriverPort | None,
 ) -> Any:
-    """Open one connection through an injected migration driver when supplied.
+    """Open one connection through the selected PostgreSQL driver boundary.
 
-    The default remains Psycopg until a permissively licensed adapter has passed
-    the repository's parity and release gates. Injected candidates can therefore
-    exercise package SQL without making the current runtime dependency an
-    unavoidable prerequisite for every persistence consumer.
+    Explicitly injected migration drivers remain authoritative for candidate and
+    degraded-mode tests. When no driver is injected, one centralized runtime
+    selector supplies the retained implementation so bounded contexts no longer
+    import or construct Psycopg directly.
     """
-    if postgres_driver is not None:
-        return postgres_driver.connect(dsn)
-    _require_psycopg()
-    return psycopg.connect(dsn)
+    selected_driver = postgres_driver or retained_postgres_driver()
+    return selected_driver.connect(dsn)
 
 
 def apply_schema(
@@ -455,14 +443,11 @@ def _set_transaction_tenant_scope(cursor: Any, tenant_scope: str) -> None:
 
 def _cursor_row_count(
     cursor: Any,
-    postgres_driver: PostgresDriverPort | None,
+    _postgres_driver: PostgresDriverPort | None,
 ) -> int | None:
-    """Read an exact affected-row count, normalizing unknown driver evidence."""
-    value = (
-        cursor.row_count()
-        if postgres_driver is not None
-        else getattr(cursor, "rowcount", None)
-    )
+    """Read an exact affected-row count through a driver-neutral cursor surface."""
+    row_count = getattr(cursor, "row_count", None)
+    value = row_count() if callable(row_count) else getattr(cursor, "rowcount", None)
     if value is None or value == -1:
         return None
     if type(value) is not int or value < 0:
@@ -888,11 +873,7 @@ def get_model_metadata(
         A dictionary containing normalized ``mode`` and ``tokenizer_model`` when
         found, otherwise ``None``.
     """
-    if (
-        not dsn
-        or not model_id
-        or (postgres_driver is None and psycopg is None)
-    ):
+    if not dsn or not model_id:
         return None
     try:
         with _connect_database(dsn, postgres_driver) as conn:
