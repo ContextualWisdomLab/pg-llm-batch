@@ -14,6 +14,7 @@ import pg_llm_batch.checkpoint_store as checkpoint_store
 import pg_llm_batch.config as config
 import pg_llm_batch.db as db
 import pg_llm_batch.health as health
+import pg_llm_batch.orchestrator as orchestrator
 import pg_llm_batch.token_counter as token_counter
 from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver
 
@@ -102,6 +103,16 @@ def test_token_counter_default_driver_uses_runtime_selector(monkeypatch) -> None
     counter = token_counter.TokenCounter("postgresql://unit")
 
     assert counter._postgres_driver is driver
+
+
+def test_orchestrator_default_driver_uses_runtime_selector(monkeypatch) -> None:
+    """Batch assembly must not retain a direct concrete Psycopg authority path."""
+    driver = _Driver()
+    monkeypatch.setattr(orchestrator, "retained_postgres_driver", lambda: driver)
+
+    service = orchestrator.PostgresBatchOrchestrator("postgresql://unit")
+
+    assert service._postgres_driver is driver
 
 
 def test_runtime_selector_returns_postgres_driver_port() -> None:
