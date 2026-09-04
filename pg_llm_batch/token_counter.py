@@ -181,6 +181,7 @@ class TokenCounter:
                 except Exception as error:  # pragma: no cover - runtime DB variance
                     if self._is_undefined_function(error):
                         self._pg_available = False
+                        self.close()
                         logger.warning("pg_tiktoken extension/functions unavailable")
                     else:
                         self.close()
