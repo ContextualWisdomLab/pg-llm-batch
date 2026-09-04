@@ -178,18 +178,36 @@ class PostgresContextLifecycleOutboxStore:
         tenant_scope_sha256: str,
     ) -> None:
         """Bind explicit PostgreSQL, RLS-tenant, and external evidence identities."""
-        self.postgres_dsn = _validated_postgres_dsn(postgres_dsn)
+        validated_postgres_dsn = _validated_postgres_dsn(postgres_dsn)
         try:
-            self.tenant_scope = validate_tenant_scope(tenant_scope)
+            validated_tenant_scope = validate_tenant_scope(tenant_scope)
         except ValidationError as exc:
             raise ValidationError(
                 field="tenant_scope",
                 value=tenant_scope,
                 reason="must be a supported trusted tenant scope",
             ) from exc
-        self.tenant_scope_sha256 = _validated_tenant_scope_sha256(
+        validated_tenant_scope_sha256 = _validated_tenant_scope_sha256(
             tenant_scope_sha256
         )
+        self._postgres_dsn = validated_postgres_dsn
+        self._tenant_scope = validated_tenant_scope
+        self._tenant_scope_sha256 = validated_tenant_scope_sha256
+
+    @property
+    def postgres_dsn(self) -> str:
+        """Return the explicit database target fixed when this store was admitted."""
+        return self._postgres_dsn
+
+    @property
+    def tenant_scope(self) -> str:
+        """Return the trusted local RLS tenant fixed when this store was admitted."""
+        return self._tenant_scope
+
+    @property
+    def tenant_scope_sha256(self) -> str:
+        """Return the external content-free tenant identity fixed at admission."""
+        return self._tenant_scope_sha256
 
     def _require_tenant_binding(
         self,
