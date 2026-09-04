@@ -218,6 +218,39 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
     return evidence_uuid, evidence_time
 
 
+def _assert_transaction_commit() -> None:
+    """Prove a successful package connection context commits a real write."""
+    connection = _connection()
+    with connection as transaction:
+        with transaction.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE pg8000_candidate_contract
+                SET evidence_json = %s
+                WHERE tenant_scope = %s
+                """,
+                (adapt_pg8000_jsonb({"committed": True}), "tenant-b"),
+            )
+            if cursor.row_count() != 1:
+                raise AssertionError("candidate commit probe did not update one row")
+
+    verification = _connection()
+    try:
+        with verification.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT evidence_json
+                FROM pg8000_candidate_contract
+                WHERE tenant_scope = %s
+                """,
+                ("tenant-b",),
+            )
+            if cursor.fetchone() != ({"committed": True},):
+                raise AssertionError("candidate connection context did not commit")
+    finally:
+        verification.close()
+
+
 def _assert_transaction_rollback() -> None:
     """Prove the package connection context rolls an exceptional write back."""
     connection = _connection()
@@ -315,6 +348,7 @@ def main() -> None:
     _cleanup()
     try:
         evidence_uuid, evidence_time = _prepare_rls_fixture()
+        _assert_transaction_commit()
         _assert_transaction_rollback()
         _assert_typed_rls_read(evidence_uuid, evidence_time)
     finally:
