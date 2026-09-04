@@ -15,6 +15,7 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
+from . import postgres_driver_runtime
 from .bootstrap import resolve_dsn
 from .exceptions import ConfigError
 from .health import serve_healthz
@@ -25,16 +26,14 @@ _MAX_PASSWORD_BYTES = 65_536
 
 
 def _default_postgres_driver() -> PostgresDriverPort:
-    """Load the retained default through the same PostgreSQL anti-corruption port.
+    """Delegate retained-driver construction to the canonical runtime selector.
 
-    Compose secret assembly must not import a concrete driver's conninfo helper
-    independently from the runtime database boundary. Keeping this lazy loader
-    behind ``PostgresDriverPort`` makes the retained Psycopg default replaceable
-    without creating a second connection-selector authority in the bootstrap.
+    Compose owns secret-file handling and private DSN assembly, not concrete
+    database-client selection. Routing the default through one runtime owner
+    keeps a future commercially admitted replacement atomic across package
+    surfaces instead of leaving a hidden Psycopg construction path here.
     """
-    from .psycopg_driver_adapter import PsycopgDriverAdapter
-
-    return PsycopgDriverAdapter()
+    return postgres_driver_runtime.retained_postgres_driver()
 
 
 def _load_database_password(password_file: Path) -> str:
@@ -71,8 +70,8 @@ def _build_private_dsn(
     """Add the mounted password through the selected reviewed conninfo renderer.
 
     The selected driver parses the credential-free selector and renders a fresh
-    parameter snapshot containing the mounted password. The retained Psycopg
-    implementation is loaded only through ``PostgresDriverPort`` while the
+    parameter snapshot containing the mounted password. The retained concrete
+    implementation is selected only by ``postgres_driver_runtime`` while the
     commercial migration is incomplete, so this module has no independent
     concrete-driver conninfo authority. Parser or renderer diagnostics are
     normalized so secret material never escapes this bootstrap boundary.

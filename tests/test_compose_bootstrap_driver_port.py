@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 from pg_llm_batch import compose_bootstrap
+from pg_llm_batch import postgres_driver_runtime
 
 
 class _BootstrapDriver:
@@ -79,6 +80,18 @@ def test_build_private_dsn_uses_default_driver_boundary_without_direct_renderer(
             "password": "private-password",
         }
     ]
+
+
+def test_compose_default_driver_delegates_to_runtime_owner(monkeypatch) -> None:
+    """Compose must not retain a second concrete-driver construction authority."""
+    driver = _BootstrapDriver()
+    monkeypatch.setattr(
+        postgres_driver_runtime,
+        "retained_postgres_driver",
+        lambda: driver,
+    )
+
+    assert compose_bootstrap._default_postgres_driver() is driver
 
 
 def test_run_compose_health_forwards_one_driver_to_dsn_and_health_boundaries(
