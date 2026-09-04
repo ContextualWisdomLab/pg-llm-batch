@@ -51,3 +51,26 @@ def test_store_private_authorization_binding_cannot_be_rebound_or_deleted() -> N
     assert store.postgres_dsn == "postgresql://unit"
     assert store.tenant_scope == "tenant-a"
     assert store.tenant_scope_sha256 == TENANT_SCOPE_SHA256
+
+
+def test_object_level_mutation_cannot_redirect_admitted_store_authority() -> None:
+    """Bypassing frozen assignment must not replace or delete admitted DB/RLS authority."""
+    store = PostgresContextLifecycleOutboxStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+        tenant_scope_sha256=TENANT_SCOPE_SHA256,
+    )
+
+    for attribute, replacement in (
+        ("_postgres_dsn", "postgresql://other"),
+        ("_tenant_scope", "tenant-b"),
+        ("_tenant_scope_sha256", "b" * 64),
+    ):
+        with pytest.raises(AttributeError):
+            object.__setattr__(store, attribute, replacement)
+        with pytest.raises(AttributeError):
+            object.__delattr__(store, attribute)
+
+    assert store.postgres_dsn == "postgresql://unit"
+    assert store.tenant_scope == "tenant-a"
+    assert store.tenant_scope_sha256 == TENANT_SCOPE_SHA256
