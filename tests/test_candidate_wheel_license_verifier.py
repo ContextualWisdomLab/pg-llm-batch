@@ -113,6 +113,23 @@ def test_candidate_closure_rejects_gpl_family_metadata_even_with_permissive_mark
         verifier.verify_candidate_wheel_licenses(tmp_path)
 
 
+def test_candidate_closure_rejects_permissive_token_inside_unapproved_word(tmp_path: Path) -> None:
+    verifier = _load_verifier()
+    _write_valid_closure(tmp_path)
+    wheel_path = tmp_path / "six-1.17.0-py2.py3-none-any.whl"
+    wheel_path.unlink()
+    _write_wheel(
+        tmp_path,
+        wheel_path.name,
+        name="six",
+        version="1.17.0",
+        license_lines=("License: Limited proprietary terms",),
+    )
+
+    with pytest.raises(verifier.CandidateWheelLicenseError, match="approved license evidence"):
+        verifier.verify_candidate_wheel_licenses(tmp_path)
+
+
 def test_candidate_closure_rejects_missing_positive_license_evidence(tmp_path: Path) -> None:
     verifier = _load_verifier()
     _write_valid_closure(tmp_path)
