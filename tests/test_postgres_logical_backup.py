@@ -16,6 +16,10 @@ from pg_llm_batch.postgres_logical_backup import (
     PostgresLogicalBackupResult,
     create_postgres_logical_backup,
 )
+from tests.logical_backup_test_support import install_retained_pg_dump_stub
+
+
+pytestmark = pytest.mark.usefixtures(install_retained_pg_dump_stub.__name__)
 
 
 def _open_private_output(tmp_path):
@@ -39,6 +43,7 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
 ):
     path, descriptor = _open_private_output(tmp_path)
     observed = {}
+    caller_status = os.fstat(descriptor)
 
     monkeypatch.setenv("PGSERVICEFILE", "/run/secrets/pg_service.conf")
     monkeypatch.setenv("PGPASSWORD", "credential-value")
@@ -52,6 +57,7 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
     def fake_run(argv, **kwargs):
         observed["argv"] = argv
         observed["kwargs"] = kwargs
+        observed["stdout_status"] = os.fstat(kwargs["stdout"])
         return _write_successfully(argv, **kwargs)
 
     monkeypatch.setattr(logical_backup.subprocess, "run", fake_run)
@@ -64,12 +70,20 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
             connect_timeout_seconds=7,
         )
         assert result == PostgresLogicalBackupResult(size_bytes=8)
-        assert observed["argv"] == [
-            "/usr/lib/postgresql/18/bin/pg_dump",
+        retained_executable = observed["argv"][0]
+        assert retained_executable.startswith("/proc/self/fd/")
+        retained_descriptor = int(retained_executable.rsplit("/", 1)[-1])
+        assert observed["argv"][1:] == [
             "--format=custom",
             "--no-password",
         ]
-        assert observed["kwargs"]["stdout"] == descriptor
+        assert observed["kwargs"]["pass_fds"] == (retained_descriptor,)
+        assert observed["kwargs"]["stdout"] != descriptor
+        assert stat.S_ISFIFO(observed["stdout_status"].st_mode)
+        assert (
+            observed["stdout_status"].st_dev,
+            observed["stdout_status"].st_ino,
+        ) != (caller_status.st_dev, caller_status.st_ino)
         assert observed["kwargs"]["stderr"] is subprocess.DEVNULL
         assert observed["kwargs"]["stdin"] is subprocess.DEVNULL
         assert observed["kwargs"]["timeout"] == 31
@@ -83,6 +97,7 @@ def test_logical_backup_uses_bounded_content_free_subprocess_contract(
             "PGCONNECT_TIMEOUT": "7",
         }
         assert str(path) not in " ".join(observed["argv"])
+        assert "/usr/lib/postgresql/18/bin/pg_dump" not in observed["argv"]
         assert "tenant_backup" not in " ".join(observed["argv"])
         assert _read_descriptor(descriptor) == b"PGDMP\x01\x02\x03"
         os.fstat(descriptor)
@@ -147,7 +162,7 @@ def test_logical_backup_rejects_closed_descriptor_before_subprocess(tmp_path, mo
     )
     with pytest.raises(
         PostgresLogicalBackupError,
-        match="^PostgreSQL logical backup output could not be inspected$",
+        match="^PostgreSQL logical backup output could not be retained$",
     ):
         create_postgres_logical_backup(
             "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
@@ -372,12 +387,16 @@ def test_logical_backup_rejects_empty_success(tmp_path, monkeypatch):
 
 def test_logical_backup_normalizes_success_path_fsync_failure(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
+    fsync_calls = 0
+
+    def fail_first_fsync(_descriptor):
+        nonlocal fsync_calls
+        fsync_calls += 1
+        if fsync_calls == 1:
+            raise OSError("secret fsync detail")
+
     monkeypatch.setattr(logical_backup.subprocess, "run", _write_successfully)
-    monkeypatch.setattr(
-        logical_backup.os,
-        "fsync",
-        lambda _descriptor: (_ for _ in ()).throw(OSError("secret fsync detail")),
-    )
+    monkeypatch.setattr(logical_backup.os, "fsync", fail_first_fsync)
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
@@ -387,6 +406,7 @@ def test_logical_backup_normalizes_success_path_fsync_failure(tmp_path, monkeypa
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
             )
         assert "secret" not in str(caught.value)
+        assert fsync_calls == 2
         assert os.lseek(descriptor, 0, os.SEEK_CUR) == 0
         assert _read_descriptor(descriptor) == b""
     finally:
@@ -396,15 +416,13 @@ def test_logical_backup_normalizes_success_path_fsync_failure(tmp_path, monkeypa
 def test_logical_backup_normalizes_final_fstat_failure(tmp_path, monkeypatch):
     _path, descriptor = _open_private_output(tmp_path)
     real_fstat = os.fstat
-    target_seen = False
+    fstat_calls = 0
 
     def flaky_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal fstat_calls
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
-            return status
-        if not target_seen:
-            target_seen = True
+        fstat_calls += 1
+        if fstat_calls == 1:
             return status
         raise OSError("secret final stat detail")
 
@@ -436,20 +454,21 @@ def test_logical_backup_rejects_unsafe_final_output_state(
 ):
     _path, descriptor = _open_private_output(tmp_path)
     real_fstat = os.fstat
-    target_seen = False
+    fstat_calls = 0
 
     def changed_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal fstat_calls
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
-            return status
-        if not target_seen:
-            target_seen = True
+        fstat_calls += 1
+        if fstat_calls == 1:
             return status
         values = {
             "st_mode": status.st_mode,
             "st_nlink": status.st_nlink,
             "st_size": status.st_size,
+            "st_dev": status.st_dev,
+            "st_ino": status.st_ino,
+            "st_uid": status.st_uid,
         }
         values.update(final_override)
         return SimpleNamespace(**values)
@@ -470,7 +489,9 @@ def test_logical_backup_rejects_unsafe_final_output_state(
         os.close(descriptor)
 
 
-def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, monkeypatch):
+def test_logical_backup_reports_invalidation_failure_after_command_error(
+    tmp_path, monkeypatch
+):
     _path, descriptor = _open_private_output(tmp_path)
 
     def failed_run(argv, **kwargs):
@@ -486,7 +507,7 @@ def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, mo
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
-            match="^PostgreSQL logical backup command failed$",
+            match="^PostgreSQL logical backup output could not be invalidated$",
         ) as caught:
             create_postgres_logical_backup(
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
@@ -497,7 +518,9 @@ def test_logical_backup_primary_error_survives_invalidation_failure(tmp_path, mo
         os.close(descriptor)
 
 
-def test_logical_backup_primary_error_survives_offset_reset_failure(tmp_path, monkeypatch):
+def test_logical_backup_reports_rewind_failure_after_command_error(
+    tmp_path, monkeypatch
+):
     _path, descriptor = _open_private_output(tmp_path)
     real_lseek = os.lseek
     offset_reset_failed = False
@@ -518,7 +541,7 @@ def test_logical_backup_primary_error_survives_offset_reset_failure(tmp_path, mo
     try:
         with pytest.raises(
             PostgresLogicalBackupError,
-            match="^PostgreSQL logical backup command failed$",
+            match="^PostgreSQL logical backup output could not be invalidated$",
         ) as caught:
             create_postgres_logical_backup(
                 "safe_service", descriptor, pg_dump_executable="/usr/bin/pg_dump"
