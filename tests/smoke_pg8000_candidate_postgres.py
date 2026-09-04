@@ -23,6 +23,7 @@ from pg_llm_batch.pg8000_driver_candidate_adapter import validate_pg8000_dbapi_m
 from pg_llm_batch.pg8000_driver_candidate_errors import (
     is_pg8000_candidate_undefined_function,
 )
+from pg_llm_batch.pg8000_driver_candidate_jsonb import adapt_pg8000_jsonb
 from pg_llm_batch.pg8000_thread_affine_candidate_adapter import (
     Pg8000ThreadAffineCandidateConnectionAdapter,
 )
@@ -117,11 +118,11 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
                     "tenant-a",
                     evidence_uuid,
                     evidence_time,
-                    {"candidate": "pg8000", "visible": True},
+                    adapt_pg8000_jsonb({"candidate": "pg8000", "visible": True}),
                     "tenant-b",
                     uuid.uuid4(),
                     evidence_time,
-                    {"candidate": "pg8000", "visible": False},
+                    adapt_pg8000_jsonb({"candidate": "pg8000", "visible": False}),
                 ),
             )
             if cursor.row_count() != 2:
@@ -144,7 +145,7 @@ def _assert_transaction_rollback() -> None:
                     SET evidence_json = %s
                     WHERE tenant_scope = %s
                     """,
-                    ({"rolled_back": True}, "tenant-a"),
+                    (adapt_pg8000_jsonb({"rolled_back": True}), "tenant-a"),
                 )
                 if cursor.row_count() != 1:
                     raise AssertionError("candidate rollback probe did not update one row")
