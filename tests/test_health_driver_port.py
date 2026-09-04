@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from pg_llm_batch import health
 
 
@@ -75,11 +73,8 @@ class _HealthDriver:
         return self.connection
 
 
-def test_check_health_uses_injected_driver_without_psycopg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Readiness must work through the replacement seam when Psycopg is unavailable."""
-    monkeypatch.setattr(health, "psycopg", None)
+def test_check_health_uses_injected_driver_without_concrete_import() -> None:
+    """Readiness must work entirely through an explicitly injected driver seam."""
     driver = _HealthDriver()
 
     report = health.check_health(
@@ -94,11 +89,8 @@ def test_check_health_uses_injected_driver_without_psycopg(
     ]
 
 
-def test_check_health_bounds_injected_driver_failures_without_psycopg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_check_health_bounds_injected_driver_failures() -> None:
     """Replacement-driver failures remain bounded without reflecting connection data."""
-    monkeypatch.setattr(health, "psycopg", None)
     secret_sentinel = "postgresql://user:private-password@db.example/batch"
 
     class _BrokenDriver:
