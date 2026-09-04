@@ -21,14 +21,8 @@ from . import db
 from .config import PostgresConfigStore
 from .exceptions import ValidationError
 from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import retained_postgres_driver
 from .token_counter import BatchAccumulator, TokenCounter
-
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-    from psycopg.types.json import Jsonb  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
-    Jsonb = None  # type: ignore
 
 
 def _validate_effective_token_limit(value: Optional[int]) -> Optional[int]:
@@ -67,39 +61,34 @@ class PostgresBatchOrchestrator:
         *,
         postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Initialize with an explicit DSN and optional migration driver."""
-        if not dsn or (postgres_driver is None and psycopg is None):
-            raise RuntimeError("A Postgres DSN and psycopg are required")
+        """Initialize with an explicit DSN through the centralized driver boundary.
+
+        Candidate and host adapters may be injected explicitly. Ordinary runtime
+        construction uses the retained selector so this bounded context does not
+        keep a second concrete Psycopg import, JSONB adapter, or connection path.
+        """
+        if not dsn:
+            raise RuntimeError("A Postgres DSN is required")
         self.dsn = dsn
-        self._postgres_driver = postgres_driver
+        self._postgres_driver = (
+            postgres_driver if postgres_driver is not None else retained_postgres_driver()
+        )
 
     def _connect_database(self) -> Any:
         """Open one orchestrator connection through the selected driver boundary."""
-        if self._postgres_driver is not None:
-            return self._postgres_driver.connect(self.dsn)
-        assert psycopg is not None
-        return psycopg.connect(self.dsn)
+        return self._postgres_driver.connect(self.dsn)
 
     def _set_autocommit(self, connection: Any, enabled: bool) -> None:
-        """Set transaction mode without exposing a candidate driver's raw API."""
-        if self._postgres_driver is not None:
-            connection.set_autocommit(enabled)
-            return
-        connection.autocommit = enabled
+        """Set transaction mode through the driver-neutral connection contract."""
+        connection.set_autocommit(enabled)
 
     def _adapt_jsonb(self, value: object) -> object:
         """Adapt JSONB through the selected driver while preserving exact payload data."""
-        if self._postgres_driver is not None:
-            return self._postgres_driver.jsonb(value)
-        if Jsonb is not None:
-            return Jsonb(value)
-        return json.dumps(value)
+        return self._postgres_driver.jsonb(value)
 
     def _cursor_row_count(self, cursor: Any) -> int | None:
         """Read affected-row evidence through the selected cursor contract."""
-        if self._postgres_driver is not None:
-            return cursor.row_count()
-        return getattr(cursor, "rowcount", None)
+        return cursor.row_count()
 
     def _resolve_batch_uuid(self, batch_key: str) -> Optional[str]:
         """Resolve an exact string batch UUID or input-file-path selector."""
@@ -165,22 +154,16 @@ class PostgresBatchOrchestrator:
                 )
                 rows: List[Tuple] = cur.fetchall()
 
-        if self._postgres_driver is None:
-            config = PostgresConfigStore(self.dsn)
-        else:
-            config = PostgresConfigStore(
+        config = PostgresConfigStore(
+            self.dsn,
+            postgres_driver=self._postgres_driver,
+        )
+        try:
+            counter = TokenCounter(
                 self.dsn,
+                config=config,
                 postgres_driver=self._postgres_driver,
             )
-        try:
-            if self._postgres_driver is None:
-                counter = TokenCounter(self.dsn, config=config)
-            else:
-                counter = TokenCounter(
-                    self.dsn,
-                    config=config,
-                    postgres_driver=self._postgres_driver,
-                )
             try:
                 if validated_token_limit is not None:
                     counter.effective_limit = min(
@@ -204,14 +187,11 @@ class PostgresBatchOrchestrator:
         payloads: List[Dict[str, Any]] = []
 
         for (request_uuid, system_prompt, user_prompt, model_name) in rows:
-            if self._postgres_driver is None:
-                metadata = db.get_model_metadata(self.dsn, model_name)
-            else:
-                metadata = db.get_model_metadata(
-                    self.dsn,
-                    model_name,
-                    postgres_driver=self._postgres_driver,
-                )
+            metadata = db.get_model_metadata(
+                self.dsn,
+                model_name,
+                postgres_driver=self._postgres_driver,
+            )
             mode = str((metadata or {}).get("mode") or "").lower()
             system_for_tokens = system_prompt if mode != "embedding" else ""
 
