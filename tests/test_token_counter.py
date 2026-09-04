@@ -122,6 +122,72 @@ def test_batch_accumulator_rejects_oversized_first_record(fake_pg):
     assert acc.record_count == 0
 
 
+def test_batch_accumulator_rejects_invalid_resource_counts_without_mutation(fake_pg):
+    counter = TokenCounter("postgresql://x")
+    acc = BatchAccumulator(counter, "gpt-4o", max_records=2, max_bytes=10_000)
+    acc.add_entry("seed", '{"seed":true}', tokens=2, byte_size=14)
+
+    for method, field, tokens, byte_size in (
+        ("add_entry", "tokens", -1, 1),
+        ("add_entry", "byte_size", 1, -1),
+        ("add_entry", "tokens", True, 1),
+        ("add_entry", "byte_size", 1, False),
+        ("would_exceed", "tokens", -1, 1),
+        ("would_exceed", "byte_size", 1, -1),
+        ("would_exceed", "tokens", True, 1),
+        ("would_exceed", "byte_size", 1, False),
+    ):
+        before = (list(acc.entries), acc.total_tokens, acc.record_count, acc.byte_size)
+        with pytest.raises(ValidationError, match="must be a non-negative integer") as error:
+            if method == "add_entry":
+                acc.add_entry("invalid", "{}", tokens=tokens, byte_size=byte_size)
+            else:
+                acc.would_exceed(tokens=tokens, byte_size=byte_size)
+        assert error.value.details == {
+            "field": field,
+            "value": "<provided>",
+            "reason": "must be a non-negative integer",
+        }
+        assert (list(acc.entries), acc.total_tokens, acc.record_count, acc.byte_size) == before
+
+
+def test_batch_accumulator_rejects_behavior_bearing_counts_before_use(fake_pg):
+    class BehaviorBearingInt(int):
+        def __repr__(self):
+            raise AssertionError("caller numeric repr must not run")
+
+        def __gt__(self, _other):
+            raise AssertionError("caller numeric comparison must not run")
+
+        def __add__(self, _other):
+            raise AssertionError("caller numeric arithmetic must not run")
+
+        def __radd__(self, _other):
+            raise AssertionError("caller numeric arithmetic must not run")
+
+    counter = TokenCounter("postgresql://x")
+    acc = BatchAccumulator(counter, "gpt-4o", max_records=2, max_bytes=10_000)
+
+    for method, field, tokens, byte_size in (
+        ("add_entry", "tokens", BehaviorBearingInt(1), 1),
+        ("add_entry", "byte_size", 1, BehaviorBearingInt(1)),
+        ("would_exceed", "tokens", BehaviorBearingInt(1), 1),
+        ("would_exceed", "byte_size", 1, BehaviorBearingInt(1)),
+    ):
+        before = (list(acc.entries), acc.total_tokens, acc.record_count, acc.byte_size)
+        with pytest.raises(ValidationError, match="must be a non-negative integer") as error:
+            if method == "add_entry":
+                acc.add_entry("behavior-bearing", "{}", tokens=tokens, byte_size=byte_size)
+            else:
+                acc.would_exceed(tokens=tokens, byte_size=byte_size)
+        assert error.value.details == {
+            "field": field,
+            "value": "<provided>",
+            "reason": "must be a non-negative integer",
+        }
+        assert (list(acc.entries), acc.total_tokens, acc.record_count, acc.byte_size) == before
+
+
 def test_empty_batches_and_oversized_single_request(fake_pg):
     counter = TokenCounter("postgresql://x")
     assert counter.count_batch_tokens([]) == {
@@ -158,7 +224,15 @@ def test_config_resolution_buffer_validation_and_encoder_cache(fake_pg, monkeypa
     assert counter.buffer_percentage == counter.DEFAULT_BUFFER_PERCENTAGE
     assert counter._resolve_config_value("x", "y", 7) == 7
     counter.config = Config(error=True)
-    assert counter._resolve_config_value("x", "y", 8) == 8
+    with pytest.raises(
+        ValidationError, match="configured value could not be read"
+    ) as config_error:
+        counter._resolve_config_value("x", "y", 8)
+    assert config_error.value.details == {
+        "field": "x.y",
+        "value": "<unavailable>",
+        "reason": "configured value could not be read",
+    }
 
     for invalid in (-1, 51):
         with pytest.raises(ValidationError, match="between 0 and 50"):

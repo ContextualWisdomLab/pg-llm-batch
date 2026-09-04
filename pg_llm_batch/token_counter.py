@@ -273,14 +273,18 @@ class TokenCounter:
             pass
 
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
-        """Read a config value from the KV store, returning the default on any failure."""
-        if self.config is not None:
-            try:
-                value = self.config.get(category, key, default)
-                return value if value is not None else default
-            except Exception:
-                return default
-        return default
+        """Read a config value, failing closed when an explicit authority is unavailable."""
+        if self.config is None:
+            return default
+        try:
+            value = self.config.get(category, key, default)
+        except Exception:
+            raise ValidationError(
+                field=f"{category}.{key}",
+                value="<unavailable>",
+                reason="configured value could not be read",
+            ) from None
+        return value if value is not None else default
 
     def _ensure_pg_tiktoken(self) -> bool:
         """Verify the pre-provisioned pg_tiktoken extension and functions read-only."""
@@ -385,6 +389,28 @@ class BatchAccumulator:
             )
         return selected
 
+    @staticmethod
+    def _require_nonnegative_resource_count(field: str, value: Any) -> int:
+        """Require an exact non-negative integer before resource arithmetic."""
+        if type(value) is not int or value < 0:
+            raise ValidationError(
+                field=field,
+                value="<provided>",
+                reason="must be a non-negative integer",
+            )
+        return value
+
+    @staticmethod
+    def _require_single_jsonl_record(json_line: Any) -> str:
+        """Reject shaped or multi-record text before JSONL accounting and mutation."""
+        if type(json_line) is not str or "\n" in json_line or "\r" in json_line:
+            raise ValidationError(
+                field="json_line",
+                value="<provided>",
+                reason="must be a single physical JSONL record without CR/LF",
+            )
+        return json_line
+
     def reset(self) -> None:
         """Clear all accumulated lines and counters."""
         self.entries: List[Tuple[str, str, int]] = []
@@ -407,8 +433,8 @@ class BatchAccumulator:
 
     def would_exceed(self, tokens: int, byte_size: int) -> bool:
         """Report whether adding a line would exceed any active limit."""
-        if self.record_count == 0:
-            return False
+        tokens = self._require_nonnegative_resource_count("tokens", tokens)
+        byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
         if self.total_tokens + tokens > self.token_limit:
             return True
         if self.byte_size + byte_size > self.max_bytes:
@@ -421,22 +447,49 @@ class BatchAccumulator:
         self, request_id: str, json_line: str, tokens: int, byte_size: int
     ) -> None:
         """Append one valid record and update aggregate counters."""
+        tokens = self._require_nonnegative_resource_count("tokens", tokens)
+        byte_size = self._require_nonnegative_resource_count("byte_size", byte_size)
+        json_line = self._require_single_jsonl_record(json_line)
+        accounted_byte_size = max(byte_size, self.compute_byte_size(json_line))
         if tokens > self.token_limit:
             raise TokenLimitExceededError(
                 current_tokens=tokens,
                 limit_tokens=self.token_limit,
                 batch_id=request_id,
             )
-        if byte_size > self.max_bytes:
+        if accounted_byte_size > self.max_bytes:
             raise ValidationError(
                 field="byte_size",
-                value=byte_size,
+                value=accounted_byte_size,
                 reason=f"single JSONL record exceeds max_bytes={self.max_bytes}",
             )
+
+        next_total_tokens = self.total_tokens + tokens
+        if next_total_tokens > self.token_limit:
+            raise TokenLimitExceededError(
+                current_tokens=next_total_tokens,
+                limit_tokens=self.token_limit,
+                batch_id=request_id,
+            )
+        next_byte_size = self.byte_size + accounted_byte_size
+        if next_byte_size > self.max_bytes:
+            raise ValidationError(
+                field="byte_size",
+                value=next_byte_size,
+                reason=f"batch JSONL bytes exceed max_bytes={self.max_bytes}",
+            )
+        next_record_count = self.record_count + 1
+        if next_record_count > self.max_records:
+            raise ValidationError(
+                field="record_count",
+                value=next_record_count,
+                reason=f"batch record count exceeds max_records={self.max_records}",
+            )
+
         self.entries.append((request_id, json_line, tokens))
-        self.total_tokens += tokens
-        self.record_count += 1
-        self.byte_size += byte_size
+        self.total_tokens = next_total_tokens
+        self.record_count = next_record_count
+        self.byte_size = next_byte_size
 
     def drain(self) -> Dict[str, Any]:
         """Return accumulated metadata and reset the accumulator."""
