@@ -3,9 +3,9 @@
 This script is intentionally outside pytest discovery. CI installs one immutable
 pg8000 candidate artifact and runs this smoke against the repository PostgreSQL
 image without adding the candidate to the production dependency graph. The
-checks cover the portable connection/cursor ACL plus transaction, parameter,
-JSONB, UUID/timestamp, affected-row, and transaction-local tenant semantics that
-must be proven before candidate promotion.
+checks cover the portable connection/cursor ACL, thread-affine connection use,
+transaction, parameter, JSONB, UUID/timestamp, affected-row, and transaction-local
+tenant semantics that must be proven before candidate promotion.
 """
 
 from __future__ import annotations
@@ -18,9 +18,9 @@ import uuid
 
 from pg8000 import dbapi
 
-from pg_llm_batch.pg8000_driver_candidate_adapter import (
-    Pg8000CandidateConnectionAdapter,
-    validate_pg8000_dbapi_module,
+from pg_llm_batch.pg8000_driver_candidate_adapter import validate_pg8000_dbapi_module
+from pg_llm_batch.pg8000_thread_affine_candidate_adapter import (
+    Pg8000ThreadAffineCandidateConnectionAdapter,
 )
 
 _EXPECTED_VERSION = "1.31.5"
@@ -71,7 +71,7 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
     raw = _raw_connection()
     try:
         raw.autocommit = True
-        connection = Pg8000CandidateConnectionAdapter(raw)
+        connection = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
         with connection.cursor() as cursor:
             cursor.execute("CREATE ROLE pg8000_candidate_reader NOLOGIN")
             cursor.execute(
@@ -130,7 +130,7 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
 def _assert_transaction_rollback() -> None:
     """Prove the package connection context rolls an exceptional write back."""
     raw = _raw_connection()
-    adapter = Pg8000CandidateConnectionAdapter(raw)
+    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
     try:
         with adapter as connection:
             with connection.cursor() as cursor:
@@ -156,7 +156,7 @@ def _assert_typed_rls_read(
 ) -> None:
     """Prove transaction-local tenant scope and typed result semantics together."""
     raw = _raw_connection()
-    adapter = Pg8000CandidateConnectionAdapter(raw)
+    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
     with adapter as connection:
         with connection.cursor() as cursor:
             cursor.execute("SET ROLE pg8000_candidate_reader")
@@ -194,7 +194,7 @@ def main() -> None:
     validate_pg8000_dbapi_module(dbapi)
 
     raw = _raw_connection()
-    adapter = Pg8000CandidateConnectionAdapter(raw)
+    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
     with adapter as connection:
         with connection.cursor() as cursor:
             cursor.execute("SELECT current_database(), current_user, %s::text", ("bound",))
