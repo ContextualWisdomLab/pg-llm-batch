@@ -16,6 +16,8 @@ connection parameters remain fail closed at the driver boundary.
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 from .pg8000_candidate_driver_port import Pg8000CandidateInvalidConninfoError
@@ -58,12 +60,51 @@ def _validate_service_name(service_name: object) -> str:
 
 
 def _read_bounded_utf8(path: Path) -> str:
-    """Read one explicit service file under a finite strict-UTF-8 evidence budget."""
+    """Read one explicit regular service file under a finite UTF-8 byte budget.
+
+    The caller-selected path is opened nonblocking where the platform supports
+    it, then the retained descriptor is required to name a regular file before
+    any bytes are consumed. This prevents a FIFO or device path from bypassing
+    the resolver's finite read contract before parsing begins.
+    """
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
     try:
-        with path.open("rb") as handle:
-            payload = handle.read(_MAX_SERVICE_FILE_BYTES + 1)
+        descriptor = os.open(path, flags)
     except (OSError, ValueError):
         raise _invalid_service_file() from None
+
+    primary_error: BaseException | None = None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise _invalid_service_file()
+
+        chunks: list[bytes] = []
+        remaining = _MAX_SERVICE_FILE_BYTES + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, remaining)
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        payload = b"".join(chunks)
+    except Pg8000CandidateInvalidConninfoError as exc:
+        primary_error = exc
+        raise
+    except (OSError, ValueError) as exc:
+        primary_error = exc
+        raise _invalid_service_file() from None
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            if primary_error is None:
+                raise _invalid_service_file() from None
+
     if len(payload) > _MAX_SERVICE_FILE_BYTES:
         raise _invalid_service_file()
     try:
