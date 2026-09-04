@@ -252,7 +252,7 @@ def _assert_transaction_commit() -> None:
 
 
 def _assert_transaction_rollback() -> None:
-    """Prove the package connection context rolls an exceptional write back."""
+    """Prove an exceptional package connection context rolls a real write back."""
     connection = _connection()
     try:
         with connection as transaction:
@@ -271,6 +271,22 @@ def _assert_transaction_rollback() -> None:
     except RuntimeError as exc:
         if str(exc) != "candidate rollback probe":
             raise
+
+    verification = _connection()
+    try:
+        with verification.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT evidence_json
+                FROM pg8000_candidate_contract
+                WHERE tenant_scope = %s
+                """,
+                ("tenant-a",),
+            )
+            if cursor.fetchone() != ({"candidate": "pg8000", "visible": True},):
+                raise AssertionError("candidate connection context did not roll back")
+    finally:
+        verification.close()
 
 
 def _assert_undefined_function_classification() -> None:
