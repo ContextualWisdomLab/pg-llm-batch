@@ -10,15 +10,14 @@ from typing import Any, Optional
 
 from .db import (
     DEFAULT_TENANT_SCOPE,
-    _require_psycopg,
     _set_transaction_tenant_scope,
-    psycopg,
     validate_endpoint_alias,
     validate_remote_resource_id,
     validate_tenant_scope,
 )
 from .exceptions import ConfigError, PgLlmBatchError, ValidationError
 from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import retained_postgres_driver
 from .result_streaming import BatchResultCheckpoint
 
 MIGRATION_PATH = (
@@ -90,17 +89,15 @@ def _connect_postgres(
     postgres_dsn: str,
     postgres_driver: PostgresDriverPort | None,
 ) -> Any:
-    """Connect through an injected driver while preserving the legacy default.
+    """Connect through the selected PostgreSQL driver boundary.
 
-    The optional port lets one bounded persistence consumer migrate away from
-    Psycopg without changing its SQL, transaction, tenant, or checkpoint
-    semantics. Until the repository selects and validates a commercial
-    replacement, omitting the port retains the current Psycopg path explicitly.
+    Explicitly injected migration drivers remain available for parity and
+    degraded-mode tests. Without an injection, the centralized runtime selector
+    supplies the retained implementation so checkpoint persistence no longer
+    imports or constructs Psycopg directly.
     """
-    if postgres_driver is not None:
-        return postgres_driver.connect(postgres_dsn)
-    _require_psycopg()
-    return psycopg.connect(postgres_dsn)
+    selected_driver = postgres_driver or retained_postgres_driver()
+    return selected_driver.connect(postgres_dsn)
 
 
 def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
