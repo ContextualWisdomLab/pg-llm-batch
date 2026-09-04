@@ -4,8 +4,9 @@ This script is intentionally outside pytest discovery. CI installs one immutable
 pg8000 candidate artifact and runs this smoke against the repository PostgreSQL
 image without adding the candidate to the production dependency graph. The
 checks cover the portable connection/cursor ACL, thread-affine connection use,
-transaction, parameter, JSONB, UUID/timestamp, affected-row, and transaction-local
-tenant semantics that must be proven before candidate promotion.
+transaction, parameter, JSONB, UUID/timestamp, affected-row, narrow PostgreSQL
+error classification, and transaction-local tenant semantics that must be proven
+before candidate promotion.
 """
 
 from __future__ import annotations
@@ -19,6 +20,9 @@ import uuid
 from pg8000 import dbapi
 
 from pg_llm_batch.pg8000_driver_candidate_adapter import validate_pg8000_dbapi_module
+from pg_llm_batch.pg8000_driver_candidate_errors import (
+    is_pg8000_candidate_undefined_function,
+)
 from pg_llm_batch.pg8000_thread_affine_candidate_adapter import (
     Pg8000ThreadAffineCandidateConnectionAdapter,
 )
@@ -150,6 +154,29 @@ def _assert_transaction_rollback() -> None:
             raise
 
 
+def _assert_undefined_function_classification() -> None:
+    """Prove SQLSTATE-based undefined-function classification on real PostgreSQL."""
+    raw = _raw_connection()
+    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
+    try:
+        with adapter.cursor() as cursor:
+            try:
+                cursor.execute("SELECT pg_llm_batch_candidate_missing_function()")
+            except BaseException as error:
+                if not is_pg8000_candidate_undefined_function(
+                    error,
+                    dbapi_module=dbapi,
+                ):
+                    raise AssertionError(
+                        "candidate undefined-function classification changed"
+                    ) from error
+            else:
+                raise AssertionError("candidate undefined-function probe unexpectedly exists")
+        adapter.rollback()
+    finally:
+        adapter.close()
+
+
 def _assert_typed_rls_read(
     expected_uuid: uuid.UUID,
     expected_time: datetime,
@@ -201,6 +228,7 @@ def main() -> None:
             if cursor.fetchone() != (_EXPECTED_DATABASE, _EXPECTED_USER, "bound"):
                 raise AssertionError("candidate parameter/result semantics changed")
 
+    _assert_undefined_function_classification()
     _cleanup()
     try:
         evidence_uuid, evidence_time = _prepare_rls_fixture()
