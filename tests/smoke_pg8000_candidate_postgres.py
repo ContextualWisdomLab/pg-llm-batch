@@ -3,10 +3,10 @@
 This script is intentionally outside pytest discovery. CI installs one immutable
 pg8000 candidate artifact and runs this smoke against the repository PostgreSQL
 image without adding the candidate to the production dependency graph. The
-checks cover the portable connection/cursor ACL, thread-affine connection use,
-transaction, parameter, JSONB, UUID/timestamp, affected-row, narrow PostgreSQL
-error classification, and transaction-local tenant semantics that must be proven
-before candidate promotion.
+checks cover the candidate URI connection factory, portable connection/cursor
+ACL, thread-affine connection use, transaction, parameter, JSONB, UUID/timestamp,
+affected-row, narrow PostgreSQL error classification, and transaction-local
+tenant semantics that must be proven before candidate promotion.
 """
 
 from __future__ import annotations
@@ -19,22 +19,22 @@ import uuid
 
 from pg8000 import dbapi
 
-from pg_llm_batch.pg8000_driver_candidate_adapter import validate_pg8000_dbapi_module
-from pg_llm_batch.pg8000_driver_candidate_errors import (
-    is_pg8000_candidate_undefined_function,
-)
+from pg_llm_batch.pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
 from pg_llm_batch.pg8000_driver_candidate_jsonb import adapt_pg8000_jsonb
-from pg_llm_batch.pg8000_thread_affine_candidate_adapter import (
-    Pg8000ThreadAffineCandidateConnectionAdapter,
-)
 
 _EXPECTED_VERSION = "1.31.5"
 _EXPECTED_DATABASE = "pgllm"
 _EXPECTED_USER = "pgllm"
+_CREDENTIAL_FREE_DSN = "postgresql://pgllm@127.0.0.1:5432/pgllm"
 
 
-def _raw_connection() -> object:
-    """Open one finite local candidate connection using the CI-owned password file."""
+def _candidate_driver() -> Pg8000CandidateDriverAdapter:
+    """Bind the exact admitted pg8000 DB-API module to the candidate driver port."""
+    return Pg8000CandidateDriverAdapter(dbapi)
+
+
+def _connection() -> object:
+    """Open one finite candidate connection from a private in-memory URI selector."""
     password_file = os.environ.get("PG8000_CANDIDATE_PASSWORD_FILE")
     if not password_file:
         raise RuntimeError("PG8000_CANDIDATE_PASSWORD_FILE is required")
@@ -44,39 +44,33 @@ def _raw_connection() -> object:
         raise RuntimeError("PG8000 candidate password file could not be read") from None
     if not password:
         raise RuntimeError("PG8000 candidate password file is empty")
-    return dbapi.connect(
-        user=_EXPECTED_USER,
-        password=password,
-        host="127.0.0.1",
-        port=5432,
-        database=_EXPECTED_DATABASE,
-        timeout=5,
-    )
+
+    driver = _candidate_driver()
+    parameters = dict(driver.parse_conninfo(_CREDENTIAL_FREE_DSN))
+    parameters["password"] = password
+    private_dsn = driver.make_conninfo(parameters)
+    return driver.connect(private_dsn, connect_timeout_seconds=5)
 
 
 def _cleanup() -> None:
     """Remove candidate-only database objects even after a prior interrupted smoke."""
-    raw = _raw_connection()
+    connection = _connection()
     try:
-        raw.autocommit = True
-        cursor = raw.cursor()
-        try:
+        connection.set_autocommit(True)
+        with connection.cursor() as cursor:
             cursor.execute("DROP TABLE IF EXISTS pg8000_candidate_contract")
             cursor.execute("DROP ROLE IF EXISTS pg8000_candidate_reader")
-        finally:
-            cursor.close()
     finally:
-        raw.close()
+        connection.close()
 
 
 def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
     """Create an ephemeral RLS fixture and return exact typed evidence values."""
     evidence_uuid = uuid.uuid4()
     evidence_time = datetime.now(timezone.utc).replace(microsecond=0)
-    raw = _raw_connection()
+    connection = _connection()
     try:
-        raw.autocommit = True
-        connection = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
+        connection.set_autocommit(True)
         with connection.cursor() as cursor:
             cursor.execute("CREATE ROLE pg8000_candidate_reader NOLOGIN")
             cursor.execute(
@@ -128,17 +122,16 @@ def _prepare_rls_fixture() -> tuple[uuid.UUID, datetime]:
             if cursor.row_count() != 2:
                 raise AssertionError("pg8000 candidate row-count evidence is not exact")
     finally:
-        raw.close()
+        connection.close()
     return evidence_uuid, evidence_time
 
 
 def _assert_transaction_rollback() -> None:
     """Prove the package connection context rolls an exceptional write back."""
-    raw = _raw_connection()
-    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
+    connection = _connection()
     try:
-        with adapter as connection:
-            with connection.cursor() as cursor:
+        with connection as transaction:
+            with transaction.cursor() as cursor:
                 cursor.execute(
                     """
                     UPDATE pg8000_candidate_contract
@@ -157,25 +150,22 @@ def _assert_transaction_rollback() -> None:
 
 def _assert_undefined_function_classification() -> None:
     """Prove SQLSTATE-based undefined-function classification on real PostgreSQL."""
-    raw = _raw_connection()
-    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
+    driver = _candidate_driver()
+    connection = _connection()
     try:
-        with adapter.cursor() as cursor:
+        with connection.cursor() as cursor:
             try:
                 cursor.execute("SELECT pg_llm_batch_candidate_missing_function()")
             except BaseException as error:
-                if not is_pg8000_candidate_undefined_function(
-                    error,
-                    dbapi_module=dbapi,
-                ):
+                if not driver.is_undefined_function(error):
                     raise AssertionError(
                         "candidate undefined-function classification changed"
                     ) from error
             else:
                 raise AssertionError("candidate undefined-function probe unexpectedly exists")
-        adapter.rollback()
+        connection.rollback()
     finally:
-        adapter.close()
+        connection.close()
 
 
 def _assert_typed_rls_read(
@@ -183,10 +173,9 @@ def _assert_typed_rls_read(
     expected_time: datetime,
 ) -> None:
     """Prove transaction-local tenant scope and typed result semantics together."""
-    raw = _raw_connection()
-    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
-    with adapter as connection:
-        with connection.cursor() as cursor:
+    connection = _connection()
+    with connection as transaction:
+        with transaction.cursor() as cursor:
             cursor.execute("SET ROLE pg8000_candidate_reader")
             cursor.execute(
                 "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
@@ -219,12 +208,11 @@ def main() -> None:
     """Run exact-artifact and real-PostgreSQL candidate acceptance probes."""
     if metadata.version("pg8000") != _EXPECTED_VERSION:
         raise AssertionError("unexpected pg8000 candidate version")
-    validate_pg8000_dbapi_module(dbapi)
+    _candidate_driver()
 
-    raw = _raw_connection()
-    adapter = Pg8000ThreadAffineCandidateConnectionAdapter(raw)
-    with adapter as connection:
-        with connection.cursor() as cursor:
+    connection = _connection()
+    with connection as transaction:
+        with transaction.cursor() as cursor:
             cursor.execute("SELECT current_database(), current_user, %s::text", ("bound",))
             if cursor.fetchone() != (_EXPECTED_DATABASE, _EXPECTED_USER, "bound"):
                 raise AssertionError("candidate parameter/result semantics changed")
