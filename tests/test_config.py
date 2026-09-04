@@ -18,6 +18,13 @@ def fake_pg(monkeypatch):
     return fake
 
 
+def _fernet_key() -> str:
+    """Return an isolated valid Fernet key for one secret-store test."""
+    from cryptography.fernet import Fernet
+
+    return Fernet.generate_key().decode()
+
+
 def test_config_requires_dsn(fake_pg):
     with pytest.raises(ConfigError):
         PostgresConfigStore("")
@@ -39,13 +46,13 @@ def test_config_set_get_roundtrip(fake_pg):
     assert store.get("gateway", "base_url") == "https://gw.example/v1"
 
 
-def test_secret_store_base64_without_key(fake_pg, caplog):
-    store = SecretStore("postgresql://x", fernet_key=None)
-    store.set_secret("gateway_api_key.default", "sk-secret-123")
-    # stored obfuscated, not plaintext
-    stored_value = fake_pg.store.secrets["gateway_api_key.default"][0]
-    assert stored_value != "sk-secret-123"
-    assert store.get_secret("gateway_api_key.default") == "sk-secret-123"
+def test_secret_store_rejects_unencrypted_local_dev_opt_out(fake_pg):
+    with pytest.raises(ConfigError, match="cannot be disabled"):
+        SecretStore(
+            "postgresql://x",
+            fernet_key=None,
+            require_encryption=False,
+        )
 
 
 def test_secret_store_fernet_encrypts_at_rest(fake_pg):
@@ -66,7 +73,7 @@ def test_secret_store_fernet_encrypts_at_rest(fake_pg):
 
 
 def test_require_secret_raises_when_missing(fake_pg):
-    store = SecretStore("postgresql://x")
+    store = SecretStore("postgresql://x", fernet_key=_fernet_key())
     with pytest.raises(ConfigError):
         store.require_secret("does_not_exist")
 
@@ -134,11 +141,8 @@ def test_store_constructor_requires_dependency_and_dsn(monkeypatch, fake_pg):
         SecretStore("")
 
 
-def test_encrypted_secret_requires_matching_key(fake_pg):
-    fake_pg.store.secrets["encrypted"] = ("opaque", True)
-    store = SecretStore("postgresql://x")
-    with pytest.raises(ConfigError, match="no Fernet key"):
-        store.get_secret("encrypted")
+def test_encrypted_secret_required_lookup_roundtrip(fake_pg):
+    store = SecretStore("postgresql://x", fernet_key=_fernet_key())
     assert store.get_secret("absent", "default") == "default"
     store.set_secret("present", "value")
     assert store.require_secret("present") == "value"
@@ -154,7 +158,7 @@ def test_close_swallows_driver_cleanup_errors(fake_pg):
     config.close()
     assert config._conn is None
 
-    secrets = SecretStore("postgresql://x")
+    secrets = SecretStore("postgresql://x", fernet_key=_fernet_key())
     secrets._conn = BrokenConnection()
     secrets.close()
     assert secrets._conn is None

@@ -41,8 +41,9 @@ def test_fernet_request_fails_before_database_access_when_crypto_is_unavailable(
     monkeypatch.setattr(config_mod, "Fernet", None)
     monkeypatch.setattr(config_mod.SecretStore, "_ensure_table", lambda _self: None)
 
-    with pytest.raises(ConfigError, match="Fernet"):
+    with pytest.raises(ConfigError, match="cryptography package") as caught:
         config_mod.SecretStore("postgresql://database", fernet_key="explicit-key")
+    assert "optional" not in str(caught.value).lower()
 
     assert fake_psycopg.connect_calls == 0
     assert fake_psycopg.connection.close_calls == 0
