@@ -23,15 +23,9 @@ from .db import get_model_metadata
 from .exceptions import TokenLimitExceededError, ValidationError
 from .models import BatchRequest
 from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import retained_postgres_driver
 
 logger = logging.getLogger(__name__)
-
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-    from psycopg.errors import UndefinedFunction  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
-    UndefinedFunction = Exception  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -61,7 +55,13 @@ class TokenCounter:
         buffer_percentage: Optional[int] = None,
         postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Initialize token counting with an optional PostgreSQL migration driver."""
+        """Initialize token counting through the centralized PostgreSQL driver boundary.
+
+        Explicitly injected drivers remain authoritative for candidate and test
+        paths. Ordinary runtime construction acquires the retained implementation
+        from :mod:`postgres_driver_runtime`, so this bounded context no longer
+        owns a second concrete Psycopg import or connection fallback.
+        """
         if not postgres_dsn:
             raise ValidationError(
                 field="postgres_dsn",
@@ -70,7 +70,9 @@ class TokenCounter:
             )
         self.postgres_dsn = postgres_dsn
         self.config = config
-        self._postgres_driver = postgres_driver
+        self._postgres_driver = (
+            postgres_driver if postgres_driver is not None else retained_postgres_driver()
+        )
         self._pg_conn: Optional[Any] = None
         self._pg_connection_lock = RLock()
         self._pg_available: bool = False
@@ -124,8 +126,7 @@ class TokenCounter:
             ),
         )
 
-        if self._postgres_driver is not None or psycopg is not None:
-            self._pg_available = self._ensure_pg_tiktoken()
+        self._pg_available = self._ensure_pg_tiktoken()
 
     @staticmethod
     def _require_positive_limit(field: str, value: Any) -> int:
@@ -301,8 +302,6 @@ class TokenCounter:
 
     def _ensure_pg_tiktoken(self) -> bool:
         """Verify the pre-provisioned pg_tiktoken extension and functions read-only."""
-        if self._postgres_driver is None and psycopg is None:
-            return False
         with self._pg_connection_lock:
             try:
                 conn = self._get_pg_conn()
@@ -328,31 +327,18 @@ class TokenCounter:
     def _get_pg_conn(self) -> Any:
         """Return a cached autocommit connection under the session reuse lock."""
         with self._pg_connection_lock:
-            if self._pg_conn is not None:
-                if self._postgres_driver is not None:
-                    if not self._pg_conn.is_closed():
-                        return self._pg_conn
-                elif not self._pg_conn.closed:
-                    return self._pg_conn
-            if self._postgres_driver is not None:
-                self._pg_conn = self._postgres_driver.connect(self.postgres_dsn)
-                self._pg_conn.set_autocommit(True)
+            if self._pg_conn is not None and not self._pg_conn.is_closed():
                 return self._pg_conn
-            assert psycopg is not None
-            self._pg_conn = psycopg.connect(self.postgres_dsn)
-            self._pg_conn.autocommit = True
+            self._pg_conn = self._postgres_driver.connect(self.postgres_dsn)
+            self._pg_conn.set_autocommit(True)
             return self._pg_conn
 
     def _is_undefined_function(self, error: BaseException) -> bool:
         """Classify undefined-function failures through the selected driver boundary."""
-        if self._postgres_driver is not None:
-            return self._postgres_driver.is_undefined_function(error)
-        return isinstance(error, UndefinedFunction)
+        return self._postgres_driver.is_undefined_function(error)
 
     def _count_tokens_postgres(self, text: str, model: str) -> int:
         """Count tokens while retaining one non-concurrent PostgreSQL session."""
-        if self._postgres_driver is None and psycopg is None:
-            raise RuntimeError("PostgreSQL integration is unavailable")
         with self._pg_connection_lock:
             conn = self._get_pg_conn()
             tiktoken_name = self.get_encoder(model).tokenizer_name
@@ -377,14 +363,11 @@ class TokenCounter:
 
     def _get_tokenizer_from_db(self, model: str) -> Optional[str]:
         """Return the tokenizer model recorded in model metadata, or None if unset."""
-        if self._postgres_driver is None:
-            metadata = get_model_metadata(self.postgres_dsn, model)
-        else:
-            metadata = get_model_metadata(
-                self.postgres_dsn,
-                model,
-                postgres_driver=self._postgres_driver,
-            )
+        metadata = get_model_metadata(
+            self.postgres_dsn,
+            model,
+            postgres_driver=self._postgres_driver,
+        )
         if metadata and metadata.get("tokenizer_model"):
             return str(metadata["tokenizer_model"])
         return None

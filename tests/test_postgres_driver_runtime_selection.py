@@ -14,6 +14,7 @@ import pg_llm_batch.checkpoint_store as checkpoint_store
 import pg_llm_batch.config as config
 import pg_llm_batch.db as db
 import pg_llm_batch.health as health
+import pg_llm_batch.token_counter as token_counter
 from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver
 
 
@@ -86,6 +87,21 @@ def test_config_default_connection_uses_runtime_driver_selector(monkeypatch) -> 
     assert connection is driver.connection
     assert driver.dsns == ["postgresql://unit"]
     assert driver.connection_kwargs == [{}]
+
+
+def test_token_counter_default_driver_uses_runtime_selector(monkeypatch) -> None:
+    """Token counting must acquire its retained database capability centrally."""
+    driver = _Driver()
+    monkeypatch.setattr(token_counter, "retained_postgres_driver", lambda: driver)
+    monkeypatch.setattr(
+        token_counter.TokenCounter,
+        "_ensure_pg_tiktoken",
+        lambda self: False,
+    )
+
+    counter = token_counter.TokenCounter("postgresql://unit")
+
+    assert counter._postgres_driver is driver
 
 
 def test_runtime_selector_returns_postgres_driver_port() -> None:
