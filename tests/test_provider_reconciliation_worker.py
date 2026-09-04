@@ -59,6 +59,42 @@ class SecretNamedProviderError(Exception):
     """Synthetic caller/provider exception whose type and message are private."""
 
 
+class SecretNamedCandidateError(Exception):
+    """Synthetic candidate-access exception whose diagnostics must remain private."""
+
+
+class HostileCandidateSubclass(ReconciliationCandidate):
+    """Package-candidate subclass that records any identity-member access."""
+
+    accessed = False
+
+    def __getattribute__(self, name: str):
+        """Raise confidential diagnostics if validation touches identity members."""
+        if name in {"endpoint_alias", "remote_batch_id"}:
+            type(self).accessed = True
+            raise SecretNamedCandidateError("candidate-secret-sentinel")
+        return super().__getattribute__(name)
+
+
+class HostileCandidateShape:
+    """Candidate-shaped object whose properties execute caller-controlled behavior."""
+
+    def __init__(self) -> None:
+        self.accessed = False
+
+    @property
+    def endpoint_alias(self) -> str:
+        """Raise if reconciliation touches a shaped object's endpoint property."""
+        self.accessed = True
+        raise SecretNamedCandidateError("candidate-secret-sentinel")
+
+    @property
+    def remote_batch_id(self) -> str:
+        """Raise if reconciliation touches a shaped object's remote-id property."""
+        self.accessed = True
+        raise SecretNamedCandidateError("candidate-secret-sentinel")
+
+
 @pytest.mark.asyncio
 async def test_reconciliation_bounds_unique_work_and_discards_provider_payloads() -> None:
     """One pass processes only the bounded unique prefix and returns no payloads."""
@@ -111,6 +147,33 @@ async def test_reconciliation_validates_selected_candidates_before_provider_io()
     assert client.status_calls == []
     assert client.download_calls == []
     assert "provider-secret-sentinel" not in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        HostileCandidateSubclass("default", "batch-a"),
+        HostileCandidateShape(),
+    ],
+)
+async def test_reconciliation_rejects_non_exact_candidates_before_member_access(
+    candidate,
+) -> None:
+    """Reject subclasses/shaped objects before executing identity-member behavior."""
+    HostileCandidateSubclass.accessed = False
+    if type(candidate) is HostileCandidateShape:
+        candidate.accessed = False
+    client = FakeClient({})
+
+    with pytest.raises(ValidationError) as exc_info:
+        await reconcile_batch_candidates(client, [candidate], max_jobs=1)
+
+    assert candidate.accessed is False
+    assert client.status_calls == []
+    assert client.download_calls == []
+    assert "candidate-secret-sentinel" not in str(exc_info.value)
+    assert "SecretNamedCandidateError" not in repr(exc_info.value)
 
 
 @pytest.mark.asyncio
