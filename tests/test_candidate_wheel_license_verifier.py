@@ -15,7 +15,8 @@ import zipfile
 import pytest
 
 
-_TOOL_PATH = Path(__file__).parents[1] / "tools" / "verify_candidate_wheel_licenses.py"
+_REPOSITORY_ROOT = Path(__file__).parents[1]
+_TOOL_PATH = _REPOSITORY_ROOT / "tools" / "verify_candidate_wheel_licenses.py"
 
 
 def _load_verifier():
@@ -142,3 +143,16 @@ def test_candidate_closure_rejects_unexpected_wheel_set(tmp_path: Path) -> None:
 
     with pytest.raises(verifier.CandidateWheelLicenseError, match="wheel set is invalid"):
         verifier.verify_candidate_wheel_licenses(tmp_path)
+
+
+def test_candidate_license_gate_runs_before_candidate_install() -> None:
+    """CI must verify license metadata before any candidate wheel is installed."""
+    workflow = (_REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml").read_text(
+        encoding="utf-8"
+    )
+    verification_step = "- name: Verify pg8000 candidate dependency licenses"
+    install_step = "- name: Install exact candidate closure into the CI environment"
+
+    assert verification_step in workflow
+    assert "python tools/verify_candidate_wheel_licenses.py /tmp/pg8000-candidate" in workflow
+    assert workflow.index(verification_step) < workflow.index(install_step)
