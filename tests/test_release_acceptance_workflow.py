@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Regression contract for the reproducible release acceptance workflow."""
+"""Regression contracts for release and behavior-bearing CI workflow inputs."""
 
 from pathlib import Path
 
@@ -11,6 +11,7 @@ except ModuleNotFoundError:  # Python 3.10 compatibility.
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github" / "workflows" / "release-acceptance.yml"
+CI_WORKFLOW = ROOT / ".github" / "workflows" / "ci.yml"
 UV_CONFIG = ROOT / "uv.toml"
 
 
@@ -25,8 +26,15 @@ def test_release_acceptance_workflow_is_exact_head_least_privilege() -> None:
     assert "ref: ${{ github.event.pull_request.head.sha }}" in text
     assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in text
     assert "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97" in text
-    assert "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9" in text
+    assert "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d" in text
     assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in text
+
+
+def test_ci_does_not_skip_behavior_bearing_documentation_changes() -> None:
+    """Documentation inputs stay inside CI because tests consume them as contracts."""
+    text = CI_WORKFLOW.read_text(encoding="utf-8")
+
+    assert "paths-ignore:" not in text
 
 
 def test_release_acceptance_uv_matches_repository_toolchain_contract() -> None:
