@@ -311,15 +311,18 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         return self._closed
 
     def close(self) -> None:
-        """Close the retained raw connection and record successful local cleanup.
+        """Release the raw connection while preserving pg8000's terminal-close state.
 
-        The state flips only after the raw close returns successfully. A close
-        failure therefore remains visible and cannot be misrepresented as a
-        released session authority; transport-failure recovery is still a later
-        candidate acceptance gate.
+        pg8000 1.31.5 documents that its underlying socket is closed even if the
+        PostgreSQL protocol-level close reports an error. The adapter therefore
+        records this capability as locally closed in ``finally`` while allowing
+        the original close failure to propagate. A failed close must never leave
+        a definitively released connection eligible for reuse.
         """
-        self._connection.close()
-        self._closed = True
+        try:
+            self._connection.close()
+        finally:
+            self._closed = True
 
     def __enter__(self) -> Pg8000CandidateConnectionAdapter:
         """Enter the package transaction context without a driver-only extension.
