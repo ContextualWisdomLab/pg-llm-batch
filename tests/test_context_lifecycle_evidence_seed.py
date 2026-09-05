@@ -85,6 +85,27 @@ def test_context_lifecycle_seed_rejects_malformed_or_open_authority(
     assert str(value) not in str(raised.value)
 
 
+@pytest.mark.parametrize(
+    "timestamp",
+    [
+        "2026-09-03T07:00:01.1Z",
+        "2026-09-03T07:00:01.123Z",
+        "2026-09-03T07:00:01.000000Z",
+    ],
+)
+def test_context_lifecycle_seed_rejects_noncanonical_timestamp_aliases(
+    timestamp: str,
+) -> None:
+    """Equivalent instants cannot acquire multiple lifecycle evidence identities."""
+    candidate = replace(VALID, system_time=timestamp)
+
+    with pytest.raises(
+        ContextLifecycleEvidenceError,
+        match="invalid context lifecycle evidence",
+    ):
+        validate_context_lifecycle_evidence_seed(candidate)
+
+
 def test_context_lifecycle_seed_rejects_shaped_object_before_member_access() -> None:
     class HostileEvidence:
         @property
