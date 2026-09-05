@@ -58,6 +58,7 @@ class PsycopgCursorAdapter(PostgresCursorPort):
     """
 
     def __init__(self, cursor: Any) -> None:
+        """Retain one Psycopg cursor behind the driver-neutral cursor contract."""
         self._cursor = cursor
 
     @staticmethod
@@ -151,6 +152,7 @@ class PsycopgConnectionAdapter(PostgresConnectionPort):
     """
 
     def __init__(self, connection: Any) -> None:
+        """Retain one Psycopg connection as the exact session capability."""
         self._connection = connection
 
     def cursor(self) -> PsycopgCursorAdapter:

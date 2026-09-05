@@ -149,6 +149,7 @@ class Pg8000CandidateServiceFileResolver:
     """
 
     def __init__(self, service_file: Path) -> None:
+        """Retain exactly one caller-selected service file after validating its path type."""
         if not isinstance(service_file, Path):
             raise _invalid_service_file()
         self._service_file = service_file

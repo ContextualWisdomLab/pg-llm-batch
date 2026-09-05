@@ -38,6 +38,7 @@ class Pg8000ThreadAffineCandidateCursorAdapter(Pg8000CandidateCursorAdapter):
     """
 
     def __init__(self, cursor: Any) -> None:
+        """Retain one candidate cursor and bind its capability to this thread."""
         super().__init__(cursor)
         self._owner_thread_id = get_ident()
 
@@ -112,6 +113,7 @@ class Pg8000ThreadAffineCandidateConnectionAdapter(Pg8000CandidateConnectionAdap
     """
 
     def __init__(self, connection: Any) -> None:
+        """Retain one candidate connection and bind its session to this thread."""
         super().__init__(connection)
         self._owner_thread_id = get_ident()
 

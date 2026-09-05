@@ -326,6 +326,7 @@ class Pg8000CandidateDriverAdapter(PostgresDriverPort):
         *,
         service_resolver: ServiceResolver | None = None,
     ) -> None:
+        """Bind one admitted DB-API module and optional explicit service resolver."""
         validate_pg8000_dbapi_module(dbapi_module)
         connect = vars(dbapi_module).get("connect")
         if not callable(connect):
