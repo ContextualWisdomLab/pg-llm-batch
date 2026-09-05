@@ -184,7 +184,7 @@ def test_schema_contract_is_rls_scoped_and_has_rollback() -> None:
     """The durable outbox migration must be tenant-scoped and reversible."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
     rollback = Path(lifecycle_outbox.ROLLBACK_PATH).read_text(encoding="utf-8")
-    assert "CREATE TABLE IF NOT EXISTS llm_context_lifecycle_outbox" in migration
+    assert "CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox" in migration
     assert "UNIQUE (tenant_scope, evidence_id)" in migration
     assert "ENABLE ROW LEVEL SECURITY" in migration
     assert "FORCE ROW LEVEL SECURITY" in migration
