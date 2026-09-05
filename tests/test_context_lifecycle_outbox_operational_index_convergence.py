@@ -67,3 +67,26 @@ def test_outbox_migration_does_not_trust_operational_index_name_alone() -> None:
     drop_at = migration.index(f"DROP INDEX public.{_INDEX_NAME};", collision_raise_at)
     create_at = migration.index(f"CREATE INDEX {_INDEX_NAME}", drop_at)
     assert guard_at < collision_guard_at < collision_raise_at < drop_at < create_at
+
+
+def test_outbox_operational_index_binds_key_semantics_not_only_column_numbers() -> None:
+    """Index collation, opclass, and B-tree options are part of canonical identity."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard_at = migration.index(
+        "IF NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_index AS operational_index"
+    )
+    guard_end = migration.index(") THEN", guard_at)
+    guard = migration[guard_at:guard_end]
+
+    assert "operational_index.indcollation[0] = (" in guard
+    assert "attname = 'tenant_scope'" in guard
+    assert "operational_index.indcollation[1] = 0" in guard
+    assert "operational_index.indclass[0] = (" in guard
+    assert "opcdefault" in guard
+    assert "opcintype = 'text'::regtype" in guard
+    assert "operational_index.indclass[1] = (" in guard
+    assert "opcintype = 'timestamptz'::regtype" in guard
+    assert "operational_index.indoption[0] = 0" in guard
+    assert "operational_index.indoption[1] = 0" in guard
