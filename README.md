@@ -198,12 +198,12 @@ Package helpers bind tenant scope with parameterized transaction-local PostgreSQ
 context and the schema enables and forces default-deny RLS. Provider metadata,
 resource identifiers, payloads, and headers never select `tenant_scope`.
 
-Lifecycle-outbox migration policy DDL is search-path-independent. Canonical
-policy v2 binds the tenant comparison with `OPERATOR(pg_catalog.=)` and resolves
-the transaction-local setting through `pg_catalog.current_setting` in both
-`USING` and `WITH CHECK`; the migration creates v2 before retiring the earlier
-unqualified policy names and does not rewrite an existing v2 during ordinary
-idempotent reapplication.
+Lifecycle-outbox RLS policy predicate authority is search-path-independent.
+Canonical policy v2 binds the tenant comparison with `OPERATOR(pg_catalog.=)`
+and resolves the transaction-local setting through
+`pg_catalog.current_setting` in both `USING` and `WITH CHECK`; the migration
+creates v2 before retiring the earlier unqualified policy names and does not
+rewrite an existing v2 during ordinary idempotent reapplication.
 
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
