@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox operational-index convergence now repeats the exact catalog
+  admission predicate after repair and fails closed before migration success if
+  the installed index is not the reviewed public B-tree over
+  `(tenant_scope, created_at)`. The regression contract also requires the
+  admission and post-repair predicates to remain byte-identical so collation,
+  operator-class, direction, null-order, validity, and relation checks cannot
+  drift independently. Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox surrogate UUID creation now converges to PostgreSQL core
   `pg_catalog.gen_random_uuid()` instead of retaining mutable
   `public.uuid_generate_v4()` compatibility-function authority. Fresh installs
