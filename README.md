@@ -211,11 +211,15 @@ repairs same-name semantic drift, fails closed on unknown policy names, and
 verifies the resulting policy before retiring v1/legacy names.
 
 Migration 0008 also verifies canonical lifecycle timestamp CHECKs by catalog
-semantics rather than constraint name alone. `valid_time` and `system_time`
-canonical names are current only when `pg_constraint` reports a validated,
-inheritable CHECK. A same-name wrong-kind, unvalidated, or `NO INHERIT`
-constraint is rebuilt before the legacy timestamp check is removed; already
-canonical constraints are left untouched on normal reapplication.
+state plus a package semantic identity rather than constraint name alone.
+`valid_time` and `system_time` canonical names are current only when
+`pg_constraint` reports a validated, inheritable CHECK and the constraint
+comment has the expected SHA-256 stamp for the reviewed CHECK source. A
+same-name wrong-kind, unvalidated, `NO INHERIT`, or unstamped constraint is
+rebuilt and stamped before the legacy timestamp check is removed. The stamp is
+bounded evidence for the trusted migration-authority model; it is not a defense
+against a database administrator deliberately forging the same stamp on a
+different CHECK.
 
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
