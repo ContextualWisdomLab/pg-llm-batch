@@ -49,6 +49,48 @@ no matching policy row, so ordinary package access fails closed. The local flag
 also prevents a scope from surviving transaction completion on a pooled
 connection.
 
+For lifecycle-outbox migration 0008, the tenant predicate's operator/function
+authority does not depend on session `search_path`. Canonical policy v2 binds
+text equality as `OPERATOR(pg_catalog.=)` and resolves the setting with
+`pg_catalog.current_setting` in both `USING` and `WITH CHECK`. The policy name
+itself is not accepted as proof: migration 0008 checks `pg_policy` for
+all-command permissive `PUBLIC` scope and the canonical stored `USING` and
+`WITH CHECK` expression trees. A same-name v2 with semantic drift is repaired;
+an unknown policy name aborts migration rather than being silently retained or
+deleted; and the resulting v2 is verified again before earlier v1/legacy names
+are removed. A semantically current v2 avoids repeated policy DDL on normal
+reapply.
+
+Package-owned payload and canonical UTC timestamp CHECKs are likewise not
+admitted by name or comment stamp alone. Migration 0008 creates session-local
+temporary probe CHECKs from the reviewed definitions and obtains their parsed
+form with the running PostgreSQL server's `pg_get_expr`. A durable canonical
+CHECK must be validated and inheritable, carry the expected review stamp, and
+have a decompiled expression equal to its same-runtime probe. A same-name or
+same-name/same-stamp different predicate is rebuilt once and post-verified; an
+already-current durable CHECK avoids replacement DDL. The stamp remains
+traceability evidence, not executable authority.
+
+The lifecycle outbox's durable replay key is also a migration contract, not just
+fresh-table DDL. Runtime inserts use
+`ON CONFLICT (tenant_scope, evidence_id) DO NOTHING`, so migration 0008 accepts
+`uq_llm_context_lifecycle_outbox_tenant_evidence` only when `pg_constraint`
+proves a validated, nondeferrable UNIQUE constraint on exactly those columns. A
+pre-existing relation with a missing, deferrable, wrong-kind, or wrong-column
+same-name constraint is repaired once. Existing duplicate identities abort the
+migration for operator reconciliation; no row is silently deleted or merged.
+PostgreSQL does not permit deferrable constraints to arbitrate `ON CONFLICT`.
+
+The outbox relation is itself part of the durability contract. Migration 0008
+accepts only an ordinary table in `public` with permanent/logged persistence.
+A table converted with `ALTER TABLE ... SET UNLOGGED` can retain the same
+columns, constraints, RLS policies, and indexes while losing WAL durability;
+PostgreSQL also truncates unlogged-table data after a crash or unclean shutdown
+and does not replicate it to standbys. Migration therefore rejects that state as
+a structural-schema mismatch before later convergence. It does not automatically
+run `SET LOGGED`, because any storage rewrite and recovery reconciliation belongs
+in an operator-controlled maintenance window.
+
 This custom PostgreSQL setting is a **trusted application boundary**, not a
 credential. PostgreSQL accepts two-part custom option names, and a database role
 that can execute arbitrary SQL can call `set_config` with an arbitrary tenant
@@ -125,8 +167,25 @@ inside one PostgreSQL anonymous block so psql autocommit cannot commit an
 intermediate owner-bypass state.
 
 The packaged schema and the Docker initialization schema are byte-for-byte
-mirrors and support idempotent reapplication. The migration enables and forces
-RLS and installs the tenant policy and tenant-qualified operational index.
+mirrors and support idempotent reapplication. Migration converges the canonical
+outbox as an ordinary logged `public` table; converges the package-owned tenant
+policy by catalog semantics; converges payload and UTC timestamp CHECKs by
+constraint kind/validation/inheritance, same-runtime parsed predicate identity,
+and review stamp; converges the nondeferrable lifecycle-outbox replay UNIQUE
+constraint required by runtime `ON CONFLICT`; and installs the tenant-qualified
+operational index. Unknown lifecycle-outbox policy names are a fail-closed
+migration finding rather than an implicit extension point. Same-name/same-stamp
+CHECK predicate drift is package-owned drift and is repaired once rather than
+accepted as current state. A stale replay constraint is likewise repaired once;
+duplicate durable identities and noncanonical relation persistence fail migration
+instead of being silently reconciled.
+
+If an existing outbox is found `UNLOGGED`, first determine whether an unclean
+shutdown occurred during the unlogged interval and reconcile product aggregate
+state, publication intent, downstream receipts, and standby replication gaps.
+Only after that evidence is resolved should an operator convert the table back
+to logged persistence and reapply migration. A successful `SET LOGGED` alone is
+not evidence that publication intent lost during a prior crash has been restored.
 
 Rollback to the former `(endpoint_alias, remote_batch_id)` key is unsafe until
 an operator proves that no pair appears in more than one tenant scope. Before a
@@ -259,14 +318,26 @@ Deterministic tests cover strict tenant syntax, pre-effect validation,
 standalone recorder compatibility, tenant recorder propagation, parameterized
 transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation and reapplication, forced default-deny
-RLS, exact schema mirroring, Python 3.10/3.12/3.14 compatibility, complete public
-docstrings, and 100% production statement and branch coverage.
+RLS, search-path-independent lifecycle policy predicate authority, full
+canonical `pg_policy` command/role/expression identity, unknown-policy
+fail-closed behavior, post-create/post-repair policy verification, canonical
+payload/timestamp CHECK kind/validation/inheritance and same-runtime parsed
+predicate identity, review-stamp traceability, same-name/same-stamp repair,
+canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
+logged-public outbox relation identity, exact schema mirroring, Python
+3.10/3.12/3.14 compatibility, complete public docstrings, and 100% production
+statement and branch coverage.
 
 The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
 persists an identical provider identifier in two tenant scopes, and proves that
 a transaction bound to one scope cannot read the other scope through the
 policy. This test verifies policy mechanics under the trusted package model; it
-does not claim protection after arbitrary SQL execution is granted.
+does not claim protection after arbitrary SQL execution is granted. Exact-head
+runtime execution must also run migration 0008 against stale replay-key schema
+variants, a spoofed same-name/same-stamp canonical payload CHECK, and an
+`UNLOGGED` outbox. PostgreSQL must reject the unlogged durability drift and
+evaluate its final canonical policy, payload/timestamp predicate identity, and
+`ON CONFLICT` arbiter conditions on the exact head.
 
 ## References
 
@@ -299,3 +370,22 @@ documentation*. https://www.postgresql.org/docs/18/sql-set.html
 PostgreSQL Global Development Group. (2026d). *System administration
 functions*. In *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/functions-admin.html
+
+PostgreSQL Global Development Group. (2026e). *pg_policy*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
+
+PostgreSQL Global Development Group. (2026f). *CREATE POLICY*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
+
+PostgreSQL Global Development Group. (2026g). *System information functions and
+operators*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-info.html
+
+PostgreSQL Global Development Group. (2026h). *pg_constraint*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+
+PostgreSQL Global Development Group. (2026i). *INSERT*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-insert.html
+
+PostgreSQL Global Development Group. (2026j). *CREATE TABLE*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createtable.html

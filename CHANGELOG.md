@@ -18,6 +18,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox migration now requires the canonical persistence object to
+  remain an ordinary logged table in `public`. A structurally identical
+  `UNLOGGED` relation fails closed before constraint, RLS, or index convergence
+  instead of being admitted as durable publication intent. The migration does
+  not silently convert it back to logged persistence because crash-recovery,
+  standby-replication, and storage-rewrite consequences require operator
+  reconciliation. The wired PostgreSQL smoke converts the outbox to UNLOGGED,
+  requires the structural mismatch, restores logged persistence, and then
+  requires successful reapplication. Package and Docker migration SQL remain
+  byte-identical.
+- Lifecycle-outbox migration now treats per-column PostgreSQL collation as part
+  of the canonical durable row shape. Required columns must retain their
+  expected type-level `typcollation`; an explicit drift such as
+  `tenant_scope text COLLATE "C"` fails closed before constraint, RLS-policy, or
+  index convergence instead of silently changing tenant/evidence comparison
+  semantics. The migration does not auto-rewrite a drifted collation because
+  data and index consequences require operator reconciliation. Package and
+  Docker migration SQL remain byte-identical.
+- Lifecycle-outbox runtime no longer inherits or mutates caller-controlled
+  PostgreSQL `search_path`: tenant binding calls `pg_catalog.set_config`
+  explicitly and reads/writes use `public.llm_context_lifecycle_outbox`.
+  Forward migration and destructive rollback retain their own reviewed
+  `pg_catalog, public, pg_temp` transaction-local path inside atomic `DO`
+  statements, preventing ambient or temporary same-name object redirection
+  without changing unrelated caller transaction SQL.
+- Lifecycle-outbox stores no longer expose the admitted PostgreSQL DSN through
+  a public property. The exact target remains package-internal connection
+  authority so DSNs containing credentials are not available to routine store
+  logging, serialization, or diagnostics.
+- Lifecycle-outbox migration RLS no longer treats the canonical policy name as
+  sufficient tenant authority. Canonical v2 binds equality and
+  `current_setting` through `pg_catalog`, verifies command/permissive/PUBLIC
+  role and both stored expression trees through `pg_policy`/`pg_get_expr`,
+  repairs a same-name policy only when those semantics drift, rejects unknown
+  policy names instead of silently widening or deleting them, and verifies the
+  stored canonical policy again before retiring v1/legacy names. A current v2
+  remains untouched on ordinary idempotent reapplication. Canonical-v2
+  admission and post-repair verification now also inspect normal `pg_depend`
+  function/operator dependencies and reject tracked object authority other than
+  built-in `pg_catalog.current_setting(text, boolean)` and text equality. The
+  dependency rule is deliberately negative because PostgreSQL may omit rows for
+  pinned system objects; it supplements the hardened `search_path` and
+  decompiled-expression checks rather than treating catalog text as provenance.
+- Lifecycle-outbox canonical payload and UTC timestamp checks no longer treat a
+  same name plus mutable constraint comment as executable migration authority.
+  Migration 0008 creates session-local temporary probe CHECKs from the reviewed
+  definitions, asks the running PostgreSQL version to decompile their expression
+  trees with `pg_get_expr`, and admits each durable canonical CHECK only when its
+  kind, validation/inheritance state, parsed expression, and review stamp all
+  agree. Same-name/same-stamp predicate drift is rebuilt and post-verified while
+  already-current durable CHECKs avoid replacement DDL. The wired PostgreSQL
+  smoke replaces payload canonical v1 with `CHECK (true)`, copies the expected
+  stamp, reapplies migration, and requires the canonical grammar to reject an
+  invalid event. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox migration now converges the payload grammar/integrity checks
+  after `CREATE TABLE IF NOT EXISTS`, so an existing restored or manually
+  repaired table cannot silently skip the tenant/event/evidence identifier,
+  digest, or truth-status constraints just because the relation already exists.
+  After canonical payload v1 is established and post-verified, migration retires
+  exactly the ten known package-owned predecessor payload CHECK names so a stale
+  stricter legacy predicate cannot remain a second grammar authority. Unknown
+  CHECK names are preserved rather than silently deleted. The PostgreSQL smoke
+  restores a stricter legacy event-type predecessor, reapplies migration, and
+  requires it to disappear. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox migration now converges the nondeferrable
+  `(tenant_scope, evidence_id)` UNIQUE constraint required by runtime
+  `ON CONFLICT` replay even when the relation already exists. Missing,
+  wrong-kind, deferrable, or wrong-column same-name constraints are repaired
+  once; duplicate durable identities fail migration for operator reconciliation
+  instead of being silently deleted or merged. Packaged and Docker migration
+  SQL remain byte-identical.
+- Lifecycle-outbox migration no longer treats the operational
+  `idx_llm_context_lifecycle_outbox_tenant_created` name or key column numbers as
+  sufficient index identity. It admits only a public, valid/ready/live,
+  nonunique two-key B-tree over exactly `(tenant_scope, created_at)` with no
+  expression or predicate, tenant-key collation equal to the canonical column,
+  default B-tree operator classes for `text` and `timestamptz`, and default
+  ascending/null-order option bits. Same-target drift in key order, collation,
+  operator class, direction, or NULL ordering is rebuilt once; an unrelated
+  same-name relation fails closed. PostgreSQL container smokes cover both wrong
+  key order and same-column semantic drift. Packaged and Docker migration SQL
+  remain byte-identical.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
