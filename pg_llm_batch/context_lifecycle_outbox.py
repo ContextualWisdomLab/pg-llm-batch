@@ -11,7 +11,9 @@ or arbitrary metadata is accepted by this module.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import stat
 from typing import Any, Optional
 from weakref import WeakKeyDictionary
 
@@ -33,6 +35,17 @@ ROLLBACK_PATH = (
     Path(__file__).with_name("migrations")
     / "rollback"
     / "0008_context_lifecycle_outbox.sql"
+)
+_MAX_MIGRATION_BYTES = 1024 * 1024
+_MIGRATION_READ_CHUNK_BYTES = 64 * 1024
+_SECURE_MIGRATION_FLAGS_AVAILABLE = all(
+    hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_NONBLOCK")
+)
+_MIGRATION_FILE_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+    | getattr(os, "O_CLOEXEC", 0)
 )
 _OUTBOX_COLUMNS = (
     "evidence_id, event_type, tenant_scope_sha256, subject_ref_sha256, "
@@ -65,6 +78,87 @@ def _validated_postgres_dsn(value: Any) -> str:
             "A Postgres DSN must be provided explicitly for lifecycle outbox persistence"
         )
     return value
+
+
+def _migration_file_error() -> ConfigError:
+    """Return the fixed content-free migration-file authority error."""
+    return ConfigError("Lifecycle outbox migration file is unavailable or unsafe")
+
+
+def _migration_file_identity(status: os.stat_result) -> tuple[int, int, int, int, int, int]:
+    """Snapshot stable metadata for one retained regular migration file."""
+    return (
+        status.st_dev,
+        status.st_ino,
+        stat.S_IFMT(status.st_mode),
+        status.st_size,
+        status.st_mtime_ns,
+        status.st_ctime_ns,
+    )
+
+
+def _read_migration_sql(path: Path) -> str:
+    """Read one bounded stable UTF-8 migration through retained file authority."""
+    if not _SECURE_MIGRATION_FLAGS_AVAILABLE:
+        raise _migration_file_error()
+    try:
+        descriptor = os.open(path, _MIGRATION_FILE_FLAGS)
+    except (OSError, ValueError):
+        raise _migration_file_error() from None
+
+    failure: BaseException | None = None
+    try:
+        try:
+            before = os.fstat(descriptor)
+        except OSError:
+            raise _migration_file_error() from None
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or before.st_size <= 0
+            or before.st_size > _MAX_MIGRATION_BYTES
+        ):
+            raise _migration_file_error()
+
+        chunks: list[bytes] = []
+        remaining = _MAX_MIGRATION_BYTES + 1
+        while remaining > 0:
+            try:
+                chunk = os.read(
+                    descriptor,
+                    min(_MIGRATION_READ_CHUNK_BYTES, remaining),
+                )
+            except OSError:
+                raise _migration_file_error() from None
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if remaining == 0:
+            raise _migration_file_error()
+
+        try:
+            after = os.fstat(descriptor)
+        except OSError:
+            raise _migration_file_error() from None
+        payload = b"".join(chunks)
+        if (
+            len(payload) != before.st_size
+            or _migration_file_identity(before) != _migration_file_identity(after)
+        ):
+            raise _migration_file_error()
+        try:
+            return payload.decode("utf-8", errors="strict")
+        except UnicodeDecodeError:
+            raise _migration_file_error() from None
+    except BaseException as exc:
+        failure = exc
+        raise
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            if failure is None:
+                raise _migration_file_error() from None
 
 
 def _validated_evidence(value: Any) -> ContextLifecycleEvidenceSeed:
@@ -145,13 +239,15 @@ def apply_context_lifecycle_outbox_schema(
     """Apply the idempotent tenant-isolated lifecycle-outbox migration.
 
     An explicit DSN is mandatory so package code never inherits an unintended libpq
-    target. Operators may supply a reviewed migration path for installation tooling;
-    normal callers use the package-owned migration.
+    target. Operators may supply a reviewed regular UTF-8 migration file for
+    installation tooling; the package pins its descriptor, enforces a finite byte
+    budget, and rejects observed mutation before SQL reaches PostgreSQL. Normal
+    callers use the same checks on the package-owned migration.
     """
     dsn = _validated_postgres_dsn(postgres_dsn)
     _require_psycopg()
     path = Path(migration_path) if migration_path else MIGRATION_PATH
-    sql = path.read_text(encoding="utf-8")
+    sql = _read_migration_sql(path)
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
