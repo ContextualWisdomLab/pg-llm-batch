@@ -97,8 +97,28 @@ if ! grep -Fq "lifecycle outbox structural schema mismatch" \
   exit 1
 fi
 
+# DROP COLUMN leaves a pg_attribute tombstone and physical row-layout remnant. The
+# exact durable schema contract must not treat that state as equivalent to a table
+# that was never extended.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   "ALTER TABLE public.llm_context_lifecycle_outbox DROP COLUMN undeclared_payload;"
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-dropped-column.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-dropped-column.out >&2
+  echo "lifecycle outbox migration admitted a dropped-column tombstone" >&2
+  exit 1
+fi
+if ! grep -Fq "lifecycle outbox structural schema mismatch" \
+  /tmp/pg-llm-batch-outbox-dropped-column.out; then
+  cat /tmp/pg-llm-batch-outbox-dropped-column.out >&2
+  echo "lifecycle outbox dropped-column drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+# This test-only rebuild represents explicit operator reconciliation. Production
+# migration does not rewrite or silently reclaim a dropped column's physical state.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP TABLE public.llm_context_lifecycle_outbox;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 
