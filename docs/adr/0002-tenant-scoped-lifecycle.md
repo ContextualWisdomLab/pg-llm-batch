@@ -30,6 +30,14 @@ reviewed DDL. Because collation participates in text comparison semantics, this
 is part of tenant/evidence identity and index authority rather than cosmetic
 schema metadata (PostgreSQL Global Development Group, 2026h, 2026i).
 
+PostgreSQL also retains a positive-numbered `pg_attribute` catalog row after a
+user column is dropped and marks it with `attisdropped = true`. The parser then
+ignores that column even though PostgreSQL still describes it as physically
+present. An exact durable-row-shape admission rule that counts only live columns
+would therefore treat an extended-then-dropped relation as equivalent to a table
+that was never extended, weakening the package's purpose-bound persistence
+claim (PostgreSQL Global Development Group, 2026h).
+
 PostgreSQL constraint names and comments are metadata, not complete executable
 constraint authority. `pg_constraint` records constraint kind, validation state,
 inheritance behavior, and the parsed expression tree separately. A restore or
@@ -104,6 +112,15 @@ or index convergence. The migration deliberately does not run `ALTER TABLE ...
 SET LOGGED`: converting a production relation can rewrite storage and has
 availability/WAL implications that require an operator-controlled maintenance
 window (PostgreSQL Global Development Group, 2026g).
+
+Migration 0008 admits the durable row shape only when exactly the 14
+package-owned positive-numbered user attributes are live and no positive-numbered
+`pg_attribute` row is marked `attisdropped`. A dropped-column tombstone therefore
+fails with the same fixed structural-schema error before later CHECK, RLS,
+UNIQUE, or index convergence. The migration does not auto-rewrite the relation or
+reclaim dropped-column storage because retention, legal-disposal, locking, WAL,
+and availability consequences require operator-controlled reconciliation
+(PostgreSQL Global Development Group, 2026h).
 
 Versioned lifecycle-outbox policies must bind their equality operator and
 `current_setting` lookup explicitly to `pg_catalog`. PostgreSQL stores policy
@@ -222,6 +239,13 @@ auto-convert the column: operators must determine whether existing data and
 indexes can be safely rewritten and then return the relation to canonical
 collation before reapplying migration. This admission check does not freeze ICU,
 libc, operating-system locale data, or cluster configuration after validation.
+
+An outbox with a positive-numbered dropped-column tombstone is also an explicit
+migration finding even when all 14 declared live columns are present. Operators
+must determine the retention/disposal requirement and perform an intentional
+rebuild or equivalent reconciliation before migration can succeed. The
+container acceptance's test-only table rebuild exists solely to let later
+specimens run; it is not a production deletion or automatic-remediation policy.
 
 An outbox converted to `UNLOGGED`, or replaced by another relation kind, is an
 explicit migration finding even when its visible columns and constraints still
