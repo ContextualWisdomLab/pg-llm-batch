@@ -20,7 +20,7 @@ _OPAQUE_ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _EVENT_TYPE_PATTERN = re.compile(r"[a-z][a-z0-9._:-]{0,127}\Z")
 _SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 _UTC_TIMESTAMP_PATTERN = re.compile(
-    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z\Z"
+    r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{6})?Z\Z"
 )
 _TRUTH_STATUSES = frozenset(
     {
@@ -101,13 +101,17 @@ def _validate_truth_status(value: object) -> str:
 
 
 def _validate_utc_timestamp(value: object) -> str:
-    """Return one canonical UTC timestamp with seconds and optional microseconds."""
+    """Return one canonical UTC timestamp at second or exact-microsecond precision."""
     if type(value) is not str or _UTC_TIMESTAMP_PATTERN.fullmatch(value) is None:
         raise _invalid_evidence()
     try:
-        datetime.fromisoformat(value[:-1] + "+00:00")
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
     except (ValueError, OverflowError):
         raise _invalid_evidence() from None
+    timespec = "microseconds" if parsed.microsecond else "seconds"
+    canonical = parsed.isoformat(timespec=timespec).replace("+00:00", "Z")
+    if value != canonical:
+        raise _invalid_evidence()
     return value
 
 
