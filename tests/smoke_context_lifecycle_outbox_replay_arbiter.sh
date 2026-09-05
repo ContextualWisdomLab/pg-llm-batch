@@ -341,6 +341,7 @@ BEGIN
   ) IS NOT NULL THEN
     ALTER INDEX public.idx_llm_context_lifecycle_outbox_tenant_created
       RENAME TO idx_llm_context_lifecycle_outbox_tenant_created_sabotaged;
+    RAISE WARNING 'pg-llm-batch test operational-index sabotage applied';
   END IF;
 END;
 $function$;
@@ -352,6 +353,11 @@ SQL
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null 2>&1; then
   echo "lifecycle outbox migration did not post-verify repaired operational index" >&2
+  exit 1
+fi
+if ! docker logs "${container}" 2>&1 | \
+    grep -Fq 'pg-llm-batch test operational-index sabotage applied'; then
+  echo "lifecycle outbox sabotage trigger did not complete index rename" >&2
   exit 1
 fi
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
