@@ -85,7 +85,13 @@ BEGIN
            OR actual.atthasdef IS DISTINCT FROM expected.atthasdef
            OR actual.attgenerated <> ''
            OR actual.attidentity <> ''
-    ) OR EXISTS (
+    ) OR (
+        SELECT count(*)
+        FROM pg_attribute AS actual
+        WHERE actual.attrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND actual.attnum > 0
+          AND NOT actual.attisdropped
+    ) <> 14 OR EXISTS (
         SELECT 1
         FROM pg_attribute AS actual
         JOIN pg_attrdef AS defaults
