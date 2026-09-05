@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox surrogate UUID creation now converges to PostgreSQL core
+  `pg_catalog.gen_random_uuid()` instead of retaining mutable
+  `public.uuid_generate_v4()` compatibility-function authority. Fresh installs
+  use the core default directly; existing structurally admissible tables repair
+  only the column-default metadata and post-verify it without rewriting stored
+  UUIDs. A wired PostgreSQL container smoke restores the predecessor public
+  helper default, reapplies migration, requires core authority, and repeats the
+  migration to prove converged idempotence. Package and Docker migration SQL
+  remain byte-identical.
 - Lifecycle-outbox migration now requires the canonical persistence object to
   remain an ordinary logged table in `public`. A structurally identical
   `UNLOGGED` relation fails closed before constraint, RLS, or index convergence
