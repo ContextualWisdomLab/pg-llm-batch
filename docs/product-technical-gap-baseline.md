@@ -2,12 +2,12 @@
 
 This file records the commercial-development gaps that are owned by
 `pg-llm-batch` or materially gate its release. It is evidence, not a substitute
-for live PR/check/release reads. The runtime code snapshot assessed here is
-`c77ad8895634d96a5da86288e48cb843241f1a6f`; the row-lock authority RED is
-`c6c03c4667d0d4f61f6fade694d84e87c6c4e0b4`. The migration DDL target repair is
-`6d0b1b5359355fae8b45ceb3162ff7165150f766` with byte-identical Docker mirror
-`99218d034c0763bfa496e16fbae790fc7e099982`. Later documentation-only commits on
-the same non-force stack do not change the assessed runtime behavior.
+for live PR/check/release reads. The runtime code snapshot assessed here includes
+the exact row-lock authority fix `c77ad8895634d96a5da86288e48cb843241f1a6f`
+and lifecycle-outbox migration semantic-convergence fix
+`7ae5d33954d03453d7fc0cbca6fb87cc09be2113`; the byte-identical Docker mirror
+is `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. Later documentation-only commits
+on the same non-force stack do not change the assessed runtime behavior.
 
 ## Canonical product boundary
 
@@ -26,9 +26,10 @@ cross-service SQL are not production authority.
 | Lifecycle-outbox runtime/migration object resolution inherited caller `search_path` | Repaired on active Draft | Initial RED `fdf1be5b02f2bf1cc7fbddfb3e908a2d232303cf` exposed ambient name-resolution authority. First runtime fix `21866e42d54a924b6970daf3640d99583eff50d0` removed ambient lookup but changed the caller-owned transaction's `search_path`; follow-up RED `941d0cae253722ec8c5c82c5d86e9b5962707712` rejects that composition side effect. Final runtime fix `2b5a7eb1b7e5c2f19628290e6e50fb57d31d6549` uses `pg_catalog.set_config` for the tenant GUC and `public.llm_context_lifecycle_outbox` for reads/writes without mutating caller `search_path`; fake/test alignment is `f3fb547f3924aaf49c7cd8b40f978d4618c8e119`. Installer RED `757c08afe51694208425677e6a2cf92d20dd9f15` then caught that `pg_catalog` first in `search_path` also makes an unqualified `CREATE TABLE` target the wrong current schema. Package migration `6d0b1b5359355fae8b45ceb3162ff7165150f766` explicitly creates `public.llm_context_lifecycle_outbox`; Docker mirror `99218d034c0763bfa496e16fbae790fc7e099982` has the same blob. Rollback `63aba47bcbf9cc71467cd2ad598a0708a9994bf0` retains its installer-owned reviewed path. Exact-head hosted execution remains required. |
 | Lifecycle-outbox caller-controlled row-lock mode accepted arbitrary truthy objects | Repaired on active Draft | RED `c6c03c4667d0d4f61f6fade694d84e87c6c4e0b4` adds a public transaction-boundary regression requiring `for_update` to be an exact built-in boolean before truthiness or SQL; behavior-bearing `__bool__`, integer, string, and null authorities are rejected without database interaction. Causal source fix `c77ad8895634d96a5da86288e48cb843241f1a6f` validates the lock decision before tenant GUC binding or relation access and preserves exact `False`/`True` semantics. Exact-head hosted execution remains required. |
 | Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
-| Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration now installs versioned canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting`, then retires unqualified v1/legacy policy names. Package/Docker SQL bytes are mirrored. Exact-head hosted execution remains required. |
+| Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration installs canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` in both policy predicates. Exact-head hosted execution remains required. |
+| Canonical RLS policy name could mask semantic drift or an additional widening policy | Repaired on active Draft | Executable RED `334f2545abecd189895d9d60d9a70caa0cffb7f1` requires `pg_policy` command/permissive/role/expression-tree identity instead of accepting the canonical name alone, and requires unknown policy names to fail closed. Causal migration fix `5e95aeac86db963d27a3421145b7df8c2f6bea9b` repairs a same-name drifted v2 only when catalog semantics differ; Docker parity is `bd41c8db721b2d3549ee82ced40ca1d79197d3ed`. Follow-up RED `2f18db2b113e5bf94092125ca9af7fd072ae2793` requires a post-create/post-repair catalog verification, satisfied by package `7ae5d33954d03453d7fc0cbca6fb87cc09be2113` and byte-identical Docker mirror `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. The migration fails rather than silently deleting an unknown policy. PostgreSQL runtime execution of the final exact head remains required. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
-| Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep are green on #233, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
+| Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep were green on the last exact read, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
 | Immutable Context Graph / EA / orchestrator authority | Blocked upstream | No production Context Assertion publication is admitted until compatible immutable releases exist. Re-read tag, version, source commit, artifact digest, provenance, schema/profile, admission, and conformance identities before binding. |
 | Commercial PostgreSQL driver migration | Separate active writer | PR #323 owns the driver-neutral migration slice, including `pg_llm_batch/db.py`. This writer does not overwrite or restack that sibling lane while it is active. |
 | Release package / SBOM / provenance / rollback proof | Not yet releasable | Perform only after protected exact head is merge-ready and all owner gates are terminal green; version, CHANGELOG, tag, package, immutable release, SBOM, provenance, reproducibility, and rollback evidence must refer to the same source identity. |
@@ -143,32 +144,45 @@ a credential-bearing database target. Connection routing remains bound to the
 same construction-time DSN. Exact-head unit/coverage execution is still required
 before this repair is GREEN evidence.
 
-## Security decision trace: lifecycle RLS policy v2
+## Security decision trace: lifecycle RLS policy convergence
 
-**Problem.** Migration 0008 previously created a tenant policy whose equality
-operator and `current_setting` function were unqualified. A migration session's
-name-resolution environment must not choose security-policy operator/function
-authority.
+**Problem.** Explicitly qualifying the v2 tenant predicate fixed creation-time name
+resolution, but migration convergence still trusted the canonical policy name. A
+same-name policy can have different command scope, permissive/restrictive mode,
+roles, `USING`, or `WITH CHECK` expression trees. An additional permissive policy
+under another name can also widen RLS because policy composition is catalog state,
+not name identity. Name-only existence therefore cannot establish the tenant
+security boundary.
 
-**Constraints.** The fix must preserve forced RLS, default-deny behavior,
-transactional migration, package/Docker byte parity, and lock-bounded idempotent
-reapplication. Rewriting the same policy on every run would regress the latter.
+**Constraints.** Preserve forced RLS and exact tenant equality, avoid repeated policy
+DDL when the stored policy is already current, preserve known v1/legacy upgrade
+convergence, keep package/Docker SQL byte-identical, and do not silently delete
+operator-owned unknown policy names. The migration must fail closed when it cannot
+prove the complete policy set it owns.
 
-**Alternatives.** Recreating the unversioned policy on every run was rejected
-because it needlessly repeats policy DDL. Treating the existing policy name as
-sufficient authority was rejected because PostgreSQL records the policy command,
-roles, and expression trees separately in `pg_policy`.
+**Alternatives.** Continuing to treat v2's name as sufficient was rejected because
+PostgreSQL stores command, permissive mode, roles, security qualification, and
+`WITH CHECK` separately in `pg_policy`. Dropping/recreating v2 on every migration
+run was rejected because it repeats policy DDL and lock work even when no semantic
+drift exists. Silently deleting unknown policies was rejected because that converts
+a security finding into an unreviewed destructive migration.
 
-**Decision.** Create `plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2`
-once, with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` in both
-`USING` and `WITH CHECK`; create v2 before dropping the earlier canonical v1 and
-legacy policy names. Current v2 is catalog-gated so ordinary reapplication does
-not rewrite it.
+**Decision.** Migration 0008 first rejects policy names outside canonical v2 and the
+two known predecessor names. It treats v2 as current only when `polcmd='*'`, the
+policy is permissive, `polroles` is exactly `PUBLIC`, and `pg_get_expr` decompiles
+both stored expression trees to the canonical tenant equality using
+`current_setting(..., true)`. A same-name v2 that fails those checks is replaced;
+a semantically current v2 is left untouched. After creation or repair, the same
+catalog predicate is checked again and the migration raises a fixed exception if
+canonical verification fails. Known v1/legacy policies are retired only after that
+verification succeeds.
 
-**Effect.** Fresh and previously-candidate installations converge to an explicit
-PostgreSQL catalog authority while retaining the same tenant predicate. This
-fix does not turn the custom setting into a credential and does not protect a
-role that is allowed arbitrary SQL, `BYPASSRLS`, or superuser authority.
+**Effect.** Policy-name reuse, role/command drift, expression drift, or an unexpected
+additional policy can no longer be silently accepted as the canonical tenant RLS
+state. Current installations retain lock-bounded idempotent reapplication because
+policy DDL occurs only when canonical semantics differ. This uses PostgreSQL's own
+`pg_policy` fields and `pg_get_expr` catalog reconstruction as verification evidence;
+exact-head PostgreSQL 18 execution remains required before hosted GREEN is claimed.
 
 ## Release gate
 
@@ -186,5 +200,9 @@ documentation*. https://www.postgresql.org/docs/18/ddl-schemas.html
 PostgreSQL Global Development Group. (2026b). *pg_policy*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
 
-PostgreSQL Global Development Group. (2026c). *CREATE POLICY*. In *PostgreSQL
-18 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
+PostgreSQL Global Development Group. (2026c). *System information functions and
+operators*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-info.html
+
+PostgreSQL Global Development Group. (2026d). *CREATE POLICY*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
