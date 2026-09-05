@@ -81,6 +81,16 @@ same-name constraint is repaired once. Existing duplicate identities abort the
 migration for operator reconciliation; no row is silently deleted or merged.
 PostgreSQL does not permit deferrable constraints to arbitrate `ON CONFLICT`.
 
+The outbox relation is itself part of the durability contract. Migration 0008
+accepts only an ordinary table in `public` with permanent/logged persistence.
+A table converted with `ALTER TABLE ... SET UNLOGGED` can retain the same
+columns, constraints, RLS policies, and indexes while losing WAL durability;
+PostgreSQL also truncates unlogged-table data after a crash or unclean shutdown
+and does not replicate it to standbys. Migration therefore rejects that state as
+a structural-schema mismatch before later convergence. It does not automatically
+run `SET LOGGED`, because any storage rewrite and recovery reconciliation belongs
+in an operator-controlled maintenance window.
+
 This custom PostgreSQL setting is a **trusted application boundary**, not a
 credential. PostgreSQL accepts two-part custom option names, and a database role
 that can execute arbitrary SQL can call `set_config` with an arbitrary tenant
@@ -157,17 +167,25 @@ inside one PostgreSQL anonymous block so psql autocommit cannot commit an
 intermediate owner-bypass state.
 
 The packaged schema and the Docker initialization schema are byte-for-byte
-mirrors and support idempotent reapplication. Migration converges the
-package-owned tenant policy by catalog semantics; converges payload and UTC
-timestamp CHECKs by constraint kind/validation/inheritance, same-runtime parsed
-predicate identity, and review stamp; converges the nondeferrable
-lifecycle-outbox replay UNIQUE constraint required by runtime `ON CONFLICT`; and
-installs the tenant-qualified operational index. Unknown lifecycle-outbox policy
-names are a fail-closed migration finding rather than an implicit extension
-point. Same-name/same-stamp CHECK predicate drift is package-owned drift and is
-repaired once rather than accepted as current state. A stale replay constraint
-is likewise repaired once; duplicate durable identities fail migration instead
-of being silently reconciled.
+mirrors and support idempotent reapplication. Migration converges the canonical
+outbox as an ordinary logged `public` table; converges the package-owned tenant
+policy by catalog semantics; converges payload and UTC timestamp CHECKs by
+constraint kind/validation/inheritance, same-runtime parsed predicate identity,
+and review stamp; converges the nondeferrable lifecycle-outbox replay UNIQUE
+constraint required by runtime `ON CONFLICT`; and installs the tenant-qualified
+operational index. Unknown lifecycle-outbox policy names are a fail-closed
+migration finding rather than an implicit extension point. Same-name/same-stamp
+CHECK predicate drift is package-owned drift and is repaired once rather than
+accepted as current state. A stale replay constraint is likewise repaired once;
+duplicate durable identities and noncanonical relation persistence fail migration
+instead of being silently reconciled.
+
+If an existing outbox is found `UNLOGGED`, first determine whether an unclean
+shutdown occurred during the unlogged interval and reconcile product aggregate
+state, publication intent, downstream receipts, and standby replication gaps.
+Only after that evidence is resolved should an operator convert the table back
+to logged persistence and reapply migration. A successful `SET LOGGED` alone is
+not evidence that publication intent lost during a prior crash has been restored.
 
 Rollback to the former `(endpoint_alias, remote_batch_id)` key is unsafe until
 an operator proves that no pair appears in more than one tenant scope. Before a
@@ -305,9 +323,10 @@ canonical `pg_policy` command/role/expression identity, unknown-policy
 fail-closed behavior, post-create/post-repair policy verification, canonical
 payload/timestamp CHECK kind/validation/inheritance and same-runtime parsed
 predicate identity, review-stamp traceability, same-name/same-stamp repair,
-canonical replay UNIQUE kind/validation/deferrability/column identity, exact
-schema mirroring, Python 3.10/3.12/3.14 compatibility, complete public
-docstrings, and 100% production statement and branch coverage.
+canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
+logged-public outbox relation identity, exact schema mirroring, Python
+3.10/3.12/3.14 compatibility, complete public docstrings, and 100% production
+statement and branch coverage.
 
 The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
 persists an identical provider identifier in two tenant scopes, and proves that
@@ -315,9 +334,10 @@ a transaction bound to one scope cannot read the other scope through the
 policy. This test verifies policy mechanics under the trusted package model; it
 does not claim protection after arbitrary SQL execution is granted. Exact-head
 runtime execution must also run migration 0008 against stale replay-key schema
-variants and a spoofed same-name/same-stamp canonical payload CHECK so
-PostgreSQL evaluates its final canonical policy, payload/timestamp predicate
-identity, and `ON CONFLICT` arbiter conditions.
+variants, a spoofed same-name/same-stamp canonical payload CHECK, and an
+`UNLOGGED` outbox. PostgreSQL must reject the unlogged durability drift and
+evaluate its final canonical policy, payload/timestamp predicate identity, and
+`ON CONFLICT` arbiter conditions on the exact head.
 
 ## References
 
