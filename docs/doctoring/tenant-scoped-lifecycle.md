@@ -59,6 +59,18 @@ evidence; such an administrator already owns migration/catalog authority and is
 outside the application isolation claim. The stamp is not advertised as a
 cryptographic defense against hostile database administration.
 
+Lifecycle-outbox replay convergence must also establish the concrete arbiter
+used by runtime UPSERT. Migration 0008 checks the canonical
+`uq_llm_context_lifecycle_outbox_tenant_evidence` row in `pg_constraint` and
+accepts it only as a validated, nondeferrable UNIQUE constraint over exactly
+`tenant_scope` then `evidence_id`. If the table pre-existed and the constraint is
+missing, wrong-kind, deferrable, or attached to different columns, migration
+adds or repairs the canonical constraint once. Existing duplicate identities
+cause the UNIQUE addition to fail transactionally; migration does not delete or
+merge durable evidence. PostgreSQL requires a usable unique index or
+NOT DEFERRABLE constraint for `ON CONFLICT` arbitration (PostgreSQL Global
+Development Group, 2026i, 2026j, 2026k).
+
 The lifecycle outbox also removes ambient PostgreSQL `search_path` from object
 authority, but the runtime seam does so without changing caller transaction
 state. Runtime tenant binding calls fully qualified `pg_catalog.set_config` and
@@ -107,6 +119,14 @@ block. A legacy installation therefore cannot commit a migrated table while RLS
 is still disabled; policy recreation afterward remains default-deny until the
 new policy exists.
 
+For the Context Fabric lifecycle outbox, `CREATE TABLE IF NOT EXISTS` is followed
+by catalog convergence for the runtime replay key. A pre-existing relation must
+finish migration with a validated NOT DEFERRABLE UNIQUE constraint on
+`(tenant_scope, evidence_id)`. A current canonical constraint is left untouched;
+a stale same-name constraint is repaired and a missing one is added. Duplicate
+rows are an explicit migration failure requiring operator reconciliation rather
+than an implicit deduplication policy.
+
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair appears in more than one tenant scope.
 The lifecycle-outbox rollback additionally binds the reviewed search path before
@@ -135,9 +155,10 @@ post-create/post-repair policy verification, canonical timestamp CHECK
 kind/validation/inheritance authority, package semantic-stamp identity and
 same-name timestamp constraint repair, runtime schema qualification without
 caller `search_path` mutation, installer/rollback search-path binding,
-non-exposure of an admitted credential-bearing outbox DSN, and documentation of
-the bounded assurance claim. Production statement, branch, and public-docstring
-coverage remain at 100% only when exact-head CI proves those gates.
+non-exposure of an admitted credential-bearing outbox DSN, canonical replay-key
+kind/deferrability/column identity, and documentation of the bounded assurance
+claim. Production statement, branch, and public-docstring coverage remain at
+100% only when exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -146,8 +167,9 @@ under the trusted package model; it does not claim protection after arbitrary
 SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
-migration 0008 so PostgreSQL evaluates the final policy and timestamp-constraint
-catalog/stamp conditions.
+migration 0008 against stale-schema fixtures that omit, defer, or mis-key the
+replay UNIQUE constraint so PostgreSQL evaluates the final policy, timestamp
+constraint, and UPSERT-arbiter catalog conditions.
 
 ## References
 
@@ -193,3 +215,9 @@ https://www.postgresql.org/docs/18/functions-info.html
 
 PostgreSQL Global Development Group. (2026i). *pg_constraint*. In *PostgreSQL
 18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+
+PostgreSQL Global Development Group. (2026j). *INSERT*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-insert.html
+
+PostgreSQL Global Development Group. (2026k). *CREATE TABLE*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
