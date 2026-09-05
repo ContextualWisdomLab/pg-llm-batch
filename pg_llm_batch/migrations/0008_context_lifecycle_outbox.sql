@@ -127,20 +127,50 @@ BEGIN
             DROP CONSTRAINT ck_llm_context_lifecycle_outbox_system_time;
     END IF;
 
-    ALTER TABLE llm_context_lifecycle_outbox ENABLE ROW LEVEL SECURITY;
-    ALTER TABLE llm_context_lifecycle_outbox FORCE ROW LEVEL SECURITY;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_class
+        WHERE oid = 'llm_context_lifecycle_outbox'::regclass
+          AND relrowsecurity
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox ENABLE ROW LEVEL SECURITY;
+    END IF;
 
-    DROP POLICY IF EXISTS plc_llm_context_lifecycle_outbox_tenant_scope
-        ON llm_context_lifecycle_outbox;
-    CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope
-        ON llm_context_lifecycle_outbox
-        TO PUBLIC
-        USING (
-            tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
-        )
-        WITH CHECK (
-            tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
-        );
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_class
+        WHERE oid = 'llm_context_lifecycle_outbox'::regclass
+          AND relforcerowsecurity
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox FORCE ROW LEVEL SECURITY;
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1'
+    ) THEN
+        CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1
+            ON llm_context_lifecycle_outbox
+            TO PUBLIC
+            USING (
+                tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
+            )
+            WITH CHECK (
+                tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
+            );
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope'
+    ) THEN
+        DROP POLICY plc_llm_context_lifecycle_outbox_tenant_scope
+            ON llm_context_lifecycle_outbox;
+    END IF;
 
     CREATE INDEX IF NOT EXISTS idx_llm_context_lifecycle_outbox_tenant_created
         ON llm_context_lifecycle_outbox(tenant_scope, created_at);
