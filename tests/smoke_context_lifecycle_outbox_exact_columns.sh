@@ -146,6 +146,53 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 
+# A user trigger is executable table authority outside the package-owned aggregate.
+# Even a no-op trigger proves that arbitrary code can intercept durable INSERT/UPDATE/
+# DELETE paths after migration admission. The migration must fail closed, not delete
+# unknown operator code on the package's behalf.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "CREATE FUNCTION public.pg_llm_batch_outbox_trigger_probe() RETURNS trigger LANGUAGE plpgsql AS \$\$ BEGIN RETURN NEW; END \$\$; CREATE TRIGGER pg_llm_batch_outbox_trigger_probe BEFORE INSERT ON public.llm_context_lifecycle_outbox FOR EACH ROW EXECUTE FUNCTION public.pg_llm_batch_outbox_trigger_probe();"
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-trigger.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-trigger.out >&2
+  echo "lifecycle outbox migration admitted an unreviewed user trigger" >&2
+  exit 1
+fi
+if ! grep -Fq "lifecycle outbox structural schema mismatch" \
+  /tmp/pg-llm-batch-outbox-trigger.out; then
+  cat /tmp/pg-llm-batch-outbox-trigger.out >&2
+  echo "lifecycle outbox trigger drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP TRIGGER pg_llm_batch_outbox_trigger_probe ON public.llm_context_lifecycle_outbox; DROP FUNCTION public.pg_llm_batch_outbox_trigger_probe();'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
+# PostgreSQL rewrite rules can redirect or supplement writes before ordinary table
+# execution. The canonical durable outbox owns no rule program, so any attached rule
+# is structural authority drift and must require explicit operator reconciliation.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE RULE pg_llm_batch_outbox_rule_probe AS ON INSERT TO public.llm_context_lifecycle_outbox DO ALSO NOTHING;'
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-rule.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-rule.out >&2
+  echo "lifecycle outbox migration admitted an unreviewed rewrite rule" >&2
+  exit 1
+fi
+if ! grep -Fq "lifecycle outbox structural schema mismatch" \
+  /tmp/pg-llm-batch-outbox-rule.out; then
+  cat /tmp/pg-llm-batch-outbox-rule.out >&2
+  echo "lifecycle outbox rewrite-rule drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP RULE pg_llm_batch_outbox_rule_probe ON public.llm_context_lifecycle_outbox;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
 # Restores can also reintroduce an older package-owned CHECK under its legacy name.
 # A stricter stale predicate must not survive beside the versioned aggregate CHECK,
 # otherwise valid current payloads remain blocked even though migration reports success.
