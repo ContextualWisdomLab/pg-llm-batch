@@ -21,6 +21,15 @@ inherit caller-controlled name resolution for its runtime relation access,
 installation DDL, or destructive rollback (PostgreSQL Global Development Group,
 2026c).
 
+PostgreSQL records the effective collation of each column in
+`pg_attribute.attcollation`, independently of the column's data-type OID. For a
+collatable base type, `pg_type.typcollation` identifies the type-level collation,
+typically the database default. An explicit per-column collation can therefore
+survive while type, nullability, default, and column count still match the
+reviewed DDL. Because collation participates in text comparison semantics, this
+is part of tenant/evidence identity and index authority rather than cosmetic
+schema metadata (PostgreSQL Global Development Group, 2026h, 2026i).
+
 PostgreSQL constraint names and comments are metadata, not complete executable
 constraint authority. `pg_constraint` records constraint kind, validation state,
 inheritance behavior, and the parsed expression tree separately. A restore or
@@ -66,6 +75,16 @@ Legacy rows are backfilled to `standalone`. Owner enforcement may be relaxed
 only inside the same atomic SQL statement that performs the backfill, enables
 row-level security for legacy tables, and restores `FORCE ROW LEVEL SECURITY`.
 Policy recreation follows under enabled and forced default-deny behavior.
+
+Migration 0008 treats column collation as part of the durable row-shape
+invariant. For every declared column, the installed `pg_attribute.attcollation`
+must equal `pg_type.typcollation` for the expected type. This binds collatable
+text columns to the database/type default and naturally requires zero for
+non-collatable types. A mismatch fails with the structural-schema error before
+constraint, RLS-policy, or index convergence. The migration does not silently
+rewrite collation because doing so can change equality/order semantics and
+require data or index work; operator reconciliation is required for a drifted
+production relation (PostgreSQL Global Development Group, 2026h, 2026i).
 
 Versioned lifecycle-outbox policies must bind their equality operator and
 `current_setting` lookup explicitly to `pg_catalog`. PostgreSQL stores policy
@@ -165,6 +184,13 @@ and `enqueue()` satisfy that contract through normal psycopg connection
 transactions; custom autocommit use is not a supported implementation of the
 caller-owned transaction seam.
 
+A restored or manually altered outbox whose column collation differs from the
+expected type default is now an explicit migration finding. The package does not
+auto-convert the column: operators must determine whether existing data and
+indexes can be safely rewritten and then return the relation to canonical
+collation before reapplying migration. This admission check does not freeze ICU,
+libc, operating-system locale data, or cluster configuration after validation.
+
 An unexpected lifecycle-outbox policy is now a migration finding, not an
 extension point. Operators that intentionally need a different policy set must
 make that a separate reviewed architecture decision rather than adding a
@@ -221,3 +247,9 @@ documentation*. https://www.postgresql.org/docs/18/sql-insert.html
 
 PostgreSQL Global Development Group. (2026g). *CREATE TABLE*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
+
+PostgreSQL Global Development Group. (2026h). *pg_attribute*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-attribute.html
+
+PostgreSQL Global Development Group. (2026i). *pg_type*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-type.html
