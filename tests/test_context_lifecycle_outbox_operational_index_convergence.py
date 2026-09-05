@@ -27,6 +27,7 @@ def test_outbox_migration_does_not_trust_operational_index_name_alone() -> None:
         "        WHERE operational_index.indrelid =\n"
         "              'llm_context_lifecycle_outbox'::regclass\n"
         f"          AND index_relation.relname = '{_INDEX_NAME}'\n"
+        "          AND index_relation.relnamespace = 'public'::regnamespace\n"
         "          AND index_method.amname = 'btree'\n"
         "          AND operational_index.indisvalid\n"
         "          AND operational_index.indisready\n"
@@ -53,6 +54,12 @@ def test_outbox_migration_does_not_trust_operational_index_name_alone() -> None:
         "    ) THEN"
     )
     guard_at = migration.index(guard)
-    drop_at = migration.index(f"DROP INDEX {_INDEX_NAME};", guard_at)
+    collision_guard_at = migration.index(
+        "IF pg_catalog.to_regclass(\n"
+        f"            'public.{_INDEX_NAME}'\n"
+        "        ) IS NOT NULL THEN",
+        guard_at,
+    )
+    drop_at = migration.index(f"DROP INDEX {_INDEX_NAME};", collision_guard_at)
     create_at = migration.index(f"CREATE INDEX {_INDEX_NAME}", drop_at)
-    assert guard_at < drop_at < create_at
+    assert guard_at < collision_guard_at < drop_at < create_at
