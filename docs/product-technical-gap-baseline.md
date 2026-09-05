@@ -9,9 +9,13 @@ lifecycle-outbox RLS semantic-convergence fix
 `acf54afed9e5d1bcc56f3f645c10fce18c150bc5`, kind/validation/inheritance fix
 `cbd626414cbd7dbb3038a0db8c2b3badbddce1fc`, follow-up semantic-stamp RED
 `aa4a7e29d8ae5455315a28e4df6ef812821b380a`, package fix
-`000a1933038b2fd2815ca3ffcf492ebd557262d3`, and byte-identical Docker mirror
-`14d7e24ca841d3050fb343768393ee7b08bfd923` with migration blob
-`cc08217b04934e3364f61e7379191b6363979a53`. Later documentation commits on the
+`000a1933038b2fd2815ca3ffcf492ebd557262d3`, byte-identical Docker mirror
+`14d7e24ca841d3050fb343768393ee7b08bfd923`, stale convergence-test alignment
+`dffd1a4ac234f209e57c3f1a275c38523051b132`, durable replay-key RED
+`939b5ae55f42c63205e9b86618272fcfecca4791`, package fix
+`beb37aaacf0d33c954a53ff15248561f6cbe8fa4`, and byte-identical Docker mirror
+`6c9ca15f57b7634973c9a999300d12c7764128ee` with migration blob
+`b4c206bef18caa8d5b4f8cc327d3b92890aceb8f`. Later documentation commits on the
 same non-force stack do not change those migration bytes.
 
 ## Canonical product boundary
@@ -34,6 +38,7 @@ cross-service SQL are not production authority.
 | Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration installs canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` in both policy predicates. Exact-head hosted execution remains required. |
 | Canonical RLS policy name could mask semantic drift or an additional widening policy | Repaired on active Draft | Executable RED `334f2545abecd189895d9d60d9a70caa0cffb7f1` requires `pg_policy` command/permissive/role/expression-tree identity instead of accepting the canonical name alone, and requires unknown policy names to fail closed. Causal migration fix `5e95aeac86db963d27a3421145b7df8c2f6bea9b` repairs a same-name drifted v2 only when catalog semantics differ; Docker parity is `bd41c8db721b2d3549ee82ced40ca1d79197d3ed`. Follow-up RED `2f18db2b113e5bf94092125ca9af7fd072ae2793` requires a post-create/post-repair catalog verification, satisfied by package `7ae5d33954d03453d7fc0cbca6fb87cc09be2113` and byte-identical Docker mirror `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. The migration fails rather than silently deleting an unknown policy. PostgreSQL runtime execution of the final exact head remains required. |
 | Canonical lifecycle timestamp name could mask noncanonical or semantically drifted CHECK state | Repaired on active Draft | RED `acf54afed9e5d1bcc56f3f645c10fce18c150bc5` requires canonical `valid_time`/`system_time` rows to be validated inheritable CHECKs and adds a same-name repair path. Package fix `cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` plus Docker `ac10613c59922563e38ccaf5af80c6f909e4ce76` closed kind/validation/inheritance drift. Review then found that a validated same-name weak CHECK could still pass, so follow-up RED `aa4a7e29d8ae5455315a28e4df6ef812821b380a` requires the expected package SHA-256 semantic stamp through `obj_description` and a post-add `COMMENT ON CONSTRAINT`. Package fix `000a1933038b2fd2815ca3ffcf492ebd557262d3` and Docker mirror `14d7e24ca841d3050fb343768393ee7b08bfd923` are byte-identical at `cc08217b04934e3364f61e7379191b6363979a53`. The stamp detects ordinary package-owned drop/recreate drift but is not claimed as a defense against an administrator intentionally forging the stamp. Exact-head PostgreSQL runtime execution remains required. |
+| Pre-existing lifecycle-outbox table could lack the nondeferrable tenant/evidence replay arbiter required by runtime `ON CONFLICT` | Repaired on active Draft | RED `939b5ae55f42c63205e9b86618272fcfecca4791` requires migration 0008 to converge a canonical validated nondeferrable UNIQUE constraint whose `conkey` is exactly `(tenant_scope, evidence_id)`, and ties that catalog invariant to the runtime `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING` path. Package fix `beb37aaacf0d33c954a53ff15248561f6cbe8fa4` repairs a same-name wrong-kind/deferrable/wrong-column constraint or installs the missing arbiter after `CREATE TABLE IF NOT EXISTS`; Docker mirror `6c9ca15f57b7634973c9a999300d12c7764128ee` is byte-identical at `b4c206bef18caa8d5b4f8cc327d3b92890aceb8f`. PostgreSQL runtime execution of a deliberately stale pre-existing table remains required before hosted GREEN is claimed. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
 | Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep were green on the last exact read, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
 | Immutable Context Graph / EA / orchestrator authority | Blocked upstream | No production Context Assertion publication is admitted until compatible immutable releases exist. Re-read tag, version, source commit, artifact digest, provenance, schema/profile, admission, and conformance identities before binding. |
@@ -228,6 +233,45 @@ the reviewed CHECK. The stamp is not claimed to prevent a privileged operator fr
 forging both a different CHECK and the same comment. Exact-head PostgreSQL runtime
 execution remains required before hosted GREEN is claimed.
 
+## Reliability decision trace: durable replay-key convergence
+
+**Problem.** Migration 0008 defined `UNIQUE (tenant_scope, evidence_id)` only inside
+`CREATE TABLE IF NOT EXISTS`. On an existing relation PostgreSQL skips that table
+creation block, so a legacy, manually repaired, or partially restored table could
+complete the migration without the unique arbiter used by
+`enqueue_in_transaction()`'s `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING`.
+The first runtime enqueue would then fail because PostgreSQL cannot infer a usable
+conflict arbiter. A same-name deferrable or wrong-column UNIQUE constraint is also not
+sufficient: PostgreSQL permits only NOT DEFERRABLE constraints and usable unique
+indexes as `ON CONFLICT` arbiters.
+
+**Constraints.** Preserve the existing tenant/evidence durable identity, idempotent
+reapplication, atomic migration behavior, package/Docker byte parity, and fail on
+pre-existing duplicate durable identities rather than deleting or rewriting rows.
+Current installations must not rebuild the unique index on every migration run.
+
+**Alternatives.** Relying on `CREATE TABLE IF NOT EXISTS` was rejected because it does
+not converge constraints on an existing relation. Checking only the canonical
+constraint name was rejected because `pg_constraint` stores kind, deferrability, and
+constrained column numbers separately. Unconditionally dropping and recreating the
+constraint was rejected because it repeats index construction and table locking.
+Silently de-duplicating existing rows was rejected because durable lifecycle identity
+conflicts require operator reconciliation, not migration-time data loss.
+
+**Decision.** After table creation, migration 0008 treats the canonical replay arbiter
+as current only when `pg_constraint` reports a validated nondeferrable UNIQUE
+constraint and `conkey` exactly identifies `tenant_scope` followed by `evidence_id`.
+A same-name noncanonical constraint is dropped and rebuilt once; an absent canonical
+constraint is added. Existing duplicate rows therefore make `ADD CONSTRAINT ...
+UNIQUE` fail transactionally. Fresh installs pass the catalog guard without repeated
+DDL. Package and Docker migration files remain byte-identical.
+
+**Effect.** A successfully converged schema now proves the concrete uniqueness
+precondition that the runtime UPSERT path depends on, rather than deferring the defect
+to the first enqueue. The change does not broaden tenant authority or rewrite durable
+evidence. Exact-head PostgreSQL execution against deliberately stale schema variants
+remains required before hosted GREEN is claimed.
+
 ## Release gate
 
 A release is not complete while any runnable merge/fix/test/restack/review,
@@ -253,3 +297,9 @@ documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
 
 PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL
 18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+
+PostgreSQL Global Development Group. (2026f). *INSERT*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-insert.html
+
+PostgreSQL Global Development Group. (2026g). *CREATE TABLE*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
