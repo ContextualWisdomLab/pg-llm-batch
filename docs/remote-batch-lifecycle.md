@@ -61,15 +61,15 @@ deleted; and the resulting v2 is verified again before earlier v1/legacy names
 are removed. A semantically current v2 avoids repeated policy DDL on normal
 reapply.
 
-The canonical UTC timestamp CHECKs are likewise not admitted by name alone.
-Migration 0008 requires `pg_constraint` to report a validated, inheritable CHECK
-and requires the expected package SHA-256 semantic stamp in the constraint
-comment. A same-name wrong-kind, unvalidated, `NO INHERIT`, or unstamped
-constraint is rebuilt and stamped before the legacy timestamp check is removed;
-an already-current stamped CHECK is left untouched. The stamp detects ordinary
-package-owned drop/recreate drift in the trusted migration-authority model. It
-does not defend against a database administrator deliberately creating a
-different CHECK and copying the same stamp.
+Package-owned payload and canonical UTC timestamp CHECKs are likewise not
+admitted by name or comment stamp alone. Migration 0008 creates session-local
+temporary probe CHECKs from the reviewed definitions and obtains their parsed
+form with the running PostgreSQL server's `pg_get_expr`. A durable canonical
+CHECK must be validated and inheritable, carry the expected review stamp, and
+have a decompiled expression equal to its same-runtime probe. A same-name or
+same-name/same-stamp different predicate is rebuilt once and post-verified; an
+already-current durable CHECK avoids replacement DDL. The stamp remains
+traceability evidence, not executable authority.
 
 The lifecycle outbox's durable replay key is also a migration contract, not just
 fresh-table DDL. Runtime inserts use
@@ -157,17 +157,17 @@ inside one PostgreSQL anonymous block so psql autocommit cannot commit an
 intermediate owner-bypass state.
 
 The packaged schema and the Docker initialization schema are byte-for-byte
-mirrors and support idempotent reapplication. The migration enables and forces
-RLS, converges the package-owned tenant policy by catalog semantics, converges
-canonical UTC timestamp CHECKs by constraint kind/validation/inheritance plus
-the package semantic stamp, converges the nondeferrable lifecycle-outbox replay
-UNIQUE constraint required by runtime `ON CONFLICT`, and installs the
-tenant-qualified operational index. Unknown lifecycle-outbox policy names are a
-fail-closed migration finding rather than an implicit extension point. A
-same-name timestamp constraint that does not carry the reviewed package identity
-is package-owned drift and is repaired once rather than accepted as current
-state. A stale replay constraint is likewise repaired once; duplicate durable
-identities fail migration instead of being silently reconciled.
+mirrors and support idempotent reapplication. Migration converges the
+package-owned tenant policy by catalog semantics; converges payload and UTC
+timestamp CHECKs by constraint kind/validation/inheritance, same-runtime parsed
+predicate identity, and review stamp; converges the nondeferrable
+lifecycle-outbox replay UNIQUE constraint required by runtime `ON CONFLICT`; and
+installs the tenant-qualified operational index. Unknown lifecycle-outbox policy
+names are a fail-closed migration finding rather than an implicit extension
+point. Same-name/same-stamp CHECK predicate drift is package-owned drift and is
+repaired once rather than accepted as current state. A stale replay constraint
+is likewise repaired once; duplicate durable identities fail migration instead
+of being silently reconciled.
 
 Rollback to the former `(endpoint_alias, remote_batch_id)` key is unsafe until
 an operator proves that no pair appears in more than one tenant scope. Before a
@@ -303,11 +303,11 @@ database rows, migration preservation and reapplication, forced default-deny
 RLS, search-path-independent lifecycle policy predicate authority, full
 canonical `pg_policy` command/role/expression identity, unknown-policy
 fail-closed behavior, post-create/post-repair policy verification, canonical
-timestamp CHECK kind/validation/inheritance authority, package semantic-stamp
-identity and same-name timestamp constraint repair, canonical replay UNIQUE
-kind/validation/deferrability/column identity, exact schema mirroring,
-Python 3.10/3.12/3.14 compatibility, complete public docstrings, and 100%
-production statement and branch coverage.
+payload/timestamp CHECK kind/validation/inheritance and same-runtime parsed
+predicate identity, review-stamp traceability, same-name/same-stamp repair,
+canonical replay UNIQUE kind/validation/deferrability/column identity, exact
+schema mirroring, Python 3.10/3.12/3.14 compatibility, complete public
+docstrings, and 100% production statement and branch coverage.
 
 The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
 persists an identical provider identifier in two tenant scopes, and proves that
@@ -315,8 +315,9 @@ a transaction bound to one scope cannot read the other scope through the
 policy. This test verifies policy mechanics under the trusted package model; it
 does not claim protection after arbitrary SQL execution is granted. Exact-head
 runtime execution must also run migration 0008 against stale replay-key schema
-variants so PostgreSQL evaluates its final canonical policy, timestamp
-constraint catalog/stamp, and `ON CONFLICT` arbiter conditions.
+variants and a spoofed same-name/same-stamp canonical payload CHECK so
+PostgreSQL evaluates its final canonical policy, payload/timestamp predicate
+identity, and `ON CONFLICT` arbiter conditions.
 
 ## References
 
