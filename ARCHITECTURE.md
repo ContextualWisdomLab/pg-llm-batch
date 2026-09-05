@@ -46,6 +46,16 @@ retired. A current stamped constraint is left untouched. The stamp is evidence
 inside the trusted migration-authority model, not protection against an
 operator who deliberately creates a different CHECK and forges the same stamp.
 
+Lifecycle-outbox replay idempotency has a separate catalog invariant. Runtime
+uses `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING`; migration 0008
+therefore converges `uq_llm_context_lifecycle_outbox_tenant_evidence` after
+`CREATE TABLE IF NOT EXISTS` and accepts it only as a validated, nondeferrable
+UNIQUE constraint over exactly those two columns. A pre-existing table with a
+missing, deferrable, wrong-kind, or wrong-column same-name constraint is repaired
+once. Existing duplicate durable identities fail migration rather than being
+silently merged or discarded. A current canonical replay arbiter is left
+untouched on reapplication.
+
 Lifecycle-outbox runtime relation authority is explicit without rewriting
 caller transaction state. Tenant binding calls `pg_catalog.set_config` directly,
 and runtime reads/writes address
@@ -81,6 +91,13 @@ identity merging. The prior endpoint/provider unique key is replaced by a
 tenant-qualified key. The owner-enforcement transition, backfill, constraint
 migration, and forced-RLS restoration execute in one PostgreSQL anonymous block
 so psql autocommit cannot commit an intermediate owner-bypass state.
+
+The Context Fabric lifecycle outbox separately converges its runtime replay key
+on every migration application. A fresh table receives the canonical UNIQUE
+constraint during creation and then satisfies the catalog guard without further
+DDL. A pre-existing table must acquire the same validated NOT DEFERRABLE
+`(tenant_scope, evidence_id)` constraint before migration succeeds; duplicates
+are an explicit operator-reconciliation failure.
 
 Enabling RLS changes the behavior of direct SQL integrations: an ordinary role
 that does not bind an authorized transaction-local scope sees no lifecycle
@@ -128,7 +145,8 @@ idempotency, malformed database rows, default-deny policy text, explicit
 `pg_catalog` policy predicate authority, `pg_policy` command/role/expression
 identity, unknown-policy fail-closed behavior, post-repair canonical policy
 verification, canonical timestamp CHECK type/validation/inheritance authority,
-semantic-stamp identity and same-name repair, runtime schema qualification
+semantic-stamp identity and same-name repair, canonical replay UNIQUE
+kind/validation/deferrability/column identity, runtime schema qualification
 without caller `search_path` mutation, installer/rollback search-path authority,
 schema mirroring, operator documentation, and 100% production statement and
 branch coverage. Live PostgreSQL isolation tests use a
@@ -137,6 +155,7 @@ different tenants remain independently addressable and mutually invisible when
 access occurs through the trusted package boundary. Exact-head runtime evidence
 must also exercise a non-default caller `search_path`, verify the canonical
 outbox relation is still selected, verify the caller path is unchanged
-afterward, and execute migration 0008 so PostgreSQL evaluates its canonical
-policy and timestamp-constraint catalog conditions. These tests do not claim
-isolation after arbitrary SQL or untrusted schema-creation authority is granted.
+afterward, and execute migration 0008 against stale replay-key schema variants
+so PostgreSQL evaluates canonical policy, timestamp-constraint, and UPSERT
+arbiter catalog conditions. These tests do not claim isolation after arbitrary
+SQL or untrusted schema-creation authority is granted.
