@@ -89,6 +89,18 @@ merge durable evidence. PostgreSQL requires a usable unique index or
 NOT DEFERRABLE constraint for `ON CONFLICT` arbitration (PostgreSQL Global
 Development Group, 2026i, 2026j, 2026k).
 
+The lifecycle outbox relation itself is durable authority. Migration 0008 now
+requires the canonical object to be an ordinary table (`pg_class.relkind = 'r'`)
+in `public` with permanent/logged persistence (`pg_class.relpersistence = 'p'`).
+This closes a gap where `ALTER TABLE ... SET UNLOGGED` could preserve the same
+columns, constraints, RLS policies, and indexes while removing WAL durability.
+PostgreSQL documents that unlogged-table data is not written to WAL, is
+truncated after a crash or unclean shutdown, and is not replicated to standby
+servers (PostgreSQL Global Development Group, 2026k). Migration fails closed on
+that state before later constraint/RLS/index convergence and does not silently
+run `SET LOGGED`; the storage rewrite and operational impact require explicit
+operator reconciliation.
+
 The lifecycle outbox operational index has the same convergence requirement.
 PostgreSQL explicitly states that `CREATE INDEX IF NOT EXISTS` only suppresses a
 name collision and does not establish that the existing index resembles the
@@ -156,15 +168,17 @@ is still disabled; policy recreation afterward remains default-deny until the
 new policy exists.
 
 For the Context Fabric lifecycle outbox, `CREATE TABLE IF NOT EXISTS` is followed
-by catalog convergence for the payload/timestamp CHECK predicates, runtime
-replay key, and operational `(tenant_scope, created_at)` index. A pre-existing
-relation must finish migration with the post-verified canonical CHECK
-expressions and stamps, a validated NOT DEFERRABLE UNIQUE constraint on
-`(tenant_scope, evidence_id)`, and the exact public B-tree operational index.
-Current canonical durable objects avoid replacement DDL. Stale same-name objects
-are repaired only when the migration can prove they belong to the outbox;
-invalid existing payload rows, duplicate replay identities, and unrelated name
-collisions fail for operator reconciliation rather than being silently changed.
+by catalog convergence for relation kind/persistence, the payload/timestamp CHECK
+predicates, runtime replay key, and operational `(tenant_scope, created_at)`
+index. A pre-existing relation must finish migration as an ordinary logged
+`public` table with the post-verified canonical CHECK expressions and stamps, a
+validated NOT DEFERRABLE UNIQUE constraint on `(tenant_scope, evidence_id)`, and
+the exact public B-tree operational index. Current canonical durable objects
+avoid replacement DDL. Stale same-name objects are repaired only when the
+migration can prove they belong to the outbox; noncanonical relation
+persistence/kind, invalid existing payload rows, duplicate replay identities,
+and unrelated name collisions fail for operator reconciliation rather than
+being silently changed.
 
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair appears in more than one tenant scope.
@@ -181,6 +195,15 @@ database interface before deployment. Caller-owned outbox methods require a
 real transaction for the transaction-local tenant GUC, but preserve the
 caller's existing `search_path` rather than imposing one.
 
+If migration reports a structural-schema mismatch after an outbox has been made
+`UNLOGGED`, do not treat a successful `ALTER TABLE ... SET LOGGED` as evidence
+that the durability incident is resolved. First determine whether an unclean
+shutdown occurred while the table was unlogged, reconcile publication intent
+against the product aggregate and downstream receipts, and account for standby
+replication gaps. Only then return the relation to logged persistence and
+reapply migration. This is a recovery/evidence step, not an automatic schema
+repair.
+
 ## Verification
 
 Deterministic tests cover strict scope syntax, pre-effect validation,
@@ -193,14 +216,14 @@ command/role/expression identity, unknown-policy fail-closed behavior,
 post-create/post-repair policy verification, canonical payload/timestamp CHECK
 kind/validation/inheritance authority, same-runtime parsed-expression identity,
 review-stamp traceability, post-repair CHECK verification, payload predecessor
-retirement, runtime schema qualification without caller `search_path` mutation,
-installer/rollback search-path binding, non-exposure of an admitted
-credential-bearing outbox DSN, canonical replay-key
-kind/deferrability/column identity, operational-index access method/state/key
-identity, same-name wrong-key repair, unrelated-name-collision fail-closed
-behavior, and documentation of the bounded assurance claim. Production
-statement, branch, and public-docstring coverage remain at 100% only when
-exact-head CI proves those gates.
+retirement, ordinary logged-public relation identity, runtime schema
+qualification without caller `search_path` mutation, installer/rollback
+search-path binding, non-exposure of an admitted credential-bearing outbox DSN,
+canonical replay-key kind/deferrability/column identity, operational-index access
+method/state/key identity, same-name wrong-key repair, unrelated-name-collision
+fail-closed behavior, and documentation of the bounded assurance claim.
+Production statement, branch, and public-docstring coverage remain at 100% only
+when exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -211,11 +234,12 @@ non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
 migration 0008 against stale-schema fixtures that omit, defer, or mis-key the
 replay UNIQUE constraint, restore a legacy stricter payload CHECK, replace the
-canonical payload CHECK with same-name/same-stamp `CHECK (true)`, and replace the
-operational index with a same-name `(created_at, tenant_scope)` index.
-PostgreSQL must repair the spoofed canonical CHECK so the malformed payload row
-is rejected and must evaluate final policy, payload/timestamp constraints,
-UPSERT arbiter, and operational-index catalog conditions on that exact head.
+canonical payload CHECK with same-name/same-stamp `CHECK (true)`, convert the
+outbox to `UNLOGGED`, and replace the operational index with a same-name
+`(created_at, tenant_scope)` index. PostgreSQL must reject the unlogged relation,
+repair the spoofed canonical CHECK so the malformed payload row is rejected, and
+evaluate final policy, payload/timestamp constraints, UPSERT arbiter, and
+operational-index catalog conditions on that exact head.
 
 ## References
 
