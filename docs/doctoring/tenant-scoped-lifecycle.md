@@ -40,6 +40,16 @@ before v1/legacy policy retirement. A semantically current v2 remains unchanged
 on idempotent reapplication (PostgreSQL Global Development Group, 2026e, 2026f,
 2026h).
 
+Timestamp CHECK convergence is also catalog-verified. PostgreSQL stores the
+constraint name, kind, validation status, and inheritance behavior separately
+in `pg_constraint`; a matching name alone does not establish that the reviewed
+CHECK is active. Migration 0008 accepts each canonical `valid_time` and
+`system_time` constraint only when `contype = 'c'`, `convalidated` is true, and
+`connoinherit` is false. A same-name wrong-kind, unvalidated, or `NO INHERIT`
+constraint is removed and rebuilt as the canonical CHECK before the legacy
+constraint is retired; a current canonical constraint is left untouched
+(PostgreSQL Global Development Group, 2026i).
+
 The lifecycle outbox also removes ambient PostgreSQL `search_path` from object
 authority, but the runtime seam does so without changing caller transaction
 state. Runtime tenant binding calls fully qualified `pg_catalog.set_config` and
@@ -112,11 +122,13 @@ database rows, migration preservation, atomic RLS restoration, policy
 default-deny behavior, exact schema mirroring, versioned policy convergence,
 explicit `pg_catalog` operator/function binding, full canonical `pg_policy`
 command/role/expression identity, unknown-policy fail-closed behavior,
-post-create/post-repair catalog verification, runtime schema qualification
-without caller `search_path` mutation, installer/rollback search-path binding,
-non-exposure of an admitted credential-bearing outbox DSN, and documentation of
-the bounded assurance claim. Production statement, branch, and public-docstring
-coverage remain at 100% only when exact-head CI proves those gates.
+post-create/post-repair policy verification, canonical timestamp CHECK
+kind/validation/inheritance authority, same-name timestamp constraint repair,
+runtime schema qualification without caller `search_path` mutation,
+installer/rollback search-path binding, non-exposure of an admitted
+credential-bearing outbox DSN, and documentation of the bounded assurance
+claim. Production statement, branch, and public-docstring coverage remain at
+100% only when exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -125,7 +137,8 @@ under the trusted package model; it does not claim protection after arbitrary
 SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
-migration 0008 so PostgreSQL evaluates the final `pg_policy` postcondition.
+migration 0008 so PostgreSQL evaluates the final policy and timestamp-constraint
+catalog conditions.
 
 ## References
 
@@ -168,3 +181,6 @@ documentation*. https://www.postgresql.org/docs/18/ddl-schemas.html
 PostgreSQL Global Development Group. (2026h). *System information functions and
 operators*. In *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/functions-info.html
+
+PostgreSQL Global Development Group. (2026i). *pg_constraint*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
