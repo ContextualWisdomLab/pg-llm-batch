@@ -85,6 +85,11 @@ BEGIN
          AND NOT actual.attisdropped
         WHERE actual.attnum IS NULL
            OR actual.atttypid IS DISTINCT FROM expected.atttypid
+           OR actual.attcollation IS DISTINCT FROM (
+               SELECT typcollation
+               FROM pg_type
+               WHERE oid = expected.atttypid
+           )
            OR actual.attnotnull IS DISTINCT FROM expected.attnotnull
            OR actual.atthasdef IS DISTINCT FROM expected.atthasdef
            OR actual.attgenerated <> ''
