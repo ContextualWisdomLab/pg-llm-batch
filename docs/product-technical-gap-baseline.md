@@ -3,8 +3,8 @@
 This file records the commercial-development gaps that are owned by
 `pg-llm-batch` or materially gate its release. It is evidence, not a substitute
 for live PR/check/release reads. The runtime code snapshot assessed here is
-`2b5a7eb1b7e5c2f19628290e6e50fb57d31d6549`; regression-fake alignment is
-`f3fb547f3924aaf49c7cd8b40f978d4618c8e119`. The migration DDL target repair is
+`c77ad8895634d96a5da86288e48cb843241f1a6f`; the row-lock authority RED is
+`c6c03c4667d0d4f61f6fade694d84e87c6c4e0b4`. The migration DDL target repair is
 `6d0b1b5359355fae8b45ceb3162ff7165150f766` with byte-identical Docker mirror
 `99218d034c0763bfa496e16fbae790fc7e099982`. Later documentation-only commits on
 the same non-force stack do not change the assessed runtime behavior.
@@ -24,6 +24,7 @@ cross-service SQL are not production authority.
 | Gap | State | Current evidence / required next condition |
 | --- | --- | --- |
 | Lifecycle-outbox runtime/migration object resolution inherited caller `search_path` | Repaired on active Draft | Initial RED `fdf1be5b02f2bf1cc7fbddfb3e908a2d232303cf` exposed ambient name-resolution authority. First runtime fix `21866e42d54a924b6970daf3640d99583eff50d0` removed ambient lookup but changed the caller-owned transaction's `search_path`; follow-up RED `941d0cae253722ec8c5c82c5d86e9b5962707712` rejects that composition side effect. Final runtime fix `2b5a7eb1b7e5c2f19628290e6e50fb57d31d6549` uses `pg_catalog.set_config` for the tenant GUC and `public.llm_context_lifecycle_outbox` for reads/writes without mutating caller `search_path`; fake/test alignment is `f3fb547f3924aaf49c7cd8b40f978d4618c8e119`. Installer RED `757c08afe51694208425677e6a2cf92d20dd9f15` then caught that `pg_catalog` first in `search_path` also makes an unqualified `CREATE TABLE` target the wrong current schema. Package migration `6d0b1b5359355fae8b45ceb3162ff7165150f766` explicitly creates `public.llm_context_lifecycle_outbox`; Docker mirror `99218d034c0763bfa496e16fbae790fc7e099982` has the same blob. Rollback `63aba47bcbf9cc71467cd2ad598a0708a9994bf0` retains its installer-owned reviewed path. Exact-head hosted execution remains required. |
+| Lifecycle-outbox caller-controlled row-lock mode accepted arbitrary truthy objects | Repaired on active Draft | RED `c6c03c4667d0d4f61f6fade694d84e87c6c4e0b4` adds a public transaction-boundary regression requiring `for_update` to be an exact built-in boolean before truthiness or SQL; behavior-bearing `__bool__`, integer, string, and null authorities are rejected without database interaction. Causal source fix `c77ad8895634d96a5da86288e48cb843241f1a6f` validates the lock decision before tenant GUC binding or relation access and preserves exact `False`/`True` semantics. Exact-head hosted execution remains required. |
 | Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
 | Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration now installs versioned canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting`, then retires unqualified v1/legacy policy names. Package/Docker SQL bytes are mirrored. Exact-head hosted execution remains required. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
@@ -82,6 +83,37 @@ name-resolution state unchanged. This does not claim that an untrusted principal
 `CREATE` authority in canonical `public` is safe; schema ACLs remain an operator trust
 boundary. Exact-head PostgreSQL execution is still required before the repair is
 hosted GREEN evidence.
+
+## Security decision trace: lifecycle-outbox row-lock authority
+
+**Problem.** `load_in_transaction(..., for_update=...)` used the caller value directly
+in a Python truthiness decision. Although the public type annotation says `bool`,
+runtime callers could pass an integer, string, null, or an object with caller-defined
+`__bool__`. A truthy non-boolean could silently request `FOR UPDATE`; a behavior-bearing
+object could execute caller code before the database boundary. The lock decision is
+transaction authority and must not be inferred from Python coercion.
+
+**Constraints.** Preserve the existing public parameter and the two legitimate modes:
+exact `False` performs a tenant-qualified unlocked read; exact `True` performs the same
+read with `FOR UPDATE`. Invalid authority must fail before transaction-local tenant
+binding, relation access, or caller-controlled truthiness. Diagnostics must remain
+content-free.
+
+**Alternatives.** `bool(for_update)` was rejected because it explicitly executes the
+behavior-bearing coercion being removed. Accepting `0`/`1` for convenience was rejected
+because Python integers are not the lock authority contract and silently widen the
+public transaction semantics. Removing the public flag was unnecessary because the
+compare-and-swap outbox path legitimately uses it.
+
+**Decision.** Require `type(for_update) is bool` at the start of
+`load_in_transaction`. Invalid values raise the package `ValidationError` with a fixed
+redacted value before any SQL. Only the validated exact boolean controls whether the
+query receives `FOR UPDATE`.
+
+**Effect.** Caller-defined truthiness and accidental truthy values cannot acquire a
+row lock or execute behavior at the outbox transaction boundary. The repair does not
+change tenant scope, isolation level, lock duration, deadlock policy, or the existing
+compare-and-swap protocol. Exact-head hosted execution remains required.
 
 ## Security decision trace: lifecycle-outbox DSN authority
 
