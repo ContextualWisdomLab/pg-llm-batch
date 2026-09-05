@@ -78,6 +78,7 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
     """
 
     def __init__(self, cursor: Any) -> None:
+        """Retain one already-admitted raw cursor without acquiring connection authority."""
         self._cursor = cursor
 
     @staticmethod
@@ -232,6 +233,7 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
     """
 
     def __init__(self, connection: Any) -> None:
+        """Retain one admitted raw connection and initialize terminal-state tracking."""
         self._connection = connection
         self._closed = False
 
