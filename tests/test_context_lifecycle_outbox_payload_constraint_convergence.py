@@ -73,6 +73,8 @@ def test_outbox_migration_converges_payload_value_contract_after_create() -> Non
         "          AND contype = 'c'\n"
         "          AND convalidated\n"
         "          AND NOT connoinherit\n"
+        "          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =\n"
+        "              canonical_payload_check_expression\n"
         "          AND pg_catalog.obj_description(oid, 'pg_constraint') =\n"
         f"              '{_CANONICAL_PAYLOAD_STAMP}'\n"
         "    ) THEN"
@@ -84,8 +86,12 @@ def test_outbox_migration_converges_payload_value_contract_after_create() -> Non
     comment_at = migration.index(
         f"COMMENT ON CONSTRAINT {_CANONICAL_PAYLOAD_CONSTRAINT}", add_at
     )
+    verify_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox payload CHECK failed canonical verification'",
+        comment_at,
+    )
 
-    assert create_end < guard_at < add_at < comment_at
+    assert create_end < guard_at < add_at < comment_at < verify_at
     payload_block = migration[add_at:comment_at]
     for required_fragment in (
         "tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'",
