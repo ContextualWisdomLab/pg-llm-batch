@@ -1,284 +1,100 @@
 # Product / Technical Gap Baseline
 
-This file records the commercial-development gaps that are owned by
-`pg-llm-batch` or materially gate its release. It is evidence, not a substitute
-for live PR/check/release reads. The runtime/migration snapshot assessed here
-includes row-lock authority fix `c77ad8895634d96a5da86288e48cb843241f1a6f`,
-lifecycle-outbox RLS semantic-convergence fix
-`7ae5d33954d03453d7fc0cbca6fb87cc09be2113`, initial timestamp catalog RED
-`acf54afed9e5d1bcc56f3f645c10fce18c150bc5`, kind/validation/inheritance fix
-`cbd626414cbd7dbb3038a0db8c2b3badbddce1fc`, follow-up semantic-stamp RED
-`aa4a7e29d8ae5455315a28e4df6ef812821b380a`, package fix
-`000a1933038b2fd2815ca3ffcf492ebd557262d3`, byte-identical Docker mirror
-`14d7e24ca841d3050fb343768393ee7b08bfd923`, stale convergence-test alignment
-`dffd1a4ac234f209e57c3f1a275c38523051b132`, durable replay-key RED
-`939b5ae55f42c63205e9b86618272fcfecca4791`, package fix
-`beb37aaacf0d33c954a53ff15248561f6cbe8fa4`, and byte-identical Docker mirror
-`6c9ca15f57b7634973c9a999300d12c7764128ee` with migration blob
-`b4c206bef18caa8d5b4f8cc327d3b92890aceb8f`. Later documentation commits on the
-same non-force stack do not change those migration bytes.
+This document records commercial-development gaps owned by `pg-llm-batch` or
+materially gating its release. It is a code-current decision/evidence ledger, not a
+substitute for live PR, check, review, release, or protected-ref reads.
+
+The active Context Fabric consumer-readiness stack retains PostgreSQL-backed durable
+lifecycle intent, tenant/RLS isolation, replay identity, and provider-neutral
+`BatchInferencePort` ownership in this repository. The latest code-changing migration
+repair is `0c17c6bc8143f941dd13c12d677ffcc933785479`; packaged migration 0008 and the
+Docker initializer are byte-identical at blob
+`75ec8b45f4dfd340f1f3b470b8ec17f350320c5d`.
 
 ## Canonical product boundary
 
-`pg-llm-batch` owns PostgreSQL-backed durable/asynchronous LLM batch
-preparation, token/size accounting, provider-neutral batch lifecycle ports,
-tenant/RLS persistence, recovery evidence, and result ingestion. Model/provider
-discovery, routing, fallback, and credentials remain outside this bounded
-context. Context Fabric integration may consume only immutable released
-contracts through a pg-owned anti-corruption layer; mutable sibling branches or
-cross-service SQL are not production authority.
+`pg-llm-batch` owns durable/asynchronous LLM batch preparation, token/size
+accounting, provider-neutral batch lifecycle ports, PostgreSQL persistence,
+tenant/RLS isolation, recovery evidence, result ingestion, and the local outbox used
+to commit privacy-minimized lifecycle publication intent with product state.
+
+Provider/model discovery, routing, fallback, and credentials remain outside this
+bounded context. Context Graph / Context Fabric integration may consume only
+compatible immutable released contracts through a pg-owned anti-corruption layer.
+Mutable sibling branches, source copies, and cross-service SQL are not production
+authority. PR #323 separately owns the commercial PostgreSQL driver migration,
+including shared database-driver code; this stack does not overwrite that lane.
 
 ## Current gaps and disposition
 
-| Gap | State | Current evidence / required next condition |
+| Gap | State | Current evidence / next condition |
 | --- | --- | --- |
-| Lifecycle-outbox runtime/migration object resolution inherited caller `search_path` | Repaired on active Draft | Initial RED `fdf1be5b02f2bf1cc7fbddfb3e908a2d232303cf` exposed ambient name-resolution authority. First runtime fix `21866e42d54a924b6970daf3640d99583eff50d0` removed ambient lookup but changed the caller-owned transaction's `search_path`; follow-up RED `941d0cae253722ec8c5c82c5d86e9b5962707712` rejects that composition side effect. Final runtime fix `2b5a7eb1b7e5c2f19628290e6e50fb57d31d6549` uses `pg_catalog.set_config` for the tenant GUC and `public.llm_context_lifecycle_outbox` for reads/writes without mutating caller `search_path`; fake/test alignment is `f3fb547f3924aaf49c7cd8b40f978d4618c8e119`. Installer RED `757c08afe51694208425677e6a2cf92d20dd9f15` then caught that `pg_catalog` first in `search_path` also makes an unqualified `CREATE TABLE` target the wrong current schema. Package migration `6d0b1b5359355fae8b45ceb3162ff7165150f766` explicitly creates `public.llm_context_lifecycle_outbox`; Docker mirror `99218d034c0763bfa496e16fbae790fc7e099982` has the same blob. Rollback `63aba47bcbf9cc71467cd2ad598a0708a9994bf0` retains its installer-owned reviewed path. Exact-head hosted execution remains required. |
-| Lifecycle-outbox caller-controlled row-lock mode accepted arbitrary truthy objects | Repaired on active Draft | RED `c6c03c4667d0d4f61f6fade694d84e87c6c4e0b4` adds a public transaction-boundary regression requiring `for_update` to be an exact built-in boolean before truthiness or SQL; behavior-bearing `__bool__`, integer, string, and null authorities are rejected without database interaction. Causal source fix `c77ad8895634d96a5da86288e48cb843241f1a6f` validates the lock decision before tenant GUC binding or relation access and preserves exact `False`/`True` semantics. Exact-head hosted execution remains required. |
-| Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
-| Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration installs canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` in both policy predicates. Exact-head hosted execution remains required. |
-| Canonical RLS policy name could mask semantic drift or an additional widening policy | Repaired on active Draft | Executable RED `334f2545abecd189895d9d60d9a70caa0cffb7f1` requires `pg_policy` command/permissive/role/expression-tree identity instead of accepting the canonical name alone, and requires unknown policy names to fail closed. Causal migration fix `5e95aeac86db963d27a3421145b7df8c2f6bea9b` repairs a same-name drifted v2 only when catalog semantics differ; Docker parity is `bd41c8db721b2d3549ee82ced40ca1d79197d3ed`. Follow-up RED `2f18db2b113e5bf94092125ca9af7fd072ae2793` requires a post-create/post-repair catalog verification, satisfied by package `7ae5d33954d03453d7fc0cbca6fb87cc09be2113` and byte-identical Docker mirror `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. The migration fails rather than silently deleting an unknown policy. PostgreSQL runtime execution of the final exact head remains required. |
-| Canonical lifecycle timestamp name could mask noncanonical or semantically drifted CHECK state | Repaired on active Draft | RED `acf54afed9e5d1bcc56f3f645c10fce18c150bc5` requires canonical `valid_time`/`system_time` rows to be validated inheritable CHECKs and adds a same-name repair path. Package fix `cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` plus Docker `ac10613c59922563e38ccaf5af80c6f909e4ce76` closed kind/validation/inheritance drift. Review then found that a validated same-name weak CHECK could still pass, so follow-up RED `aa4a7e29d8ae5455315a28e4df6ef812821b380a` requires the expected package SHA-256 semantic stamp through `obj_description` and a post-add `COMMENT ON CONSTRAINT`. Package fix `000a1933038b2fd2815ca3ffcf492ebd557262d3` and Docker mirror `14d7e24ca841d3050fb343768393ee7b08bfd923` are byte-identical at `cc08217b04934e3364f61e7379191b6363979a53`. The stamp detects ordinary package-owned drop/recreate drift but is not claimed as a defense against an administrator intentionally forging the stamp. Exact-head PostgreSQL runtime execution remains required. |
-| Pre-existing lifecycle-outbox table could lack the nondeferrable tenant/evidence replay arbiter required by runtime `ON CONFLICT` | Repaired on active Draft | RED `939b5ae55f42c63205e9b86618272fcfecca4791` requires migration 0008 to converge a canonical validated nondeferrable UNIQUE constraint whose `conkey` is exactly `(tenant_scope, evidence_id)`, and ties that catalog invariant to the runtime `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING` path. Package fix `beb37aaacf0d33c954a53ff15248561f6cbe8fa4` repairs a same-name wrong-kind/deferrable/wrong-column constraint or installs the missing arbiter after `CREATE TABLE IF NOT EXISTS`; Docker mirror `6c9ca15f57b7634973c9a999300d12c7764128ee` is byte-identical at `b4c206bef18caa8d5b4f8cc327d3b92890aceb8f`. PostgreSQL runtime execution of a deliberately stale pre-existing table remains required before hosted GREEN is claimed. |
-| Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
-| Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep were green on the last exact read, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
-| Immutable Context Graph / EA / orchestrator authority | Blocked upstream | No production Context Assertion publication is admitted until compatible immutable releases exist. Re-read tag, version, source commit, artifact digest, provenance, schema/profile, admission, and conformance identities before binding. |
-| Commercial PostgreSQL driver migration | Separate active writer | PR #323 owns the driver-neutral migration slice, including `pg_llm_batch/db.py`. This writer does not overwrite or restack that sibling lane while it is active. |
-| Release package / SBOM / provenance / rollback proof | Not yet releasable | Perform only after protected exact head is merge-ready and all owner gates are terminal green; version, CHANGELOG, tag, package, immutable release, SBOM, provenance, reproducibility, and rollback evidence must refer to the same source identity. |
-| Buyer-path p95 ≤ 20 ms | Unproven for this slice | Do not claim the threshold from unit tests or warm-cache microbenchmarks. Measure applicable PostgreSQL/API buyer paths with realistic data and connection lifecycle once this stack can execute on hosted/runtime infrastructure. |
+| Lifecycle-outbox runtime/migration object resolution inherited caller `search_path` | Repaired on active Draft | Runtime uses `pg_catalog.set_config` and `public.llm_context_lifecycle_outbox` without mutating caller transaction search state. Installer creation targets `public` explicitly while the installer-owned path remains `pg_catalog, public, pg_temp`. Exact-head hosted execution remains required. |
+| Caller-controlled row-lock mode accepted arbitrary truthy values | Repaired on active Draft | RED `c6c03c4667d0d4f61f6fade694d84e87c6c4e0b4`; fix `c77ad8895634d96a5da86288e48cb843241f1a6f` requires exact built-in `bool` before tenant binding or SQL. |
+| Lifecycle-outbox store exposed admitted PostgreSQL DSN | Repaired on active Draft | RED `34010cdb4267afafd7e06246b29cf7765403cae3`; fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN package-internal and removes the public accessor. |
+| Canonical RLS policy name could mask policy drift or additional widening policy | Repaired on active Draft | Migration verifies command, permissive mode, PUBLIC role, both stored expressions, rejects unknown policy names, and verifies canonical v2 before retiring known predecessors. Policy predicates bind equality and `current_setting` through `pg_catalog`. Exact-head PostgreSQL execution remains required. |
+| Canonical UTC timestamp CHECK name could mask noncanonical state | Repaired on active Draft | Canonical checks require validated inheritable CHECK state plus package semantic stamps; stale same-name constraints are rebuilt once. Exact-head PostgreSQL execution remains required. |
+| Existing table could lack the nondeferrable `(tenant_scope, evidence_id)` replay arbiter | Repaired on active Draft | RED `939b5ae55f42c63205e9b86618272fcfecca4791`; migration converges a validated nondeferrable UNIQUE with exact `conkey` order. Runtime `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING` therefore has a schema-level arbiter after successful migration. |
+| Same-name operational index could have the wrong key order or unusable catalog state | Repaired on active Draft; hosted GREEN pending | Static RED `e7174cfe11874ef815dc53bd0d48af3cc2cf0d3e`, executable PostgreSQL specimen `338a1ddb753b0fb03d1e8de5643d28a550f32f44`, and tightened fail-closed contract `e5e4db86cd1d5348056c248f3b9600e27120f3e7` prove that name-only `CREATE INDEX IF NOT EXISTS` is insufficient. Causal fix `0c17c6bc8143f941dd13c12d677ffcc933785479` admits only a public, valid/ready/live, nonunique two-key B-tree over exactly `(tenant_scope, created_at)` with no expression or predicate; it repairs a same-target wrong index once and fails closed on an unrelated same-name relation. Package and Docker SQL are byte-identical at `75ec8b45f4dfd340f1f3b470b8ec17f350320c5d`. Exact-head container execution remains required before GREEN is claimed. |
+| Exact-head executable evidence for active #319 stack | Waiting on hosted runner | CI and Release Acceptance must execute against the final exact head. Predecessor or superseded-head GREEN is not transferable. |
+| Dependency root #233 | Protected merge prerequisite | Re-read exact head, required checks, CodeQL compatibility evidence, independent reviews, and unresolved threads before merge. Do not self-approve or weaken gates. |
+| Immutable Context Graph / enterprise architecture / orchestrator authority | Blocked until compatible immutable releases exist | Re-read tag, source commit, artifact digest, provenance, schema/profile, admission, and conformance identities before any production binding. Mutable PR heads remain candidate evidence only. |
+| Commercial PostgreSQL driver migration | Separate active writer | PR #323 owns that slice. No overlapping rewrite or destructive restack from this lane. |
+| Release package / SBOM / provenance / rollback proof | Not yet releasable | Perform only after the exact protected head is merge-ready and owner gates are terminal green. Version, CHANGELOG, tag, package, immutable release, SBOM, provenance, reproducibility, and rollback evidence must identify the same source. |
+| Buyer-path p95 ≤ 20 ms | Unproven for this slice | Do not infer the threshold from unit tests or warm-cache microbenchmarks. Measure applicable PostgreSQL/API paths with realistic/right-cleared data and full connection lifecycle once hosted/runtime execution is available. |
 
-## Security decision trace: lifecycle-outbox database name authority
+## Reliability/performance decision trace: lifecycle operational-index convergence
 
-**Problem.** The outbox policy predicate already bound its security-sensitive
-operator/function names to `pg_catalog`, but runtime relation access and migration
-0008 still inherited PostgreSQL `search_path`. PostgreSQL resolves unqualified
-relation, type, function, and operator names through that path; temporary schemas
-also receive special lookup treatment unless explicitly placed. A caller-controlled
-or misconfigured session path could therefore select a same-named object before the
-reviewed outbox relation or influence migration object resolution. Conversely, once
-`pg_catalog` is deliberately first, an unqualified `CREATE TABLE` would use the wrong
-current schema for creation rather than the intended `public` application schema.
+**Problem.** Migration 0008 ended with `CREATE INDEX IF NOT EXISTS
+idx_llm_context_lifecycle_outbox_tenant_created ON ... (tenant_scope, created_at)`.
+PostgreSQL documents that `IF NOT EXISTS` only suppresses the name-collision error;
+it does not guarantee that the existing index resembles the requested definition.
+A restored, manually repaired, or partially migrated database could therefore retain
+that canonical name on `(created_at, tenant_scope)`, a partial/expression index, an
+invalid index, a different access method, or another unusable shape. Migration would
+succeed while the tenant-first operational access path silently disappeared.
 
-**Constraints.** The repair must preserve the package's existing `public` application
-schema, forced RLS, transaction-local tenant binding, caller-owned transaction seam,
-package/Docker migration parity, and atomic rollback refusal. It must not modify the
-shared `db.py` helper because active sibling PR #323 currently owns that file. A
-caller-owned transaction's pre-existing `search_path` is also caller state; the
-outbox must not silently rewrite it merely to protect its own object resolution.
+**Constraints.** Preserve the established `(tenant_scope, created_at)` read path,
+package/Docker SQL parity, idempotent reapplication, existing data, and the
+single-transaction migration. A current index must not be rebuilt on every run.
+Migration must not silently drop an unrelated same-name relation.
 
-**Alternatives.** Leaving ambient `search_path` unchanged while retaining unqualified
-runtime names was rejected because it leaves object authority to the caller session.
-The first causal attempt, `SET LOCAL search_path = pg_catalog, public, pg_temp`, was
-rejected for the runtime seam after follow-up review because `SET LOCAL` persists for
-the remainder of the caller's transaction and can change unrelated domain SQL.
-Changing the shared tenant helper was rejected because #323 currently owns `db.py`.
-Fully qualifying the runtime tenant-setting function and outbox relation is smaller
-and preserves caller state. Migration and rollback are different: each owns its
-single atomic installer/destructive statement, so transaction-local path binding
-there does not leak into caller domain work. Putting `public` first for migration was
-rejected because it would restore a writable-schema-before-catalog lookup hazard; the
-creation target is instead qualified explicitly.
+**Alternatives.** Keeping `CREATE INDEX IF NOT EXISTS` was rejected because name
+identity is weaker than index identity. Unconditional drop/recreate was rejected
+because it imposes avoidable lock/build cost on every current installation. Silently
+dropping any object returned by the canonical name was rejected because that turns a
+catalog collision into an unreviewed destructive migration.
 
-**Decision.** Runtime uses fully qualified
-`pg_catalog.set_config('pg_llm_batch.tenant_scope', ..., true)` and addresses the
-canonical relation as `public.llm_context_lifecycle_outbox`; it does not issue
-`SET LOCAL search_path`. Forward migration and destructive rollback `DO` blocks use
-fully qualified `pg_catalog.set_config` to bind `pg_catalog, public, pg_temp` before
-object lookup or DDL. Migration creation is explicitly
-`CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox`, so secure lookup
-order cannot redirect the DDL target. Explicitly placing `pg_temp` last prevents its
-implicit precedence in installer-owned statements.
+**Decision.** Migration 0008 now admits the operational index only when PostgreSQL
+catalog state proves all of the following: target relation is the lifecycle outbox;
+index namespace is `public`; access method is B-tree; `indisvalid`, `indisready`, and
+`indislive` are true; the index is nonunique; there are exactly two key/total
+attributes; there is no expression or predicate; and `indkey` resolves exactly to
+`tenant_scope` followed by `created_at`. If the canonical name exists as an index on
+the target relation but fails that contract, migration drops and recreates it once.
+If the canonical name resolves to an unrelated relation, migration raises the fixed
+`lifecycle outbox operational index name collision` exception instead of deleting it.
 
-**Effect.** Ambient session `search_path` is no longer authority for supported
-outbox runtime, installation, or rollback object resolution; creation is fixed to the
-canonical application schema; and the runtime seam leaves the caller transaction's
-name-resolution state unchanged. This does not claim that an untrusted principal with
-`CREATE` authority in canonical `public` is safe; schema ACLs remain an operator trust
-boundary. Exact-head PostgreSQL execution is still required before the repair is
-hosted GREEN evidence.
+The PostgreSQL container smoke deliberately creates the same canonical name with the
+wrong key order, reapplies migration 0008, then checks `pg_index`, `pg_class`, and
+`pg_am` for the canonical shape. A second reapplication proves the current state is
+idempotent. Static tests pin the same catalog contract so later refactors cannot
+return to name-only admission.
 
-## Security decision trace: lifecycle-outbox row-lock authority
-
-**Problem.** `load_in_transaction(..., for_update=...)` used the caller value directly
-in a Python truthiness decision. Although the public type annotation says `bool`,
-runtime callers could pass an integer, string, null, or an object with caller-defined
-`__bool__`. A truthy non-boolean could silently request `FOR UPDATE`; a behavior-bearing
-object could execute caller code before the database boundary. The lock decision is
-transaction authority and must not be inferred from Python coercion.
-
-**Constraints.** Preserve the existing public parameter and the two legitimate modes:
-exact `False` performs a tenant-qualified unlocked read; exact `True` performs the same
-read with `FOR UPDATE`. Invalid authority must fail before transaction-local tenant
-binding, relation access, or caller-controlled truthiness. Diagnostics must remain
-content-free.
-
-**Alternatives.** `bool(for_update)` was rejected because it explicitly executes the
-behavior-bearing coercion being removed. Accepting `0`/`1` for convenience was rejected
-because Python integers are not the lock authority contract and silently widen the
-public transaction semantics. Removing the public flag was unnecessary because the
-compare-and-swap outbox path legitimately uses it.
-
-**Decision.** Require `type(for_update) is bool` at the start of
-`load_in_transaction`. Invalid values raise the package `ValidationError` with a fixed
-redacted value before any SQL. Only the validated exact boolean controls whether the
-query receives `FOR UPDATE`.
-
-**Effect.** Caller-defined truthiness and accidental truthy values cannot acquire a
-row lock or execute behavior at the outbox transaction boundary. The repair does not
-change tenant scope, isolation level, lock duration, deadlock policy, or the existing
-compare-and-swap protocol. Exact-head hosted execution remains required.
-
-## Security decision trace: lifecycle-outbox DSN authority
-
-**Problem.** `PostgresContextLifecycleOutboxStore` retained an exact PostgreSQL
-DSN in a package-owned binding but also exposed that value through a public
-`postgres_dsn` property. PostgreSQL connection URIs commonly carry user/password
-material, so an immutable authority binding should not also become a routine
-logging or diagnostic surface.
-
-**Constraints.** The exact admitted database target must remain immutable for
-`load()` and `enqueue()`; tenant/RLS bindings and caller-owned transaction seams
-must remain unchanged. This is accidental-exposure minimization, not a claim
-that hostile in-process Python code cannot inspect module internals.
-
-**Alternatives.** Returning a redacted DSN was rejected because robustly
-canonicalizing every libpq DSN form would create a second connection-string
-parser and an unnecessary public API. Retaining the exact public property was
-rejected because no caller operation requires it.
-
-**Decision.** Keep the exact DSN only in `_OUTBOX_STORE_BINDINGS` and consume it
-directly for package-owned connection acquisition. `tenant_scope` and its
-content-free SHA-256 identity remain observable because they are authorization
-and evidence identities, not connection credentials.
-
-**Effect.** Normal store representation and public attributes no longer expose
-a credential-bearing database target. Connection routing remains bound to the
-same construction-time DSN. Exact-head unit/coverage execution is still required
-before this repair is GREEN evidence.
-
-## Security decision trace: lifecycle RLS policy convergence
-
-**Problem.** Explicitly qualifying the v2 tenant predicate fixed creation-time name
-resolution, but migration convergence still trusted the canonical policy name. A
-same-name policy can have different command scope, permissive/restrictive mode,
-roles, `USING`, or `WITH CHECK` expression trees. An additional permissive policy
-under another name can also widen RLS because policy composition is catalog state,
-not name identity. Name-only existence therefore cannot establish the tenant
-security boundary.
-
-**Constraints.** Preserve forced RLS and exact tenant equality, avoid repeated policy
-DDL when the stored policy is already current, preserve known v1/legacy upgrade
-convergence, keep package/Docker SQL byte-identical, and do not silently delete
-operator-owned unknown policy names. The migration must fail closed when it cannot
-prove the complete policy set it owns.
-
-**Alternatives.** Continuing to treat v2's name as sufficient was rejected because
-PostgreSQL stores command, permissive mode, roles, security qualification, and
-`WITH CHECK` separately in `pg_policy`. Dropping/recreating v2 on every migration
-run was rejected because it repeats policy DDL and lock work even when no semantic
-drift exists. Silently deleting unknown policies was rejected because that converts
-a security finding into an unreviewed destructive migration.
-
-**Decision.** Migration 0008 first rejects policy names outside canonical v2 and the
-two known predecessor names. It treats v2 as current only when `polcmd='*'`, the
-policy is permissive, `polroles` is exactly `PUBLIC`, and `pg_get_expr` decompiles
-both stored expression trees to the canonical tenant equality using
-`current_setting(..., true)`. A same-name v2 that fails those checks is replaced;
-a semantically current v2 is left untouched. After creation or repair, the same
-catalog predicate is checked again and the migration raises a fixed exception if
-canonical verification fails. Known v1/legacy policies are retired only after that
-verification succeeds.
-
-**Effect.** Policy-name reuse, role/command drift, expression drift, or an unexpected
-additional policy can no longer be silently accepted as the canonical tenant RLS
-state. Current installations retain lock-bounded idempotent reapplication because
-policy DDL occurs only when canonical semantics differ. This uses PostgreSQL's own
-`pg_policy` fields and `pg_get_expr` catalog reconstruction as verification evidence;
-exact-head PostgreSQL 18 execution remains required before hosted GREEN is claimed.
-
-## Security decision trace: lifecycle timestamp CHECK convergence
-
-**Problem.** Migration 0008 originally treated the canonical UTC timestamp constraint
-name as proof that the constraint was current. First review established that
-`pg_constraint` also carries constraint kind, validation state, and inheritance
-behavior. A second review then showed that even a validated inheritable same-name
-CHECK could contain a different expression, so those catalog flags still did not
-identify the reviewed package CHECK.
-
-**Constraints.** Preserve canonical UTC identity, idempotent reapplication, package
-and Docker SQL parity, and fail the migration rather than silently weakening
-existing-row validation. A current reviewed CHECK must not be rewritten on every run
-because that repeats table-lock and validation work. The application assurance model
-does not attempt to defend against a database administrator who intentionally forges
-package-owned catalog evidence.
-
-**Alternatives.** Name-only existence was rejected. Kind/validation/inheritance-only
-identity was also rejected because it cannot distinguish a weak same-name CHECK.
-Unconditional drop/add was rejected because it relocks and revalidates every current
-installation. Depending on PostgreSQL internal parse-tree text was rejected as a
-brittle cross-version contract for this migration slice.
-
-**Decision.** A canonical timestamp constraint is current only when its
-`pg_constraint` row is a validated inheritable CHECK and `obj_description` returns the
-expected SHA-256 semantic stamp for the reviewed CHECK source. Migration adds the
-stamp with `COMMENT ON CONSTRAINT` immediately after adding the canonical CHECK. If
-any catalog property or stamp is absent/mismatched, the package-owned same-name
-constraint is dropped and rebuilt before the legacy name is retired. Package and
-Docker migration files remain byte-identical.
-
-**Effect.** Ordinary wrong-kind, unvalidated, non-inheritable, unstamped, or
-same-name drop/recreate drift can no longer masquerade as canonical UTC lifecycle
-validation. Current installations do not repeat constraint DDL; stale installations
-pay the validation/lock cost once and fail transactionally if existing rows violate
-the reviewed CHECK. The stamp is not claimed to prevent a privileged operator from
-forging both a different CHECK and the same comment. Exact-head PostgreSQL runtime
-execution remains required before hosted GREEN is claimed.
-
-## Reliability decision trace: durable replay-key convergence
-
-**Problem.** Migration 0008 defined `UNIQUE (tenant_scope, evidence_id)` only inside
-`CREATE TABLE IF NOT EXISTS`. On an existing relation PostgreSQL skips that table
-creation block, so a legacy, manually repaired, or partially restored table could
-complete the migration without the unique arbiter used by
-`enqueue_in_transaction()`'s `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING`.
-The first runtime enqueue would then fail because PostgreSQL cannot infer a usable
-conflict arbiter. A same-name deferrable or wrong-column UNIQUE constraint is also not
-sufficient: PostgreSQL permits only NOT DEFERRABLE constraints and usable unique
-indexes as `ON CONFLICT` arbiters.
-
-**Constraints.** Preserve the existing tenant/evidence durable identity, idempotent
-reapplication, atomic migration behavior, package/Docker byte parity, and fail on
-pre-existing duplicate durable identities rather than deleting or rewriting rows.
-Current installations must not rebuild the unique index on every migration run.
-
-**Alternatives.** Relying on `CREATE TABLE IF NOT EXISTS` was rejected because it does
-not converge constraints on an existing relation. Checking only the canonical
-constraint name was rejected because `pg_constraint` stores kind, deferrability, and
-constrained column numbers separately. Unconditionally dropping and recreating the
-constraint was rejected because it repeats index construction and table locking.
-Silently de-duplicating existing rows was rejected because durable lifecycle identity
-conflicts require operator reconciliation, not migration-time data loss.
-
-**Decision.** After table creation, migration 0008 treats the canonical replay arbiter
-as current only when `pg_constraint` reports a validated nondeferrable UNIQUE
-constraint and `conkey` exactly identifies `tenant_scope` followed by `evidence_id`.
-A same-name noncanonical constraint is dropped and rebuilt once; an absent canonical
-constraint is added. Existing duplicate rows therefore make `ADD CONSTRAINT ...
-UNIQUE` fail transactionally. Fresh installs pass the catalog guard without repeated
-DDL. Package and Docker migration files remain byte-identical.
-
-**Effect.** A successfully converged schema now proves the concrete uniqueness
-precondition that the runtime UPSERT path depends on, rather than deferring the defect
-to the first enqueue. The change does not broaden tenant authority or rewrite durable
-evidence. Exact-head PostgreSQL execution against deliberately stale schema variants
-remains required before hosted GREEN is claimed.
+**Effect.** A successful migration establishes the tenant-first operational index
+shape rather than merely its name. This removes one avoidable source of production
+latency drift and makes restore/migration convergence observable. It does not claim
+the buyer-path p95 target is met; that remains a separate realistic-data performance
+acceptance gate. Hosted exact-head PostgreSQL execution is required before this repair
+is called GREEN.
 
 ## Release gate
 
-A release is not complete while any runnable merge/fix/test/restack/review,
+A release is incomplete while any runnable merge, fix, test, restack, review/thread,
 owner-path, documentation-to-code, or buyer-gap action remains. Before release,
-perform two fresh live sweeps and require the exact protected head, required
-checks, review state, security evidence, immutable dependency identities, and
-release artifacts to agree. Routine status reporting is not a completion gate.
+perform two fresh live sweeps and require the exact protected head, required checks,
+review state, security evidence, immutable dependency identities, and release
+artifacts to agree. Routine status reporting is not completion evidence.
 
 ## References
 
@@ -295,11 +111,17 @@ https://www.postgresql.org/docs/18/functions-info.html
 PostgreSQL Global Development Group. (2026d). *CREATE POLICY*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
 
-PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL
-18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
 
 PostgreSQL Global Development Group. (2026f). *INSERT*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-insert.html
 
 PostgreSQL Global Development Group. (2026g). *CREATE TABLE*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
+
+PostgreSQL Global Development Group. (2026h). *CREATE INDEX*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createindex.html
+
+PostgreSQL Global Development Group. (2026i). *pg_index*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-index.html
