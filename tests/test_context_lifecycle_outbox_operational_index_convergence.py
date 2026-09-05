@@ -60,6 +60,10 @@ def test_outbox_migration_does_not_trust_operational_index_name_alone() -> None:
         "        ) IS NOT NULL THEN",
         guard_at,
     )
-    drop_at = migration.index(f"DROP INDEX {_INDEX_NAME};", collision_guard_at)
+    collision_raise_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox operational index name collision'",
+        collision_guard_at,
+    )
+    drop_at = migration.index(f"DROP INDEX public.{_INDEX_NAME};", collision_raise_at)
     create_at = migration.index(f"CREATE INDEX {_INDEX_NAME}", drop_at)
-    assert guard_at < collision_guard_at < drop_at < create_at
+    assert guard_at < collision_guard_at < collision_raise_at < drop_at < create_at
