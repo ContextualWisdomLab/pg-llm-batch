@@ -13,10 +13,11 @@ import json
 import logging
 from typing import Any, Dict, List
 
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
+from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import (
+    PostgresDriverUnavailableError,
+    retained_postgres_driver,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,18 +25,46 @@ logger = logging.getLogger(__name__)
 REQUIRED_COMPONENTS = {"database", "pg_tiktoken", "com_config"}
 
 
-def check_health(dsn: str) -> Dict[str, Any]:
-    """Return a readiness report ``{ready: bool, components: [...]}``."""
-    if psycopg is None:
-        return {
-            "ready": False,
-            "components": [
-                {"component": "psycopg", "is_ready": False, "detail": "not installed"}
-            ],
-        }
+def _connect_health_database(
+    dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+) -> Any:
+    """Open a bounded readiness connection through the shared driver selector.
+
+    An explicitly injected driver remains authoritative for candidate and
+    degraded-mode checks. Otherwise the centralized runtime boundary selects the
+    retained concrete client. Both paths receive the same five-second connection
+    budget so migration cannot silently weaken readiness liveness semantics.
+    """
+    if postgres_driver is None:
+        try:
+            postgres_driver = retained_postgres_driver()
+        except PostgresDriverUnavailableError:
+            return None
+    return postgres_driver.connect(dsn, connect_timeout_seconds=5)
+
+
+def check_health(
+    dsn: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> Dict[str, Any]:
+    """Return a readiness report using the injected or retained database driver."""
     components: List[Dict[str, Any]] = []
     try:
-        with psycopg.connect(dsn, connect_timeout=5) as conn:
+        connection = _connect_health_database(dsn, postgres_driver)
+        if connection is None:
+            return {
+                "ready": False,
+                "components": [
+                    {
+                        "component": "psycopg",
+                        "is_ready": False,
+                        "detail": "not installed",
+                    }
+                ],
+            }
+        with connection as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     "SELECT component, is_ready, detail FROM pg_llm_batch_health_check()"
@@ -48,11 +77,16 @@ def check_health(dsn: str) -> Dict[str, Any]:
                             "detail": detail,
                         }
                     )
-    except Exception as exc:
+    except Exception:
+        logger.debug("Database readiness check failed")
         return {
             "ready": False,
             "components": [
-                {"component": "database", "is_ready": False, "detail": str(exc)}
+                {
+                    "component": "database",
+                    "is_ready": False,
+                    "detail": "database readiness check failed",
+                }
             ],
         }
 
@@ -120,8 +154,14 @@ def public_health_report(report: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
-    """Serve a minimal ``/healthz`` endpoint (blocking)."""
+def serve_healthz(
+    dsn: str,
+    host: str = "0.0.0.0",
+    port: int = 8080,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> None:
+    """Serve ``/healthz`` using the selected PostgreSQL driver boundary."""
     from http.server import BaseHTTPRequestHandler, HTTPServer
 
     class _Handler(BaseHTTPRequestHandler):
@@ -133,7 +173,9 @@ def serve_healthz(dsn: str, host: str = "0.0.0.0", port: int = 8080) -> None:
                 self.send_response(404)
                 self.end_headers()
                 return
-            report = public_health_report(check_health(dsn))
+            report = public_health_report(
+                check_health(dsn, postgres_driver=postgres_driver)
+            )
             body = json.dumps(report).encode("utf-8")
             self.send_response(200 if report["ready"] else 503)
             self.send_header("Content-Type", "application/json")

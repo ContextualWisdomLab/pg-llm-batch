@@ -43,24 +43,25 @@ class _Connection:
         return _Cursor(self._rows)
 
 
-class _Psycopg:
-    """Minimal psycopg facade returning fixed health rows."""
+class _Driver:
+    """Minimal retained-driver facade returning fixed health rows."""
 
     def __init__(self, rows):
         self._rows = rows
 
-    def connect(self, _dsn, *, connect_timeout):
-        assert connect_timeout == 5
+    def connect(self, _dsn, *, connect_timeout_seconds):
+        assert connect_timeout_seconds == 5
         return _Connection(self._rows)
+
+
+def _select_driver(monkeypatch, driver) -> None:
+    """Bind one retained readiness driver without exposing concrete-client imports."""
+    monkeypatch.setattr(health, "retained_postgres_driver", lambda: driver)
 
 
 def test_missing_required_component_is_reported_not_ready(monkeypatch):
     """A partial health function result must never pass by vacuous truth."""
-    monkeypatch.setattr(
-        health,
-        "psycopg",
-        _Psycopg([("database", True, "connected")]),
-    )
+    _select_driver(monkeypatch, _Driver([("database", True, "connected")]))
 
     report = health.check_health("postgresql://example")
 
@@ -76,9 +77,14 @@ def test_missing_required_component_is_reported_not_ready(monkeypatch):
     }
 
 
-def test_health_dependency_and_database_failures_include_reason(monkeypatch):
-    """Dependency and connection failures are explicit rather than hidden."""
-    monkeypatch.setattr(health, "psycopg", None)
+def test_health_dependency_and_database_failures_are_bounded(monkeypatch):
+    """Dependency absence is explicit while runtime failures stay content-free."""
+    def unavailable_driver():
+        raise health.PostgresDriverUnavailableError(
+            "Retained PostgreSQL driver is unavailable"
+        )
+
+    monkeypatch.setattr(health, "retained_postgres_driver", unavailable_driver)
     report = health.check_health("postgresql://example")
     assert report == {
         "ready": False,
@@ -87,15 +93,26 @@ def test_health_dependency_and_database_failures_include_reason(monkeypatch):
         ],
     }
 
-    class BrokenPsycopg:
+    class BrokenDriver:
         @staticmethod
-        def connect(_dsn, *, connect_timeout):
-            raise OSError(f"connection refused after {connect_timeout}s")
+        def connect(_dsn, *, connect_timeout_seconds):
+            raise OSError(
+                f"private-dsn-sentinel after {connect_timeout_seconds}s"
+            )
 
-    monkeypatch.setattr(health, "psycopg", BrokenPsycopg())
+    _select_driver(monkeypatch, BrokenDriver())
     report = health.check_health("postgresql://example")
-    assert report["ready"] is False
-    assert "connection refused after 5s" in report["components"][0]["detail"]
+    assert report == {
+        "ready": False,
+        "components": [
+            {
+                "component": "database",
+                "is_ready": False,
+                "detail": "database readiness check failed",
+            }
+        ],
+    }
+    assert "private-dsn-sentinel" not in repr(report)
 
 
 def test_health_requires_every_required_component(monkeypatch):
@@ -106,17 +123,19 @@ def test_health_requires_every_required_component(monkeypatch):
         ("com_config", True, "ready"),
         ("optional_metrics", False, "disabled"),
     ]
-    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
+    _select_driver(monkeypatch, _Driver(rows))
     assert health.check_health("postgresql://example")["ready"] is True
 
     rows[1] = ("pg_tiktoken", False, "extension unavailable")
-    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
+    _select_driver(monkeypatch, _Driver(rows))
     assert health.check_health("postgresql://example")["ready"] is False
 
 
 def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
-    """The HTTP wrapper emits JSON readiness and a strict 404 elsewhere."""
+    """The HTTP wrapper emits JSON readiness and forwards the selected DB driver."""
     events = []
+    observed = {}
+    driver = object()
 
     class FakeHTTPServer:
         def __init__(self, address, handler_class):
@@ -142,13 +161,19 @@ def test_serve_healthz_reports_status_body_and_not_found(monkeypatch):
             handler = self.handler_class.__new__(self.handler_class)
             assert handler.log_message("ignored") is None
 
+    def fake_check_health(_dsn, *, postgres_driver=None):
+        observed["driver"] = postgres_driver
+        return {"ready": False, "components": []}
+
     monkeypatch.setattr("http.server.HTTPServer", FakeHTTPServer)
-    monkeypatch.setattr(
-        health,
-        "check_health",
-        lambda _dsn: {"ready": False, "components": []},
+    monkeypatch.setattr(health, "check_health", fake_check_health)
+    health.serve_healthz(
+        "postgresql://example",
+        host="127.0.0.1",
+        port=8090,
+        postgres_driver=driver,  # type: ignore[arg-type]
     )
-    health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
+    assert observed["driver"] is driver
     assert ("address", ("127.0.0.1", 8090)) in events
     assert ("/other", "status", 404) in events
     assert ("/healthz/", "status", 503) in events
