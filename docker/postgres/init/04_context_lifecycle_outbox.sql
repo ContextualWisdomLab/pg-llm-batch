@@ -70,6 +70,13 @@ BEGIN
           AND outbox_namespace.nspname = 'public'
     ) OR EXISTS (
         SELECT 1
+        FROM pg_catalog.pg_inherits AS inheritance_edge
+        WHERE inheritance_edge.inhrelid =
+              'public.llm_context_lifecycle_outbox'::regclass
+           OR inheritance_edge.inhparent =
+              'public.llm_context_lifecycle_outbox'::regclass
+    ) OR EXISTS (
+        SELECT 1
         FROM (
             VALUES
                 ('context_outbox_uuid', 'uuid'::regtype, true, true),
