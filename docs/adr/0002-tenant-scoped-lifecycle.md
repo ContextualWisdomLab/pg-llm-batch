@@ -40,6 +40,15 @@ only inside the same atomic SQL statement that performs the backfill, enables
 row-level security for legacy tables, and restores `FORCE ROW LEVEL SECURITY`.
 Policy recreation follows under enabled and forced default-deny behavior.
 
+Versioned lifecycle-outbox policies must also bind their equality operator and
+`current_setting` lookup explicitly to `pg_catalog`. PostgreSQL stores policy
+command, role, and expression authority in `pg_policy`; a policy name alone does
+not make an unqualified expression canonical. Migration 0008 therefore creates
+the search-path-independent `...tenant_scope_canonical_v2` policy first, then
+retires the earlier unqualified `canonical_v1` and legacy policy names in the
+same transaction. Once v2 exists, catalog guards avoid rewriting it on ordinary
+idempotent reapplication (PostgreSQL Global Development Group, 2026a, 2026b).
+
 ## Consequences
 
 Embedding hosts must derive tenant scope from a trusted identity boundary and
@@ -55,3 +64,11 @@ Rollback to the prior two-column key requires first proving that no
 endpoint/provider pair exists in multiple tenants and supplying a replacement
 authorization boundary. Packaged and deployable schemas must remain exact
 mirrors, and schema reapplication must be idempotent.
+
+## References
+
+PostgreSQL Global Development Group. (2026a). *pg_policy*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
+
+PostgreSQL Global Development Group. (2026b). *CREATE POLICY*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
