@@ -2,6 +2,10 @@
 -- Durable, privacy-minimized lifecycle publication intent owned by pg-llm-batch.
 
 DO $$
+DECLARE
+    canonical_payload_check_expression TEXT;
+    canonical_valid_time_check_expression TEXT;
+    canonical_system_time_check_expression TEXT;
 BEGIN
     -- Bind name resolution before any DDL/catalog lookup. Explicit pg_temp placement
     -- prevents temporary relations from being searched ahead of the reviewed schema.
@@ -178,6 +182,103 @@ BEGIN
             UNIQUE (tenant_scope, evidence_id);
     END IF;
 
+    -- Derive canonical CHECK parser output from this PostgreSQL runtime instead of
+    -- trusting mutable COMMENT metadata or hard-coding version-sensitive deparser text.
+    -- The probe is session-local, never touches durable rows, and is explicitly removed
+    -- before production constraint admission.
+    CREATE TEMPORARY TABLE pg_temp.pg_llm_batch_outbox_constraint_probe_v1 (
+        tenant_scope TEXT NOT NULL,
+        evidence_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        tenant_scope_sha256 TEXT NOT NULL,
+        subject_ref_sha256 TEXT NOT NULL,
+        authority_ref_sha256 TEXT NOT NULL,
+        origin_ref_sha256 TEXT NOT NULL,
+        truth_status TEXT NOT NULL,
+        valid_time TEXT NOT NULL,
+        system_time TEXT NOT NULL,
+        provenance_ref_sha256 TEXT NOT NULL,
+        evidence_ref_sha256 TEXT NOT NULL,
+        CONSTRAINT pg_llm_batch_outbox_payload_probe_v1
+            CHECK (
+                tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                AND evidence_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                AND event_type ~ '^[a-z][a-z0-9._:-]{0,127}$'
+                AND tenant_scope_sha256 ~ '^[0-9a-f]{64}$'
+                AND subject_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND authority_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND origin_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND truth_status IN (
+                    'authoritative',
+                    'observed',
+                    'inferred',
+                    'proposed',
+                    'superseded',
+                    'rejected'
+                )
+                AND provenance_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND evidence_ref_sha256 ~ '^[0-9a-f]{64}$'
+            ),
+        CONSTRAINT pg_llm_batch_outbox_valid_time_probe_v1
+            CHECK (
+                valid_time ~
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+                AND valid_time::timestamptz IS NOT NULL
+                AND valid_time !~ '[.]000000Z$'
+                AND valid_time = CASE
+                    WHEN valid_time ~ '[.]' THEN
+                        to_char(
+                            valid_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                        )
+                    ELSE
+                        to_char(
+                            valid_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                        )
+                END
+            ),
+        CONSTRAINT pg_llm_batch_outbox_system_time_probe_v1
+            CHECK (
+                system_time ~
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+                AND system_time::timestamptz IS NOT NULL
+                AND system_time !~ '[.]000000Z$'
+                AND system_time = CASE
+                    WHEN system_time ~ '[.]' THEN
+                        to_char(
+                            system_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                        )
+                    ELSE
+                        to_char(
+                            system_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                        )
+                END
+            )
+    ) ON COMMIT DROP;
+
+    SELECT pg_catalog.pg_get_expr(conbin, conrelid, false)
+    INTO STRICT canonical_payload_check_expression
+    FROM pg_constraint
+    WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_constraint_probe_v1'::regclass
+      AND conname = 'pg_llm_batch_outbox_payload_probe_v1';
+
+    SELECT pg_catalog.pg_get_expr(conbin, conrelid, false)
+    INTO STRICT canonical_valid_time_check_expression
+    FROM pg_constraint
+    WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_constraint_probe_v1'::regclass
+      AND conname = 'pg_llm_batch_outbox_valid_time_probe_v1';
+
+    SELECT pg_catalog.pg_get_expr(conbin, conrelid, false)
+    INTO STRICT canonical_system_time_check_expression
+    FROM pg_constraint
+    WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_constraint_probe_v1'::regclass
+      AND conname = 'pg_llm_batch_outbox_system_time_probe_v1';
+
+    DROP TABLE pg_temp.pg_llm_batch_outbox_constraint_probe_v1;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -186,6 +287,8 @@ BEGIN
           AND contype = 'c'
           AND convalidated
           AND NOT connoinherit
+          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =
+              canonical_payload_check_expression
           AND pg_catalog.obj_description(oid, 'pg_constraint') =
               'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a'
     ) THEN
@@ -223,6 +326,22 @@ BEGIN
         COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1
             ON llm_context_lifecycle_outbox
             IS 'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_payload_canonical_v1'
+          AND contype = 'c'
+          AND convalidated
+          AND NOT connoinherit
+          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =
+              canonical_payload_check_expression
+          AND pg_catalog.obj_description(oid, 'pg_constraint') =
+              'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a'
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox payload CHECK failed canonical verification';
     END IF;
 
     IF EXISTS (
@@ -333,6 +452,8 @@ BEGIN
           AND contype = 'c'
           AND convalidated
           AND NOT connoinherit
+          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =
+              canonical_valid_time_check_expression
           AND pg_catalog.obj_description(oid, 'pg_constraint') =
               'pg-llm-batch:timestamp-check:v1:sha256=32c3d6803b1c13e584230dcb0652bf8f932ee3ee256109dd25ed7d07e11d0261'
     ) THEN
@@ -371,6 +492,22 @@ BEGIN
             IS 'pg-llm-batch:timestamp-check:v1:sha256=32c3d6803b1c13e584230dcb0652bf8f932ee3ee256109dd25ed7d07e11d0261';
     END IF;
 
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'
+          AND contype = 'c'
+          AND convalidated
+          AND NOT connoinherit
+          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =
+              canonical_valid_time_check_expression
+          AND pg_catalog.obj_description(oid, 'pg_constraint') =
+              'pg-llm-batch:timestamp-check:v1:sha256=32c3d6803b1c13e584230dcb0652bf8f932ee3ee256109dd25ed7d07e11d0261'
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox valid_time CHECK failed canonical verification';
+    END IF;
+
     IF EXISTS (
         SELECT 1
         FROM pg_constraint
@@ -389,6 +526,8 @@ BEGIN
           AND contype = 'c'
           AND convalidated
           AND NOT connoinherit
+          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =
+              canonical_system_time_check_expression
           AND pg_catalog.obj_description(oid, 'pg_constraint') =
               'pg-llm-batch:timestamp-check:v1:sha256=490658f6948499784f4c86d642ff38a680821c50d31ad2627d6af10e02722ede'
     ) THEN
@@ -425,6 +564,22 @@ BEGIN
         COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_system_time_canonical_v1
             ON llm_context_lifecycle_outbox
             IS 'pg-llm-batch:timestamp-check:v1:sha256=490658f6948499784f4c86d642ff38a680821c50d31ad2627d6af10e02722ede';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'
+          AND contype = 'c'
+          AND convalidated
+          AND NOT connoinherit
+          AND pg_catalog.pg_get_expr(conbin, conrelid, false) =
+              canonical_system_time_check_expression
+          AND pg_catalog.obj_description(oid, 'pg_constraint') =
+              'pg-llm-batch:timestamp-check:v1:sha256=490658f6948499784f4c86d642ff38a680821c50d31ad2627d6af10e02722ede'
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox system_time CHECK failed canonical verification';
     END IF;
 
     IF EXISTS (
