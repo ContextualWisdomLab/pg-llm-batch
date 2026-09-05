@@ -25,6 +25,16 @@ expressions. RLS is enabled and forced. Missing context therefore has no matchin
 row policy. PostgreSQL superusers and roles carrying `BYPASSRLS` bypass this
 mechanism and cannot be used as production application identities.
 
+Lifecycle-outbox migration policy predicates bind text equality with
+`OPERATOR(pg_catalog.=)` and resolve the tenant setting through
+`pg_catalog.current_setting`. This matters because PostgreSQL records a policy's
+command, roles, `USING`, and `WITH CHECK` expression authority in `pg_policy`;
+an unqualified policy expression can otherwise depend on the migration
+session's name-resolution environment. The canonical v2 policy is installed
+before the earlier unqualified v1/legacy names are removed, and current v2 is
+left unchanged on idempotent reapplication (PostgreSQL Global Development
+Group, 2026e, 2026f).
+
 The setting itself is not a credential. PostgreSQL accepts custom two-part
 configuration names, so a role that can execute arbitrary SQL can call
 `set_config` with an arbitrary tenant scope. This design is a **trusted
@@ -61,9 +71,10 @@ Deterministic tests cover strict scope syntax, pre-effect validation,
 tenant-recorder propagation, standalone compatibility, parameterized
 transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation, atomic RLS restoration, policy
-default-deny behavior, exact schema mirroring, and documentation of the bounded
-assurance claim. Production statement, branch, and public-docstring coverage
-remain at 100%.
+default-deny behavior, exact schema mirroring, versioned policy convergence,
+explicit `pg_catalog` operator/function binding, and documentation of the
+bounded assurance claim. Production statement, branch, and public-docstring
+coverage remain at 100%.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -99,3 +110,9 @@ documentation*. https://www.postgresql.org/docs/18/sql-set.html
 PostgreSQL Global Development Group. (2026d). *System administration
 functions*. In *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/functions-admin.html
+
+PostgreSQL Global Development Group. (2026e). *pg_policy*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
+
+PostgreSQL Global Development Group. (2026f). *CREATE POLICY*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
