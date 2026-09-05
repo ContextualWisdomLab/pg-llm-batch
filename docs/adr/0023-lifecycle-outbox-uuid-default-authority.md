@@ -1,4 +1,4 @@
-# ADR 0019: Pin lifecycle-outbox UUID default authority to PostgreSQL core
+# ADR 0023: Pin lifecycle-outbox UUID default authority to PostgreSQL core
 
 - Status: Proposed
 - Date: 2026-09-06
