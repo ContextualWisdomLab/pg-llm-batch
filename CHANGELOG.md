@@ -18,6 +18,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox replay-arbiter convergence now repeats the exact
+  `pg_constraint` admission predicate after UNIQUE repair and fails closed if
+  the validated nondeferrable `(tenant_scope, evidence_id)` arbiter is no
+  longer canonical before migration success. The wired PostgreSQL smoke uses a
+  test-only event trigger to rename the newly added constraint after
+  `ALTER TABLE`, requires migration rollback, then requires clean canonical
+  reapplication. Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox operational-index convergence now repeats the exact catalog
   admission predicate after repair and fails closed before migration success if
   the installed index is not the reviewed public B-tree over
