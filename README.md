@@ -9,18 +9,32 @@ Azure OpenAI, or a LiteLLM gateway).
 Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and
 relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
 
+> **Commercial dependency status:** the repository's own source is Apache-2.0,
+> but the current runtime dependency `psycopg[binary]>=3.1` resolves to
+> LGPL-3.0-only Psycopg/Psycopg Binary distributions. That GPL-family inbound
+> path is outside ContextualWisdomLab's commercial dependency baseline and is
+> tracked in [issue #322](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/322).
+> The current install/compose/submodule commands below document development and
+> verification behavior; they are **not** evidence that this dependency graph is
+> approved for commercial incorporation or distribution. Do not suppress the
+> license inventory or treat this repository's Apache-2.0 grant as relicensing
+> Psycopg.
+
 ## Why it exists
 
 - **Token counting is authoritative.** Counts come from `pg_tiktoken` in the
   database, so the numbers used to pack a batch are exactly what the DB sees —
   there is no drifting Python-side tokenizer.
-- **No secrets in the environment.** All configuration and credentials live in
-  Postgres KV tables (`com_config`, `com_secrets`). The environment is only a
-  *bootstrap transport* for the DSN and an optional Fernet key. This replaces
-  the ~75 `os.getenv` reads in the upstream app. CLI secret values are entered
-  through a no-echo prompt or bounded standard input, never as process arguments.
-  Content-bearing `count-tokens` input is likewise accepted only through bounded
-  UTF-8 standard input, so prompt text is not placed in process arguments.
+- **Provider secrets stay out of ordinary process arguments.** Runtime provider
+  configuration and credentials live in Postgres KV tables (`com_config`,
+  `com_secrets`). Environment variables are limited to explicit bootstrap
+  transport such as the DSN, Compose secret source, passfile path, and optional
+  Fernet key; the bundled Compose path mounts the PostgreSQL password as a named
+  secret instead of embedding it in the component DSN. CLI secret values are
+  entered through a no-echo prompt or bounded standard input, never as process
+  arguments. Content-bearing `count-tokens` input is likewise accepted only
+  through bounded UTF-8 standard input, so prompt text is not placed in process
+  arguments.
 - **Disk-free assembly.** JSONL payloads are stored as `JSONB` and reconstructed
   by JOIN, never written to disk.
 - **Standalone or tenant-scoped lifecycle state.** `DurableBatchAPIClient`
@@ -63,27 +77,81 @@ than a second database-side network authority.
 - PostgreSQL with `pg_tiktoken`. Fresh bundled database initialization does not
   create `pg_cron` or `http`; their image packages are retained temporarily only
   for existing-volume cleanup and rollback compatibility.
-- Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
+- Python 3.10+ with the **current** `psycopg[binary]` and `aiohttp` dependency
+  graph (installed via `pip install .`). Psycopg is LGPL-3.0-only and therefore
+  remains an unresolved commercial-policy blocker under issue #322; this line
+  describes present execution requirements, not an approved inbound dependency.
 - Tenant-scoped lifecycle deployments require an application database role with
   `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
 
 ---
 
-## Standalone use
+## Standalone development and verification
+
+The following path exercises the current implementation. Because it installs the
+LGPL-family Psycopg runtime path described above, it is not the approved
+commercial distribution path while issue #322 remains open.
 
 ### 1. Bring up the stack
 
+For a **new disposable Compose project**, generate the PostgreSQL development
+password once and retain it in your normal local secret store. PostgreSQL applies
+that password only when it initializes the `pgdata` volume, so later starts of
+the same volume must reuse the same value unless you deliberately rotate the
+role credential inside PostgreSQL.
+
+For the host-side CLI, create a mode-0600 libpq passfile before starting Compose.
+The passfile escapes libpq delimiters, so arbitrary generated or restored
+passwords are not interpolated into a connection URI. After Compose has read its
+bootstrap secret, remove the plaintext password from the shell environment; the
+CLI environment contains only the passfile path and a credential-free DSN.
+
 ```bash
+export PG_LLM_BATCH_POSTGRES_PASSWORD="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+# Save the generated value outside the repository in your local secret manager.
+export PGPASSFILE="$(mktemp "${TMPDIR:-/tmp}/pg-llm-batch.pgpass.XXXXXX")"
+chmod 600 "$PGPASSFILE"
+python - <<'PY'
+import os
+from pathlib import Path
+
+password = os.environ["PG_LLM_BATCH_POSTGRES_PASSWORD"]
+escaped = password.replace("\\", "\\\\").replace(":", "\\:")
+Path(os.environ["PGPASSFILE"]).write_text(
+    f"localhost:5432:pgllm:pgllm:{escaped}\n",
+    encoding="utf-8",
+)
+PY
+
 docker compose up -d --build
+unset PG_LLM_BATCH_POSTGRES_PASSWORD
+export PG_LLM_BATCH_DSN="postgresql://pgllm@localhost:5432/pgllm"
 # postgres becomes healthy only once pg_tiktoken + com_config are ready;
 # the component then serves GET /healthz on :8080
 curl -fsS localhost:8080/healthz
 ```
 
-### 2. Point it at your gateway (config + secret in the DB, not env)
+On subsequent starts that reuse the existing `pgdata` volume, restore the same
+password from your local secret manager, recreate the mode-0600 passfile with the
+same Python escaping step, run `docker compose up`, and unset
+`PG_LLM_BATCH_POSTGRES_PASSWORD` again. Changing only the Compose secret does not
+rotate the persisted database role. If a disposable development password is
+intentionally lost, `docker compose down -v` removes the persisted database
+volume so the next start can initialize a new password; that command permanently
+deletes the old local database contents. Retained environments should use a
+deliberate PostgreSQL credential-rotation procedure and update the
+deployment/application secret together.
+
+Remove the temporary passfile when the local CLI session is finished:
 
 ```bash
-export PG_LLM_BATCH_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm
+rm -f "$PGPASSFILE"
+unset PGPASSFILE PG_LLM_BATCH_DSN
+```
+
+### 2. Point it at your gateway (config + secret in the DB, not argv)
+
+```bash
 python -m pg_llm_batch init-db                                   # idempotent
 python -m pg_llm_batch config set gateway base_url https://your-gateway/v1
 python -m pg_llm_batch config set-secret gateway_api_key.default # no-echo prompt
@@ -134,9 +202,11 @@ expires, including the last observed remote status.
 Assemble a batch programmatically:
 
 ```python
+import os
+
 from pg_llm_batch import PostgresBatchOrchestrator
 
-orch = PostgresBatchOrchestrator("postgresql://pgllm:pgllm@localhost:5432/pgllm")
+orch = PostgresBatchOrchestrator(os.environ["PG_LLM_BATCH_DSN"])
 result = orch.prepare_batches(batch_uuid="<uuid or input_file_path>")
 for payload in result["ready"]:
     print(payload.file_path, payload.request_count, payload.total_tokens)
@@ -219,7 +289,14 @@ exits zero, treat the target as unsafe and do not retry into the same service.
 See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md)
 for the operator steps.
 
-## Embed as a git submodule
+## Embedding boundary
+
+The codebase supports submodule-style embedding mechanically, but the current
+runtime graph contains the unapproved LGPL-family Psycopg dependency. The
+commands below document existing developer integration only; do not incorporate
+this package into a commercial ContextualWisdomLab distribution until issue
+`#322` removes/replaces that dependency and exact-head package/license evidence
+is clean.
 
 ```bash
 git submodule add https://github.com/ContextualWisdomLab/pg-llm-batch.git \
@@ -306,13 +383,21 @@ for signals, ownership boundaries, privacy rules, and APA 7 references.
 
 ## Tests
 
+The current test environment also installs Psycopg and therefore verifies the
+present implementation, not the eventual commercially compatible replacement.
+
 ```bash
 pip install -e '.[test]'
 pytest                       # unit tests (fakes, no DB needed)
 
+# Restore the same development password used by the existing pgdata volume,
+# recreate a mode-0600 PGPASSFILE as in the quick start, then unset the plaintext
+# password after Compose has consumed it.
+export PG_LLM_BATCH_POSTGRES_PASSWORD="<same locally retained development password>"
 docker compose up -d --build postgres
-PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
-    pytest -m integration    # against the real pg_tiktoken PostgreSQL container
+unset PG_LLM_BATCH_POSTGRES_PASSWORD
+PG_LLM_BATCH_TEST_DSN="postgresql://pgllm@localhost:5432/pgllm" \
+    pytest -m integration    # libpq reads the password from PGPASSFILE
 ```
 
 ## Docs
@@ -339,4 +424,10 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+The pg-llm-batch repository's original source is Apache-2.0; see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). That grant does not relicense
+third-party dependencies. The current direct runtime path includes
+`psycopg[binary]>=3.1` / Psycopg Binary under LGPL-3.0-only, which is not
+accepted by ContextualWisdomLab's commercial inbound baseline. Issue #322 owns
+its removal/replacement; do not present the current dependency graph as
+commercial-policy clean until that work is integrated and reverified.
