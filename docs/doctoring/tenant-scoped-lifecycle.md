@@ -71,6 +71,21 @@ merge durable evidence. PostgreSQL requires a usable unique index or
 NOT DEFERRABLE constraint for `ON CONFLICT` arbitration (PostgreSQL Global
 Development Group, 2026i, 2026j, 2026k).
 
+The lifecycle outbox operational index has the same convergence requirement.
+PostgreSQL explicitly states that `CREATE INDEX IF NOT EXISTS` only suppresses a
+name collision and does not establish that the existing index resembles the
+requested definition (PostgreSQL Global Development Group, 2026l). Migration
+0008 therefore accepts
+`idx_llm_context_lifecycle_outbox_tenant_created` only when `pg_index`,
+`pg_class`, and `pg_am` prove a `public` B-tree that is valid, ready, live,
+nonunique, has exactly two key/total attributes, has no expression or predicate,
+and resolves its keys to `tenant_scope` followed by `created_at` (PostgreSQL
+Global Development Group, 2026m). A same-name index on the outbox with the wrong
+shape is rebuilt once. If the canonical name resolves to an unrelated relation,
+migration raises a fixed collision error instead of deleting operator-owned
+state. This is an operational performance/convergence guarantee, not evidence
+that the buyer-path p95 target has been measured.
+
 The lifecycle outbox also removes ambient PostgreSQL `search_path` from object
 authority, but the runtime seam does so without changing caller transaction
 state. Runtime tenant binding calls fully qualified `pg_catalog.set_config` and
@@ -120,12 +135,13 @@ is still disabled; policy recreation afterward remains default-deny until the
 new policy exists.
 
 For the Context Fabric lifecycle outbox, `CREATE TABLE IF NOT EXISTS` is followed
-by catalog convergence for the runtime replay key. A pre-existing relation must
-finish migration with a validated NOT DEFERRABLE UNIQUE constraint on
-`(tenant_scope, evidence_id)`. A current canonical constraint is left untouched;
-a stale same-name constraint is repaired and a missing one is added. Duplicate
-rows are an explicit migration failure requiring operator reconciliation rather
-than an implicit deduplication policy.
+by catalog convergence for both the runtime replay key and the operational
+`(tenant_scope, created_at)` index. A pre-existing relation must finish migration
+with a validated NOT DEFERRABLE UNIQUE constraint on `(tenant_scope, evidence_id)`
+and the exact public B-tree operational index. Current canonical objects are left
+untouched. Stale same-name objects are repaired only when the migration can prove
+they belong to the outbox; duplicate replay identities and unrelated name
+collisions fail for operator reconciliation rather than being silently changed.
 
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair appears in more than one tenant scope.
@@ -156,9 +172,11 @@ kind/validation/inheritance authority, package semantic-stamp identity and
 same-name timestamp constraint repair, runtime schema qualification without
 caller `search_path` mutation, installer/rollback search-path binding,
 non-exposure of an admitted credential-bearing outbox DSN, canonical replay-key
-kind/deferrability/column identity, and documentation of the bounded assurance
-claim. Production statement, branch, and public-docstring coverage remain at
-100% only when exact-head CI proves those gates.
+kind/deferrability/column identity, operational-index access method/state/key
+identity, same-name wrong-key repair, unrelated-name-collision fail-closed
+behavior, and documentation of the bounded assurance claim. Production
+statement, branch, and public-docstring coverage remain at 100% only when
+exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -168,8 +186,10 @@ SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
 migration 0008 against stale-schema fixtures that omit, defer, or mis-key the
-replay UNIQUE constraint so PostgreSQL evaluates the final policy, timestamp
-constraint, and UPSERT-arbiter catalog conditions.
+replay UNIQUE constraint and fixtures that replace the operational index with a
+same-name `(created_at, tenant_scope)` index. PostgreSQL must evaluate the final
+policy, timestamp constraint, UPSERT-arbiter, and operational-index catalog
+conditions on that exact head.
 
 ## References
 
@@ -221,3 +241,9 @@ documentation*. https://www.postgresql.org/docs/18/sql-insert.html
 
 PostgreSQL Global Development Group. (2026k). *CREATE TABLE*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
+
+PostgreSQL Global Development Group. (2026l). *CREATE INDEX*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createindex.html
+
+PostgreSQL Global Development Group. (2026m). *pg_index*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-index.html
