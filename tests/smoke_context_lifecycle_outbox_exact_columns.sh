@@ -71,3 +71,25 @@ if [[ "${legacy_event_type_constraints}" != "0" ]]; then
   echo "lifecycle outbox migration retained a legacy payload CHECK" >&2
   exit 1
 fi
+
+# A constraint COMMENT is metadata, not executable predicate identity. Simulate a
+# restore/manual drift that installs a same-name permissive CHECK and copies the
+# reviewed semantic stamp. Reapplying the migration must reconstruct the canonical
+# predicate rather than trusting the spoofable COMMENT alone.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "ALTER TABLE public.llm_context_lifecycle_outbox DROP CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1; ALTER TABLE public.llm_context_lifecycle_outbox ADD CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1 CHECK (true); COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1 ON public.llm_context_lifecycle_outbox IS 'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a';"
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "INSERT INTO public.llm_context_lifecycle_outbox (tenant_scope, evidence_id, event_type, tenant_scope_sha256, subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, truth_status, valid_time, system_time, provenance_ref_sha256, evidence_ref_sha256) VALUES ('tenant-a', 'stamp-spoof', 'INVALID', repeat('a', 64), repeat('b', 64), repeat('c', 64), repeat('d', 64), 'observed', '2026-09-06T00:00:00Z', '2026-09-06T00:00:00Z', repeat('e', 64), repeat('f', 64));" \
+  >/tmp/pg-llm-batch-outbox-payload-spoof.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-payload-spoof.out >&2
+  echo "lifecycle outbox migration trusted a spoofed canonical payload CHECK stamp" >&2
+  exit 1
+fi
+if ! grep -Fq "ck_llm_context_lifecycle_outbox_payload_canonical_v1" \
+  /tmp/pg-llm-batch-outbox-payload-spoof.out; then
+  cat /tmp/pg-llm-batch-outbox-payload-spoof.out >&2
+  echo "canonical payload rejection came from an unexpected constraint" >&2
+  exit 1
+fi
