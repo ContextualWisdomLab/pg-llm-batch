@@ -325,6 +325,47 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 assert_canonical_operational_index
 
+# Existing-table specimen 6: prove convergence is verified after CREATE INDEX, not
+# inferred from successful DDL return. A superuser-only test trigger renames the
+# just-created package index before migration 0008 can finish. The migration must
+# detect the missing canonical catalog state and roll its repair back atomically.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP INDEX public.idx_llm_context_lifecycle_outbox_tenant_created;
+CREATE FUNCTION public.pg_llm_batch_test_sabotage_outbox_index()
+RETURNS event_trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+  IF pg_catalog.to_regclass(
+      'public.idx_llm_context_lifecycle_outbox_tenant_created'
+  ) IS NOT NULL THEN
+    ALTER INDEX public.idx_llm_context_lifecycle_outbox_tenant_created
+      RENAME TO idx_llm_context_lifecycle_outbox_tenant_created_sabotaged;
+  END IF;
+END
+$function$;
+CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_outbox_index
+  ON ddl_command_end
+  WHEN TAG IN ('CREATE INDEX')
+  EXECUTE FUNCTION public.pg_llm_batch_test_sabotage_outbox_index();
+SQL
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null 2>&1; then
+  echo "lifecycle outbox migration did not post-verify repaired operational index" >&2
+  exit 1
+fi
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP EVENT TRIGGER pg_llm_batch_test_sabotage_outbox_index;
+DROP FUNCTION public.pg_llm_batch_test_sabotage_outbox_index();
+SQL
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT (to_regclass('public.idx_llm_context_lifecycle_outbox_tenant_created') IS NULL)::int")" = "1"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT (to_regclass('public.idx_llm_context_lifecycle_outbox_tenant_created_sabotaged') IS NULL)::int")" = "1"
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+assert_canonical_operational_index
+
 # Current state remains idempotently re-applicable without changing any arbiter.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
