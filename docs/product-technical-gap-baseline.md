@@ -3,7 +3,7 @@
 This file records the commercial-development gaps that are owned by
 `pg-llm-batch` or materially gate its release. It is evidence, not a substitute
 for live PR/check/release reads. The code snapshot assessed here is
-`28f44d89a21af76798d7c1dcef7a5bc2cbb31f64`; later documentation-only commits
+`ed081bbe21deb49938d32895c6b6eab267d94cf0`; later documentation-only commits
 on the same non-force stack do not change the assessed runtime behavior.
 
 ## Canonical product boundary
@@ -20,6 +20,7 @@ cross-service SQL are not production authority.
 
 | Gap | State | Current evidence / required next condition |
 | --- | --- | --- |
+| Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
 | Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration now installs versioned canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting`, then retires unqualified v1/legacy policy names. Package/Docker SQL bytes are mirrored. Exact-head hosted execution remains required. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
 | Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep are green on #233, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
@@ -27,6 +28,34 @@ cross-service SQL are not production authority.
 | Commercial PostgreSQL driver migration | Separate active writer | PR #323 owns the driver-neutral migration slice. This writer does not overwrite or restack that sibling lane while it is active. |
 | Release package / SBOM / provenance / rollback proof | Not yet releasable | Perform only after protected exact head is merge-ready and all owner gates are terminal green; version, CHANGELOG, tag, package, immutable release, SBOM, provenance, reproducibility, and rollback evidence must refer to the same source identity. |
 | Buyer-path p95 ≤ 20 ms | Unproven for this slice | Do not claim the threshold from unit tests or warm-cache microbenchmarks. Measure applicable PostgreSQL/API buyer paths with realistic data and connection lifecycle once this stack can execute on hosted/runtime infrastructure. |
+
+## Security decision trace: lifecycle-outbox DSN authority
+
+**Problem.** `PostgresContextLifecycleOutboxStore` retained an exact PostgreSQL
+DSN in a package-owned binding but also exposed that value through a public
+`postgres_dsn` property. PostgreSQL connection URIs commonly carry user/password
+material, so an immutable authority binding should not also become a routine
+logging or diagnostic surface.
+
+**Constraints.** The exact admitted database target must remain immutable for
+`load()` and `enqueue()`; tenant/RLS bindings and caller-owned transaction seams
+must remain unchanged. This is accidental-exposure minimization, not a claim
+that hostile in-process Python code cannot inspect module internals.
+
+**Alternatives.** Returning a redacted DSN was rejected because robustly
+canonicalizing every libpq DSN form would create a second connection-string
+parser and an unnecessary public API. Retaining the exact public property was
+rejected because no caller operation requires it.
+
+**Decision.** Keep the exact DSN only in `_OUTBOX_STORE_BINDINGS` and consume it
+directly for package-owned connection acquisition. `tenant_scope` and its
+content-free SHA-256 identity remain observable because they are authorization
+and evidence identities, not connection credentials.
+
+**Effect.** Normal store representation and public attributes no longer expose
+a credential-bearing database target. Connection routing remains bound to the
+same construction-time DSN. Exact-head unit/coverage execution is still required
+before this repair is GREEN evidence.
 
 ## Security decision trace: lifecycle RLS policy v2
 
