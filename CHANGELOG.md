@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox migration now treats per-column PostgreSQL collation as part
+  of the canonical durable row shape. Required columns must retain their
+  expected type-level `typcollation`; an explicit drift such as
+  `tenant_scope text COLLATE "C"` fails closed before constraint, RLS-policy, or
+  index convergence instead of silently changing tenant/evidence comparison
+  semantics. The migration does not auto-rewrite a drifted collation because
+  data and index consequences require operator reconciliation. Package and
+  Docker migration SQL remain byte-identical.
 - Lifecycle-outbox runtime no longer inherits or mutates caller-controlled
   PostgreSQL `search_path`: tenant binding calls `pg_catalog.set_config`
   explicitly and reads/writes use `public.llm_context_lifecycle_outbox`.
