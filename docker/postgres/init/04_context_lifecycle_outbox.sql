@@ -149,12 +149,42 @@ BEGIN
         ALTER TABLE llm_context_lifecycle_outbox FORCE ROW LEVEL SECURITY;
     END IF;
 
+    IF EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND polname NOT IN (
+              'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2',
+              'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1',
+              'plc_llm_context_lifecycle_outbox_tenant_scope'
+          )
+    ) THEN
+        RAISE EXCEPTION 'unexpected lifecycle outbox row-security policy';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_policy
         WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
           AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
+          AND polcmd = '*'
+          AND polpermissive
+          AND polroles = ARRAY[0::oid]
+          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =
+              '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =
+              '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
     ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_policy
+            WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
+              AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
+        ) THEN
+            DROP POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2
+                ON llm_context_lifecycle_outbox;
+        END IF;
+
         CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2
             ON llm_context_lifecycle_outbox
             TO PUBLIC
