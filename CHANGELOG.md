@@ -37,27 +37,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy names instead of silently widening or deleting them, and verifies the
   stored canonical policy again before retiring v1/legacy names. A current v2
   remains untouched on ordinary idempotent reapplication.
-- Lifecycle-outbox canonical UTC timestamp checks no longer treat a
-  `pg_constraint.conname` match as sufficient migration authority. Migration
-  0008 now requires a validated, inheritable `CHECK` plus a package-owned
-  SHA-256 semantic stamp stored as the constraint comment. A same-name
-  wrong-kind, unvalidated, `NO INHERIT`, or unstamped constraint is dropped and
-  rebuilt before legacy timestamp checks are retired. The stamp detects normal
-  drop/recreate semantic drift under the trusted migration-authority model; it
-  is not a defense against an operator deliberately forging the package stamp.
-  Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox canonical payload and UTC timestamp checks no longer treat a
+  same name plus mutable constraint comment as executable migration authority.
+  Migration 0008 creates session-local temporary probe CHECKs from the reviewed
+  definitions, asks the running PostgreSQL version to decompile their expression
+  trees with `pg_get_expr`, and admits each durable canonical CHECK only when its
+  kind, validation/inheritance state, parsed expression, and review stamp all
+  agree. Same-name/same-stamp predicate drift is rebuilt and post-verified while
+  already-current durable CHECKs avoid replacement DDL. The wired PostgreSQL
+  smoke replaces payload canonical v1 with `CHECK (true)`, copies the expected
+  stamp, reapplies migration, and requires the canonical grammar to reject an
+  invalid event. Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox migration now converges the payload grammar/integrity checks
   after `CREATE TABLE IF NOT EXISTS`, so an existing restored or manually
   repaired table cannot silently skip the tenant/event/evidence identifier,
   digest, or truth-status constraints just because the relation already exists.
-  Canonical payload CHECK v1 must be validated, inheritable, and carry a
-  reproducible SHA-256 stamp derived from the reviewed grammar. After canonical
-  v1 is established, migration retires exactly the ten known package-owned
-  predecessor payload CHECK names so a stale stricter legacy predicate cannot
-  remain a second grammar authority. Unknown CHECK names are preserved rather
-  than silently deleted. The PostgreSQL smoke restores a stricter legacy
-  event-type predecessor, reapplies migration, and requires it to disappear.
-  Package and Docker migration SQL remain byte-identical.
+  After canonical payload v1 is established and post-verified, migration retires
+  exactly the ten known package-owned predecessor payload CHECK names so a stale
+  stricter legacy predicate cannot remain a second grammar authority. Unknown
+  CHECK names are preserved rather than silently deleted. The PostgreSQL smoke
+  restores a stricter legacy event-type predecessor, reapplies migration, and
+  requires it to disappear. Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox migration now converges the nondeferrable
   `(tenant_scope, evidence_id)` UNIQUE constraint required by runtime
   `ON CONFLICT` replay even when the relation already exists. Missing,
