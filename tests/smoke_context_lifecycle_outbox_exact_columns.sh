@@ -33,6 +33,29 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
+# Durable publication intent cannot be admitted on an UNLOGGED relation. PostgreSQL
+# can preserve the same columns, constraints, RLS and indexes across SET UNLOGGED,
+# while crash recovery and standby replication semantics are materially weakened.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'ALTER TABLE public.llm_context_lifecycle_outbox SET UNLOGGED;'
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-persistence.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-persistence.out >&2
+  echo "lifecycle outbox migration admitted an unlogged durable relation" >&2
+  exit 1
+fi
+if ! grep -Fq "lifecycle outbox structural schema mismatch" \
+  /tmp/pg-llm-batch-outbox-persistence.out; then
+  cat /tmp/pg-llm-batch-outbox-persistence.out >&2
+  echo "lifecycle outbox persistence drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'ALTER TABLE public.llm_context_lifecycle_outbox SET LOGGED;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
 # Column collation participates in text equality and unique-index semantics. Use the
 # evidence identity rather than tenant_scope so the specimen changes only column/index
 # authority and does not fail earlier on PostgreSQL's RLS-policy ALTER TYPE dependency.
