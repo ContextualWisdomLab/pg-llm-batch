@@ -59,6 +59,38 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'uq_llm_context_lifecycle_outbox_tenant_evidence'
+          AND contype = 'u'
+          AND convalidated
+          AND NOT condeferrable
+          AND conkey = ARRAY[
+              (SELECT attnum::smallint FROM pg_attribute
+               WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                 AND attname = 'tenant_scope' AND NOT attisdropped),
+              (SELECT attnum::smallint FROM pg_attribute
+               WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                 AND attname = 'evidence_id' AND NOT attisdropped)
+          ]
+    ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+              AND conname = 'uq_llm_context_lifecycle_outbox_tenant_evidence'
+        ) THEN
+            ALTER TABLE llm_context_lifecycle_outbox
+                DROP CONSTRAINT uq_llm_context_lifecycle_outbox_tenant_evidence;
+        END IF;
+
+        ALTER TABLE llm_context_lifecycle_outbox
+            ADD CONSTRAINT uq_llm_context_lifecycle_outbox_tenant_evidence
+            UNIQUE (tenant_scope, evidence_id);
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
           AND conname = 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'
           AND contype = 'c'
           AND convalidated
