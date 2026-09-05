@@ -85,6 +85,43 @@ BEGIN
            OR actual.atthasdef IS DISTINCT FROM expected.atthasdef
            OR actual.attgenerated <> ''
            OR actual.attidentity <> ''
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_attribute AS actual
+        JOIN pg_attrdef AS defaults
+          ON defaults.adrelid = actual.attrelid
+         AND defaults.adnum = actual.attnum
+        WHERE actual.attrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND NOT actual.attisdropped
+          AND (
+              (
+                  actual.attname = 'context_outbox_uuid'
+                  AND pg_catalog.pg_get_expr(
+                      defaults.adbin,
+                      defaults.adrelid,
+                      false
+                  ) NOT IN (
+                      'uuid_generate_v4()',
+                      'public.uuid_generate_v4()'
+                  )
+              )
+              OR (
+                  actual.attname = 'tenant_scope'
+                  AND pg_catalog.pg_get_expr(
+                      defaults.adbin,
+                      defaults.adrelid,
+                      false
+                  ) <> '''standalone''::text'
+              )
+              OR (
+                  actual.attname = 'created_at'
+                  AND pg_catalog.pg_get_expr(
+                      defaults.adbin,
+                      defaults.adrelid,
+                      false
+                  ) <> 'now()'
+              )
+          )
     ) OR NOT EXISTS (
         SELECT 1
         FROM pg_constraint
