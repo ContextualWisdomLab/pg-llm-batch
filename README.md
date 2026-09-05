@@ -210,16 +210,14 @@ all-command permissive `PUBLIC` role and canonical stored expressions. It
 repairs same-name semantic drift, fails closed on unknown policy names, and
 verifies the resulting policy before retiring v1/legacy names.
 
-Migration 0008 also verifies canonical lifecycle timestamp CHECKs by catalog
-state plus a package semantic identity rather than constraint name alone.
-`valid_time` and `system_time` canonical names are current only when
-`pg_constraint` reports a validated, inheritable CHECK and the constraint
-comment has the expected SHA-256 stamp for the reviewed CHECK source. A
-same-name wrong-kind, unvalidated, `NO INHERIT`, or unstamped constraint is
-rebuilt and stamped before the legacy timestamp check is removed. The stamp is
-bounded evidence for the trusted migration-authority model; it is not a defense
-against a database administrator deliberately forging the same stamp on a
-different CHECK.
+Migration 0008 verifies package-owned payload and lifecycle timestamp CHECKs by
+executable catalog identity rather than name or comment alone. It creates
+session-local temporary probe CHECKs from the reviewed definitions and uses the
+same running PostgreSQL server's `pg_get_expr` output as the canonical parsed
+expression. A durable canonical CHECK is current only when its type,
+validation/inheritance state, parsed expression, and review stamp all match.
+Same-name/same-stamp predicate drift is rebuilt once and post-verified; an
+already-current durable constraint is not replaced on ordinary reapplication.
 
 The lifecycle outbox runtime uses
 `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING` for idempotent durable
