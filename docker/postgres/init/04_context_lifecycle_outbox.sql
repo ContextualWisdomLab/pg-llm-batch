@@ -46,13 +46,13 @@ BEGIN
         CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time
             CHECK (
                 valid_time ~
-                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{1,6})?Z$'
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
                 AND valid_time::timestamptz IS NOT NULL
             ),
         CONSTRAINT ck_llm_context_lifecycle_outbox_system_time
             CHECK (
                 system_time ~
-                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{1,6})?Z$'
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
                 AND system_time::timestamptz IS NOT NULL
             ),
         CONSTRAINT ck_llm_context_lifecycle_outbox_provenance_sha256
