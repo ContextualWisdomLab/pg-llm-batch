@@ -5,6 +5,8 @@ image="pg-llm-batch-postgres:ci"
 container="pg-llm-batch-outbox-arbiter-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/05_context_lifecycle_outbox.sql"
 constraint="uq_llm_context_lifecycle_outbox_tenant_evidence"
+payload_constraint="ck_llm_context_lifecycle_outbox_payload_canonical_v1"
+payload_stamp="pg-llm-batch:payload-check:v1:sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d"
 operational_index="idx_llm_context_lifecycle_outbox_tenant_created"
 
 cleanup() {
@@ -60,6 +62,20 @@ assert_canonical_arbiter() {
   test "${observed}" = 'u|t|f|t'
 }
 
+assert_canonical_payload_constraint() {
+  local observed
+  observed="$(docker exec "${container}" psql -U postgres -d postgres -AtF '|' -c "
+    SELECT contype,
+           convalidated,
+           connoinherit,
+           pg_catalog.obj_description(oid, 'pg_constraint')
+    FROM pg_constraint
+    WHERE conrelid = 'public.llm_context_lifecycle_outbox'::regclass
+      AND conname = '${payload_constraint}';
+  ")"
+  test "${observed}" = "c|t|f|${payload_stamp}"
+}
+
 assert_canonical_operational_index() {
   local observed
   observed="$(docker exec "${container}" psql -U postgres -d postgres -AtF '|' -c "
@@ -100,6 +116,7 @@ assert_canonical_operational_index() {
 }
 
 assert_canonical_arbiter
+assert_canonical_payload_constraint
 assert_canonical_operational_index
 
 # Existing-table specimen 1: the runtime replay arbiter is absent. Reapplying
@@ -187,7 +204,56 @@ SQL
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT count(*) FROM public.llm_context_lifecycle_outbox WHERE tenant_scope = 'smoke' AND evidence_id = 'replay-arbiter'")" = "1"
 
-# Existing-table specimen 3: CREATE INDEX IF NOT EXISTS accepts a same-name index
+# Existing-table specimen 3: older installs can have the CREATE-time event-type
+# check removed and lack the canonical aggregate payload check. Reapplying migration
+# must restore a validated stamped check after CREATE TABLE IF NOT EXISTS is skipped.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+ALTER TABLE public.llm_context_lifecycle_outbox
+  DROP CONSTRAINT ck_llm_context_lifecycle_outbox_event_type;
+ALTER TABLE public.llm_context_lifecycle_outbox
+  DROP CONSTRAINT ${payload_constraint};
+SQL
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+assert_canonical_payload_constraint
+
+# The converged canonical payload contract must reject a row that the deliberately
+# removed legacy event-type check would otherwise have admitted.
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO public.llm_context_lifecycle_outbox (
+  tenant_scope,
+  evidence_id,
+  event_type,
+  tenant_scope_sha256,
+  subject_ref_sha256,
+  authority_ref_sha256,
+  origin_ref_sha256,
+  truth_status,
+  valid_time,
+  system_time,
+  provenance_ref_sha256,
+  evidence_ref_sha256
+) VALUES (
+  'smoke',
+  'payload-constraint-negative',
+  'Context.Invalid',
+  repeat('1', 64),
+  repeat('2', 64),
+  repeat('3', 64),
+  repeat('4', 64),
+  'observed',
+  '2026-09-05T00:00:00Z',
+  '2026-09-05T00:00:00Z',
+  repeat('5', 64),
+  repeat('6', 64)
+);
+SQL
+then
+  echo "canonical lifecycle payload constraint accepted invalid event_type" >&2
+  exit 1
+fi
+
+# Existing-table specimen 4: CREATE INDEX IF NOT EXISTS accepts a same-name index
 # even when its key order is wrong. Migration 0008 must repair the catalog shape.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
 DROP INDEX public.${operational_index};
@@ -198,8 +264,9 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 assert_canonical_operational_index
 
-# Current state remains idempotently re-applicable without changing either arbiter.
+# Current state remains idempotently re-applicable without changing any arbiter.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 assert_canonical_arbiter
+assert_canonical_payload_constraint
 assert_canonical_operational_index
