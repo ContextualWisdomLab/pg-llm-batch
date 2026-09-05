@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox migration RLS no longer relies on session `search_path` for
+  tenant equality or `current_setting` resolution. Canonical policy v2 binds
+  both through `pg_catalog`, installs before retiring the earlier unqualified
+  v1/legacy policy names, and remains catalog-gated on idempotent reapplication.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
