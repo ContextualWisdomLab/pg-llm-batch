@@ -17,15 +17,17 @@ def test_packaged_and_container_outbox_migrations_are_identical() -> None:
 
 
 def test_outbox_migration_uses_canonical_lifecycle_timestamp_identity() -> None:
-    """Database checks must enforce the package's exact canonical UTC identity."""
+    """Database checks and same-runtime probes must share canonical UTC identity."""
     schema = PACKAGE_SQL.read_text(encoding="utf-8")
 
-    assert schema.count(r"([.]\d{6})?Z$") == 2
+    assert "pg_llm_batch_outbox_valid_time_probe_v1" in schema
+    assert "pg_llm_batch_outbox_system_time_probe_v1" in schema
+    assert schema.count(r"([.]\d{6})?Z$") == 4
     assert r"\d{1,6}" not in schema
-    assert schema.count("AT TIME ZONE 'UTC'") == 2
-    assert schema.count("!~ '[.]000000Z$'") == 2
-    assert schema.count("HH24:MI:SS.US") == 2
-    assert schema.count("HH24:MI:SS\"Z\"") == 2
+    assert schema.count("AT TIME ZONE 'UTC'") == 4
+    assert schema.count("!~ '[.]000000Z$'") == 4
+    assert schema.count("HH24:MI:SS.US") == 4
+    assert schema.count("HH24:MI:SS\"Z\"") == 4
 
 
 def test_postgres_image_installs_outbox_after_checkpoint_schema() -> None:
