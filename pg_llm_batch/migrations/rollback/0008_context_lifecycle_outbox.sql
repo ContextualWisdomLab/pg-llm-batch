@@ -3,7 +3,11 @@
 
 DO $$
 BEGIN
-    IF to_regclass('llm_context_lifecycle_outbox') IS NOT NULL THEN
+    -- The rollback is destructive, so resolve only reviewed PostgreSQL/application
+    -- schemas before inspecting or dropping the canonical outbox relation.
+    PERFORM pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true);
+
+    IF pg_catalog.to_regclass('llm_context_lifecycle_outbox') IS NOT NULL THEN
         -- FORCE RLS would hide rows when no tenant setting is bound. A role able to
         -- drop the table must first expose every tenant so the emptiness check is
         -- meaningful. The DO block is transactional, so a refusal restores FORCE RLS.
