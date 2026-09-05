@@ -229,6 +229,14 @@ wrong-kind, or wrong-column same-name constraint is repaired once. Existing
 duplicate durable identities make migration fail for operator reconciliation
 rather than being silently deleted or merged.
 
+Migration 0008 also requires the lifecycle outbox itself to remain an ordinary
+logged table in `public`. A structurally matching `UNLOGGED` relation is rejected
+before constraint, RLS, or index convergence because PostgreSQL does not WAL-log
+its data, truncates it after a crash or unclean shutdown, and does not replicate
+its contents to standbys. The migration does not silently run `SET LOGGED`;
+operators must reconcile any crash/replication gap and schedule the storage
+rewrite explicitly before reapplying the migration.
+
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
 application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
