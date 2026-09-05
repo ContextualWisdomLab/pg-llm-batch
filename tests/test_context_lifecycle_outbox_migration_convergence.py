@@ -19,8 +19,8 @@ _TIMESTAMP_CONSTRAINTS = (
     ),
 )
 _LEGACY_POLICIES = (
-    "plc_llm_context_lifecycle_outbox_tenant_scope",
     "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1",
+    "plc_llm_context_lifecycle_outbox_tenant_scope",
 )
 _CANONICAL_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2"
 
