@@ -37,6 +37,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   policy names instead of silently widening or deleting them, and verifies the
   stored canonical policy again before retiring v1/legacy names. A current v2
   remains untouched on ordinary idempotent reapplication.
+- Lifecycle-outbox canonical UTC timestamp checks no longer treat a
+  `pg_constraint.conname` match as sufficient migration authority. Migration
+  0008 now admits the canonical `valid_time` and `system_time` constraints only
+  when PostgreSQL reports a validated, inheritable `CHECK`; a same-name
+  wrong-kind, unvalidated, or `NO INHERIT` constraint is dropped and rebuilt
+  before legacy timestamp checks are retired. Package and Docker migration SQL
+  remain byte-identical.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
