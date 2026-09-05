@@ -77,6 +77,17 @@ BEGIN
               'public.llm_context_lifecycle_outbox'::regclass
     ) OR EXISTS (
         SELECT 1
+        FROM pg_catalog.pg_trigger AS outbox_trigger
+        WHERE outbox_trigger.tgrelid =
+              'public.llm_context_lifecycle_outbox'::regclass
+          AND NOT outbox_trigger.tgisinternal
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_rewrite AS outbox_rule
+        WHERE outbox_rule.ev_class =
+              'public.llm_context_lifecycle_outbox'::regclass
+    ) OR EXISTS (
+        SELECT 1
         FROM (
             VALUES
                 ('context_outbox_uuid', 'uuid'::regtype, true, true),
