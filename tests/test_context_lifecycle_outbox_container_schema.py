@@ -16,6 +16,14 @@ def test_packaged_and_container_outbox_migrations_are_identical() -> None:
     assert PACKAGE_SQL.read_bytes() == DOCKER_SQL.read_bytes()
 
 
+def test_outbox_migration_uses_canonical_lifecycle_timestamp_identity() -> None:
+    """Database checks must admit only whole-second or six-digit UTC identities."""
+    schema = PACKAGE_SQL.read_text(encoding="utf-8")
+
+    assert schema.count(r"([.]\d{6})?Z$") == 2
+    assert r"\d{1,6}" not in schema
+
+
 def test_postgres_image_installs_outbox_after_checkpoint_schema() -> None:
     """Fresh container databases must receive the outbox after its prerequisites."""
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
