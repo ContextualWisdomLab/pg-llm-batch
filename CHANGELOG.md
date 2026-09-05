@@ -54,7 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repairs a same-name policy only when those semantics drift, rejects unknown
   policy names instead of silently widening or deleting them, and verifies the
   stored canonical policy again before retiring v1/legacy names. A current v2
-  remains untouched on ordinary idempotent reapplication.
+  remains untouched on ordinary idempotent reapplication. Canonical-v2
+  admission and post-repair verification now also inspect normal `pg_depend`
+  function/operator dependencies and reject tracked object authority other than
+  built-in `pg_catalog.current_setting(text, boolean)` and text equality. The
+  dependency rule is deliberately negative because PostgreSQL may omit rows for
+  pinned system objects; it supplements the hardened `search_path` and
+  decompiled-expression checks rather than treating catalog text as provenance.
 - Lifecycle-outbox canonical payload and UTC timestamp checks no longer treat a
   same name plus mutable constraint comment as executable migration authority.
   Migration 0008 creates session-local temporary probe CHECKs from the reviewed
