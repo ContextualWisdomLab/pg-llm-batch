@@ -122,6 +122,30 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 
+# PostgreSQL parent scans recurse into inheritance children unless ONLY is used, while
+# primary-key and unique constraints do not span those children. The package-owned
+# durability boundary therefore rejects either side of a pg_inherits edge rather than
+# silently widening replay and lifecycle reads beyond the canonical physical table.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE TABLE public.llm_context_lifecycle_outbox_shadow () INHERITS (public.llm_context_lifecycle_outbox);'
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-inheritance.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-inheritance.out >&2
+  echo "lifecycle outbox migration admitted an inheritance edge" >&2
+  exit 1
+fi
+if ! grep -Fq "lifecycle outbox structural schema mismatch" \
+  /tmp/pg-llm-batch-outbox-inheritance.out; then
+  cat /tmp/pg-llm-batch-outbox-inheritance.out >&2
+  echo "lifecycle outbox inheritance drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP TABLE public.llm_context_lifecycle_outbox_shadow;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
 # Restores can also reintroduce an older package-owned CHECK under its legacy name.
 # A stricter stale predicate must not survive beside the versioned aggregate CHECK,
 # otherwise valid current payloads remain blocked even though migration reports success.
