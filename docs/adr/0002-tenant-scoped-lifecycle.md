@@ -119,6 +119,19 @@ is verified again before canonical v1 and the legacy policy are retired. This
 keeps ordinary reapplication lock-bounded without accepting name-only drift
 (PostgreSQL Global Development Group, 2026a, 2026b, 2026d).
 
+Decompiled policy text is not the only policy-authority evidence. Both canonical
+v2 admission checks also inspect `pg_depend` normal dependencies owned by the
+policy. Any tracked function dependency must identify built-in
+`pg_catalog.current_setting(text, boolean)`, and any tracked operator dependency
+must identify built-in `pg_catalog.=(text, text)`. A different tracked function
+or operator causes the package-owned canonical policy to be rebuilt through the
+schema-qualified DDL and post-verified. The check is deliberately negative:
+PostgreSQL can omit dependency rows for pinned system objects, so requiring a
+positive dependency record for each built-in would reject valid installations.
+This supplements the hardened `search_path` and `pg_get_expr` checks rather than
+claiming that decompiled text alone proves referenced object identity
+(PostgreSQL Global Development Group, 2026d, 2026j).
+
 Versioned lifecycle-outbox payload and timestamp constraints use executable
 catalog identity plus a review stamp. Migration 0008 creates a session-local
 temporary probe table containing the reviewed payload, `valid_time`, and
@@ -221,7 +234,12 @@ An unexpected lifecycle-outbox policy is now a migration finding, not an
 extension point. Operators that intentionally need a different policy set must
 make that a separate reviewed architecture decision rather than adding a
 permissive policy beside the canonical tenant boundary. A same-name altered v2
-is repaired only because v2 is package-owned canonical state.
+is repaired only because v2 is package-owned canonical state. A same-name v2
+with a tracked normal dependency on a noncanonical function or operator is also
+repaired rather than accepted solely because its decompiled expression text
+looks canonical. This dependency check is catalog provenance evidence, not a
+claim of protection from a privileged administrator able to rewrite policy or
+catalog state after migration.
 
 A package-owned canonical payload or timestamp CHECK that fails executable
 predicate identity is also a repair finding, even if its name and comment stamp
@@ -279,3 +297,6 @@ documentation*. https://www.postgresql.org/docs/18/catalog-pg-attribute.html
 
 PostgreSQL Global Development Group. (2026i). *pg_type*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/catalog-pg-type.html
+
+PostgreSQL Global Development Group. (2026j). *pg_depend*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-depend.html
