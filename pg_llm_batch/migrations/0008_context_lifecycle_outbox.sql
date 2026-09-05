@@ -871,4 +871,70 @@ BEGIN
         CREATE INDEX idx_llm_context_lifecycle_outbox_tenant_created
             ON public.llm_context_lifecycle_outbox(tenant_scope, created_at);
     END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_index AS operational_index
+        JOIN pg_class AS index_relation
+          ON index_relation.oid = operational_index.indexrelid
+        JOIN pg_am AS index_method
+          ON index_method.oid = index_relation.relam
+        WHERE operational_index.indrelid =
+              'llm_context_lifecycle_outbox'::regclass
+          AND index_relation.relname = 'idx_llm_context_lifecycle_outbox_tenant_created'
+          AND index_relation.relnamespace = 'public'::regnamespace
+          AND index_method.amname = 'btree'
+          AND operational_index.indisvalid
+          AND operational_index.indisready
+          AND operational_index.indislive
+          AND NOT operational_index.indisunique
+          AND operational_index.indnkeyatts = 2
+          AND operational_index.indnatts = 2
+          AND operational_index.indexprs IS NULL
+          AND operational_index.indpred IS NULL
+          AND operational_index.indkey[0] = (
+              SELECT attnum
+              FROM pg_attribute
+              WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                AND attname = 'tenant_scope'
+                AND NOT attisdropped
+          )
+          AND operational_index.indkey[1] = (
+              SELECT attnum
+              FROM pg_attribute
+              WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                AND attname = 'created_at'
+                AND NOT attisdropped
+          )
+          AND operational_index.indcollation[0] = (
+              SELECT attcollation
+              FROM pg_attribute
+              WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                AND attname = 'tenant_scope'
+                AND NOT attisdropped
+          )
+          AND operational_index.indcollation[1] = 0
+          AND operational_index.indclass[0] = (
+              SELECT opclass.oid
+              FROM pg_opclass AS opclass
+              JOIN pg_am AS opclass_method
+                ON opclass_method.oid = index_relation.relam
+              WHERE opclass_method.amname = 'btree'
+                AND opclass.opcdefault
+                AND opclass.opcintype = 'text'::regtype
+          )
+          AND operational_index.indclass[1] = (
+              SELECT opclass.oid
+              FROM pg_opclass AS opclass
+              JOIN pg_am AS opclass_method
+                ON opclass_method.oid = opclass.opcmethod
+              WHERE opclass_method.amname = 'btree'
+                AND opclass.opcdefault
+                AND opclass.opcintype = 'timestamptz'::regtype
+          )
+          AND operational_index.indoption[0] = 0
+          AND operational_index.indoption[1] = 0
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox operational index failed canonical verification';
+    END IF;
 END $$;
