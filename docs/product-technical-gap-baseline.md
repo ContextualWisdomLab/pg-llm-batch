@@ -2,12 +2,14 @@
 
 This file records the commercial-development gaps that are owned by
 `pg-llm-batch` or materially gate its release. It is evidence, not a substitute
-for live PR/check/release reads. The runtime code snapshot assessed here includes
-the exact row-lock authority fix `c77ad8895634d96a5da86288e48cb843241f1a6f`
-and lifecycle-outbox migration semantic-convergence fix
-`7ae5d33954d03453d7fc0cbca6fb87cc09be2113`; the byte-identical Docker mirror
-is `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. Later documentation-only commits
-on the same non-force stack do not change the assessed runtime behavior.
+for live PR/check/release reads. The runtime/migration snapshot assessed here
+includes row-lock authority fix `c77ad8895634d96a5da86288e48cb843241f1a6f`,
+lifecycle-outbox RLS semantic-convergence fix
+`7ae5d33954d03453d7fc0cbca6fb87cc09be2113`, and timestamp CHECK catalog RED
+`acf54afed9e5d1bcc56f3f645c10fce18c150bc5` followed by package fix
+`cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` plus byte-identical Docker mirror
+`ac10613c59922563e38ccaf5af80c6f909e4ce76`. Later documentation commits on the
+same non-force stack do not change those migration bytes.
 
 ## Canonical product boundary
 
@@ -28,6 +30,7 @@ cross-service SQL are not production authority.
 | Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
 | Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration installs canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` in both policy predicates. Exact-head hosted execution remains required. |
 | Canonical RLS policy name could mask semantic drift or an additional widening policy | Repaired on active Draft | Executable RED `334f2545abecd189895d9d60d9a70caa0cffb7f1` requires `pg_policy` command/permissive/role/expression-tree identity instead of accepting the canonical name alone, and requires unknown policy names to fail closed. Causal migration fix `5e95aeac86db963d27a3421145b7df8c2f6bea9b` repairs a same-name drifted v2 only when catalog semantics differ; Docker parity is `bd41c8db721b2d3549ee82ced40ca1d79197d3ed`. Follow-up RED `2f18db2b113e5bf94092125ca9af7fd072ae2793` requires a post-create/post-repair catalog verification, satisfied by package `7ae5d33954d03453d7fc0cbca6fb87cc09be2113` and byte-identical Docker mirror `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. The migration fails rather than silently deleting an unknown policy. PostgreSQL runtime execution of the final exact head remains required. |
+| Canonical lifecycle timestamp constraint name could mask wrong-kind, unvalidated, or non-inheritable catalog state | Repaired on active Draft | RED `acf54afed9e5d1bcc56f3f645c10fce18c150bc5` requires each canonical `valid_time`/`system_time` name to be backed by `pg_constraint.contype='c'`, `convalidated`, and `NOT connoinherit`, plus a repair path for a same-name noncanonical row. Package migration fix `cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` drops package-owned same-name drift and rebuilds the canonical CHECK; Docker mirror `ac10613c59922563e38ccaf5af80c6f909e4ce76` has the identical SQL blob `dc3d57b0acb10525246133a717d43ff9217913a8`. PostgreSQL runtime execution of the final exact head remains required. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
 | Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep were green on the last exact read, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
 | Immutable Context Graph / EA / orchestrator authority | Blocked upstream | No production Context Assertion publication is admitted until compatible immutable releases exist. Re-read tag, version, source commit, artifact digest, provenance, schema/profile, admission, and conformance identities before binding. |
@@ -184,6 +187,38 @@ policy DDL occurs only when canonical semantics differ. This uses PostgreSQL's o
 `pg_policy` fields and `pg_get_expr` catalog reconstruction as verification evidence;
 exact-head PostgreSQL 18 execution remains required before hosted GREEN is claimed.
 
+## Security decision trace: lifecycle timestamp CHECK convergence
+
+**Problem.** Migration 0008 originally treated the existence of each canonical
+UTC timestamp constraint name as proof that the constraint was current. PostgreSQL
+stores constraint kind, validation state, and inheritance behavior separately in
+`pg_constraint`. A package-owned same-name row could therefore be an unvalidated
+CHECK, a `NO INHERIT` CHECK, or another constraint kind while the migration skipped
+canonical CHECK installation and proceeded to retire the legacy timestamp check.
+
+**Constraints.** Preserve canonical UTC identity, idempotent reapplication, package
+and Docker SQL parity, and fail the migration rather than silently weakening
+existing-row validation. A current validated inheritable CHECK must not be rewritten
+every time because that would repeat table-lock and validation work.
+
+**Alternatives.** Name-only existence was rejected because `conname` does not encode
+the constraint semantics. Unconditionally dropping and adding both canonical checks
+was rejected because it would relock and revalidate current installations. Accepting
+an unvalidated CHECK and validating it later was rejected because migration success
+would temporarily rely on weaker catalog state.
+
+**Decision.** A canonical timestamp constraint is current only when its
+`pg_constraint` row matches the package-owned name, `contype='c'`, `convalidated`
+is true, and `connoinherit` is false. Otherwise migration drops the same-name
+package-owned drift, adds the reviewed canonical CHECK, and only then retires the
+legacy constraint. Package and Docker migration files remain byte-identical.
+
+**Effect.** Wrong-kind, unvalidated, and non-inheritable same-name constraints can no
+longer masquerade as canonical UTC lifecycle validation. Current installations do
+not repeat constraint DDL; stale installations pay the validation/lock cost once and
+fail transactionally if existing rows violate the reviewed CHECK. Exact-head
+PostgreSQL runtime execution remains required before hosted GREEN is claimed.
+
 ## Release gate
 
 A release is not complete while any runnable merge/fix/test/restack/review,
@@ -206,3 +241,6 @@ https://www.postgresql.org/docs/18/functions-info.html
 
 PostgreSQL Global Development Group. (2026d). *CREATE POLICY*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
+
+PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
