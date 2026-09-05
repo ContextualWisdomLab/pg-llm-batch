@@ -198,6 +198,22 @@ BEGIN
             );
     END IF;
 
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
+          AND polcmd = '*'
+          AND polpermissive
+          AND polroles = ARRAY[0::oid]
+          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =
+              '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =
+              '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox row-security policy failed canonical verification';
+    END IF;
+
     IF EXISTS (
         SELECT 1
         FROM pg_policy
