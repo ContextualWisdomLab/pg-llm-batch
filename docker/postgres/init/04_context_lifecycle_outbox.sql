@@ -63,6 +63,8 @@ BEGIN
           AND contype = 'c'
           AND convalidated
           AND NOT connoinherit
+          AND pg_catalog.obj_description(oid, 'pg_constraint') =
+              'pg-llm-batch:timestamp-check:v1:sha256=32c3d6803b1c13e584230dcb0652bf8f932ee3ee256109dd25ed7d07e11d0261'
     ) THEN
         IF EXISTS (
             SELECT 1
@@ -94,6 +96,9 @@ BEGIN
                         )
                 END
             );
+        COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time_canonical_v1
+            ON llm_context_lifecycle_outbox
+            IS 'pg-llm-batch:timestamp-check:v1:sha256=32c3d6803b1c13e584230dcb0652bf8f932ee3ee256109dd25ed7d07e11d0261';
     END IF;
 
     IF EXISTS (
@@ -114,6 +119,8 @@ BEGIN
           AND contype = 'c'
           AND convalidated
           AND NOT connoinherit
+          AND pg_catalog.obj_description(oid, 'pg_constraint') =
+              'pg-llm-batch:timestamp-check:v1:sha256=490658f6948499784f4c86d642ff38a680821c50d31ad2627d6af10e02722ede'
     ) THEN
         IF EXISTS (
             SELECT 1
@@ -145,6 +152,9 @@ BEGIN
                         )
                 END
             );
+        COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_system_time_canonical_v1
+            ON llm_context_lifecycle_outbox
+            IS 'pg-llm-batch:timestamp-check:v1:sha256=490658f6948499784f4c86d642ff38a680821c50d31ad2627d6af10e02722ede';
     END IF;
 
     IF EXISTS (
