@@ -35,6 +35,16 @@ before the earlier unqualified v1/legacy names are removed, and current v2 is
 left unchanged on idempotent reapplication (PostgreSQL Global Development
 Group, 2026e, 2026f).
 
+`PostgresContextLifecycleOutboxStore` requires an explicit PostgreSQL DSN but
+does not expose that exact value as a public store property. A DSN can contain
+database credentials; the admitted value therefore remains package-internal
+connection authority in the weak binding used by `load()` and `enqueue()`.
+Tenant scope and its content-free digest stay observable because they are the
+local authorization/evidence identities. This is an accidental-disclosure
+control for normal logging and diagnostics, not an attempt to defend secrets
+from arbitrary code executing inside the same Python process (Joint Task Force,
+2020).
+
 The setting itself is not a credential. PostgreSQL accepts custom two-part
 configuration names, so a role that can execute arbitrary SQL can call
 `set_config` with an arbitrary tenant scope. This design is a **trusted
@@ -72,9 +82,10 @@ tenant-recorder propagation, standalone compatibility, parameterized
 transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation, atomic RLS restoration, policy
 default-deny behavior, exact schema mirroring, versioned policy convergence,
-explicit `pg_catalog` operator/function binding, and documentation of the
-bounded assurance claim. Production statement, branch, and public-docstring
-coverage remain at 100%.
+explicit `pg_catalog` operator/function binding, non-exposure of an admitted
+credential-bearing outbox DSN, and documentation of the bounded assurance
+claim. Production statement, branch, and public-docstring coverage remain at
+100% only when exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
