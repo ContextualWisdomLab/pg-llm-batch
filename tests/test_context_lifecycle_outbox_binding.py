@@ -74,3 +74,16 @@ def test_object_level_mutation_cannot_redirect_admitted_store_authority() -> Non
     assert store.postgres_dsn == "postgresql://unit"
     assert store.tenant_scope == "tenant-a"
     assert store.tenant_scope_sha256 == TENANT_SCOPE_SHA256
+
+
+def test_store_authority_boundary_cannot_be_overridden_by_subclassing() -> None:
+    """Inheritance must not replace database or tenant authority after admission."""
+    with pytest.raises(TypeError, match="does not support subclassing"):
+
+        class RedirectingOutboxStore(PostgresContextLifecycleOutboxStore):
+            """Attempt to replace admitted authority through virtual properties."""
+
+            @property
+            def tenant_scope(self) -> str:
+                """Redirect the local RLS authority if inheritance were accepted."""
+                return "tenant-b"
