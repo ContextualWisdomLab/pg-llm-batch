@@ -32,6 +32,16 @@ installs v2 before retiring the earlier unqualified policy names, then leaves an
 existing v2 unchanged on idempotent reapplication. Policy names are version
 markers, not substitutes for binding operator/function authority.
 
+Lifecycle-outbox relation authority is also pinned before use. Runtime
+transactions execute `SET LOCAL search_path = pg_catalog, public, pg_temp`
+before the tenant-setting helper or outbox relation can resolve. Migration 0008
+and its destructive rollback set the same transaction-local path with fully
+qualified `pg_catalog.set_config` inside their atomic `DO` blocks. Explicit
+`pg_temp` placement prevents the temporary schema from receiving implicit
+relation precedence over the reviewed `public` application schema. This does
+not make `public` safe if operators grant untrusted principals `CREATE` there;
+schema ACLs remain part of the deployment trust boundary.
+
 The custom setting is part of a **trusted application boundary**. It is not a
 credential and is not a substitute for authentication, authorization,
 SQL-injection prevention, or restricted direct database access. A role capable
@@ -55,12 +65,16 @@ Enabling RLS changes the behavior of direct SQL integrations: an ordinary role
 that does not bind an authorized transaction-local scope sees no lifecycle
 rows. Those integrations must move to `get_remote_batch_state`,
 `get_tenant_remote_batch_state`, or a reviewed tenant-binding database interface
-before deployment.
+before deployment. Caller-owned outbox methods require a real transaction;
+autocommit does not satisfy the transaction-local search-path or tenant-setting
+contract.
 
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair exists in more than one tenant scope.
-The packaged schema and Docker initialization schema are maintained as exact
-mirrors and must be reapplied successfully more than once.
+The rollback binds reviewed name resolution before `to_regclass`, emptiness
+inspection, and `DROP TABLE`. The packaged schema and Docker initialization
+schema are maintained as exact mirrors and must be reapplied successfully more
+than once.
 
 ## Logical restore execution
 
@@ -90,9 +104,12 @@ provider-returned data.
 Deterministic gates cover strict tenant validation, standalone compatibility,
 tenant-qualified SQL parameters, current-state reconciliation, migration
 idempotency, malformed database rows, default-deny policy text, explicit
-`pg_catalog` policy predicate authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage. Live
-PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
-identical provider identifiers in different tenants remain independently
-addressable and mutually invisible when access occurs through the trusted
-package boundary. They do not claim isolation after arbitrary SQL is granted.
+`pg_catalog` policy predicate authority, runtime/forward/rollback search-path
+authority, schema mirroring, operator documentation, and 100% production
+statement and branch coverage. Live PostgreSQL isolation tests use a
+`NOSUPERUSER NOBYPASSRLS` role and prove that identical provider identifiers in
+different tenants remain independently addressable and mutually invisible when
+access occurs through the trusted package boundary. Exact-head runtime evidence
+must also exercise a non-default caller `search_path` and verify the canonical
+outbox relation is still selected. These tests do not claim isolation after
+arbitrary SQL or untrusted schema-creation authority is granted.
