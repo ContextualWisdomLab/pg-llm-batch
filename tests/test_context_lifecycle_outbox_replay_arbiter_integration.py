@@ -19,9 +19,12 @@ _SKIP_NO_DB = pytest.mark.skipif(
     reason="PG_LLM_BATCH_TEST_DSN not set; skipping live-DB integration",
 )
 _CONSTRAINT = "uq_llm_context_lifecycle_outbox_tenant_evidence"
+_CANONICAL_CATALOG = ("u", True, False, True)
 
 
-def _replay_arbiter_catalog(dsn: str) -> tuple[str, bool, bool, bool]:
+def _replay_arbiter_catalog(
+    dsn: str,
+) -> tuple[str, bool, bool, bool] | None:
     """Read the exact catalog identity required by runtime ON CONFLICT inference."""
     import psycopg
 
@@ -52,9 +55,7 @@ def _replay_arbiter_catalog(dsn: str) -> tuple[str, bool, bool, bool]:
                 """,
                 (_CONSTRAINT,),
             )
-            row = cursor.fetchone()
-    assert row is not None
-    return row
+            return cursor.fetchone()
 
 
 def _install_noncanonical_replay_arbiter(dsn: str) -> None:
@@ -109,15 +110,15 @@ def test_live_migration_repairs_missing_and_noncanonical_replay_arbiter() -> Non
             connection.commit()
 
         apply_context_lifecycle_outbox_schema(_DSN)
-        assert _replay_arbiter_catalog(_DSN) == ("u", True, False, True)
+        assert _replay_arbiter_catalog(_DSN) == _CANONICAL_CATALOG
 
         _install_noncanonical_replay_arbiter(_DSN)
         apply_context_lifecycle_outbox_schema(_DSN)
-        assert _replay_arbiter_catalog(_DSN) == ("u", True, False, True)
+        assert _replay_arbiter_catalog(_DSN) == _CANONICAL_CATALOG
 
         # A current canonical catalog state must remain safely re-applicable.
         apply_context_lifecycle_outbox_schema(_DSN)
-        assert _replay_arbiter_catalog(_DSN) == ("u", True, False, True)
+        assert _replay_arbiter_catalog(_DSN) == _CANONICAL_CATALOG
     finally:
-        if _replay_arbiter_catalog(_DSN) != ("u", True, False, True):
+        if _replay_arbiter_catalog(_DSN) != _CANONICAL_CATALOG:
             _restore_canonical_replay_arbiter(_DSN)
