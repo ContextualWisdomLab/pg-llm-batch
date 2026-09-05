@@ -98,6 +98,18 @@ It is not a security boundary against a database administrator who deliberately
 creates a different CHECK and copies the package stamp; such an administrator
 already controls migration/catalog authority and remains outside this assurance.
 
+Payload grammar uses the same versioned convergence model, with one additional
+rule: once `ck_llm_context_lifecycle_outbox_payload_canonical_v1` has been
+established, migration retires exactly the ten known package-owned predecessor
+CHECK names for tenant/event/evidence identifiers, digests, and truth status.
+Leaving those predecessor checks in place would preserve multiple package grammar
+authorities; a restored stricter predecessor could reject values that canonical
+v1 intentionally accepts. Unknown CHECK names are not deleted because the
+migration cannot prove their ownership or disposal semantics. On a converged
+installation the predecessor names are already absent, so ordinary reapplication
+does not repeat those `ALTER TABLE ... DROP CONSTRAINT` operations
+(PostgreSQL Global Development Group, 2026e, 2026g).
+
 Migration 0008 also converges the lifecycle-outbox replay arbiter after table
 creation. The canonical `uq_llm_context_lifecycle_outbox_tenant_evidence` state
 is accepted only when `pg_constraint` identifies a validated, nondeferrable
@@ -159,6 +171,14 @@ migration replaces that package-owned drift rather than accepting it or merely
 dropping the legacy check. This may require table validation and its associated
 lock/work once for a stale installation; a current installation avoids that
 repeated DDL.
+
+Known pre-canonical payload CHECKs are migration predecessors rather than
+independent durable invariants after canonical payload v1 exists. They are
+removed only after canonical v1 is installed or admitted. This can acquire table
+locks once on a stale installation, but it prevents a stricter restored
+predecessor from silently overriding the reviewed current grammar and is a no-op
+for already-converged stores. Unknown CHECKs remain operator findings, not
+automatic deletion targets.
 
 A pre-existing outbox relation without the canonical nondeferrable
 `(tenant_scope, evidence_id)` uniqueness invariant is likewise a repair finding.
