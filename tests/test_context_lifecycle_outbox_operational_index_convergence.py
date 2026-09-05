@@ -90,3 +90,21 @@ def test_outbox_operational_index_binds_key_semantics_not_only_column_numbers() 
     assert "opcintype = 'timestamptz'::regtype" in guard
     assert "operational_index.indoption[0] = 0" in guard
     assert "operational_index.indoption[1] = 0" in guard
+
+
+def test_outbox_operational_index_is_post_verified_after_repair() -> None:
+    """A repaired index must be re-read from the catalog before migration success."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    create_at = migration.index(f"CREATE INDEX {_INDEX_NAME}")
+    verification_at = migration.index(
+        "IF NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_index AS operational_index",
+        create_at + 1,
+    )
+    raise_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox operational index failed canonical verification'",
+        verification_at,
+    )
+
+    assert create_at < verification_at < raise_at
