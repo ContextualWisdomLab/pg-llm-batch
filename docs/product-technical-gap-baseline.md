@@ -3,7 +3,7 @@
 This file records the commercial-development gaps that are owned by
 `pg-llm-batch` or materially gate its release. It is evidence, not a substitute
 for live PR/check/release reads. The code snapshot assessed here is
-`ed081bbe21deb49938d32895c6b6eab267d94cf0`; later documentation-only commits
+`63aba47bcbf9cc71467cd2ad598a0708a9994bf0`; later documentation-only commits
 on the same non-force stack do not change the assessed runtime behavior.
 
 ## Canonical product boundary
@@ -20,6 +20,7 @@ cross-service SQL are not production authority.
 
 | Gap | State | Current evidence / required next condition |
 | --- | --- | --- |
+| Lifecycle-outbox runtime/migration object resolution inherited caller `search_path` | Repaired on active Draft | RED `fdf1be5b02f2bf1cc7fbddfb3e908a2d232303cf` requires runtime tenant/table resolution and both forward/rollback DDL to replace ambient name resolution first. Runtime fix `21866e42d54a924b6970daf3640d99583eff50d0` executes `SET LOCAL search_path = pg_catalog, public, pg_temp` before the shared tenant-setting helper or relation access. Forward migration `f1cb40ba6ce7d7cca6a8cc135ae970e8cf737b21`, byte-identical Docker mirror `91597b5f0290214ac781df9a9ddacd114b4c8fd0`, and rollback `63aba47bcbf9cc71467cd2ad598a0708a9994bf0` bind the same reviewed order inside their atomic `DO` blocks. Exact-head hosted execution remains required. |
 | Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
 | Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration now installs versioned canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting`, then retires unqualified v1/legacy policy names. Package/Docker SQL bytes are mirrored. Exact-head hosted execution remains required. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
@@ -28,6 +29,40 @@ cross-service SQL are not production authority.
 | Commercial PostgreSQL driver migration | Separate active writer | PR #323 owns the driver-neutral migration slice. This writer does not overwrite or restack that sibling lane while it is active. |
 | Release package / SBOM / provenance / rollback proof | Not yet releasable | Perform only after protected exact head is merge-ready and all owner gates are terminal green; version, CHANGELOG, tag, package, immutable release, SBOM, provenance, reproducibility, and rollback evidence must refer to the same source identity. |
 | Buyer-path p95 ≤ 20 ms | Unproven for this slice | Do not claim the threshold from unit tests or warm-cache microbenchmarks. Measure applicable PostgreSQL/API buyer paths with realistic data and connection lifecycle once this stack can execute on hosted/runtime infrastructure. |
+
+## Security decision trace: lifecycle-outbox database name authority
+
+**Problem.** The outbox policy predicate already bound its security-sensitive
+operator/function names to `pg_catalog`, but runtime relation access and migration
+0008 still inherited PostgreSQL `search_path`. PostgreSQL resolves unqualified
+relation, type, function, and operator names through that path; temporary schemas
+also receive special lookup treatment unless explicitly placed. A caller-controlled
+or misconfigured session path could therefore select a same-named object before the
+reviewed outbox relation or influence migration object resolution.
+
+**Constraints.** The repair must preserve the package's existing `public` application
+schema, forced RLS, transaction-local tenant binding, caller-owned transaction seam,
+package/Docker migration parity, and atomic rollback refusal. It must not modify the
+shared `db.py` helper because active sibling PR #323 currently owns that file.
+
+**Alternatives.** Fully qualifying every existing SQL token was rejected for this
+slice because it would broaden the migration diff and duplicate an application-schema
+constant across many statements. Changing the shared tenant helper was rejected due
+to the active sibling writer. Leaving `pg_temp` implicit was rejected because
+PostgreSQL can search the temporary schema ahead of ordinary relation schemas.
+
+**Decision.** Runtime outbox transactions issue `SET LOCAL search_path = pg_catalog,
+public, pg_temp` before invoking the shared tenant-setting helper or touching the
+outbox relation. Forward and destructive rollback `DO` blocks use the fully qualified
+`pg_catalog.set_config` to set the same transaction-local path before any object
+lookup or DDL. Explicitly placing `pg_temp` last prevents its implicit precedence.
+
+**Effect.** Ambient session `search_path` is no longer authority for outbox runtime,
+installation, or rollback object resolution inside the supported transaction model.
+This does not claim that an untrusted principal with `CREATE` authority in the
+canonical `public` application schema is safe; schema ACLs remain an operator trust
+boundary. Exact-head PostgreSQL execution is still required before the repair is
+hosted GREEN evidence.
 
 ## Security decision trace: lifecycle-outbox DSN authority
 
@@ -94,8 +129,11 @@ release artifacts to agree. Routine status reporting is not a completion gate.
 
 ## References
 
-PostgreSQL Global Development Group. (2026a). *pg_policy*. In *PostgreSQL 18
+PostgreSQL Global Development Group. (2026a). *Schemas*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/ddl-schemas.html
+
+PostgreSQL Global Development Group. (2026b). *pg_policy*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
 
-PostgreSQL Global Development Group. (2026b). *CREATE POLICY*. In *PostgreSQL
+PostgreSQL Global Development Group. (2026c). *CREATE POLICY*. In *PostgreSQL
 18 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
