@@ -368,7 +368,9 @@ class PostgresContextLifecycleOutboxStore:
         executed, avoiding a second, subtly different event-id grammar. ``for_update``
         is reserved for compare-and-swap writers and keeps row locking explicit.
         Durable evidence is revalidated and must retain the tenant identity explicitly
-        bound to this store before it can return to application code.
+        bound to this store before it can return to application code. Database object
+        resolution is pinned to the package's reviewed schema order before the shared
+        tenant-setting helper or any outbox relation name can be resolved.
         """
         probe = _validated_evidence(
             ContextLifecycleEvidenceSeed(
@@ -385,6 +387,7 @@ class PostgresContextLifecycleOutboxStore:
                 evidence_ref_sha256="0" * 64,
             )
         )
+        cursor.execute("SET LOCAL search_path = pg_catalog, public, pg_temp")
         _set_transaction_tenant_scope(cursor, self.tenant_scope)
         locking = " FOR UPDATE" if for_update else ""
         cursor.execute(
