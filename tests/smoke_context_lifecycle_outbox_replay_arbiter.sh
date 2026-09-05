@@ -5,6 +5,7 @@ image="pg-llm-batch-postgres:ci"
 container="pg-llm-batch-outbox-arbiter-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/05_context_lifecycle_outbox.sql"
 constraint="uq_llm_context_lifecycle_outbox_tenant_evidence"
+operational_index="idx_llm_context_lifecycle_outbox_tenant_created"
 
 cleanup() {
   docker rm --force "${container}" >/dev/null 2>&1 || true
@@ -59,7 +60,47 @@ assert_canonical_arbiter() {
   test "${observed}" = 'u|t|f|t'
 }
 
+assert_canonical_operational_index() {
+  local observed
+  observed="$(docker exec "${container}" psql -U postgres -d postgres -AtF '|' -c "
+    SELECT index_method.amname,
+           operational_index.indisvalid,
+           operational_index.indisready,
+           operational_index.indislive,
+           operational_index.indisunique,
+           operational_index.indnkeyatts,
+           operational_index.indnatts,
+           operational_index.indexprs IS NULL,
+           operational_index.indpred IS NULL,
+           operational_index.indkey[0] = (
+             SELECT attnum
+             FROM pg_attribute
+             WHERE attrelid = 'public.llm_context_lifecycle_outbox'::regclass
+               AND attname = 'tenant_scope'
+               AND NOT attisdropped
+           ),
+           operational_index.indkey[1] = (
+             SELECT attnum
+             FROM pg_attribute
+             WHERE attrelid = 'public.llm_context_lifecycle_outbox'::regclass
+               AND attname = 'created_at'
+               AND NOT attisdropped
+           )
+    FROM pg_index AS operational_index
+    JOIN pg_class AS index_relation
+      ON index_relation.oid = operational_index.indexrelid
+    JOIN pg_am AS index_method
+      ON index_method.oid = index_relation.relam
+    WHERE operational_index.indexrelid =
+          'public.idx_llm_context_lifecycle_outbox_tenant_created'::regclass
+      AND operational_index.indrelid =
+          'public.llm_context_lifecycle_outbox'::regclass;
+  ")"
+  test "${observed}" = 'btree|t|t|t|f|2|2|t|t|t|t'
+}
+
 assert_canonical_arbiter
+assert_canonical_operational_index
 
 # Existing-table specimen 1: the runtime replay arbiter is absent. Reapplying
 # migration 0008 must install it even though CREATE TABLE IF NOT EXISTS is skipped.
@@ -146,7 +187,19 @@ SQL
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT count(*) FROM public.llm_context_lifecycle_outbox WHERE tenant_scope = 'smoke' AND evidence_id = 'replay-arbiter'")" = "1"
 
-# Current state remains idempotently re-applicable without changing the arbiter.
+# Existing-table specimen 3: CREATE INDEX IF NOT EXISTS accepts a same-name index
+# even when its key order is wrong. Migration 0008 must repair the catalog shape.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+DROP INDEX public.${operational_index};
+CREATE INDEX ${operational_index}
+  ON public.llm_context_lifecycle_outbox(created_at, tenant_scope);
+SQL
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+assert_canonical_operational_index
+
+# Current state remains idempotently re-applicable without changing either arbiter.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 assert_canonical_arbiter
+assert_canonical_operational_index
