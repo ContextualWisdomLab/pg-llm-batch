@@ -14,7 +14,6 @@ from pg_llm_batch.context_lifecycle_outbox import (
 
 
 TENANT_SCOPE_SHA256 = "a" * 64
-_CANONICAL_SEARCH_PATH = "pg_catalog, public, pg_temp"
 
 
 class RecordingCursor:
@@ -29,7 +28,7 @@ class RecordingCursor:
         normalized = " ".join(sql.split())
         parameters = params or ()
         self.calls.append((normalized, parameters))
-        if normalized.startswith("SELECT set_config"):
+        if normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
         elif normalized.startswith("SELECT evidence_id"):
             self.result = None
@@ -41,8 +40,8 @@ class RecordingCursor:
         return self.result
 
 
-def test_runtime_pins_search_path_before_tenant_and_table_resolution() -> None:
-    """Caller session search_path must not redirect tenant binding or outbox SQL."""
+def test_runtime_qualifies_authority_without_mutating_caller_search_path() -> None:
+    """Outbox SQL must resist ambient lookup without changing caller transaction state."""
     store = PostgresContextLifecycleOutboxStore(
         "postgresql://unit",
         tenant_scope="tenant-a",
@@ -53,9 +52,9 @@ def test_runtime_pins_search_path_before_tenant_and_table_resolution() -> None:
     assert store.load_in_transaction(cursor, "event-1") is None
 
     statements = [sql for sql, _ in cursor.calls]
-    assert statements[0] == f"SET LOCAL search_path = {_CANONICAL_SEARCH_PATH}"
-    assert statements[1].startswith("SELECT set_config")
-    assert statements[2].startswith("SELECT evidence_id")
+    assert all(not sql.startswith("SET LOCAL search_path") for sql in statements)
+    assert statements[0].startswith("SELECT pg_catalog.set_config")
+    assert "FROM public.llm_context_lifecycle_outbox" in statements[1]
 
 
 def test_forward_and_rollback_migrations_pin_search_path_inside_do_block() -> None:
