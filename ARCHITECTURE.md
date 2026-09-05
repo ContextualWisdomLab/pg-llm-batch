@@ -25,12 +25,12 @@ default-deny for ordinary application roles. PostgreSQL superusers and roles
 with `BYPASSRLS` remain administrative escape hatches and must not be used as
 application identities.
 
-Lifecycle-outbox RLS migration DDL is search-path-independent: the canonical v2
-policy uses `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` for both
-`USING` and `WITH CHECK`. Migration 0008 installs v2 before retiring the earlier
-unqualified policy names, then leaves an existing v2 unchanged on idempotent
-reapplication. Policy names are version markers, not substitutes for binding
-operator/function authority.
+Lifecycle-outbox RLS policy predicate authority is search-path-independent: the
+canonical v2 policy uses `OPERATOR(pg_catalog.=)` and
+`pg_catalog.current_setting` for both `USING` and `WITH CHECK`. Migration 0008
+installs v2 before retiring the earlier unqualified policy names, then leaves an
+existing v2 unchanged on idempotent reapplication. Policy names are version
+markers, not substitutes for binding operator/function authority.
 
 The custom setting is part of a **trusted application boundary**. It is not a
 credential and is not a substitute for authentication, authorization,
@@ -90,9 +90,9 @@ provider-returned data.
 Deterministic gates cover strict tenant validation, standalone compatibility,
 tenant-qualified SQL parameters, current-state reconciliation, migration
 idempotency, malformed database rows, default-deny policy text, explicit
-`pg_catalog` policy authority, schema mirroring, operator documentation, and
-100% production statement and branch coverage. Live PostgreSQL isolation tests
-use a `NOSUPERUSER NOBYPASSRLS` role and prove that identical provider
-identifiers in different tenants remain independently addressable and mutually
-invisible when access occurs through the trusted package boundary. They do not
-claim isolation after arbitrary SQL is granted.
+`pg_catalog` policy predicate authority, schema mirroring, operator
+documentation, and 100% production statement and branch coverage. Live
+PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
+identical provider identifiers in different tenants remain independently
+addressable and mutually invisible when access occurs through the trusted
+package boundary. They do not claim isolation after arbitrary SQL is granted.
