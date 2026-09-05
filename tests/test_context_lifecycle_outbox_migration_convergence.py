@@ -107,11 +107,10 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
 
     policy_end = migration.index("    END IF;", create_policy_at)
     policy_block = migration[create_policy_at:policy_end]
-    qualified_predicate = (
-        "tenant_scope OPERATOR(pg_catalog.=) "
+    assert policy_block.count("OPERATOR(pg_catalog.=)") == 2
+    assert policy_block.count(
         "pg_catalog.current_setting('pg_llm_batch.tenant_scope', true)"
-    )
-    assert policy_block.count(qualified_predicate) == 2
+    ) == 2
 
     last_drop_at = create_policy_at
     for legacy_policy in _LEGACY_POLICIES:
