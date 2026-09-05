@@ -639,16 +639,41 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1
-        FROM pg_policy
-        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
-          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
-          AND polcmd = '*'
-          AND polpermissive
-          AND polroles = ARRAY[0::oid]
-          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =
+        FROM pg_catalog.pg_policy AS policy_row
+        WHERE policy_row.polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND policy_row.polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
+          AND policy_row.polcmd = '*'
+          AND policy_row.polpermissive
+          AND policy_row.polroles = ARRAY[0::oid]
+          AND pg_catalog.pg_get_expr(policy_row.polqual, policy_row.polrelid, false) =
               '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
-          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =
+          AND pg_catalog.pg_get_expr(policy_row.polwithcheck, policy_row.polrelid, false) =
               '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_depend AS unexpected_policy_dependency
+              WHERE unexpected_policy_dependency.classid OPERATOR(pg_catalog.=)
+                    'pg_catalog.pg_policy'::pg_catalog.regclass
+                AND unexpected_policy_dependency.objid OPERATOR(pg_catalog.=)
+                    policy_row.oid
+                AND unexpected_policy_dependency.objsubid OPERATOR(pg_catalog.=) 0
+                AND unexpected_policy_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
+                AND unexpected_policy_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
+                AND (
+                    (
+                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)
+                            'pg_catalog.pg_proc'::pg_catalog.regclass
+                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)
+                            'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure
+                    )
+                    OR (
+                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)
+                            'pg_catalog.pg_operator'::pg_catalog.regclass
+                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)
+                            'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator
+                    )
+                )
+          )
     ) THEN
         IF EXISTS (
             SELECT 1
@@ -675,16 +700,41 @@ BEGIN
 
     IF NOT EXISTS (
         SELECT 1
-        FROM pg_policy
-        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
-          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
-          AND polcmd = '*'
-          AND polpermissive
-          AND polroles = ARRAY[0::oid]
-          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =
+        FROM pg_catalog.pg_policy AS policy_row
+        WHERE policy_row.polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND policy_row.polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
+          AND policy_row.polcmd = '*'
+          AND policy_row.polpermissive
+          AND policy_row.polroles = ARRAY[0::oid]
+          AND pg_catalog.pg_get_expr(policy_row.polqual, policy_row.polrelid, false) =
               '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
-          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =
+          AND pg_catalog.pg_get_expr(policy_row.polwithcheck, policy_row.polrelid, false) =
               '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_depend AS unexpected_policy_dependency
+              WHERE unexpected_policy_dependency.classid OPERATOR(pg_catalog.=)
+                    'pg_catalog.pg_policy'::pg_catalog.regclass
+                AND unexpected_policy_dependency.objid OPERATOR(pg_catalog.=)
+                    policy_row.oid
+                AND unexpected_policy_dependency.objsubid OPERATOR(pg_catalog.=) 0
+                AND unexpected_policy_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
+                AND unexpected_policy_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'
+                AND (
+                    (
+                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)
+                            'pg_catalog.pg_proc'::pg_catalog.regclass
+                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)
+                            'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure
+                    )
+                    OR (
+                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)
+                            'pg_catalog.pg_operator'::pg_catalog.regclass
+                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)
+                            'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator
+                    )
+                )
+          )
     ) THEN
         RAISE EXCEPTION 'lifecycle outbox row-security policy failed canonical verification';
     END IF;
