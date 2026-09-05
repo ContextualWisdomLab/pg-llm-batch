@@ -24,7 +24,6 @@ from .context_lifecycle_evidence import (
 from .db import (
     DEFAULT_TENANT_SCOPE,
     _require_psycopg,
-    _set_transaction_tenant_scope,
     psycopg,
     validate_tenant_scope,
 )
@@ -368,9 +367,9 @@ class PostgresContextLifecycleOutboxStore:
         executed, avoiding a second, subtly different event-id grammar. ``for_update``
         is reserved for compare-and-swap writers and keeps row locking explicit.
         Durable evidence is revalidated and must retain the tenant identity explicitly
-        bound to this store before it can return to application code. Database object
-        resolution is pinned to the package's reviewed schema order before the shared
-        tenant-setting helper or any outbox relation name can be resolved.
+        bound to this store before it can return to application code. Security-critical
+        function and relation authority is explicitly schema-qualified so the outbox
+        does not mutate or inherit the caller transaction's ``search_path``.
         """
         probe = _validated_evidence(
             ContextLifecycleEvidenceSeed(
@@ -387,11 +386,13 @@ class PostgresContextLifecycleOutboxStore:
                 evidence_ref_sha256="0" * 64,
             )
         )
-        cursor.execute("SET LOCAL search_path = pg_catalog, public, pg_temp")
-        _set_transaction_tenant_scope(cursor, self.tenant_scope)
+        cursor.execute(
+            "SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', %s, true)",
+            (self.tenant_scope,),
+        )
         locking = " FOR UPDATE" if for_update else ""
         cursor.execute(
-            f"SELECT {_OUTBOX_COLUMNS} FROM llm_context_lifecycle_outbox "
+            f"SELECT {_OUTBOX_COLUMNS} FROM public.llm_context_lifecycle_outbox "
             "WHERE tenant_scope = %s AND evidence_id = %s" + locking,
             (self.tenant_scope, probe.evidence_id),
         )
@@ -447,7 +448,7 @@ class PostgresContextLifecycleOutboxStore:
             )
 
         cursor.execute(
-            "INSERT INTO llm_context_lifecycle_outbox ("
+            "INSERT INTO public.llm_context_lifecycle_outbox ("
             "tenant_scope, evidence_id, event_type, tenant_scope_sha256, "
             "subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, "
             "truth_status, valid_time, system_time, provenance_ref_sha256, "
