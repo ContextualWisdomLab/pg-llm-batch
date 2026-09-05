@@ -40,41 +40,42 @@ before v1/legacy policy retirement. A semantically current v2 remains unchanged
 on idempotent reapplication (PostgreSQL Global Development Group, 2026e, 2026f,
 2026h).
 
-Timestamp CHECK convergence also requires more than a name. PostgreSQL stores
-constraint kind, validation status, and inheritance behavior separately in
-`pg_constraint`. Migration 0008 accepts each canonical `valid_time` and
-`system_time` constraint only when `contype = 'c'`, `convalidated` is true,
-`connoinherit` is false, and `obj_description` returns the expected package
-SHA-256 semantic stamp. A same-name wrong-kind, unvalidated, `NO INHERIT`, or
-unstamped constraint is removed and rebuilt as the reviewed canonical CHECK,
-then stamped before the legacy constraint is retired. A current stamped CHECK
-is untouched (PostgreSQL Global Development Group, 2026i).
+Package-owned payload and timestamp CHECK convergence also requires executable
+predicate identity. PostgreSQL stores the parsed CHECK expression in
+`pg_constraint.conbin`; `pg_get_expr` reconstructs that expression for a
+relation. Migration 0008 creates one session-local temporary probe table with
+the reviewed payload, `valid_time`, and `system_time` CHECK definitions, asks
+the running server for each probe's `pg_get_expr(conbin, conrelid, false)`, and
+drops the probe before durable repair. A canonical CHECK is accepted only when
+it is validated, inheritable, carries the expected SHA-256 review stamp, and its
+live decompiled expression equals the corresponding same-runtime probe
+expression. Same-name or same-name/same-stamp predicate drift is rebuilt and
+post-verified; an already-current durable CHECK avoids replacement DDL
+(PostgreSQL Global Development Group, 2026h, 2026i, 2026k).
 
-The semantic stamp is deliberately bounded evidence. PostgreSQL discards the
-old constraint comment when a constraint is normally dropped, so an accidental
-or ordinary operator same-name recreation cannot pass the migration guard
-without also carrying the reviewed package stamp. A database administrator who
-intentionally creates a different CHECK and copies that stamp can forge this
-evidence; such an administrator already owns migration/catalog authority and is
-outside the application isolation claim. The stamp is not advertised as a
-cryptographic defense against hostile database administration.
+The semantic stamp is deliberately bounded traceability evidence rather than
+executable authority. A restore or manual DDL sequence can create a different
+same-name CHECK and copy the expected comment. The parsed-expression comparison
+now detects that drift. This remains a trusted migration boundary, not a defense
+against a PostgreSQL administrator who can replace both catalog objects and the
+reviewed migration bytes.
 
 The non-temporal lifecycle payload CHECKs also require post-create convergence.
 PostgreSQL does not guarantee that an existing relation resembles the definition
 supplied to `CREATE TABLE IF NOT EXISTS`; therefore the original CREATE-only
 checks were insufficient authority for restored or manually repaired tables
-(PostgreSQL Global Development Group, 2026k). Migration 0008 now converges one
+(PostgreSQL Global Development Group, 2026k). Migration 0008 converges one
 validated inheritable aggregate
 `ck_llm_context_lifecycle_outbox_payload_canonical_v1` covering trusted tenant
 scope syntax, evidence/event identity grammar, every SHA-256 reference field,
-and the closed truth-status vocabulary. Its package comment stamp is the SHA-256
+and the closed truth-status vocabulary. Its review comment stamp is the SHA-256
 of a canonical newline-delimited reviewed grammar and is reproduced by the
 regression suite as
 `29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a`.
-A current stamped constraint is not rebuilt; a missing or stale same-name
-constraint is recreated and PostgreSQL validates existing rows before migration
-can succeed. As with the timestamp stamp, a privileged database administrator
-can forge the comment and remains outside this application-level assurance.
+The stamp is admitted only together with exact parsed-expression identity. A
+missing or stale same-name constraint is recreated, PostgreSQL validates
+existing rows, and migration verifies the resulting canonical CHECK before
+retiring predecessor constraints.
 
 Lifecycle-outbox replay convergence must also establish the concrete arbiter
 used by runtime UPSERT. Migration 0008 checks the canonical
@@ -117,9 +118,12 @@ Forward migration and rollback are installer-owned atomic statements, so their
 before object resolution. PostgreSQL normally searches temporary schemas
 specially when they are not explicitly named; putting `pg_temp` last prevents a
 same-named temporary relation from preceding the reviewed application schema in
-those statements (PostgreSQL Global Development Group, 2026g). This control
-assumes `public` is the trusted package application schema; an operator must not
-grant untrusted principals `CREATE` there.
+those statements (PostgreSQL Global Development Group, 2026g). The canonical
+probe itself is created as an unqualified `TEMPORARY TABLE`, because PostgreSQL
+assigns temporary tables to the session temporary schema; subsequent catalog
+lookup names it through `pg_temp`. This control assumes `public` is the trusted
+package application schema; an operator must not grant untrusted principals
+`CREATE` there.
 
 `PostgresContextLifecycleOutboxStore` requires an explicit PostgreSQL DSN but
 does not expose that exact value as a public store property. A DSN can contain
@@ -152,15 +156,15 @@ is still disabled; policy recreation afterward remains default-deny until the
 new policy exists.
 
 For the Context Fabric lifecycle outbox, `CREATE TABLE IF NOT EXISTS` is followed
-by catalog convergence for the payload grammar CHECK, runtime replay key, and
-operational `(tenant_scope, created_at)` index. A pre-existing relation must
-finish migration with the validated stamped canonical payload CHECK, a validated
-NOT DEFERRABLE UNIQUE constraint on `(tenant_scope, evidence_id)`, and the exact
-public B-tree operational index. Current canonical objects are left untouched.
-Stale same-name objects are repaired only when the migration can prove they
-belong to the outbox; invalid existing payload rows, duplicate replay identities,
-and unrelated name collisions fail for operator reconciliation rather than being
-silently changed.
+by catalog convergence for the payload/timestamp CHECK predicates, runtime
+replay key, and operational `(tenant_scope, created_at)` index. A pre-existing
+relation must finish migration with the post-verified canonical CHECK
+expressions and stamps, a validated NOT DEFERRABLE UNIQUE constraint on
+`(tenant_scope, evidence_id)`, and the exact public B-tree operational index.
+Current canonical durable objects avoid replacement DDL. Stale same-name objects
+are repaired only when the migration can prove they belong to the outbox;
+invalid existing payload rows, duplicate replay identities, and unrelated name
+collisions fail for operator reconciliation rather than being silently changed.
 
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair appears in more than one tenant scope.
@@ -186,10 +190,10 @@ database rows, migration preservation, atomic RLS restoration, policy
 default-deny behavior, exact schema mirroring, versioned policy convergence,
 explicit `pg_catalog` operator/function binding, full canonical `pg_policy`
 command/role/expression identity, unknown-policy fail-closed behavior,
-post-create/post-repair policy verification, canonical timestamp CHECK
-kind/validation/inheritance authority, reproducible payload grammar semantic
-stamp, payload CHECK post-create convergence, same-name timestamp constraint
-repair, runtime schema qualification without caller `search_path` mutation,
+post-create/post-repair policy verification, canonical payload/timestamp CHECK
+kind/validation/inheritance authority, same-runtime parsed-expression identity,
+review-stamp traceability, post-repair CHECK verification, payload predecessor
+retirement, runtime schema qualification without caller `search_path` mutation,
 installer/rollback search-path binding, non-exposure of an admitted
 credential-bearing outbox DSN, canonical replay-key
 kind/deferrability/column identity, operational-index access method/state/key
@@ -206,11 +210,12 @@ SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
 migration 0008 against stale-schema fixtures that omit, defer, or mis-key the
-replay UNIQUE constraint, remove the legacy event-type plus canonical payload
-checks, and replace the operational index with a same-name
-`(created_at, tenant_scope)` index. PostgreSQL must reject the malformed payload
-row and evaluate the final policy, payload/timestamp constraints, UPSERT arbiter,
-and operational-index catalog conditions on that exact head.
+replay UNIQUE constraint, restore a legacy stricter payload CHECK, replace the
+canonical payload CHECK with same-name/same-stamp `CHECK (true)`, and replace the
+operational index with a same-name `(created_at, tenant_scope)` index.
+PostgreSQL must repair the spoofed canonical CHECK so the malformed payload row
+is rejected and must evaluate final policy, payload/timestamp constraints,
+UPSERT arbiter, and operational-index catalog conditions on that exact head.
 
 ## References
 
