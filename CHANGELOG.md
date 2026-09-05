@@ -51,9 +51,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repaired table cannot silently skip the tenant/event/evidence identifier,
   digest, or truth-status constraints just because the relation already exists.
   Canonical payload CHECK v1 must be validated, inheritable, and carry a
-  reproducible SHA-256 stamp derived from the reviewed grammar; the PostgreSQL
-  smoke removes the legacy event-type check and canonical aggregate check,
-  reapplies migration, and requires an invalid mixed-case event type to fail.
+  reproducible SHA-256 stamp derived from the reviewed grammar. After canonical
+  v1 is established, migration retires exactly the ten known package-owned
+  predecessor payload CHECK names so a stale stricter legacy predicate cannot
+  remain a second grammar authority. Unknown CHECK names are preserved rather
+  than silently deleted. The PostgreSQL smoke restores a stricter legacy
+  event-type predecessor, reapplies migration, and requires it to disappear.
   Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox migration now converges the nondeferrable
   `(tenant_scope, evidence_id)` UNIQUE constraint required by runtime
