@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox stores no longer expose the admitted PostgreSQL DSN through
+  a public property. The exact target remains package-internal connection
+  authority so DSNs containing credentials are not available to routine store
+  logging, serialization, or diagnostics.
 - Lifecycle-outbox migration RLS no longer relies on session `search_path` for
   tenant equality or `current_setting` resolution. Canonical policy v2 binds
   both through `pg_catalog`, installs before retiring the earlier unqualified
