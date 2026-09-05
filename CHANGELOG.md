@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox structural admission now rejects positive-numbered dropped
+  PostgreSQL column tombstones instead of treating the 14 remaining live
+  columns as equivalent to a never-extended canonical table. The wired
+  PostgreSQL smoke adds and drops an undeclared column, requires the migration
+  to keep failing after `DROP COLUMN`, then performs an explicit test-only
+  rebuild before later specimens. Production migration does not auto-rewrite
+  or reclaim dropped-column state. Package and Docker migration SQL remain
+  byte-identical.
 - Lifecycle-outbox replay-arbiter convergence now repeats the exact
   `pg_constraint` admission predicate after UNIQUE repair and fails closed if
   the validated nondeferrable `(tenant_scope, evidence_id)` arbiter is no
