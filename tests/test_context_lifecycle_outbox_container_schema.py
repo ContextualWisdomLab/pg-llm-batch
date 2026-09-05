@@ -22,7 +22,7 @@ def test_outbox_migration_uses_canonical_lifecycle_timestamp_identity() -> None:
 
     assert schema.count(r"([.]\d{6})?Z$") == 2
     assert r"\d{1,6}" not in schema
-    assert schema.count("AT TIME ZONE 'UTC'") == 4
+    assert schema.count("AT TIME ZONE 'UTC'") == 2
     assert schema.count("!~ '[.]000000Z$'") == 2
     assert schema.count("HH24:MI:SS.US") == 2
     assert schema.count("HH24:MI:SS\"Z\"") == 2
