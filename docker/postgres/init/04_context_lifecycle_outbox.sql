@@ -91,6 +91,53 @@ BEGIN
         SELECT 1
         FROM pg_constraint
         WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_payload_canonical_v1'
+          AND contype = 'c'
+          AND convalidated
+          AND NOT connoinherit
+          AND pg_catalog.obj_description(oid, 'pg_constraint') =
+              'pg-llm-batch:payload-check:v1:sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d'
+    ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+              AND conname = 'ck_llm_context_lifecycle_outbox_payload_canonical_v1'
+        ) THEN
+            ALTER TABLE llm_context_lifecycle_outbox
+                DROP CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1;
+        END IF;
+
+        ALTER TABLE llm_context_lifecycle_outbox
+            ADD CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1
+            CHECK (
+                tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                AND evidence_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                AND event_type ~ '^[a-z][a-z0-9._:-]{0,127}$'
+                AND tenant_scope_sha256 ~ '^[0-9a-f]{64}$'
+                AND subject_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND authority_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND origin_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND truth_status IN (
+                    'authoritative',
+                    'observed',
+                    'inferred',
+                    'proposed',
+                    'superseded',
+                    'rejected'
+                )
+                AND provenance_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND evidence_ref_sha256 ~ '^[0-9a-f]{64}$'
+            );
+        COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1
+            ON llm_context_lifecycle_outbox
+            IS 'pg-llm-batch:payload-check:v1:sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d';
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
           AND conname = 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'
           AND contype = 'c'
           AND convalidated
