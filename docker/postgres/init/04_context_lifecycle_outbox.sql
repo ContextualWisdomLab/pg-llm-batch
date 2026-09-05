@@ -96,7 +96,7 @@ BEGIN
           AND convalidated
           AND NOT connoinherit
           AND pg_catalog.obj_description(oid, 'pg_constraint') =
-              'pg-llm-batch:payload-check:v1:sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d'
+              'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a'
     ) THEN
         IF EXISTS (
             SELECT 1
@@ -131,7 +131,7 @@ BEGIN
             );
         COMMENT ON CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1
             ON llm_context_lifecycle_outbox
-            IS 'pg-llm-batch:payload-check:v1:sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d';
+            IS 'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a';
     END IF;
 
     IF NOT EXISTS (

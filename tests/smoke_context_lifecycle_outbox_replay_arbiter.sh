@@ -6,7 +6,7 @@ container="pg-llm-batch-outbox-arbiter-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/05_context_lifecycle_outbox.sql"
 constraint="uq_llm_context_lifecycle_outbox_tenant_evidence"
 payload_constraint="ck_llm_context_lifecycle_outbox_payload_canonical_v1"
-payload_stamp="pg-llm-batch:payload-check:v1:sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d"
+payload_stamp="pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a"
 operational_index="idx_llm_context_lifecycle_outbox_tenant_created"
 
 cleanup() {
