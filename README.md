@@ -3,8 +3,7 @@
 Standalone **and** embeddable Postgres LLM batch engine. It counts tokens
 **inside** PostgreSQL with [`pg_tiktoken`](https://github.com/postgresml/pg_tiktoken),
 assembles OpenAI-compatible JSONL batches under token/byte/record limits, and
-submits/polls/retrieves them against any OpenAI-compatible Batch API (OpenAI,
-Azure OpenAI, or a LiteLLM gateway).
+submits/polls/retrieves them through an authorized Batch API adapter.
 
 Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and
 relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
@@ -43,7 +42,11 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 Provider-facing polling and retrieval stay behind the validated Python client
 boundary. The former bundled `pg_cron` + `pgsql-http` provider retriever is
 retired; automatic reconciliation remains a separate product capability rather
-than a second database-side network authority.
+than a second database-side network authority. `BatchInferencePort` is
+provider-neutral and does not discover providers/models, choose routing or
+fallback, or resolve credentials. CWL production hosts bind those authorities
+through released `contextual-orchestrator` contracts; mutable provider or model
+selection is not owned by this repository.
 
 | Piece | Module |
 | --- | --- |
@@ -207,6 +210,13 @@ all-command permissive `PUBLIC` role and canonical stored expressions. It
 repairs same-name semantic drift, fails closed on unknown policy names, and
 verifies the resulting policy before retiring v1/legacy names.
 
+Migration 0008 also verifies canonical lifecycle timestamp CHECKs by catalog
+semantics rather than constraint name alone. `valid_time` and `system_time`
+canonical names are current only when `pg_constraint` reports a validated,
+inheritable CHECK. A same-name wrong-kind, unvalidated, or `NO INHERIT`
+constraint is rebuilt before the legacy timestamp check is removed; already
+canonical constraints are left untouched on normal reapplication.
+
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
 application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
@@ -265,6 +275,8 @@ db.apply_schema(dsn)
 The `credentials` argument to `BatchAPIClient` is a seam: pass
 `config_credentials_provider(...)` to use the KV stores, or supply your own
 `Callable[[str], GatewayCredentials]` to source credentials from your host app.
+In CWL production, that adapter must be driven by released contextual-orchestrator
+authority rather than local provider/model discovery or paid fallback selection.
 
 Files and Batches control-plane JSON responses are streamed through an
 independent 1 MiB decoded-byte budget before strict UTF-8 and JSON object
