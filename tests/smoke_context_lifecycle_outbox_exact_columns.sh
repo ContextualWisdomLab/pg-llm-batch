@@ -55,3 +55,19 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   "ALTER TABLE public.llm_context_lifecycle_outbox DROP COLUMN undeclared_payload;"
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# Restores can also reintroduce an older package-owned CHECK under its legacy name.
+# A stricter stale predicate must not survive beside the versioned aggregate CHECK,
+# otherwise valid current payloads remain blocked even though migration reports success.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "ALTER TABLE public.llm_context_lifecycle_outbox ADD CONSTRAINT ck_llm_context_lifecycle_outbox_event_type CHECK (event_type = 'legacy.only');"
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+legacy_event_type_constraints="$(
+  docker exec "${container}" psql -U postgres -d postgres -Atqc \
+    "SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::regclass AND conname = 'ck_llm_context_lifecycle_outbox_event_type'"
+)"
+if [[ "${legacy_event_type_constraints}" != "0" ]]; then
+  echo "lifecycle outbox migration retained a legacy payload CHECK" >&2
+  exit 1
+fi
