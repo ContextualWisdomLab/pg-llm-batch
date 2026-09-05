@@ -49,12 +49,17 @@ Policy recreation follows under enabled and forced default-deny behavior.
 
 Versioned lifecycle-outbox policies must bind their equality operator and
 `current_setting` lookup explicitly to `pg_catalog`. PostgreSQL stores policy
-command, role, and expression authority in `pg_policy`; a policy name alone does
-not make an unqualified expression canonical. Migration 0008 therefore creates
-the `...tenant_scope_canonical_v2` policy first, then retires the earlier
-unqualified `canonical_v1` and legacy policy names in the same transaction. Once
-v2 exists, catalog guards avoid rewriting it on ordinary idempotent reapplication
-(PostgreSQL Global Development Group, 2026a, 2026b).
+command, permissive mode, role set, security qualification, and `WITH CHECK`
+expression separately in `pg_policy`; a policy name alone is not authority.
+Migration 0008 therefore accepts the existing
+`...tenant_scope_canonical_v2` policy without DDL only when the catalog proves
+`FOR ALL`, permissive, exact `PUBLIC` role scope and canonical `USING` plus
+`WITH CHECK` expression trees. A same-name v2 with semantic drift is replaced.
+Policy names outside v2 and the two known predecessor names fail the migration
+instead of being silently retained or deleted. The resulting v2 catalog state
+is verified again before canonical v1 and the legacy policy are retired. This
+keeps ordinary reapplication lock-bounded without accepting name-only drift
+(PostgreSQL Global Development Group, 2026a, 2026b, 2026d).
 
 Lifecycle-outbox runtime must protect its own object authority without rewriting
 caller-owned transaction state. It therefore binds the tenant GUC through fully
@@ -95,6 +100,12 @@ and `enqueue()` satisfy that contract through normal psycopg connection
 transactions; custom autocommit use is not a supported implementation of the
 caller-owned transaction seam.
 
+An unexpected lifecycle-outbox policy is now a migration finding, not an
+extension point. Operators that intentionally need a different policy set must
+make that a separate reviewed architecture decision rather than adding a
+permissive policy beside the canonical tenant boundary. A same-name altered v2
+is repaired only because v2 is package-owned canonical state.
+
 Rollback to the prior two-column key requires first proving that no
 endpoint/provider pair exists in multiple tenants and supplying a replacement
 authorization boundary. Packaged and deployable schemas must remain exact
@@ -110,3 +121,7 @@ PostgreSQL Global Development Group. (2026b). *CREATE POLICY*. In *PostgreSQL
 
 PostgreSQL Global Development Group. (2026c). *Schemas*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/ddl-schemas.html
+
+PostgreSQL Global Development Group. (2026d). *System information functions and
+operators*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-info.html
