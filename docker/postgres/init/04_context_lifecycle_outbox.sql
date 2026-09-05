@@ -225,6 +225,106 @@ BEGIN
             IS 'pg-llm-batch:payload-check:v1:sha256=29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a';
     END IF;
 
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_tenant_scope'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_tenant_scope;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_evidence_id'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_evidence_id;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_event_type'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_event_type;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_tenant_sha256'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_tenant_sha256;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_subject_sha256'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_subject_sha256;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_authority_sha256'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_authority_sha256;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_origin_sha256'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_origin_sha256;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_truth_status'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_truth_status;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_provenance_sha256'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_provenance_sha256;
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'ck_llm_context_lifecycle_outbox_evidence_sha256'
+    ) THEN
+        ALTER TABLE llm_context_lifecycle_outbox
+            DROP CONSTRAINT ck_llm_context_lifecycle_outbox_evidence_sha256;
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
