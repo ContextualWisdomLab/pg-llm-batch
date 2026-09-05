@@ -50,6 +50,20 @@ def test_outbox_migration_fails_closed_on_incompatible_existing_columns() -> Non
     assert "actual.attidentity <> ''" in guard_block
 
 
+def test_outbox_migration_rejects_undeclared_live_columns() -> None:
+    """The durable row shape must not silently gain package-undeclared columns."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
+    )
+    guard_block = migration[:guard_at]
+
+    assert "SELECT count(*)" in guard_block
+    assert "actual.attnum > 0" in guard_block
+    assert "NOT actual.attisdropped" in guard_block
+    assert ") <> 14 OR EXISTS (" in guard_block
+
+
 def test_outbox_migration_requires_primary_key_on_context_uuid() -> None:
     """The durable surrogate identifier must retain a concrete nondeferrable PK."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
