@@ -49,6 +49,15 @@ no matching policy row, so ordinary package access fails closed. The local flag
 also prevents a scope from surviving transaction completion on a pooled
 connection.
 
+For lifecycle-outbox migration 0008, the policy DDL does not rely on the
+migration session's name-resolution environment. Canonical policy v2 binds text
+equality as `OPERATOR(pg_catalog.=)` and resolves the setting with
+`pg_catalog.current_setting` in both `USING` and `WITH CHECK`. The migration
+creates v2 before dropping the earlier unqualified v1 and legacy policy names;
+a database that already has v2 avoids repeating policy DDL on normal reapply.
+This version transition is part of the tenant-isolation contract, not a cosmetic
+policy rename.
+
 This custom PostgreSQL setting is a **trusted application boundary**, not a
 credential. PostgreSQL accepts two-part custom option names, and a database role
 that can execute arbitrary SQL can call `set_config` with an arbitrary tenant
@@ -259,8 +268,9 @@ Deterministic tests cover strict tenant syntax, pre-effect validation,
 standalone recorder compatibility, tenant recorder propagation, parameterized
 transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation and reapplication, forced default-deny
-RLS, exact schema mirroring, Python 3.10/3.12/3.14 compatibility, complete public
-docstrings, and 100% production statement and branch coverage.
+RLS, search-path-independent lifecycle policy DDL, exact schema mirroring,
+Python 3.10/3.12/3.14 compatibility, complete public docstrings, and 100%
+production statement and branch coverage.
 
 The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
 persists an identical provider identifier in two tenant scopes, and proves that
@@ -299,3 +309,9 @@ documentation*. https://www.postgresql.org/docs/18/sql-set.html
 PostgreSQL Global Development Group. (2026d). *System administration
 functions*. In *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/functions-admin.html
+
+PostgreSQL Global Development Group. (2026e). *pg_policy*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
+
+PostgreSQL Global Development Group. (2026f). *CREATE POLICY*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
