@@ -149,17 +149,29 @@ BEGIN
         SELECT 1
         FROM pg_policy
         WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
-          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1'
+          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
     ) THEN
-        CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1
+        CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2
             ON llm_context_lifecycle_outbox
             TO PUBLIC
             USING (
-                tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
+                tenant_scope OPERATOR(pg_catalog.=)
+                    pg_catalog.current_setting('pg_llm_batch.tenant_scope', true)
             )
             WITH CHECK (
-                tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
+                tenant_scope OPERATOR(pg_catalog.=)
+                    pg_catalog.current_setting('pg_llm_batch.tenant_scope', true)
             );
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM pg_policy
+        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND polname = 'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1'
+    ) THEN
+        DROP POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1
+            ON llm_context_lifecycle_outbox;
     END IF;
 
     IF EXISTS (
