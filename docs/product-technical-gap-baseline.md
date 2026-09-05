@@ -5,10 +5,13 @@ This file records the commercial-development gaps that are owned by
 for live PR/check/release reads. The runtime/migration snapshot assessed here
 includes row-lock authority fix `c77ad8895634d96a5da86288e48cb843241f1a6f`,
 lifecycle-outbox RLS semantic-convergence fix
-`7ae5d33954d03453d7fc0cbca6fb87cc09be2113`, and timestamp CHECK catalog RED
-`acf54afed9e5d1bcc56f3f645c10fce18c150bc5` followed by package fix
-`cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` plus byte-identical Docker mirror
-`ac10613c59922563e38ccaf5af80c6f909e4ce76`. Later documentation commits on the
+`7ae5d33954d03453d7fc0cbca6fb87cc09be2113`, initial timestamp catalog RED
+`acf54afed9e5d1bcc56f3f645c10fce18c150bc5`, kind/validation/inheritance fix
+`cbd626414cbd7dbb3038a0db8c2b3badbddce1fc`, follow-up semantic-stamp RED
+`aa4a7e29d8ae5455315a28e4df6ef812821b380a`, package fix
+`000a1933038b2fd2815ca3ffcf492ebd557262d3`, and byte-identical Docker mirror
+`14d7e24ca841d3050fb343768393ee7b08bfd923` with migration blob
+`cc08217b04934e3364f61e7379191b6363979a53`. Later documentation commits on the
 same non-force stack do not change those migration bytes.
 
 ## Canonical product boundary
@@ -30,7 +33,7 @@ cross-service SQL are not production authority.
 | Lifecycle-outbox store publicly exposed its admitted PostgreSQL DSN | Repaired on active Draft | RED test commit `34010cdb4267afafd7e06246b29cf7765403cae3` requires that an admitted store have no public `postgres_dsn` accessor and that a credential-bearing DSN not appear in its representation. Causal source fix `ed081bbe21deb49938d32895c6b6eab267d94cf0` keeps the exact DSN only in the package-owned weak binding and uses it internally for connections. Exact-head hosted execution remains required. |
 | Lifecycle-outbox RLS policy could depend on migration-session name resolution | Repaired on active Draft | RED `6c22770e752dc24666477429835862fd2e43a523`; migration installs canonical v2 with `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` in both policy predicates. Exact-head hosted execution remains required. |
 | Canonical RLS policy name could mask semantic drift or an additional widening policy | Repaired on active Draft | Executable RED `334f2545abecd189895d9d60d9a70caa0cffb7f1` requires `pg_policy` command/permissive/role/expression-tree identity instead of accepting the canonical name alone, and requires unknown policy names to fail closed. Causal migration fix `5e95aeac86db963d27a3421145b7df8c2f6bea9b` repairs a same-name drifted v2 only when catalog semantics differ; Docker parity is `bd41c8db721b2d3549ee82ced40ca1d79197d3ed`. Follow-up RED `2f18db2b113e5bf94092125ca9af7fd072ae2793` requires a post-create/post-repair catalog verification, satisfied by package `7ae5d33954d03453d7fc0cbca6fb87cc09be2113` and byte-identical Docker mirror `e91d12b5272048c0e3fbac2a9e26986dec8ac9dd`. The migration fails rather than silently deleting an unknown policy. PostgreSQL runtime execution of the final exact head remains required. |
-| Canonical lifecycle timestamp constraint name could mask wrong-kind, unvalidated, or non-inheritable catalog state | Repaired on active Draft | RED `acf54afed9e5d1bcc56f3f645c10fce18c150bc5` requires each canonical `valid_time`/`system_time` name to be backed by `pg_constraint.contype='c'`, `convalidated`, and `NOT connoinherit`, plus a repair path for a same-name noncanonical row. Package migration fix `cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` drops package-owned same-name drift and rebuilds the canonical CHECK; Docker mirror `ac10613c59922563e38ccaf5af80c6f909e4ce76` has the identical SQL blob `dc3d57b0acb10525246133a717d43ff9217913a8`. PostgreSQL runtime execution of the final exact head remains required. |
+| Canonical lifecycle timestamp name could mask noncanonical or semantically drifted CHECK state | Repaired on active Draft | RED `acf54afed9e5d1bcc56f3f645c10fce18c150bc5` requires canonical `valid_time`/`system_time` rows to be validated inheritable CHECKs and adds a same-name repair path. Package fix `cbd626414cbd7dbb3038a0db8c2b3badbddce1fc` plus Docker `ac10613c59922563e38ccaf5af80c6f909e4ce76` closed kind/validation/inheritance drift. Review then found that a validated same-name weak CHECK could still pass, so follow-up RED `aa4a7e29d8ae5455315a28e4df6ef812821b380a` requires the expected package SHA-256 semantic stamp through `obj_description` and a post-add `COMMENT ON CONSTRAINT`. Package fix `000a1933038b2fd2815ca3ffcf492ebd557262d3` and Docker mirror `14d7e24ca841d3050fb343768393ee7b08bfd923` are byte-identical at `cc08217b04934e3364f61e7379191b6363979a53`. The stamp detects ordinary package-owned drop/recreate drift but is not claimed as a defense against an administrator intentionally forging the stamp. Exact-head PostgreSQL runtime execution remains required. |
 | Exact-head executable evidence for active Context Fabric consumer-readiness stack | Waiting on runner capacity | PR #319 remains Draft and based on #233. CI and Release Acceptance must execute against the final exact head; predecessor runs are not transferable. |
 | Dependency root #233 | Blocked by central evidence/review | Repository-local CI, release acceptance, Security Scan, and Semgrep were green on the last exact read, but the required CodeQL compatibility path lacks authenticated terminal `codeql-dispatch/<language>` evidence and there is no qualifying independent approval. Do not self-approve or bypass. |
 | Immutable Context Graph / EA / orchestrator authority | Blocked upstream | No production Context Assertion publication is admitted until compatible immutable releases exist. Re-read tag, version, source commit, artifact digest, provenance, schema/profile, admission, and conformance identities before binding. |
@@ -189,35 +192,41 @@ exact-head PostgreSQL 18 execution remains required before hosted GREEN is claim
 
 ## Security decision trace: lifecycle timestamp CHECK convergence
 
-**Problem.** Migration 0008 originally treated the existence of each canonical
-UTC timestamp constraint name as proof that the constraint was current. PostgreSQL
-stores constraint kind, validation state, and inheritance behavior separately in
-`pg_constraint`. A package-owned same-name row could therefore be an unvalidated
-CHECK, a `NO INHERIT` CHECK, or another constraint kind while the migration skipped
-canonical CHECK installation and proceeded to retire the legacy timestamp check.
+**Problem.** Migration 0008 originally treated the canonical UTC timestamp constraint
+name as proof that the constraint was current. First review established that
+`pg_constraint` also carries constraint kind, validation state, and inheritance
+behavior. A second review then showed that even a validated inheritable same-name
+CHECK could contain a different expression, so those catalog flags still did not
+identify the reviewed package CHECK.
 
 **Constraints.** Preserve canonical UTC identity, idempotent reapplication, package
 and Docker SQL parity, and fail the migration rather than silently weakening
-existing-row validation. A current validated inheritable CHECK must not be rewritten
-every time because that would repeat table-lock and validation work.
+existing-row validation. A current reviewed CHECK must not be rewritten on every run
+because that repeats table-lock and validation work. The application assurance model
+does not attempt to defend against a database administrator who intentionally forges
+package-owned catalog evidence.
 
-**Alternatives.** Name-only existence was rejected because `conname` does not encode
-the constraint semantics. Unconditionally dropping and adding both canonical checks
-was rejected because it would relock and revalidate current installations. Accepting
-an unvalidated CHECK and validating it later was rejected because migration success
-would temporarily rely on weaker catalog state.
+**Alternatives.** Name-only existence was rejected. Kind/validation/inheritance-only
+identity was also rejected because it cannot distinguish a weak same-name CHECK.
+Unconditional drop/add was rejected because it relocks and revalidates every current
+installation. Depending on PostgreSQL internal parse-tree text was rejected as a
+brittle cross-version contract for this migration slice.
 
 **Decision.** A canonical timestamp constraint is current only when its
-`pg_constraint` row matches the package-owned name, `contype='c'`, `convalidated`
-is true, and `connoinherit` is false. Otherwise migration drops the same-name
-package-owned drift, adds the reviewed canonical CHECK, and only then retires the
-legacy constraint. Package and Docker migration files remain byte-identical.
+`pg_constraint` row is a validated inheritable CHECK and `obj_description` returns the
+expected SHA-256 semantic stamp for the reviewed CHECK source. Migration adds the
+stamp with `COMMENT ON CONSTRAINT` immediately after adding the canonical CHECK. If
+any catalog property or stamp is absent/mismatched, the package-owned same-name
+constraint is dropped and rebuilt before the legacy name is retired. Package and
+Docker migration files remain byte-identical.
 
-**Effect.** Wrong-kind, unvalidated, and non-inheritable same-name constraints can no
-longer masquerade as canonical UTC lifecycle validation. Current installations do
-not repeat constraint DDL; stale installations pay the validation/lock cost once and
-fail transactionally if existing rows violate the reviewed CHECK. Exact-head
-PostgreSQL runtime execution remains required before hosted GREEN is claimed.
+**Effect.** Ordinary wrong-kind, unvalidated, non-inheritable, unstamped, or
+same-name drop/recreate drift can no longer masquerade as canonical UTC lifecycle
+validation. Current installations do not repeat constraint DDL; stale installations
+pay the validation/lock cost once and fail transactionally if existing rows violate
+the reviewed CHECK. The stamp is not claimed to prevent a privileged operator from
+forging both a different CHECK and the same comment. Exact-head PostgreSQL runtime
+execution remains required before hosted GREEN is claimed.
 
 ## Release gate
 
@@ -242,5 +251,5 @@ https://www.postgresql.org/docs/18/functions-info.html
 PostgreSQL Global Development Group. (2026d). *CREATE POLICY*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createpolicy.html
 
-PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL 18
-documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
