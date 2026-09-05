@@ -6,8 +6,9 @@ commit or rollback failure. An application exception also remains primary when
 rollback succeeds but later connection cleanup fails. Direct connection
 execution must likewise close the internally created cursor when execution
 fails, because the caller never receives that cursor and therefore cannot
-release it. These tests keep that recovery contract independent from the
-real-driver PostgreSQL smoke gate.
+release it. Candidate connection state remains terminal after a close attempt
+because pg8000 1.31.5 releases its retained transport in the driver's ``finally``
+path even when protocol-level cleanup raises.
 """
 
 from __future__ import annotations
@@ -100,7 +101,7 @@ def test_candidate_context_preserves_commit_failure_when_close_also_fails() -> N
     assert raw.commit_count == 1
     assert raw.rollback_count == 0
     assert raw.close_count == 1
-    assert adapter.is_closed() is False
+    assert adapter.is_closed() is True
 
 
 def test_candidate_context_preserves_rollback_failure_when_close_also_fails() -> None:
@@ -114,7 +115,7 @@ def test_candidate_context_preserves_rollback_failure_when_close_also_fails() ->
     assert raw.commit_count == 0
     assert raw.rollback_count == 1
     assert raw.close_count == 1
-    assert adapter.is_closed() is False
+    assert adapter.is_closed() is True
 
 
 def test_candidate_context_preserves_application_error_when_only_close_fails() -> None:
@@ -129,7 +130,7 @@ def test_candidate_context_preserves_application_error_when_only_close_fails() -
     assert caught.value is application_error
     assert raw.rollback_count == 1
     assert raw.close_count == 1
-    assert adapter.is_closed() is False
+    assert adapter.is_closed() is True
 
 
 @pytest.mark.parametrize("fail_close", [False, True])
