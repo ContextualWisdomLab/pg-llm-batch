@@ -35,18 +35,23 @@ before the earlier unqualified v1/legacy names are removed, and current v2 is
 left unchanged on idempotent reapplication (PostgreSQL Global Development
 Group, 2026e, 2026f).
 
-The lifecycle outbox additionally replaces ambient PostgreSQL `search_path`
-before any runtime relation access, forward migration DDL, or destructive
-rollback lookup. Runtime caller-owned transactions execute `SET LOCAL
-search_path = pg_catalog, public, pg_temp` before invoking the shared tenant
-setting helper. Forward migration and rollback execute fully qualified
+The lifecycle outbox also removes ambient PostgreSQL `search_path` from object
+authority, but the runtime seam does so without changing caller transaction
+state. Runtime tenant binding calls fully qualified `pg_catalog.set_config` and
+runtime reads/writes address `public.llm_context_lifecycle_outbox` explicitly.
+The earlier candidate that executed `SET LOCAL search_path` was superseded after
+review showed that the changed path would remain active for unrelated SQL in the
+caller-owned transaction.
+
+Forward migration and rollback are installer-owned atomic statements, so their
+`DO` blocks execute fully qualified
 `pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true)`
-inside their atomic `DO` blocks before object resolution. PostgreSQL normally
-searches temporary schemas specially when they are not explicitly named, so
-putting `pg_temp` last prevents a same-named temporary relation from preceding
-the reviewed application schema (PostgreSQL Global Development Group, 2026g).
-This control assumes `public` is the trusted package application schema; an
-operator must not grant untrusted principals `CREATE` there.
+before object resolution. PostgreSQL normally searches temporary schemas
+specially when they are not explicitly named; putting `pg_temp` last prevents a
+same-named temporary relation from preceding the reviewed application schema in
+those statements (PostgreSQL Global Development Group, 2026g). This control
+assumes `public` is the trusted package application schema; an operator must not
+grant untrusted principals `CREATE` there.
 
 `PostgresContextLifecycleOutboxStore` requires an explicit PostgreSQL DSN but
 does not expose that exact value as a public store property. A DSN can contain
@@ -90,7 +95,8 @@ Enabling RLS is an operational compatibility change for direct SQL consumers.
 Queries that do not bind an authorized transaction-local scope become
 default-deny. Such consumers must migrate to the package helpers or a reviewed
 database interface before deployment. Caller-owned outbox methods require a
-real transaction; autocommit does not satisfy the `SET LOCAL` contract.
+real transaction for the transaction-local tenant GUC, but preserve the
+caller's existing `search_path` rather than imposing one.
 
 ## Verification
 
@@ -99,19 +105,19 @@ tenant-recorder propagation, standalone compatibility, parameterized
 transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation, atomic RLS restoration, policy
 default-deny behavior, exact schema mirroring, versioned policy convergence,
-explicit `pg_catalog` operator/function binding, runtime/forward/rollback
-search-path replacement, non-exposure of an admitted credential-bearing outbox
-DSN, and documentation of the bounded assurance claim. Production statement,
-branch, and public-docstring coverage remain at 100% only when exact-head CI
-proves those gates.
+explicit `pg_catalog` operator/function binding, runtime schema qualification
+without caller `search_path` mutation, installer/rollback search-path binding,
+non-exposure of an admitted credential-bearing outbox DSN, and documentation of
+the bounded assurance claim. Production statement, branch, and public-docstring
+coverage remain at 100% only when exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
 scope can retrieve only its own lifecycle projection. This proves RLS mechanics
 under the trusted package model; it does not claim protection after arbitrary
 SQL execution is granted. Exact-head runtime verification must also exercise a
-non-default caller `search_path` before outbox operations and confirm the
-canonical relation remains selected.
+non-default caller `search_path`, confirm the canonical outbox relation is still
+selected, and confirm the caller's path is unchanged afterward.
 
 ## References
 
