@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pg_llm_batch.context_lifecycle_outbox as lifecycle_outbox
@@ -11,10 +12,36 @@ import pg_llm_batch.context_lifecycle_outbox as lifecycle_outbox
 _CANONICAL_PAYLOAD_CONSTRAINT = (
     "ck_llm_context_lifecycle_outbox_payload_canonical_v1"
 )
-_CANONICAL_PAYLOAD_STAMP = (
-    "pg-llm-batch:payload-check:v1:"
-    "sha256=1ff07a511e201295d934dedf36e6d9f6a2362c4acb98be582f9b8fa3a1da3c7d"
+_CANONICAL_PAYLOAD_SPEC = "\n".join(
+    (
+        "tenant_scope=^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "evidence_id=^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
+        "event_type=^[a-z][a-z0-9._:-]{0,127}$",
+        "tenant_scope_sha256=^[0-9a-f]{64}$",
+        "subject_ref_sha256=^[0-9a-f]{64}$",
+        "authority_ref_sha256=^[0-9a-f]{64}$",
+        "origin_ref_sha256=^[0-9a-f]{64}$",
+        (
+            "truth_status="
+            "authoritative|observed|inferred|proposed|superseded|rejected"
+        ),
+        "provenance_ref_sha256=^[0-9a-f]{64}$",
+        "evidence_ref_sha256=^[0-9a-f]{64}$",
+    )
 )
+_CANONICAL_PAYLOAD_SHA256 = hashlib.sha256(
+    _CANONICAL_PAYLOAD_SPEC.encode("utf-8")
+).hexdigest()
+_CANONICAL_PAYLOAD_STAMP = (
+    "pg-llm-batch:payload-check:v1:sha256=" + _CANONICAL_PAYLOAD_SHA256
+)
+
+
+def test_outbox_payload_semantic_stamp_matches_reviewed_spec() -> None:
+    """The stored payload stamp must be reproducible from the reviewed grammar."""
+    assert _CANONICAL_PAYLOAD_SHA256 == (
+        "29c9507c92caf7bc0891e8d2bd3f1ee57f1394f40c1566b09455b9eb6bb9c98a"
+    )
 
 
 def test_outbox_migration_converges_payload_value_contract_after_create() -> None:
