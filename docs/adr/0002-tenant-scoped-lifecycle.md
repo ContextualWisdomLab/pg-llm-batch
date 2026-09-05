@@ -56,15 +56,21 @@ unqualified `canonical_v1` and legacy policy names in the same transaction. Once
 v2 exists, catalog guards avoid rewriting it on ordinary idempotent reapplication
 (PostgreSQL Global Development Group, 2026a, 2026b).
 
-Lifecycle-outbox runtime, forward migration, and rollback also replace ambient
-name resolution with the reviewed order `pg_catalog, public, pg_temp`. Runtime
-uses transaction-local `SET LOCAL` before the shared tenant-setting helper or
-outbox relation access. Migration and rollback use fully qualified
-`pg_catalog.set_config(..., true)` inside their atomic `DO` blocks before any
-object lookup or DDL. Explicitly placing `pg_temp` last prevents its implicit
-relation precedence. The `public` schema remains the package's application
-schema; granting untrusted principals `CREATE` there remains outside this
-assurance and must be prevented operationally.
+Lifecycle-outbox runtime must protect its own object authority without rewriting
+caller-owned transaction state. It therefore binds the tenant GUC through fully
+qualified `pg_catalog.set_config(..., true)` and addresses the relation as
+`public.llm_context_lifecycle_outbox`; it does not change caller `search_path`.
+The earlier candidate that issued `SET LOCAL search_path` in the runtime seam was
+superseded because the setting would persist through the remainder of the
+caller's transaction and could alter unrelated domain SQL resolution.
+
+Forward migration and rollback are installer-owned atomic statements, so their
+`DO` blocks bind the reviewed order `pg_catalog, public, pg_temp` with fully
+qualified `pg_catalog.set_config(..., true)` before any object lookup or DDL.
+Explicitly placing `pg_temp` last prevents its implicit relation precedence. The
+`public` schema remains the package's application schema; granting untrusted
+principals `CREATE` there remains outside this assurance and must be prevented
+operationally.
 
 ## Consequences
 
@@ -77,11 +83,14 @@ The tenant-qualified key allows identical provider identifiers in separate
 tenants without collision. A missing transaction-local scope is default-deny,
 which intentionally changes direct SQL behavior for existing integrations.
 
-Caller-owned lifecycle-outbox transactions must remain real PostgreSQL
-transactions so `SET LOCAL` has the documented transaction scope. Package-owned
-`load()` and `enqueue()` already satisfy this through normal psycopg connection
-transactions. Custom integration code that opts into autocommit is not a
-supported implementation of the transaction seam.
+Caller-owned lifecycle-outbox methods preserve the transaction's existing
+`search_path`; composition with unrelated domain SQL therefore does not receive
+a hidden name-resolution mutation from the outbox. They still require a real
+transaction because the tenant GUC is intentionally bound with
+`set_config(..., true)` for transaction-local RLS scope. Package-owned `load()`
+and `enqueue()` satisfy that contract through normal psycopg connection
+transactions; custom autocommit use is not a supported implementation of the
+caller-owned transaction seam.
 
 Rollback to the prior two-column key requires first proving that no
 endpoint/provider pair exists in multiple tenants and supplying a replacement
