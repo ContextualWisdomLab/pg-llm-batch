@@ -93,18 +93,24 @@ def test_outbox_operational_index_binds_key_semantics_not_only_column_numbers() 
 
 
 def test_outbox_operational_index_is_post_verified_after_repair() -> None:
-    """A repaired index must be re-read from the catalog before migration success."""
+    """Post-repair verification must repeat the exact admission predicate."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
-    create_at = migration.index(f"CREATE INDEX {_INDEX_NAME}")
-    verification_at = migration.index(
+    guard_prefix = (
         "IF NOT EXISTS (\n"
         "        SELECT 1\n"
-        "        FROM pg_index AS operational_index",
-        create_at + 1,
+        "        FROM pg_index AS operational_index"
     )
+    admission_at = migration.index(guard_prefix)
+    admission_end = migration.index("    ) THEN", admission_at) + len("    ) THEN")
+    create_at = migration.index(f"CREATE INDEX {_INDEX_NAME}", admission_end)
+    verification_at = migration.index(guard_prefix, create_at + 1)
+    verification_end = migration.index("    ) THEN", verification_at) + len("    ) THEN")
     raise_at = migration.index(
         "RAISE EXCEPTION 'lifecycle outbox operational index failed canonical verification'",
-        verification_at,
+        verification_end,
     )
 
-    assert create_at < verification_at < raise_at
+    assert create_at < verification_at < verification_end < raise_at
+    assert migration[admission_at:admission_end] == migration[
+        verification_at:verification_end
+    ]
