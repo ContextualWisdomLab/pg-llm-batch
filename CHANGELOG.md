@@ -29,10 +29,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a public property. The exact target remains package-internal connection
   authority so DSNs containing credentials are not available to routine store
   logging, serialization, or diagnostics.
-- Lifecycle-outbox migration RLS no longer relies on session `search_path` for
-  tenant equality or `current_setting` resolution. Canonical policy v2 binds
-  both through `pg_catalog`, installs before retiring the earlier unqualified
-  v1/legacy policy names, and remains catalog-gated on idempotent reapplication.
+- Lifecycle-outbox migration RLS no longer treats the canonical policy name as
+  sufficient tenant authority. Canonical v2 binds equality and
+  `current_setting` through `pg_catalog`, verifies command/permissive/PUBLIC
+  role and both stored expression trees through `pg_policy`/`pg_get_expr`,
+  repairs a same-name policy only when those semantics drift, rejects unknown
+  policy names instead of silently widening or deleting them, and verifies the
+  stored canonical policy again before retiring v1/legacy names. A current v2
+  remains untouched on ordinary idempotent reapplication.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
