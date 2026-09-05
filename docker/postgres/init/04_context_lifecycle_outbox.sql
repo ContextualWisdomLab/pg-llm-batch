@@ -3,6 +3,10 @@
 
 DO $$
 BEGIN
+    -- Bind name resolution before any DDL/catalog lookup. Explicit pg_temp placement
+    -- prevents temporary relations from being searched ahead of the reviewed schema.
+    PERFORM pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true);
+
     CREATE TABLE IF NOT EXISTS llm_context_lifecycle_outbox (
         context_outbox_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
         tenant_scope TEXT NOT NULL DEFAULT 'standalone',
