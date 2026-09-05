@@ -33,11 +33,11 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
-# Column collation participates in text equality, uniqueness, policy predicates, and
-# validation semantics. A restore/manual ALTER that gives a package-owned identity
-# column explicit non-default collation must not be admitted as the canonical row shape.
+# Column collation participates in text equality and unique-index semantics. Use the
+# evidence identity rather than tenant_scope so the specimen changes only column/index
+# authority and does not fail earlier on PostgreSQL's RLS-policy ALTER TYPE dependency.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
-  'ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN tenant_scope TYPE text COLLATE "C";'
+  'ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN evidence_id TYPE text COLLATE "C";'
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/tmp/pg-llm-batch-outbox-collation.out 2>&1; then
   cat /tmp/pg-llm-batch-outbox-collation.out >&2
@@ -52,7 +52,7 @@ if ! grep -Fq "lifecycle outbox structural schema mismatch" \
 fi
 
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
-  'ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN tenant_scope TYPE text COLLATE "default";'
+  'ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN evidence_id TYPE text COLLATE "default";'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 
