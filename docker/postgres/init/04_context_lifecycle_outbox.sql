@@ -186,7 +186,7 @@ BEGIN
     -- trusting mutable COMMENT metadata or hard-coding version-sensitive deparser text.
     -- The probe is session-local, never touches durable rows, and is explicitly removed
     -- before production constraint admission.
-    CREATE TEMPORARY TABLE pg_temp.pg_llm_batch_outbox_constraint_probe_v1 (
+    CREATE TEMPORARY TABLE pg_llm_batch_outbox_constraint_probe_v1 (
         tenant_scope TEXT NOT NULL,
         evidence_id TEXT NOT NULL,
         event_type TEXT NOT NULL,
