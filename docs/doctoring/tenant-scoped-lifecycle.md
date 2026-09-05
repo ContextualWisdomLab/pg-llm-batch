@@ -40,6 +40,22 @@ before v1/legacy policy retirement. A semantically current v2 remains unchanged
 on idempotent reapplication (PostgreSQL Global Development Group, 2026e, 2026f,
 2026h).
 
+Canonical v2 admission also authenticates tracked function/operator dependency
+authority rather than treating decompiled expression text as a complete object
+identity proof. PostgreSQL records normal dependencies from a policy expression
+to referenced database objects in `pg_depend`; however dependencies on pinned
+system objects can be omitted. Migration 0008 therefore uses a negative guard:
+if a normal dependency row identifies a function, that OID must be built-in
+`pg_catalog.current_setting(text, boolean)`; if it identifies an operator, that
+OID must be built-in `pg_catalog.=(text, text)`. Any different tracked
+function/operator dependency rejects the installed canonical-v2 policy and
+causes package-owned reconstruction plus the same post-repair verification.
+Missing dependency rows for pinned built-ins do not fail admission. This is
+independent provenance evidence layered on top of the hardened installer
+`search_path`, schema-qualified creation SQL, and `pg_get_expr` semantic checks;
+it is not evidence that a cross-tenant policy bypass was reproduced
+(PostgreSQL Global Development Group, 2026h, 2026n).
+
 Package-owned payload and timestamp CHECK convergence also requires executable
 predicate identity. PostgreSQL stores the parsed CHECK expression in
 `pg_constraint.conbin`; `pg_get_expr` reconstructs that expression for a
@@ -212,18 +228,19 @@ transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation, atomic RLS restoration, policy
 default-deny behavior, exact schema mirroring, versioned policy convergence,
 explicit `pg_catalog` operator/function binding, full canonical `pg_policy`
-command/role/expression identity, unknown-policy fail-closed behavior,
-post-create/post-repair policy verification, canonical payload/timestamp CHECK
-kind/validation/inheritance authority, same-runtime parsed-expression identity,
-review-stamp traceability, post-repair CHECK verification, payload predecessor
-retirement, ordinary logged-public relation identity, runtime schema
-qualification without caller `search_path` mutation, installer/rollback
-search-path binding, non-exposure of an admitted credential-bearing outbox DSN,
-canonical replay-key kind/deferrability/column identity, operational-index access
-method/state/key identity, same-name wrong-key repair, unrelated-name-collision
-fail-closed behavior, and documentation of the bounded assurance claim.
-Production statement, branch, and public-docstring coverage remain at 100% only
-when exact-head CI proves those gates.
+command/role/expression identity, tracked normal function/operator dependency
+provenance, unknown-policy fail-closed behavior, post-create/post-repair policy
+verification, canonical payload/timestamp CHECK kind/validation/inheritance
+authority, same-runtime parsed-expression identity, review-stamp traceability,
+post-repair CHECK verification, payload predecessor retirement, ordinary
+logged-public relation identity, runtime schema qualification without caller
+`search_path` mutation, installer/rollback search-path binding, non-exposure of
+an admitted credential-bearing outbox DSN, canonical replay-key
+kind/deferrability/column identity, operational-index access method/state/key
+identity, same-name wrong-key repair, unrelated-name-collision fail-closed
+behavior, and documentation of the bounded assurance claim. Production
+statement, branch, and public-docstring coverage remain at 100% only when
+exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -239,7 +256,10 @@ outbox to `UNLOGGED`, and replace the operational index with a same-name
 `(created_at, tenant_scope)` index. PostgreSQL must reject the unlogged relation,
 repair the spoofed canonical CHECK so the malformed payload row is rejected, and
 evaluate final policy, payload/timestamp constraints, UPSERT arbiter, and
-operational-index catalog conditions on that exact head.
+operational-index catalog conditions on that exact head. The RLS dependency-OID
+regression is currently a deterministic migration-text contract; a hosted
+PostgreSQL specimen that distinguishes it from the existing `pg_get_expr` guard
+must not be claimed until such a distinct executable catalog state is proven.
 
 ## References
 
@@ -283,8 +303,8 @@ PostgreSQL Global Development Group. (2026h). *System information functions and
 operators*. In *PostgreSQL 18 documentation*.
 https://www.postgresql.org/docs/18/functions-info.html
 
-PostgreSQL Global Development Group. (2026i). *pg_constraint*. In *PostgreSQL
-18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+PostgreSQL Global Development Group. (2026i). *pg_constraint*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
 
 PostgreSQL Global Development Group. (2026j). *INSERT*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-insert.html
@@ -297,3 +317,6 @@ documentation*. https://www.postgresql.org/docs/18/sql-createindex.html
 
 PostgreSQL Global Development Group. (2026m). *pg_index*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/catalog-pg-index.html
+
+PostgreSQL Global Development Group. (2026n). *pg_depend*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/catalog-pg-depend.html
