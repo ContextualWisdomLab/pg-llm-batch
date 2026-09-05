@@ -43,44 +43,6 @@ BEGIN
                     'rejected'
                 )
             ),
-        CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time
-            CHECK (
-                valid_time ~
-                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
-                AND valid_time::timestamptz IS NOT NULL
-                AND valid_time !~ '[.]000000Z$'
-                AND valid_time = CASE
-                    WHEN valid_time ~ '[.]' THEN
-                        to_char(
-                            valid_time::timestamptz AT TIME ZONE 'UTC',
-                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
-                        )
-                    ELSE
-                        to_char(
-                            valid_time::timestamptz AT TIME ZONE 'UTC',
-                            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
-                        )
-                END
-            ),
-        CONSTRAINT ck_llm_context_lifecycle_outbox_system_time
-            CHECK (
-                system_time ~
-                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
-                AND system_time::timestamptz IS NOT NULL
-                AND system_time !~ '[.]000000Z$'
-                AND system_time = CASE
-                    WHEN system_time ~ '[.]' THEN
-                        to_char(
-                            system_time::timestamptz AT TIME ZONE 'UTC',
-                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
-                        )
-                    ELSE
-                        to_char(
-                            system_time::timestamptz AT TIME ZONE 'UTC',
-                            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
-                        )
-                END
-            ),
         CONSTRAINT ck_llm_context_lifecycle_outbox_provenance_sha256
             CHECK (provenance_ref_sha256 ~ '^[0-9a-f]{64}$'),
         CONSTRAINT ck_llm_context_lifecycle_outbox_evidence_sha256
@@ -88,6 +50,52 @@ BEGIN
         CONSTRAINT uq_llm_context_lifecycle_outbox_tenant_evidence
             UNIQUE (tenant_scope, evidence_id)
     );
+
+    ALTER TABLE llm_context_lifecycle_outbox
+        DROP CONSTRAINT IF EXISTS ck_llm_context_lifecycle_outbox_valid_time;
+    ALTER TABLE llm_context_lifecycle_outbox
+        ADD CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time
+        CHECK (
+            valid_time ~
+            '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+            AND valid_time::timestamptz IS NOT NULL
+            AND valid_time !~ '[.]000000Z$'
+            AND valid_time = CASE
+                WHEN valid_time ~ '[.]' THEN
+                    to_char(
+                        valid_time::timestamptz AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                    )
+                ELSE
+                    to_char(
+                        valid_time::timestamptz AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                    )
+            END
+        );
+
+    ALTER TABLE llm_context_lifecycle_outbox
+        DROP CONSTRAINT IF EXISTS ck_llm_context_lifecycle_outbox_system_time;
+    ALTER TABLE llm_context_lifecycle_outbox
+        ADD CONSTRAINT ck_llm_context_lifecycle_outbox_system_time
+        CHECK (
+            system_time ~
+            '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+            AND system_time::timestamptz IS NOT NULL
+            AND system_time !~ '[.]000000Z$'
+            AND system_time = CASE
+                WHEN system_time ~ '[.]' THEN
+                    to_char(
+                        system_time::timestamptz AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                    )
+                ELSE
+                    to_char(
+                        system_time::timestamptz AT TIME ZONE 'UTC',
+                        'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                    )
+            END
+        );
 
     ALTER TABLE llm_context_lifecycle_outbox ENABLE ROW LEVEL SECURITY;
     ALTER TABLE llm_context_lifecycle_outbox FORCE ROW LEVEL SECURITY;
