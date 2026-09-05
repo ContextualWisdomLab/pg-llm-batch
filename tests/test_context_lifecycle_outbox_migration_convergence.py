@@ -29,7 +29,7 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
     """Migration 0008 must converge stale checks without relocking every reapply."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
     create_start = migration.index(
-        "CREATE TABLE IF NOT EXISTS llm_context_lifecycle_outbox"
+        "CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox"
     )
     create_end = migration.index("\n    );", create_start)
     create_block = migration[create_start:create_end]
