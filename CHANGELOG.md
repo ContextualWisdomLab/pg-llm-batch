@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime, forward migration, and destructive rollback no
+  longer inherit caller-controlled PostgreSQL `search_path`. The supported
+  transaction boundary pins `pg_catalog, public, pg_temp` before tenant setting,
+  relation access, DDL, or rollback lookup so an ambient or temporary same-name
+  object cannot precede the reviewed application relation.
 - Lifecycle-outbox stores no longer expose the admitted PostgreSQL DSN through
   a public property. The exact target remains package-internal connection
   authority so DSNs containing credentials are not available to routine store
