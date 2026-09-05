@@ -372,6 +372,56 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 assert_canonical_operational_index
 
+# Existing-table specimen 7: prove UNIQUE convergence is verified after ALTER TABLE,
+# not inferred from successful ADD CONSTRAINT. A superuser-only test trigger renames
+# the just-created replay arbiter before migration 0008 can finish. The migration must
+# detect the missing canonical constraint and roll the repair back atomically.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+ALTER TABLE public.llm_context_lifecycle_outbox
+  DROP CONSTRAINT uq_llm_context_lifecycle_outbox_tenant_evidence;
+CREATE FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter()
+RETURNS event_trigger
+LANGUAGE plpgsql
+AS $function$
+BEGIN
+  IF EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conrelid = 'public.llm_context_lifecycle_outbox'::regclass
+        AND conname = 'uq_llm_context_lifecycle_outbox_tenant_evidence'
+  ) THEN
+    ALTER TABLE public.llm_context_lifecycle_outbox
+      RENAME CONSTRAINT uq_llm_context_lifecycle_outbox_tenant_evidence
+      TO uq_llm_context_lifecycle_outbox_tenant_evidence_sabotaged;
+    RAISE WARNING 'pg-llm-batch test replay-arbiter sabotage applied';
+  END IF;
+END;
+$function$;
+CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_replay_arbiter
+  ON ddl_command_end
+  WHEN TAG IN ('ALTER TABLE')
+  EXECUTE FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter();
+SQL
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null 2>&1; then
+  echo "lifecycle outbox migration did not post-verify repaired replay arbiter" >&2
+  exit 1
+fi
+if ! docker logs "${container}" 2>&1 | \
+    grep -Fq 'pg-llm-batch test replay-arbiter sabotage applied'; then
+  echo "lifecycle outbox sabotage trigger did not complete arbiter rename" >&2
+  exit 1
+fi
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP EVENT TRIGGER pg_llm_batch_test_sabotage_replay_arbiter;
+DROP FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter();
+SQL
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::regclass AND conname IN ('uq_llm_context_lifecycle_outbox_tenant_evidence', 'uq_llm_context_lifecycle_outbox_tenant_evidence_sabotaged')")" = "0"
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+assert_canonical_arbiter
+
 # Current state remains idempotently re-applicable without changing any arbiter.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
