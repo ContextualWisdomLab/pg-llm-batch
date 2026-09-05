@@ -918,7 +918,7 @@ BEGIN
               SELECT opclass.oid
               FROM pg_opclass AS opclass
               JOIN pg_am AS opclass_method
-                ON opclass_method.oid = index_relation.relam
+                ON opclass_method.oid = opclass.opcmethod
               WHERE opclass_method.amname = 'btree'
                 AND opclass.opcdefault
                 AND opclass.opcintype = 'text'::regtype
