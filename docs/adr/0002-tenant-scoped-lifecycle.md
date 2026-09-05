@@ -24,9 +24,11 @@ installation DDL, or destructive rollback (PostgreSQL Global Development Group,
 PostgreSQL constraint names are identifiers, not complete constraint authority.
 `pg_constraint` records constraint kind, validation state, and inheritance
 behavior separately; a same-name row can therefore fail to represent the
-reviewed canonical CHECK. Migration convergence must evaluate those catalog
-properties rather than treating `conname` existence as proof (PostgreSQL Global
-Development Group, 2026e).
+reviewed canonical CHECK. A normal drop/recreate also discards the package
+comment attached to the old constraint. Migration convergence can use these
+catalog properties plus a package-owned semantic stamp to detect ordinary
+same-name drift without parsing PostgreSQL's internal expression tree
+(PostgreSQL Global Development Group, 2026e).
 
 ## Decision
 
@@ -68,16 +70,24 @@ is verified again before canonical v1 and the legacy policy are retired. This
 keeps ordinary reapplication lock-bounded without accepting name-only drift
 (PostgreSQL Global Development Group, 2026a, 2026b, 2026d).
 
-Versioned lifecycle-outbox timestamp constraints use the same evidence rule.
-Migration 0008 accepts `ck_llm_context_lifecycle_outbox_valid_time_canonical_v1`
-or `ck_llm_context_lifecycle_outbox_system_time_canonical_v1` as current only
-when the matching `pg_constraint` row is a validated, inheritable CHECK:
-`contype = 'c'`, `convalidated`, and `NOT connoinherit`. If the canonical name
-exists with another kind, remains unvalidated, or is `NO INHERIT`, migration
-drops that package-owned same-name constraint and adds the reviewed canonical
-CHECK before retiring the legacy timestamp constraint. A current canonical
-constraint remains untouched on reapplication (PostgreSQL Global Development
-Group, 2026e).
+Versioned lifecycle-outbox timestamp constraints use a package semantic identity
+in addition to catalog state. Migration 0008 accepts
+`ck_llm_context_lifecycle_outbox_valid_time_canonical_v1` or
+`ck_llm_context_lifecycle_outbox_system_time_canonical_v1` as current only when
+the matching `pg_constraint` row is a validated, inheritable CHECK and its
+constraint comment carries the expected SHA-256 semantic stamp for the reviewed
+CHECK source. If the canonical name has another kind, remains unvalidated, is
+`NO INHERIT`, or lacks the expected stamp, migration drops that package-owned
+same-name constraint and adds the reviewed canonical CHECK and stamp before
+retiring the legacy timestamp constraint. A current stamped constraint remains
+untouched on reapplication (PostgreSQL Global Development Group, 2026e).
+
+The semantic stamp is an integrity/version identity inside the trusted
+migration-authority boundary. It detects ordinary package-owned drop/recreate or
+operator drift because the old constraint comment does not survive replacement.
+It is not a security boundary against a database administrator who deliberately
+creates a different CHECK and copies the package stamp; such an administrator
+already controls migration/catalog authority and remains outside this assurance.
 
 Lifecycle-outbox runtime must protect its own object authority without rewriting
 caller-owned transaction state. It therefore binds the tenant GUC through fully
@@ -124,11 +134,12 @@ make that a separate reviewed architecture decision rather than adding a
 permissive policy beside the canonical tenant boundary. A same-name altered v2
 is repaired only because v2 is package-owned canonical state.
 
-A same-name timestamp constraint that is not a validated inheritable CHECK is
-also a repair finding. The migration replaces that package-owned drift rather
-than accepting it or merely dropping the legacy check. This may require table
-validation and its associated lock/work once for a stale installation; a
-current installation avoids that repeated DDL.
+A same-name timestamp constraint without the validated inheritable CHECK
+properties and expected package semantic stamp is also a repair finding. The
+migration replaces that package-owned drift rather than accepting it or merely
+dropping the legacy check. This may require table validation and its associated
+lock/work once for a stale installation; a current installation avoids that
+repeated DDL.
 
 Rollback to the prior two-column key requires first proving that no
 endpoint/provider pair exists in multiple tenants and supplying a replacement
