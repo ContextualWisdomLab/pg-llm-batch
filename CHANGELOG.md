@@ -46,6 +46,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop/recreate semantic drift under the trusted migration-authority model; it
   is not a defense against an operator deliberately forging the package stamp.
   Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox migration now converges the payload grammar/integrity checks
+  after `CREATE TABLE IF NOT EXISTS`, so an existing restored or manually
+  repaired table cannot silently skip the tenant/event/evidence identifier,
+  digest, or truth-status constraints just because the relation already exists.
+  Canonical payload CHECK v1 must be validated, inheritable, and carry a
+  reproducible SHA-256 stamp derived from the reviewed grammar; the PostgreSQL
+  smoke removes the legacy event-type check and canonical aggregate check,
+  reapplies migration, and requires an invalid mixed-case event type to fail.
+  Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox migration now converges the nondeferrable
   `(tenant_scope, evidence_id)` UNIQUE constraint required by runtime
   `ON CONFLICT` replay even when the relation already exists. Missing,
