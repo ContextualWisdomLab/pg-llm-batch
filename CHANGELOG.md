@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox structural admission now rejects unreviewed user triggers
+  and query-rewrite rules attached to the canonical table before later
+  CHECK/RLS/UNIQUE/index convergence. PostgreSQL-internal triggers remain
+  admissible; unknown user programs are not auto-dropped because ownership and
+  side effects require operator reconciliation. The wired PostgreSQL smoke
+  installs a no-op trigger and a no-op `DO ALSO` rule and requires the fixed
+  structural-schema failure for each. Package and Docker migration SQL remain
+  byte-identical.
 - Lifecycle-outbox structural admission now rejects positive-numbered dropped
   PostgreSQL column tombstones instead of treating the 14 remaining live
   columns as equivalent to a never-extended canonical table. The wired
