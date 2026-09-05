@@ -50,6 +50,20 @@ def test_outbox_migration_fails_closed_on_incompatible_existing_columns() -> Non
     assert "actual.attidentity <> ''" in guard_block
 
 
+def test_outbox_migration_rejects_noncanonical_column_collation() -> None:
+    """Durable text identity must retain the type-default collation authority."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
+    )
+    guard_block = migration[:guard_at]
+
+    assert "actual.attcollation IS DISTINCT FROM (" in guard_block
+    assert "SELECT typcollation" in guard_block
+    assert "FROM pg_type" in guard_block
+    assert "WHERE oid = expected.atttypid" in guard_block
+
+
 def test_outbox_migration_rejects_undeclared_live_columns() -> None:
     """The durable row shape must not silently gain package-undeclared columns."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
