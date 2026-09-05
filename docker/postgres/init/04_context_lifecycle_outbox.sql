@@ -238,16 +238,6 @@ BEGIN
           AND polcmd = '*'
           AND polpermissive
           AND polroles = ARRAY[0::oid]
-          AND NOT EXISTS (
-              SELECT 1
-              FROM pg_depend AS policy_depend
-              WHERE policy_depend.classid = 'pg_policy'::regclass
-                AND policy_depend.objid = pg_policy.oid
-                AND policy_depend.refclassid IN (
-                    'pg_proc'::regclass,
-                    'pg_operator'::regclass
-                )
-          )
           AND pg_catalog.pg_get_expr(polqual, polrelid, false) =
               '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
           AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =
@@ -284,16 +274,6 @@ BEGIN
           AND polcmd = '*'
           AND polpermissive
           AND polroles = ARRAY[0::oid]
-          AND NOT EXISTS (
-              SELECT 1
-              FROM pg_depend AS policy_depend
-              WHERE policy_depend.classid = 'pg_policy'::regclass
-                AND policy_depend.objid = pg_policy.oid
-                AND policy_depend.refclassid IN (
-                    'pg_proc'::regclass,
-                    'pg_operator'::regclass
-                )
-          )
           AND pg_catalog.pg_get_expr(polqual, polrelid, false) =
               '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
           AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =
