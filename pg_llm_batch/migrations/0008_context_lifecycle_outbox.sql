@@ -55,6 +55,54 @@ BEGIN
             UNIQUE (tenant_scope, evidence_id)
     );
 
+    IF EXISTS (
+        SELECT 1
+        FROM (
+            VALUES
+                ('context_outbox_uuid', 'uuid'::regtype, true, true),
+                ('tenant_scope', 'text'::regtype, true, true),
+                ('evidence_id', 'text'::regtype, true, false),
+                ('event_type', 'text'::regtype, true, false),
+                ('tenant_scope_sha256', 'text'::regtype, true, false),
+                ('subject_ref_sha256', 'text'::regtype, true, false),
+                ('authority_ref_sha256', 'text'::regtype, true, false),
+                ('origin_ref_sha256', 'text'::regtype, true, false),
+                ('truth_status', 'text'::regtype, true, false),
+                ('valid_time', 'text'::regtype, true, false),
+                ('system_time', 'text'::regtype, true, false),
+                ('provenance_ref_sha256', 'text'::regtype, true, false),
+                ('evidence_ref_sha256', 'text'::regtype, true, false),
+                ('created_at', 'timestamptz'::regtype, true, true)
+        ) AS expected(attname, atttypid, attnotnull, atthasdef)
+        LEFT JOIN pg_attribute AS actual
+          ON actual.attrelid = 'llm_context_lifecycle_outbox'::regclass
+         AND actual.attname = expected.attname
+         AND actual.attnum > 0
+         AND NOT actual.attisdropped
+        WHERE actual.attnum IS NULL
+           OR actual.atttypid IS DISTINCT FROM expected.atttypid
+           OR actual.attnotnull IS DISTINCT FROM expected.attnotnull
+           OR actual.atthasdef IS DISTINCT FROM expected.atthasdef
+           OR actual.attgenerated <> ''
+           OR actual.attidentity <> ''
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND contype = 'p'
+          AND convalidated
+          AND NOT condeferrable
+          AND conkey = ARRAY[
+              (SELECT attnum::smallint
+               FROM pg_attribute
+               WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                 AND attname = 'context_outbox_uuid'
+                 AND NOT attisdropped)
+          ]
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';
+    END IF;
+
     IF NOT EXISTS (
         SELECT 1
         FROM pg_constraint
