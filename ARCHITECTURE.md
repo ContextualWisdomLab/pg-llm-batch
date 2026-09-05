@@ -73,6 +73,16 @@ unclean shutdown, and does not replicate its contents to standbys. The migration
 does not silently issue `SET LOGGED`, because that rewrite and its operational
 impact require an operator-controlled reconciliation window.
 
+Exact durable row-shape admission is physical/catalog-aware rather than limited
+to SQL-visible columns. Migration 0008 requires exactly the 14 package-owned live
+positive-numbered user attributes and also rejects any positive-numbered
+`pg_attribute.attisdropped` entry. PostgreSQL retains a dropped column physically
+while hiding it from SQL parsing, so `DROP COLUMN` is not treated as proof that a
+previously undeclared persistence surface never existed. The migration does not
+auto-rewrite the table or reclaim that state; retention, legal-disposal, WAL,
+locking, and availability consequences require operator-controlled
+reconciliation or rebuild.
+
 Migration 0008 and its destructive rollback are installer-owned atomic
 statements and bind `pg_catalog, public, pg_temp` with fully qualified
 `pg_catalog.set_config` inside their `DO` blocks before object lookup or DDL.
@@ -156,16 +166,18 @@ identity, unknown-policy fail-closed behavior, post-repair canonical policy
 verification, canonical payload/timestamp CHECK type/validation/inheritance,
 same-runtime parsed-expression identity, review-stamp traceability, post-repair
 CHECK verification, canonical replay UNIQUE kind/validation/deferrability/column
-identity, ordinary logged-public relation identity, runtime schema qualification
-without caller `search_path` mutation, installer/rollback search-path authority,
-schema mirroring, operator documentation, and 100% production statement and
-branch coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS`
-role and prove that identical provider identifiers in different tenants remain
+identity, ordinary logged-public relation identity, exact live-column cardinality,
+dropped-column tombstone rejection, runtime schema qualification without caller
+`search_path` mutation, installer/rollback search-path authority, schema
+mirroring, operator documentation, and 100% production statement and branch
+coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role
+and prove that identical provider identifiers in different tenants remain
 independently addressable and mutually invisible when access occurs through the
 trusted package boundary. Exact-head runtime evidence must also exercise a
 non-default caller `search_path`, verify the canonical outbox relation is still
 selected, verify the caller path is unchanged afterward, and execute migration
-0008 against stale replay-key, spoofed canonical-CHECK, and UNLOGGED-relation
-variants so PostgreSQL evaluates canonical policy, CHECK-predicate, UPSERT-arbiter,
-and durability catalog conditions. These tests do not claim isolation after
-arbitrary SQL or untrusted schema-creation authority is granted.
+0008 against stale replay-key, spoofed canonical-CHECK, UNLOGGED-relation,
+undeclared-live-column, and dropped-column-tombstone variants so PostgreSQL
+evaluates canonical policy, CHECK-predicate, UPSERT-arbiter, and durability/schema
+catalog conditions. These tests do not claim isolation after arbitrary SQL or
+untrusted schema-creation authority is granted.
