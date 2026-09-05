@@ -59,7 +59,16 @@ BEGIN
             UNIQUE (tenant_scope, evidence_id)
     );
 
-    IF EXISTS (
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_class AS outbox_relation
+        JOIN pg_namespace AS outbox_namespace
+          ON outbox_namespace.oid = outbox_relation.relnamespace
+        WHERE outbox_relation.oid = 'public.llm_context_lifecycle_outbox'::regclass
+          AND outbox_relation.relkind = 'r'
+          AND outbox_relation.relpersistence = 'p'
+          AND outbox_namespace.nspname = 'public'
+    ) OR EXISTS (
         SELECT 1
         FROM (
             VALUES
