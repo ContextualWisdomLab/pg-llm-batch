@@ -226,6 +226,26 @@ BEGIN
             UNIQUE (tenant_scope, evidence_id);
     END IF;
 
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND conname = 'uq_llm_context_lifecycle_outbox_tenant_evidence'
+          AND contype = 'u'
+          AND convalidated
+          AND NOT condeferrable
+          AND conkey = ARRAY[
+              (SELECT attnum::smallint FROM pg_attribute
+               WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                 AND attname = 'tenant_scope' AND NOT attisdropped),
+              (SELECT attnum::smallint FROM pg_attribute
+               WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                 AND attname = 'evidence_id' AND NOT attisdropped)
+          ]
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox replay arbiter failed canonical verification';
+    END IF;
+
     -- Derive canonical CHECK parser output from this PostgreSQL runtime instead of
     -- trusting mutable COMMENT metadata or hard-coding version-sensitive deparser text.
     -- The probe is session-local, never touches durable rows, and is explicitly removed
