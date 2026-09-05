@@ -12,6 +12,18 @@ import pg_llm_batch.context_lifecycle_outbox as lifecycle_outbox
 _CANONICAL_PAYLOAD_CONSTRAINT = (
     "ck_llm_context_lifecycle_outbox_payload_canonical_v1"
 )
+_LEGACY_PAYLOAD_CONSTRAINTS = (
+    "ck_llm_context_lifecycle_outbox_tenant_scope",
+    "ck_llm_context_lifecycle_outbox_evidence_id",
+    "ck_llm_context_lifecycle_outbox_event_type",
+    "ck_llm_context_lifecycle_outbox_tenant_sha256",
+    "ck_llm_context_lifecycle_outbox_subject_sha256",
+    "ck_llm_context_lifecycle_outbox_authority_sha256",
+    "ck_llm_context_lifecycle_outbox_origin_sha256",
+    "ck_llm_context_lifecycle_outbox_truth_status",
+    "ck_llm_context_lifecycle_outbox_provenance_sha256",
+    "ck_llm_context_lifecycle_outbox_evidence_sha256",
+)
 _CANONICAL_PAYLOAD_SPEC = "\n".join(
     (
         "tenant_scope=^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$",
@@ -88,6 +100,36 @@ def test_outbox_migration_converges_payload_value_contract_after_create() -> Non
         "evidence_ref_sha256 ~ '^[0-9a-f]{64}$'",
     ):
         assert required_fragment in payload_block
+
+
+def test_outbox_migration_retires_legacy_payload_constraints() -> None:
+    """Once canonical payload authority exists, legacy package checks must disappear."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    canonical_at = migration.index(
+        f"COMMENT ON CONSTRAINT {_CANONICAL_PAYLOAD_CONSTRAINT}"
+    )
+    timestamp_at = migration.index(
+        "ck_llm_context_lifecycle_outbox_valid_time_canonical_v1",
+        canonical_at,
+    )
+
+    last_drop_at = canonical_at
+    for legacy_constraint in _LEGACY_PAYLOAD_CONSTRAINTS:
+        drop_guard = (
+            "IF EXISTS (\n"
+            "        SELECT 1\n"
+            "        FROM pg_constraint\n"
+            "        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+            f"          AND conname = '{legacy_constraint}'\n"
+            "    ) THEN"
+        )
+        drop_at = migration.index(drop_guard, last_drop_at)
+        drop_constraint_at = migration.index(
+            f"DROP CONSTRAINT {legacy_constraint}",
+            drop_at,
+        )
+        assert canonical_at < drop_at < drop_constraint_at < timestamp_at
+        last_drop_at = drop_constraint_at
 
 
 def test_outbox_payload_constraint_remains_package_docker_byte_identical() -> None:
