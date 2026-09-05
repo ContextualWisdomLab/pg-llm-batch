@@ -342,7 +342,7 @@ BEGIN
     ALTER INDEX public.idx_llm_context_lifecycle_outbox_tenant_created
       RENAME TO idx_llm_context_lifecycle_outbox_tenant_created_sabotaged;
   END IF;
-END
+END;
 $function$;
 CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_outbox_index
   ON ddl_command_end
