@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox migration now requires the canonical persistence object to
+  remain an ordinary logged table in `public`. A structurally identical
+  `UNLOGGED` relation fails closed before constraint, RLS, or index convergence
+  instead of being admitted as durable publication intent. The migration does
+  not silently convert it back to logged persistence because crash-recovery,
+  standby-replication, and storage-rewrite consequences require operator
+  reconciliation. The wired PostgreSQL smoke converts the outbox to UNLOGGED,
+  requires the structural mismatch, restores logged persistence, and then
+  requires successful reapplication. Package and Docker migration SQL remain
+  byte-identical.
 - Lifecycle-outbox migration now treats per-column PostgreSQL collation as part
   of the canonical durable row shape. Required columns must retain their
   expected type-level `typcollation`; an explicit drift such as
