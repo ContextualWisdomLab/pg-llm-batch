@@ -78,6 +78,22 @@ def test_outbox_migration_rejects_undeclared_live_columns() -> None:
     assert ") <> 14 OR EXISTS (" in guard_block
 
 
+def test_outbox_migration_requires_logged_ordinary_table_authority() -> None:
+    """Durable lifecycle rows must live in one logged ordinary public table."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
+    )
+    guard_block = migration[:guard_at]
+
+    assert "FROM pg_class AS outbox_relation" in guard_block
+    assert "JOIN pg_namespace AS outbox_namespace" in guard_block
+    assert "outbox_relation.oid = 'public.llm_context_lifecycle_outbox'::regclass" in guard_block
+    assert "outbox_relation.relkind = 'r'" in guard_block
+    assert "outbox_relation.relpersistence = 'p'" in guard_block
+    assert "outbox_namespace.nspname = 'public'" in guard_block
+
+
 def test_outbox_migration_requires_primary_key_on_context_uuid() -> None:
     """The durable surrogate identifier must retain a concrete nondeferrable PK."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
