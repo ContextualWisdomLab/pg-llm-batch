@@ -27,13 +27,18 @@ mechanism and cannot be used as production application identities.
 
 Lifecycle-outbox migration policy predicates bind text equality with
 `OPERATOR(pg_catalog.=)` and resolve the tenant setting through
-`pg_catalog.current_setting`. This matters because PostgreSQL records a policy's
-command, roles, `USING`, and `WITH CHECK` expression authority in `pg_policy`;
-an unqualified policy expression can otherwise depend on the migration
-session's name-resolution environment. The canonical v2 policy is installed
-before the earlier unqualified v1/legacy names are removed, and current v2 is
-left unchanged on idempotent reapplication (PostgreSQL Global Development
-Group, 2026e, 2026f).
+`pg_catalog.current_setting`. PostgreSQL records the applicable command,
+permissive/restrictive mode, roles, `USING`, and `WITH CHECK` expression trees
+separately in `pg_policy`; the policy name is not sufficient security evidence.
+Migration 0008 therefore accepts canonical v2 without DDL only when the stored
+catalog row is all-command, permissive, exactly `PUBLIC`, and both expressions
+decompile to the expected tenant equality. Same-name semantic drift is repaired.
+An unknown policy name fails closed rather than being silently kept or deleted,
+because an additional permissive policy could widen visible/writeable rows. The
+resulting canonical v2 is verified again through `pg_policy` and `pg_get_expr`
+before v1/legacy policy retirement. A semantically current v2 remains unchanged
+on idempotent reapplication (PostgreSQL Global Development Group, 2026e, 2026f,
+2026h).
 
 The lifecycle outbox also removes ambient PostgreSQL `search_path` from object
 authority, but the runtime seam does so without changing caller transaction
@@ -105,7 +110,9 @@ tenant-recorder propagation, standalone compatibility, parameterized
 transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation, atomic RLS restoration, policy
 default-deny behavior, exact schema mirroring, versioned policy convergence,
-explicit `pg_catalog` operator/function binding, runtime schema qualification
+explicit `pg_catalog` operator/function binding, full canonical `pg_policy`
+command/role/expression identity, unknown-policy fail-closed behavior,
+post-create/post-repair catalog verification, runtime schema qualification
 without caller `search_path` mutation, installer/rollback search-path binding,
 non-exposure of an admitted credential-bearing outbox DSN, and documentation of
 the bounded assurance claim. Production statement, branch, and public-docstring
@@ -117,7 +124,8 @@ scope can retrieve only its own lifecycle projection. This proves RLS mechanics
 under the trusted package model; it does not claim protection after arbitrary
 SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
-selected, and confirm the caller's path is unchanged afterward.
+selected, confirm the caller's path is unchanged afterward, and execute
+migration 0008 so PostgreSQL evaluates the final `pg_policy` postcondition.
 
 ## References
 
@@ -156,3 +164,7 @@ PostgreSQL Global Development Group. (2026f). *CREATE POLICY*. In *PostgreSQL
 
 PostgreSQL Global Development Group. (2026g). *Schemas*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/ddl-schemas.html
+
+PostgreSQL Global Development Group. (2026h). *System information functions and
+operators*. In *PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/functions-info.html
