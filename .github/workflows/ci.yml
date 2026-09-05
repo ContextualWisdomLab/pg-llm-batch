@@ -118,3 +118,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_replay_arbiter.sh
       - name: Run lifecycle-outbox exact-column smoke
         run: bash tests/smoke_context_lifecycle_outbox_exact_columns.sh
+      - name: Run lifecycle-outbox UUID default-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_uuid_default_authority.sh
