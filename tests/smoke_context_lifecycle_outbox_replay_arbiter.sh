@@ -101,7 +101,35 @@ assert_canonical_operational_index() {
              WHERE attrelid = 'public.llm_context_lifecycle_outbox'::regclass
                AND attname = 'created_at'
                AND NOT attisdropped
-           )
+           ),
+           operational_index.indcollation[0] = (
+             SELECT attcollation
+             FROM pg_attribute
+             WHERE attrelid = 'public.llm_context_lifecycle_outbox'::regclass
+               AND attname = 'tenant_scope'
+               AND NOT attisdropped
+           ),
+           operational_index.indcollation[1] = 0,
+           operational_index.indclass[0] = (
+             SELECT opclass.oid
+             FROM pg_opclass AS opclass
+             JOIN pg_am AS opclass_method
+               ON opclass_method.oid = opclass.opcmethod
+             WHERE opclass_method.amname = 'btree'
+               AND opclass.opcdefault
+               AND opclass.opcintype = 'text'::regtype
+           ),
+           operational_index.indclass[1] = (
+             SELECT opclass.oid
+             FROM pg_opclass AS opclass
+             JOIN pg_am AS opclass_method
+               ON opclass_method.oid = opclass.opcmethod
+             WHERE opclass_method.amname = 'btree'
+               AND opclass.opcdefault
+               AND opclass.opcintype = 'timestamptz'::regtype
+           ),
+           operational_index.indoption[0] = 0,
+           operational_index.indoption[1] = 0
     FROM pg_index AS operational_index
     JOIN pg_class AS index_relation
       ON index_relation.oid = operational_index.indexrelid
@@ -112,7 +140,7 @@ assert_canonical_operational_index() {
       AND operational_index.indrelid =
           'public.llm_context_lifecycle_outbox'::regclass;
   ")"
-  test "${observed}" = 'btree|t|t|t|f|2|2|t|t|t|t'
+  test "${observed}" = 'btree|t|t|t|f|2|2|t|t|t|t|t|t|t|t|t|t'
 }
 
 assert_canonical_arbiter
@@ -277,6 +305,21 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
 DROP INDEX public.${operational_index};
 CREATE INDEX ${operational_index}
   ON public.llm_context_lifecycle_outbox(created_at, tenant_scope);
+SQL
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+assert_canonical_operational_index
+
+# Existing-table specimen 5: the same key column numbers can still carry different
+# B-tree semantics through per-key collation, opclass, sort direction, and null order.
+# Migration must rebuild this same-name index rather than treating indkey as identity.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+DROP INDEX public.${operational_index};
+CREATE INDEX ${operational_index}
+  ON public.llm_context_lifecycle_outbox(
+    tenant_scope COLLATE "C" text_pattern_ops DESC NULLS FIRST,
+    created_at DESC NULLS FIRST
+  );
 SQL
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
