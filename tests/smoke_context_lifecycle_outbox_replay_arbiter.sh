@@ -214,7 +214,9 @@ observed_policy_expression="$(docker exec "${container}" psql -U postgres -d pos
     AND polname = '${policy}';
 ")"
 test "${observed_policy_expression}" = \
-  "${expected_policy_expression}|${expected_policy_expression}"\nshadow_dependency_count="$(docker exec "${container}" psql -U postgres -d postgres -Atqc "
+  "${expected_policy_expression}|${expected_policy_expression}"
+
+shadow_dependency_count="$(docker exec "${container}" psql -U postgres -d postgres -Atqc "
   SELECT count(*)
   FROM pg_depend AS policy_depend
   JOIN pg_operator AS operator_object
