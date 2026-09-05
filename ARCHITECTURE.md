@@ -25,12 +25,15 @@ default-deny for ordinary application roles. PostgreSQL superusers and roles
 with `BYPASSRLS` remain administrative escape hatches and must not be used as
 application identities.
 
-Lifecycle-outbox RLS policy predicate authority is search-path-independent: the
-canonical v2 policy uses `OPERATOR(pg_catalog.=)` and
-`pg_catalog.current_setting` for both `USING` and `WITH CHECK`. Migration 0008
-installs v2 before retiring the earlier unqualified policy names, then leaves an
-existing v2 unchanged on idempotent reapplication. Policy names are version
-markers, not substitutes for binding operator/function authority.
+Lifecycle-outbox RLS policy authority is catalog-verified, not name-inferred.
+Canonical v2 uses `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` for
+both `USING` and `WITH CHECK`. Migration 0008 accepts an existing v2 without DDL
+only when `pg_policy` proves all-command permissive `PUBLIC` scope and both
+stored expression trees decompile to the canonical tenant predicate. A
+same-name drifted v2 is replaced, an unknown policy name fails the migration
+instead of being silently retained or deleted, and the canonical catalog state
+is verified again before v1/legacy policies are retired. Policy names remain
+version markers rather than security evidence.
 
 Lifecycle-outbox runtime relation authority is explicit without rewriting
 caller transaction state. Tenant binding calls `pg_catalog.set_config` directly,
@@ -111,14 +114,16 @@ provider-returned data.
 Deterministic gates cover strict tenant validation, standalone compatibility,
 tenant-qualified SQL parameters, current-state reconciliation, migration
 idempotency, malformed database rows, default-deny policy text, explicit
-`pg_catalog` policy predicate authority, runtime schema qualification without
-caller `search_path` mutation, installer/rollback search-path authority, schema
-mirroring, operator documentation, and 100% production statement and branch
-coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role
-and prove that identical provider identifiers in different tenants remain
-independently addressable and mutually invisible when access occurs through the
-trusted package boundary. Exact-head runtime evidence must also exercise a
-non-default caller `search_path`, verify the canonical outbox relation is still
-selected, and verify the caller path is unchanged afterward. These tests do not
-claim isolation after arbitrary SQL or untrusted schema-creation authority is
-granted.
+`pg_catalog` policy predicate authority, `pg_policy` command/role/expression
+identity, unknown-policy fail-closed behavior, post-repair canonical policy
+verification, runtime schema qualification without caller `search_path`
+mutation, installer/rollback search-path authority, schema mirroring, operator
+documentation, and 100% production statement and branch coverage. Live
+PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
+identical provider identifiers in different tenants remain independently
+addressable and mutually invisible when access occurs through the trusted
+package boundary. Exact-head runtime evidence must also exercise a non-default
+caller `search_path`, verify the canonical outbox relation is still selected,
+verify the caller path is unchanged afterward, and execute migration 0008 so its
+catalog postcondition is checked by PostgreSQL itself. These tests do not claim
+isolation after arbitrary SQL or untrusted schema-creation authority is granted.
