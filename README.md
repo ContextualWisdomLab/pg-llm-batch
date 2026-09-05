@@ -198,12 +198,14 @@ Package helpers bind tenant scope with parameterized transaction-local PostgreSQ
 context and the schema enables and forces default-deny RLS. Provider metadata,
 resource identifiers, payloads, and headers never select `tenant_scope`.
 
-Lifecycle-outbox RLS policy predicate authority is search-path-independent.
-Canonical policy v2 binds the tenant comparison with `OPERATOR(pg_catalog.=)`
-and resolves the transaction-local setting through
-`pg_catalog.current_setting` in both `USING` and `WITH CHECK`; the migration
-creates v2 before retiring the earlier unqualified policy names and does not
-rewrite an existing v2 during ordinary idempotent reapplication.
+Lifecycle-outbox RLS policy authority is catalog-verified rather than inferred
+from the policy name. Canonical v2 binds the tenant comparison with
+`OPERATOR(pg_catalog.=)` and resolves the transaction-local setting through
+`pg_catalog.current_setting` in both `USING` and `WITH CHECK`. Migration 0008
+accepts an existing v2 without policy DDL only when PostgreSQL reports the exact
+all-command permissive `PUBLIC` role and canonical stored expressions. It
+repairs same-name semantic drift, fails closed on unknown policy names, and
+verifies the resulting policy before retiring v1/legacy names.
 
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
@@ -346,4 +348,4 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`].
