@@ -23,8 +23,8 @@ _LEGACY_POLICIES = (
     "plc_llm_context_lifecycle_outbox_tenant_scope",
 )
 _CANONICAL_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2"
-_EXPECTED_POLICY_EXPRESSION = (
-    "(tenant_scope = current_setting('pg_llm_batch.tenant_scope'::text, true))"
+_EXPECTED_POLICY_EXPRESSION_SQL = (
+    "(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))"
 )
 
 
@@ -107,9 +107,9 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
         "          AND polpermissive\n"
         "          AND polroles = ARRAY[0::oid]\n"
         "          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =\n"
-        f"              '{_EXPECTED_POLICY_EXPRESSION.replace("'", "''")}'\n"
+        f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
         "          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =\n"
-        f"              '{_EXPECTED_POLICY_EXPRESSION.replace("'", "''")}'\n"
+        f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
         "    ) THEN"
     )
     add_policy_at = migration.index(add_policy_guard)
