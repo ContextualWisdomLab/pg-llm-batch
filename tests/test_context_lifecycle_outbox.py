@@ -80,13 +80,13 @@ class FakeCursor:
         normalized = " ".join(sql.split())
         parameters = params or ()
         self.database.calls.append((normalized, parameters))
-        if normalized.startswith("SELECT set_config"):
+        if normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
             return
         if normalized.startswith("SELECT evidence_id"):
             self.result = self.database.rows.get(parameters)
             return
-        if normalized.startswith("INSERT INTO llm_context_lifecycle_outbox"):
+        if normalized.startswith("INSERT INTO public.llm_context_lifecycle_outbox"):
             tenant = parameters[0]
             seed_values = parameters[1:]
             key = (tenant, seed_values[0])
@@ -265,7 +265,7 @@ def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
     statements = [sql for sql, _ in database.calls]
     assert (
         sum(
-            sql.startswith("INSERT INTO llm_context_lifecycle_outbox")
+            sql.startswith("INSERT INTO public.llm_context_lifecycle_outbox")
             for sql in statements
         )
         == 1
