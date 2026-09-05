@@ -46,6 +46,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drop/recreate semantic drift under the trusted migration-authority model; it
   is not a defense against an operator deliberately forging the package stamp.
   Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox migration now converges the nondeferrable
+  `(tenant_scope, evidence_id)` UNIQUE constraint required by runtime
+  `ON CONFLICT` replay even when the relation already exists. Missing,
+  wrong-kind, deferrable, or wrong-column same-name constraints are repaired
+  once; duplicate durable identities fail migration for operator reconciliation
+  instead of being silently deleted or merged. Packaged and Docker migration
+  SQL remain byte-identical.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
