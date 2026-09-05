@@ -85,12 +85,19 @@ def _migration_file_error() -> ConfigError:
     return ConfigError("Lifecycle outbox migration file is unavailable or unsafe")
 
 
+def _migration_file_mode_is_safe(status: os.stat_result) -> bool:
+    """Require regular SQL bytes that no group or other principal may rewrite."""
+    return stat.S_ISREG(status.st_mode) and not (
+        status.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+    )
+
+
 def _migration_file_identity(status: os.stat_result) -> tuple[int, int, int, int, int, int]:
-    """Snapshot stable metadata for one retained regular migration file."""
+    """Snapshot stable metadata, including write authority, for one migration file."""
     return (
         status.st_dev,
         status.st_ino,
-        stat.S_IFMT(status.st_mode),
+        status.st_mode,
         status.st_size,
         status.st_mtime_ns,
         status.st_ctime_ns,
@@ -113,7 +120,7 @@ def _read_migration_sql(path: Path) -> str:
         except OSError:
             raise _migration_file_error() from None
         if (
-            not stat.S_ISREG(before.st_mode)
+            not _migration_file_mode_is_safe(before)
             or before.st_size <= 0
             or before.st_size > _MAX_MIGRATION_BYTES
         ):
@@ -240,9 +247,10 @@ def apply_context_lifecycle_outbox_schema(
 
     An explicit DSN is mandatory so package code never inherits an unintended libpq
     target. Operators may supply a reviewed regular UTF-8 migration file for
-    installation tooling; the package pins its descriptor, enforces a finite byte
-    budget, and rejects observed mutation before SQL reaches PostgreSQL. Normal
-    callers use the same checks on the package-owned migration.
+    installation tooling; the package pins its descriptor, rejects group/other write
+    authority, enforces a finite byte budget, and rejects observed mutation before
+    SQL reaches PostgreSQL. Normal callers use the same checks on the package-owned
+    migration.
     """
     dsn = _validated_postgres_dsn(postgres_dsn)
     _require_psycopg()
