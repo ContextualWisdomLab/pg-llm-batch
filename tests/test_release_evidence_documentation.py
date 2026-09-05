@@ -12,7 +12,22 @@ except ModuleNotFoundError:  # pragma: no cover - Python 3.10 compatibility
 ROOT = Path(__file__).resolve().parents[1]
 ADR = ROOT / "docs" / "adr" / "0003-reproducible-release-evidence.md"
 DOCTORING = ROOT / "docs" / "doctoring" / "reproducible-release-evidence.md"
+PYPROJECT = ROOT / "pyproject.toml"
 UV_CONFIG = ROOT / "uv.toml"
+
+
+def _uv_build_requirement() -> str:
+    """Return the single exact uv-build backend requirement from pyproject."""
+    requirements = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))["build-system"][
+        "requires"
+    ]
+    matches = [
+        requirement
+        for requirement in requirements
+        if requirement.casefold().startswith("uv_build==")
+    ]
+    assert len(matches) == 1
+    return matches[0]
 
 
 def test_release_evidence_adr_separates_acceptance_from_publication() -> None:
@@ -31,11 +46,13 @@ def test_release_evidence_documents_exact_build_toolchain() -> None:
     ]
     assert required_version.startswith("==")
     uv_version = required_version.removeprefix("==")
+    backend_requirement = _uv_build_requirement()
 
+    assert backend_requirement == "uv_build==0.12.7"
     for path in (ADR, DOCTORING):
         text = path.read_text(encoding="utf-8")
         assert f"`uv` {uv_version}" in text
-        assert "`uv_build==0.12.1`" in text
+        assert f"`{backend_requirement}`" in text
         assert "build-system requirements are not pinned by `uv.lock`" in text
 
 
