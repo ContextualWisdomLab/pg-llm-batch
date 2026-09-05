@@ -2,8 +2,8 @@
 """Regression tests for lifecycle-outbox migration mode authority."""
 
 import os
-from pathlib import Path
 import stat
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
