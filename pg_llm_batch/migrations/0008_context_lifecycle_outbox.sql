@@ -111,6 +111,12 @@ BEGIN
           AND NOT actual.attisdropped
     ) <> 14 OR EXISTS (
         SELECT 1
+        FROM pg_attribute AS dropped_column
+        WHERE dropped_column.attrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND dropped_column.attnum > 0
+          AND dropped_column.attisdropped
+    ) OR EXISTS (
+        SELECT 1
         FROM pg_attribute AS actual
         JOIN pg_attrdef AS defaults
           ON defaults.adrelid = actual.attrelid
