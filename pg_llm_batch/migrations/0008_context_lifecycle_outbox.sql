@@ -12,7 +12,7 @@ BEGIN
     PERFORM pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true);
 
     CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox (
-        context_outbox_uuid UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        context_outbox_uuid UUID PRIMARY KEY DEFAULT pg_catalog.gen_random_uuid(),
         tenant_scope TEXT NOT NULL DEFAULT 'standalone',
         evidence_id TEXT NOT NULL,
         event_type TEXT NOT NULL,
@@ -119,17 +119,6 @@ BEGIN
           AND NOT actual.attisdropped
           AND (
               (
-                  actual.attname = 'context_outbox_uuid'
-                  AND pg_catalog.pg_get_expr(
-                      defaults.adbin,
-                      defaults.adrelid,
-                      false
-                  ) NOT IN (
-                      'uuid_generate_v4()',
-                      'public.uuid_generate_v4()'
-                  )
-              )
-              OR (
                   actual.attname = 'tenant_scope'
                   AND pg_catalog.pg_get_expr(
                       defaults.adbin,
@@ -162,6 +151,47 @@ BEGIN
           ]
     ) THEN
         RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';
+    END IF;
+
+    -- UUID generation is durable identity authority. Converge any predecessor or
+    -- restored default to PostgreSQL's core v4 generator without rewriting rows.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_attribute AS actual
+        JOIN pg_attrdef AS defaults
+          ON defaults.adrelid = actual.attrelid
+         AND defaults.adnum = actual.attnum
+        WHERE actual.attrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND actual.attname = 'context_outbox_uuid'
+          AND actual.attnum > 0
+          AND NOT actual.attisdropped
+          AND pg_catalog.pg_get_expr(
+              defaults.adbin,
+              defaults.adrelid,
+              false
+          ) = 'gen_random_uuid()'
+    ) THEN
+        ALTER TABLE public.llm_context_lifecycle_outbox
+            ALTER COLUMN context_outbox_uuid SET DEFAULT pg_catalog.gen_random_uuid();
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_attribute AS actual
+        JOIN pg_attrdef AS defaults
+          ON defaults.adrelid = actual.attrelid
+         AND defaults.adnum = actual.attnum
+        WHERE actual.attrelid = 'llm_context_lifecycle_outbox'::regclass
+          AND actual.attname = 'context_outbox_uuid'
+          AND actual.attnum > 0
+          AND NOT actual.attisdropped
+          AND pg_catalog.pg_get_expr(
+              defaults.adbin,
+              defaults.adrelid,
+              false
+          ) = 'gen_random_uuid()'
+    ) THEN
+        RAISE EXCEPTION 'lifecycle outbox UUID default failed canonical verification';
     END IF;
 
     IF NOT EXISTS (
