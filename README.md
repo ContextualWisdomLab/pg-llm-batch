@@ -221,6 +221,16 @@ bounded evidence for the trusted migration-authority model; it is not a defense
 against a database administrator deliberately forging the same stamp on a
 different CHECK.
 
+The lifecycle outbox runtime uses
+`ON CONFLICT (tenant_scope, evidence_id) DO NOTHING` for idempotent durable
+replay. Migration 0008 therefore converges the matching
+`uq_llm_context_lifecycle_outbox_tenant_evidence` constraint even when the table
+already exists. The canonical state is a validated, NOT DEFERRABLE UNIQUE
+constraint over exactly `tenant_scope` and `evidence_id`; a missing, deferrable,
+wrong-kind, or wrong-column same-name constraint is repaired once. Existing
+duplicate durable identities make migration fail for operator reconciliation
+rather than being silently deleted or merged.
+
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
 application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
