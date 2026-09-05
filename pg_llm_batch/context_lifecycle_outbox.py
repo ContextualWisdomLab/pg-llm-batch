@@ -365,12 +365,19 @@ class PostgresContextLifecycleOutboxStore:
 
         The identifier is validated through the same evidence contract before SQL is
         executed, avoiding a second, subtly different event-id grammar. ``for_update``
-        is reserved for compare-and-swap writers and keeps row locking explicit.
-        Durable evidence is revalidated and must retain the tenant identity explicitly
-        bound to this store before it can return to application code. Security-critical
-        function and relation authority is explicitly schema-qualified so the outbox
-        does not mutate or inherit the caller transaction's ``search_path``.
+        is an exact built-in boolean reserved for compare-and-swap writers and keeps
+        row locking explicit. Durable evidence is revalidated and must retain the
+        tenant identity explicitly bound to this store before it can return to
+        application code. Security-critical function and relation authority is
+        explicitly schema-qualified so the outbox does not mutate or inherit the
+        caller transaction's ``search_path``.
         """
+        if type(for_update) is not bool:
+            raise ValidationError(
+                field="for_update",
+                value="<redacted>",
+                reason="must be an exact boolean",
+            )
         probe = _validated_evidence(
             ContextLifecycleEvidenceSeed(
                 evidence_id=evidence_id,
