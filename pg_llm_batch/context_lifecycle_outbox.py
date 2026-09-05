@@ -176,10 +176,19 @@ class PostgresContextLifecycleOutboxStore:
     Validated database and tenant authority lives in a package-owned weak registry,
     not caller-writable instance slots. This keeps later SQL/RLS decisions bound to
     construction-time authority even if a hostile caller invokes ``object.__setattr__``
-    or ``object.__delattr__`` directly against the admitted store object.
+    or ``object.__delattr__`` directly against the admitted store object. The concrete
+    authority-bearing adapter is intentionally non-subclassable so inheritance cannot
+    replace those database/RLS properties through virtual dispatch; callers extend the
+    boundary by composition behind a port instead.
     """
 
     __slots__ = ("__weakref__",)
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Reject inheritance that could override admitted database or RLS authority."""
+        raise TypeError(
+            "PostgresContextLifecycleOutboxStore does not support subclassing"
+        )
 
     def __init__(
         self,
