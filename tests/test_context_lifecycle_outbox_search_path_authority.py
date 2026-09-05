@@ -67,8 +67,8 @@ def test_forward_and_rollback_migrations_pin_search_path_inside_do_block() -> No
     rollback = Path(ROLLBACK_PATH).read_text(encoding="utf-8")
 
     assert binding in migration
-    assert migration.index(binding) < migration.index(
-        "CREATE TABLE IF NOT EXISTS llm_context_lifecycle_outbox"
-    )
+    create_table = "CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox"
+    assert create_table in migration
+    assert migration.index(binding) < migration.index(create_table)
     assert binding in rollback
     assert rollback.index(binding) < rollback.index("to_regclass")
