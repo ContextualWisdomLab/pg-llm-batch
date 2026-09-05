@@ -35,6 +35,16 @@ instead of being silently retained or deleted, and the canonical catalog state
 is verified again before v1/legacy policies are retired. Policy names remain
 version markers rather than security evidence.
 
+Lifecycle-outbox timestamp CHECK authority follows the same catalog principle.
+Migration 0008 does not accept the canonical `valid_time` or `system_time`
+constraint name by itself: the matching `pg_constraint` row must describe a
+validated, inheritable CHECK (`contype = 'c'`, `convalidated`, and not
+`connoinherit`). A same-name wrong-kind, unvalidated, or `NO INHERIT`
+constraint is removed and the reviewed canonical CHECK is rebuilt before the
+legacy timestamp check is retired. A current canonical constraint is left
+untouched, preserving idempotent reapplication without confusing a name with
+validated database state.
+
 Lifecycle-outbox runtime relation authority is explicit without rewriting
 caller transaction state. Tenant binding calls `pg_catalog.set_config` directly,
 and runtime reads/writes address
@@ -116,14 +126,16 @@ tenant-qualified SQL parameters, current-state reconciliation, migration
 idempotency, malformed database rows, default-deny policy text, explicit
 `pg_catalog` policy predicate authority, `pg_policy` command/role/expression
 identity, unknown-policy fail-closed behavior, post-repair canonical policy
-verification, runtime schema qualification without caller `search_path`
-mutation, installer/rollback search-path authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage. Live
-PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
-identical provider identifiers in different tenants remain independently
-addressable and mutually invisible when access occurs through the trusted
-package boundary. Exact-head runtime evidence must also exercise a non-default
-caller `search_path`, verify the canonical outbox relation is still selected,
-verify the caller path is unchanged afterward, and execute migration 0008 so its
-catalog postcondition is checked by PostgreSQL itself. These tests do not claim
-isolation after arbitrary SQL or untrusted schema-creation authority is granted.
+verification, canonical timestamp CHECK type/validation/inheritance authority,
+same-name timestamp constraint repair, runtime schema qualification without
+caller `search_path` mutation, installer/rollback search-path authority, schema
+mirroring, operator documentation, and 100% production statement and branch
+coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role
+and prove that identical provider identifiers in different tenants remain
+independently addressable and mutually invisible when access occurs through the
+trusted package boundary. Exact-head runtime evidence must also exercise a
+non-default caller `search_path`, verify the canonical outbox relation is still
+selected, verify the caller path is unchanged afterward, and execute migration
+0008 so PostgreSQL evaluates its canonical policy and timestamp-constraint
+catalog conditions. These tests do not claim isolation after arbitrary SQL or
+untrusted schema-creation authority is granted.
