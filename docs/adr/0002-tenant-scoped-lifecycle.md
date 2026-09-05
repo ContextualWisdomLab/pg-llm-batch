@@ -30,6 +30,15 @@ catalog properties plus a package-owned semantic stamp to detect ordinary
 same-name drift without parsing PostgreSQL's internal expression tree
 (PostgreSQL Global Development Group, 2026e).
 
+The lifecycle-outbox runtime also depends on PostgreSQL unique-index inference:
+`enqueue_in_transaction()` uses `ON CONFLICT (tenant_scope, evidence_id) DO
+NOTHING` as its durable replay boundary. `CREATE TABLE IF NOT EXISTS` does not
+converge constraints on an already-existing relation, and PostgreSQL does not
+accept a deferrable unique constraint as an `ON CONFLICT` arbiter. Migration
+success must therefore establish the usable replay arbiter explicitly rather
+than deferring that failure to the first enqueue (PostgreSQL Global Development
+Group, 2026f, 2026g).
+
 ## Decision
 
 Shared-table deployments must provide a trusted local `tenant_scope` selected
@@ -89,6 +98,16 @@ It is not a security boundary against a database administrator who deliberately
 creates a different CHECK and copies the package stamp; such an administrator
 already controls migration/catalog authority and remains outside this assurance.
 
+Migration 0008 also converges the lifecycle-outbox replay arbiter after table
+creation. The canonical `uq_llm_context_lifecycle_outbox_tenant_evidence` state
+is accepted only when `pg_constraint` identifies a validated, nondeferrable
+UNIQUE constraint whose constrained columns are exactly `tenant_scope` then
+`evidence_id`. A same-name wrong-kind, deferrable, or wrong-column constraint is
+replaced once; a missing constraint is added. Existing duplicate rows make the
+UNIQUE addition fail transactionally rather than being deleted or rewritten.
+A current canonical constraint remains untouched on reapplication
+(PostgreSQL Global Development Group, 2026e, 2026f, 2026g).
+
 Lifecycle-outbox runtime must protect its own object authority without rewriting
 caller-owned transaction state. It therefore binds the tenant GUC through fully
 qualified `pg_catalog.set_config(..., true)` and addresses the relation as
@@ -141,6 +160,13 @@ dropping the legacy check. This may require table validation and its associated
 lock/work once for a stale installation; a current installation avoids that
 repeated DDL.
 
+A pre-existing outbox relation without the canonical nondeferrable
+`(tenant_scope, evidence_id)` uniqueness invariant is likewise a repair finding.
+Migration may build the unique index once and will fail if duplicate durable
+identities already exist. That failure is intentional: duplicate lifecycle
+identity requires operator reconciliation and must not be hidden by migration
+cleanup. Once converged, runtime UPSERT has the arbiter it assumes.
+
 Rollback to the prior two-column key requires first proving that no
 endpoint/provider pair exists in multiple tenants and supplying a replacement
 authorization boundary. Packaged and deployable schemas must remain exact
@@ -163,3 +189,9 @@ https://www.postgresql.org/docs/18/functions-info.html
 
 PostgreSQL Global Development Group. (2026e). *pg_constraint*. In *PostgreSQL
 18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+
+PostgreSQL Global Development Group. (2026f). *INSERT*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-insert.html
+
+PostgreSQL Global Development Group. (2026g). *CREATE TABLE*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
