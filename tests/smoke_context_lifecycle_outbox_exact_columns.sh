@@ -33,6 +33,29 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
+# Column collation participates in text equality, uniqueness, policy predicates, and
+# validation semantics. A restore/manual ALTER that gives a package-owned identity
+# column explicit non-default collation must not be admitted as the canonical row shape.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN tenant_scope TYPE text COLLATE "C";'
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-collation.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-collation.out >&2
+  echo "lifecycle outbox migration admitted noncanonical column collation" >&2
+  exit 1
+fi
+if ! grep -Fq "lifecycle outbox structural schema mismatch" \
+  /tmp/pg-llm-batch-outbox-collation.out; then
+  cat /tmp/pg-llm-batch-outbox-collation.out >&2
+  echo "lifecycle outbox collation drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN tenant_scope TYPE text COLLATE "default";'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
 # A stale/manual additive column is not part of the pg-llm-batch aggregate contract.
 # Migration must fail closed rather than silently admitting an undeclared durability
 # surface that could later carry data outside the package-owned schema.
