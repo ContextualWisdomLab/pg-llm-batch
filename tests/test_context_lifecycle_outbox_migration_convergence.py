@@ -12,10 +12,18 @@ _TIMESTAMP_CONSTRAINTS = (
     (
         "ck_llm_context_lifecycle_outbox_valid_time",
         "ck_llm_context_lifecycle_outbox_valid_time_canonical_v1",
+        (
+            "pg-llm-batch:timestamp-check:v1:"
+            "sha256=32c3d6803b1c13e584230dcb0652bf8f932ee3ee256109dd25ed7d07e11d0261"
+        ),
     ),
     (
         "ck_llm_context_lifecycle_outbox_system_time",
         "ck_llm_context_lifecycle_outbox_system_time_canonical_v1",
+        (
+            "pg-llm-batch:timestamp-check:v1:"
+            "sha256=490658f6948499784f4c86d642ff38a680821c50d31ad2627d6af10e02722ede"
+        ),
     ),
 )
 _LEGACY_POLICIES = (
@@ -37,7 +45,7 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
     create_end = migration.index("\n    );", create_start)
     create_block = migration[create_start:create_end]
 
-    for legacy_constraint, canonical_constraint in _TIMESTAMP_CONSTRAINTS:
+    for legacy_constraint, canonical_constraint, semantic_stamp in _TIMESTAMP_CONSTRAINTS:
         assert legacy_constraint not in create_block
         assert canonical_constraint not in create_block
 
@@ -47,13 +55,21 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
             "        FROM pg_constraint\n"
             "        WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass\n"
             f"          AND conname = '{canonical_constraint}'\n"
+            "          AND contype = 'c'\n"
+            "          AND convalidated\n"
+            "          AND NOT connoinherit\n"
+            "          AND pg_catalog.obj_description(oid, 'pg_constraint') =\n"
+            f"              '{semantic_stamp}'\n"
             "    ) THEN"
         )
         add_at = migration.index(add_guard, create_end)
         constraint_at = migration.index(
             f"ADD CONSTRAINT {canonical_constraint}", add_at
         )
-        assert add_at < constraint_at
+        comment_at = migration.index(
+            f"COMMENT ON CONSTRAINT {canonical_constraint}", constraint_at
+        )
+        assert add_at < constraint_at < comment_at
 
         drop_guard = (
             "IF EXISTS (\n"
@@ -63,11 +79,11 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
             f"          AND conname = '{legacy_constraint}'\n"
             "    ) THEN"
         )
-        drop_at = migration.index(drop_guard, constraint_at)
+        drop_at = migration.index(drop_guard, comment_at)
         drop_constraint_at = migration.index(
             f"DROP CONSTRAINT {legacy_constraint}", drop_at
         )
-        assert constraint_at < drop_at < drop_constraint_at
+        assert comment_at < drop_at < drop_constraint_at
 
     assert migration.count("valid_time !~ '[.]000000Z$'") == 1
     assert migration.count("system_time !~ '[.]000000Z$'") == 1
