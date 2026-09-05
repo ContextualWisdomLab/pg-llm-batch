@@ -23,6 +23,9 @@ _LEGACY_POLICIES = (
     "plc_llm_context_lifecycle_outbox_tenant_scope",
 )
 _CANONICAL_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2"
+_EXPECTED_POLICY_EXPRESSION = (
+    "(tenant_scope = current_setting('pg_llm_batch.tenant_scope'::text, true))"
+)
 
 
 def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> None:
@@ -72,7 +75,7 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
 
 
 def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
-    """Current RLS flags and policy must not be rewritten on every idempotent run."""
+    """A semantically current RLS policy must not be rewritten on every reapply."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
 
     enable_guard = (
@@ -100,10 +103,31 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
         "        FROM pg_policy\n"
         "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
         f"          AND polname = '{_CANONICAL_POLICY}'\n"
+        "          AND polcmd = '*'\n"
+        "          AND polpermissive\n"
+        "          AND polroles = ARRAY[0::oid]\n"
+        "          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =\n"
+        f"              '{_EXPECTED_POLICY_EXPRESSION.replace("'", "''")}'\n"
+        "          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =\n"
+        f"              '{_EXPECTED_POLICY_EXPRESSION.replace("'", "''")}'\n"
         "    ) THEN"
     )
     add_policy_at = migration.index(add_policy_guard)
     create_policy_at = migration.index(f"CREATE POLICY {_CANONICAL_POLICY}", add_policy_at)
+
+    repair_drop_guard = (
+        "IF EXISTS (\n"
+        "            SELECT 1\n"
+        "            FROM pg_policy\n"
+        "            WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+        f"              AND polname = '{_CANONICAL_POLICY}'\n"
+        "        ) THEN"
+    )
+    repair_drop_at = migration.index(repair_drop_guard, add_policy_at)
+    canonical_drop_at = migration.index(
+        f"DROP POLICY {_CANONICAL_POLICY}", repair_drop_at
+    )
+    assert add_policy_at < repair_drop_at < canonical_drop_at < create_policy_at
 
     policy_end = migration.index("    END IF;", create_policy_at)
     policy_block = migration[create_policy_at:policy_end]
@@ -127,3 +151,27 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
         last_drop_at = drop_policy_at
 
     assert "DROP POLICY IF EXISTS" not in migration
+
+
+def test_outbox_migration_fails_closed_on_unknown_rls_policy() -> None:
+    """An unexpected policy must not silently widen the canonical tenant boundary."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    expected_guard = (
+        "IF EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_policy\n"
+        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+        "          AND polname NOT IN (\n"
+        f"              '{_CANONICAL_POLICY}',\n"
+        f"              '{_LEGACY_POLICIES[0]}',\n"
+        f"              '{_LEGACY_POLICIES[1]}'\n"
+        "          )\n"
+        "    ) THEN"
+    )
+    guard_at = migration.index(expected_guard)
+    raise_at = migration.index(
+        "RAISE EXCEPTION 'unexpected lifecycle outbox row-security policy'",
+        guard_at,
+    )
+    canonical_at = migration.index(f"CREATE POLICY {_CANONICAL_POLICY}")
+    assert guard_at < raise_at < canonical_at
