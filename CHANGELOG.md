@@ -53,6 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once; duplicate durable identities fail migration for operator reconciliation
   instead of being silently deleted or merged. Packaged and Docker migration
   SQL remain byte-identical.
+- Lifecycle-outbox migration no longer treats the operational
+  `idx_llm_context_lifecycle_outbox_tenant_created` name as sufficient index
+  identity. It admits only a public, valid/ready/live, nonunique two-key B-tree
+  over exactly `(tenant_scope, created_at)` with no expression or predicate,
+  repairs a same-target wrong index once, and fails closed if the canonical name
+  belongs to an unrelated relation. A PostgreSQL container smoke now mutates the
+  same name to `(created_at, tenant_scope)` and proves migration convergence and
+  idempotent reapplication. Packaged and Docker migration SQL remain
+  byte-identical.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
