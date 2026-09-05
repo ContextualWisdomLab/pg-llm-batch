@@ -9,6 +9,20 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 TENANT_SCOPE_SHA256 = "a" * 64
 
 
+def test_store_does_not_expose_database_dsn() -> None:
+    """Admitted database credentials must remain internal connection authority."""
+    postgres_dsn = "postgresql://batch-user:unit-secret@db.example/batch"
+    store = PostgresContextLifecycleOutboxStore(
+        postgres_dsn,
+        tenant_scope="tenant-a",
+        tenant_scope_sha256=TENANT_SCOPE_SHA256,
+    )
+
+    assert not hasattr(store, "postgres_dsn")
+    assert postgres_dsn not in repr(store)
+    assert "unit-secret" not in repr(store)
+
+
 def test_store_authorization_binding_cannot_be_reassigned() -> None:
     """A validated store must not become a different tenant or database after admission."""
     store = PostgresContextLifecycleOutboxStore(
@@ -17,7 +31,6 @@ def test_store_authorization_binding_cannot_be_reassigned() -> None:
         tenant_scope_sha256=TENANT_SCOPE_SHA256,
     )
 
-    assert store.postgres_dsn == "postgresql://unit"
     assert store.tenant_scope == "tenant-a"
     assert store.tenant_scope_sha256 == TENANT_SCOPE_SHA256
 
@@ -48,7 +61,6 @@ def test_store_private_authorization_binding_cannot_be_rebound_or_deleted() -> N
         with pytest.raises(AttributeError):
             delattr(store, attribute)
 
-    assert store.postgres_dsn == "postgresql://unit"
     assert store.tenant_scope == "tenant-a"
     assert store.tenant_scope_sha256 == TENANT_SCOPE_SHA256
 
@@ -71,7 +83,6 @@ def test_object_level_mutation_cannot_redirect_admitted_store_authority() -> Non
         with pytest.raises(AttributeError):
             object.__delattr__(store, attribute)
 
-    assert store.postgres_dsn == "postgresql://unit"
     assert store.tenant_scope == "tenant-a"
     assert store.tenant_scope_sha256 == TENANT_SCOPE_SHA256
 
