@@ -119,6 +119,24 @@ assert_canonical_arbiter
 assert_canonical_payload_constraint
 assert_canonical_operational_index
 
+# Existing-table structural specimen: CREATE TABLE IF NOT EXISTS must not admit
+# a relation whose required column contract drifted. The migration is expected
+# to fail closed before attempting constraint/index repair.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN event_type DROP NOT NULL;"
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null 2>&1; then
+  echo "lifecycle outbox migration admitted structurally incompatible existing table" >&2
+  exit 1
+fi
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  "ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN event_type SET NOT NULL;"
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+assert_canonical_arbiter
+assert_canonical_payload_constraint
+assert_canonical_operational_index
+
 # Existing-table specimen 1: the runtime replay arbiter is absent. Reapplying
 # migration 0008 must install it even though CREATE TABLE IF NOT EXISTS is skipped.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
