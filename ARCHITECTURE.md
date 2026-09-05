@@ -64,6 +64,15 @@ and runtime reads/writes address
 name-resolution change would persist for unrelated domain SQL until transaction
 end.
 
+The durable outbox relation itself is also part of the admitted persistence
+contract. Migration 0008 accepts only an ordinary (`pg_class.relkind = 'r'`),
+logged (`relpersistence = 'p'`) table in `public`. A structurally identical
+`UNLOGGED` replacement fails closed before constraint, RLS, or index convergence;
+PostgreSQL does not WAL-log unlogged-table data, truncates it after a crash or
+unclean shutdown, and does not replicate its contents to standbys. The migration
+does not silently issue `SET LOGGED`, because that rewrite and its operational
+impact require an operator-controlled reconciliation window.
+
 Migration 0008 and its destructive rollback are installer-owned atomic
 statements and bind `pg_catalog, public, pg_temp` with fully qualified
 `pg_catalog.set_config` inside their `DO` blocks before object lookup or DDL.
@@ -147,16 +156,16 @@ identity, unknown-policy fail-closed behavior, post-repair canonical policy
 verification, canonical payload/timestamp CHECK type/validation/inheritance,
 same-runtime parsed-expression identity, review-stamp traceability, post-repair
 CHECK verification, canonical replay UNIQUE kind/validation/deferrability/column
-identity, runtime schema qualification without caller `search_path` mutation,
-installer/rollback search-path authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage. Live
-PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
-identical provider identifiers in different tenants remain independently
-addressable and mutually invisible when access occurs through the trusted
-package boundary. Exact-head runtime evidence must also exercise a non-default
-caller `search_path`, verify the canonical outbox relation is still selected,
-verify the caller path is unchanged afterward, and execute migration 0008
-against stale replay-key and spoofed canonical-CHECK variants so PostgreSQL
-evaluates canonical policy, CHECK-predicate, and UPSERT-arbiter catalog
-conditions. These tests do not claim isolation after arbitrary SQL or untrusted
-schema-creation authority is granted.
+identity, ordinary logged-public relation identity, runtime schema qualification
+without caller `search_path` mutation, installer/rollback search-path authority,
+schema mirroring, operator documentation, and 100% production statement and
+branch coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS`
+role and prove that identical provider identifiers in different tenants remain
+independently addressable and mutually invisible when access occurs through the
+trusted package boundary. Exact-head runtime evidence must also exercise a
+non-default caller `search_path`, verify the canonical outbox relation is still
+selected, verify the caller path is unchanged afterward, and execute migration
+0008 against stale replay-key, spoofed canonical-CHECK, and UNLOGGED-relation
+variants so PostgreSQL evaluates canonical policy, CHECK-predicate, UPSERT-arbiter,
+and durability catalog conditions. These tests do not claim isolation after
+arbitrary SQL or untrusted schema-creation authority is granted.
