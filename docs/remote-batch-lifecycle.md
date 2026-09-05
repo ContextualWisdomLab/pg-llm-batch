@@ -62,12 +62,14 @@ are removed. A semantically current v2 avoids repeated policy DDL on normal
 reapply.
 
 The canonical UTC timestamp CHECKs are likewise not admitted by name alone.
-Migration 0008 inspects `pg_constraint` and accepts each canonical `valid_time`
-and `system_time` constraint only when it is a validated, inheritable CHECK.
-If the package-owned canonical name is attached to another constraint kind, an
-unvalidated CHECK, or a `NO INHERIT` CHECK, the migration drops that drifted
-constraint and rebuilds the reviewed canonical CHECK before removing the legacy
-name. An already-current constraint is left untouched on reapplication.
+Migration 0008 requires `pg_constraint` to report a validated, inheritable CHECK
+and requires the expected package SHA-256 semantic stamp in the constraint
+comment. A same-name wrong-kind, unvalidated, `NO INHERIT`, or unstamped
+constraint is rebuilt and stamped before the legacy timestamp check is removed;
+an already-current stamped CHECK is left untouched. The stamp detects ordinary
+package-owned drop/recreate drift in the trusted migration-authority model. It
+does not defend against a database administrator deliberately creating a
+different CHECK and copying the same stamp.
 
 This custom PostgreSQL setting is a **trusted application boundary**, not a
 credential. PostgreSQL accepts two-part custom option names, and a database role
@@ -147,12 +149,12 @@ intermediate owner-bypass state.
 The packaged schema and the Docker initialization schema are byte-for-byte
 mirrors and support idempotent reapplication. The migration enables and forces
 RLS, converges the package-owned tenant policy by catalog semantics, converges
-canonical UTC timestamp CHECKs by `pg_constraint` kind/validation/inheritance
-semantics, and installs the tenant-qualified operational index. Unknown
-lifecycle-outbox policy names are a fail-closed migration finding rather than an
-implicit extension point. A same-name timestamp constraint that is not a
-validated inheritable CHECK is package-owned drift and is repaired once rather
-than accepted as current state.
+canonical UTC timestamp CHECKs by constraint kind/validation/inheritance plus
+the package semantic stamp, and installs the tenant-qualified operational index.
+Unknown lifecycle-outbox policy names are a fail-closed migration finding rather
+than an implicit extension point. A same-name timestamp constraint that does not
+carry the reviewed package identity is package-owned drift and is repaired once
+rather than accepted as current state.
 
 Rollback to the former `(endpoint_alias, remote_batch_id)` key is unsafe until
 an operator proves that no pair appears in more than one tenant scope. Before a
@@ -288,9 +290,10 @@ database rows, migration preservation and reapplication, forced default-deny
 RLS, search-path-independent lifecycle policy predicate authority, full
 canonical `pg_policy` command/role/expression identity, unknown-policy
 fail-closed behavior, post-create/post-repair policy verification, canonical
-timestamp CHECK kind/validation/inheritance authority, same-name timestamp
-constraint repair, exact schema mirroring, Python 3.10/3.12/3.14 compatibility,
-complete public docstrings, and 100% production statement and branch coverage.
+timestamp CHECK kind/validation/inheritance authority, package semantic-stamp
+identity and same-name timestamp constraint repair, exact schema mirroring,
+Python 3.10/3.12/3.14 compatibility, complete public docstrings, and 100%
+production statement and branch coverage.
 
 The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
 persists an identical provider identifier in two tenant scopes, and proves that
@@ -298,7 +301,7 @@ a transaction bound to one scope cannot read the other scope through the
 policy. This test verifies policy mechanics under the trusted package model; it
 does not claim protection after arbitrary SQL execution is granted. Exact-head
 runtime execution must also run migration 0008 so PostgreSQL evaluates its final
-canonical policy and timestamp-constraint catalog conditions.
+canonical policy and timestamp-constraint catalog/stamp conditions.
 
 ## References
 
