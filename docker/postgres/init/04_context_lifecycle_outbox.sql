@@ -60,7 +60,20 @@ BEGIN
         FROM pg_constraint
         WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
           AND conname = 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'
+          AND contype = 'c'
+          AND convalidated
+          AND NOT connoinherit
     ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+              AND conname = 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'
+        ) THEN
+            ALTER TABLE llm_context_lifecycle_outbox
+                DROP CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time_canonical_v1;
+        END IF;
+
         ALTER TABLE llm_context_lifecycle_outbox
             ADD CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time_canonical_v1
             CHECK (
@@ -98,7 +111,20 @@ BEGIN
         FROM pg_constraint
         WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
           AND conname = 'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'
+          AND contype = 'c'
+          AND convalidated
+          AND NOT connoinherit
     ) THEN
+        IF EXISTS (
+            SELECT 1
+            FROM pg_constraint
+            WHERE conrelid = 'llm_context_lifecycle_outbox'::regclass
+              AND conname = 'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'
+        ) THEN
+            ALTER TABLE llm_context_lifecycle_outbox
+                DROP CONSTRAINT ck_llm_context_lifecycle_outbox_system_time_canonical_v1;
+        END IF;
+
         ALTER TABLE llm_context_lifecycle_outbox
             ADD CONSTRAINT ck_llm_context_lifecycle_outbox_system_time_canonical_v1
             CHECK (
