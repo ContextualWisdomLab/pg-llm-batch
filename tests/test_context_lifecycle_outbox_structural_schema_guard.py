@@ -93,6 +93,20 @@ def test_outbox_migration_rejects_dropped_user_column_tombstones() -> None:
     assert "dropped_column.attisdropped" in guard_block
 
 
+def test_outbox_migration_rejects_inheritance_topology() -> None:
+    """The canonical outbox must not inherit from or expose inherited relations."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
+    )
+    guard_block = migration[:guard_at]
+
+    assert "FROM pg_catalog.pg_inherits AS inheritance_edge" in guard_block
+    assert "inheritance_edge.inhrelid =" in guard_block
+    assert "inheritance_edge.inhparent =" in guard_block
+    assert "'public.llm_context_lifecycle_outbox'::regclass" in guard_block
+
+
 def test_outbox_migration_requires_logged_ordinary_table_authority() -> None:
     """Durable lifecycle rows must live in one logged ordinary public table."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
