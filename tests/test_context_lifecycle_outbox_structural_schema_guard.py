@@ -107,6 +107,21 @@ def test_outbox_migration_rejects_inheritance_topology() -> None:
     assert "'public.llm_context_lifecycle_outbox'::regclass" in guard_block
 
 
+def test_outbox_migration_rejects_user_trigger_and_rewrite_authority() -> None:
+    """Unreviewed trigger or rewrite programs must not intercept durable outbox I/O."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
+    )
+    guard_block = migration[:guard_at]
+
+    assert "FROM pg_catalog.pg_trigger AS outbox_trigger" in guard_block
+    assert "outbox_trigger.tgrelid =" in guard_block
+    assert "NOT outbox_trigger.tgisinternal" in guard_block
+    assert "FROM pg_catalog.pg_rewrite AS outbox_rule" in guard_block
+    assert "outbox_rule.ev_class =" in guard_block
+
+
 def test_outbox_migration_requires_logged_ordinary_table_authority() -> None:
     """Durable lifecycle rows must live in one logged ordinary public table."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
