@@ -71,6 +71,16 @@ package-owned drop/recreate drift in the trusted migration-authority model. It
 does not defend against a database administrator deliberately creating a
 different CHECK and copying the same stamp.
 
+The lifecycle outbox's durable replay key is also a migration contract, not just
+fresh-table DDL. Runtime inserts use
+`ON CONFLICT (tenant_scope, evidence_id) DO NOTHING`, so migration 0008 accepts
+`uq_llm_context_lifecycle_outbox_tenant_evidence` only when `pg_constraint`
+proves a validated, nondeferrable UNIQUE constraint on exactly those columns. A
+pre-existing relation with a missing, deferrable, wrong-kind, or wrong-column
+same-name constraint is repaired once. Existing duplicate identities abort the
+migration for operator reconciliation; no row is silently deleted or merged.
+PostgreSQL does not permit deferrable constraints to arbitrate `ON CONFLICT`.
+
 This custom PostgreSQL setting is a **trusted application boundary**, not a
 credential. PostgreSQL accepts two-part custom option names, and a database role
 that can execute arbitrary SQL can call `set_config` with an arbitrary tenant
@@ -150,11 +160,14 @@ The packaged schema and the Docker initialization schema are byte-for-byte
 mirrors and support idempotent reapplication. The migration enables and forces
 RLS, converges the package-owned tenant policy by catalog semantics, converges
 canonical UTC timestamp CHECKs by constraint kind/validation/inheritance plus
-the package semantic stamp, and installs the tenant-qualified operational index.
-Unknown lifecycle-outbox policy names are a fail-closed migration finding rather
-than an implicit extension point. A same-name timestamp constraint that does not
-carry the reviewed package identity is package-owned drift and is repaired once
-rather than accepted as current state.
+the package semantic stamp, converges the nondeferrable lifecycle-outbox replay
+UNIQUE constraint required by runtime `ON CONFLICT`, and installs the
+tenant-qualified operational index. Unknown lifecycle-outbox policy names are a
+fail-closed migration finding rather than an implicit extension point. A
+same-name timestamp constraint that does not carry the reviewed package identity
+is package-owned drift and is repaired once rather than accepted as current
+state. A stale replay constraint is likewise repaired once; duplicate durable
+identities fail migration instead of being silently reconciled.
 
 Rollback to the former `(endpoint_alias, remote_batch_id)` key is unsafe until
 an operator proves that no pair appears in more than one tenant scope. Before a
@@ -291,7 +304,8 @@ RLS, search-path-independent lifecycle policy predicate authority, full
 canonical `pg_policy` command/role/expression identity, unknown-policy
 fail-closed behavior, post-create/post-repair policy verification, canonical
 timestamp CHECK kind/validation/inheritance authority, package semantic-stamp
-identity and same-name timestamp constraint repair, exact schema mirroring,
+identity and same-name timestamp constraint repair, canonical replay UNIQUE
+kind/validation/deferrability/column identity, exact schema mirroring,
 Python 3.10/3.12/3.14 compatibility, complete public docstrings, and 100%
 production statement and branch coverage.
 
@@ -300,8 +314,9 @@ persists an identical provider identifier in two tenant scopes, and proves that
 a transaction bound to one scope cannot read the other scope through the
 policy. This test verifies policy mechanics under the trusted package model; it
 does not claim protection after arbitrary SQL execution is granted. Exact-head
-runtime execution must also run migration 0008 so PostgreSQL evaluates its final
-canonical policy and timestamp-constraint catalog/stamp conditions.
+runtime execution must also run migration 0008 against stale replay-key schema
+variants so PostgreSQL evaluates its final canonical policy, timestamp
+constraint catalog/stamp, and `ON CONFLICT` arbiter conditions.
 
 ## References
 
@@ -347,3 +362,9 @@ https://www.postgresql.org/docs/18/functions-info.html
 
 PostgreSQL Global Development Group. (2026h). *pg_constraint*. In *PostgreSQL
 18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-constraint.html
+
+PostgreSQL Global Development Group. (2026i). *INSERT*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-insert.html
+
+PostgreSQL Global Development Group. (2026j). *CREATE TABLE*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
