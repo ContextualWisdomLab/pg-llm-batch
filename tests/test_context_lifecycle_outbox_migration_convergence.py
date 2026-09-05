@@ -18,6 +18,8 @@ _TIMESTAMP_CONSTRAINTS = (
         "ck_llm_context_lifecycle_outbox_system_time_canonical_v1",
     ),
 )
+_LEGACY_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope"
+_CANONICAL_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1"
 
 
 def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> None:
@@ -64,3 +66,50 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
     assert migration.count("valid_time !~ '[.]000000Z$'") == 1
     assert migration.count("system_time !~ '[.]000000Z$'") == 1
     assert migration.count("AT TIME ZONE 'UTC'") == 2
+
+
+def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
+    """Current RLS flags and policy must not be rewritten on every idempotent run."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+
+    enable_guard = (
+        "IF NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_class\n"
+        "        WHERE oid = 'llm_context_lifecycle_outbox'::regclass\n"
+        "          AND relrowsecurity\n"
+        "    ) THEN"
+    )
+    force_guard = (
+        "IF NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_class\n"
+        "        WHERE oid = 'llm_context_lifecycle_outbox'::regclass\n"
+        "          AND relforcerowsecurity\n"
+        "    ) THEN"
+    )
+    assert migration.index(enable_guard) < migration.index("ENABLE ROW LEVEL SECURITY")
+    assert migration.index(force_guard) < migration.index("FORCE ROW LEVEL SECURITY")
+
+    add_policy_guard = (
+        "IF NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_policy\n"
+        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+        f"          AND polname = '{_CANONICAL_POLICY}'\n"
+        "    ) THEN"
+    )
+    add_policy_at = migration.index(add_policy_guard)
+    create_policy_at = migration.index(f"CREATE POLICY {_CANONICAL_POLICY}", add_policy_at)
+
+    drop_policy_guard = (
+        "IF EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_policy\n"
+        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+        f"          AND polname = '{_LEGACY_POLICY}'\n"
+        "    ) THEN"
+    )
+    drop_policy_at = migration.index(drop_policy_guard, create_policy_at)
+    assert migration.index(f"DROP POLICY {_LEGACY_POLICY}", drop_policy_at) > drop_policy_at
+    assert "DROP POLICY IF EXISTS" not in migration
