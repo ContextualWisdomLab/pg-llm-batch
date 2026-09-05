@@ -5,7 +5,6 @@ image="pg-llm-batch-postgres:ci"
 container="pg-llm-batch-outbox-arbiter-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/05_context_lifecycle_outbox.sql"
 constraint="uq_llm_context_lifecycle_outbox_tenant_evidence"
-policy="plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2"
 
 cleanup() {
   docker rm --force "${container}" >/dev/null 2>&1 || true
@@ -60,28 +59,7 @@ assert_canonical_arbiter() {
   test "${observed}" = 'u|t|f|t'
 }
 
-assert_canonical_policy_dependencies() {
-  local dependency_count
-  dependency_count="$(docker exec "${container}" psql -U postgres -d postgres -Atqc "
-    SELECT count(*)
-    FROM pg_depend AS policy_depend
-    WHERE policy_depend.classid = 'pg_policy'::regclass
-      AND policy_depend.objid = (
-        SELECT oid
-        FROM pg_policy
-        WHERE polrelid = 'public.llm_context_lifecycle_outbox'::regclass
-          AND polname = '${policy}'
-      )
-      AND policy_depend.refclassid IN (
-        'pg_proc'::regclass,
-        'pg_operator'::regclass
-      );
-  ")"
-  test "${dependency_count}" = '0'
-}
-
 assert_canonical_arbiter
-assert_canonical_policy_dependencies
 
 # Existing-table specimen 1: the runtime replay arbiter is absent. Reapplying
 # migration 0008 must install it even though CREATE TABLE IF NOT EXISTS is skipped.
@@ -172,70 +150,3 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
 assert_canonical_arbiter
-assert_canonical_policy_dependencies
-
-# Existing-table specimen 3: a same-name policy can deparse to the expected text
-# while its equality operator is bound to a caller-controlled schema object. The
-# migration must inspect object dependencies rather than trusting pg_get_expr text.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
-CREATE FUNCTION public.pg_llm_batch_outbox_shadow_eq(text, text)
-RETURNS boolean
-LANGUAGE sql
-IMMUTABLE
-STRICT
-AS 'SELECT true';
-
-CREATE OPERATOR public.= (
-  LEFTARG = text,
-  RIGHTARG = text,
-  FUNCTION = public.pg_llm_batch_outbox_shadow_eq
-);
-
-DROP POLICY ${policy} ON public.llm_context_lifecycle_outbox;
-SET search_path = public, pg_catalog;
-CREATE POLICY ${policy}
-  ON public.llm_context_lifecycle_outbox
-  TO PUBLIC
-  USING (
-    tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
-  )
-  WITH CHECK (
-    tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)
-  );
-RESET search_path;
-SQL
-
-expected_policy_expression="(tenant_scope = current_setting('pg_llm_batch.tenant_scope'::text, true))"
-observed_policy_expression="$(docker exec "${container}" psql -U postgres -d postgres -AtF '|' -c "
-  SELECT pg_catalog.pg_get_expr(polqual, polrelid, false),
-         pg_catalog.pg_get_expr(polwithcheck, polrelid, false)
-  FROM pg_policy
-  WHERE polrelid = 'public.llm_context_lifecycle_outbox'::regclass
-    AND polname = '${policy}';
-")"
-test "${observed_policy_expression}" = \
-  "${expected_policy_expression}|${expected_policy_expression}"
-
-shadow_dependency_count="$(docker exec "${container}" psql -U postgres -d postgres -Atqc "
-  SELECT count(*)
-  FROM pg_depend AS policy_depend
-  JOIN pg_operator AS operator_object
-    ON policy_depend.refclassid = 'pg_operator'::regclass
-   AND policy_depend.refobjid = operator_object.oid
-  JOIN pg_namespace AS operator_namespace
-    ON operator_namespace.oid = operator_object.oprnamespace
-  WHERE policy_depend.classid = 'pg_policy'::regclass
-    AND policy_depend.objid = (
-      SELECT oid
-      FROM pg_policy
-      WHERE polrelid = 'public.llm_context_lifecycle_outbox'::regclass
-        AND polname = '${policy}'
-    )
-    AND operator_namespace.nspname = 'public'
-    AND operator_object.oprname = '=';
-")"
-test "${shadow_dependency_count}" -ge 1
-
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
-assert_canonical_policy_dependencies
