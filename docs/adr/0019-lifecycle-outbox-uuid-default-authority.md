@@ -48,10 +48,10 @@ The convergence DDL may acquire the normal table lock required to change a colum
 
 ## References
 
-PostgreSQL Global Development Group. (2025). *PostgreSQL 16 documentation: UUID functions*. https://www.postgresql.org/docs/16/functions-uuid.html
+PostgreSQL Global Development Group. (n.d.). *PostgreSQL 16 documentation: UUID functions*. Retrieved September 6, 2026, from https://www.postgresql.org/docs/16/functions-uuid.html
 
-PostgreSQL Global Development Group. (2025). *PostgreSQL 16 documentation: F.28. pgcrypto*. https://www.postgresql.org/docs/16/pgcrypto.html
+PostgreSQL Global Development Group. (n.d.). *PostgreSQL 16 documentation: F.28. pgcrypto*. Retrieved September 6, 2026, from https://www.postgresql.org/docs/16/pgcrypto.html
 
-PostgreSQL Global Development Group. (2025). *PostgreSQL 16 documentation: F.49. uuid-ossp*. https://www.postgresql.org/docs/16/uuid-ossp.html
+PostgreSQL Global Development Group. (n.d.). *PostgreSQL 16 documentation: F.49. uuid-ossp*. Retrieved September 6, 2026, from https://www.postgresql.org/docs/16/uuid-ossp.html
 
-PostgreSQL Global Development Group. (2025). *PostgreSQL 16 documentation: 53.6. pg_attrdef*. https://www.postgresql.org/docs/16/catalog-pg-attrdef.html
+PostgreSQL Global Development Group. (n.d.). *PostgreSQL 16 documentation: 53.6. pg_attrdef*. Retrieved September 6, 2026, from https://www.postgresql.org/docs/16/catalog-pg-attrdef.html
