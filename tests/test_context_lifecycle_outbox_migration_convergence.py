@@ -74,6 +74,25 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
     assert migration.count("AT TIME ZONE 'UTC'") == 2
 
 
+def _canonical_policy_guard() -> str:
+    """Return the exact catalog predicate for one current canonical RLS policy."""
+    return (
+        "IF NOT EXISTS (\n"
+        "        SELECT 1\n"
+        "        FROM pg_policy\n"
+        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+        f"          AND polname = '{_CANONICAL_POLICY}'\n"
+        "          AND polcmd = '*'\n"
+        "          AND polpermissive\n"
+        "          AND polroles = ARRAY[0::oid]\n"
+        "          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =\n"
+        f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
+        "          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =\n"
+        f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
+        "    ) THEN"
+    )
+
+
 def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
     """A semantically current RLS policy must not be rewritten on every reapply."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
@@ -97,21 +116,7 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
     assert migration.index(enable_guard) < migration.index("ENABLE ROW LEVEL SECURITY")
     assert migration.index(force_guard) < migration.index("FORCE ROW LEVEL SECURITY")
 
-    add_policy_guard = (
-        "IF NOT EXISTS (\n"
-        "        SELECT 1\n"
-        "        FROM pg_policy\n"
-        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
-        f"          AND polname = '{_CANONICAL_POLICY}'\n"
-        "          AND polcmd = '*'\n"
-        "          AND polpermissive\n"
-        "          AND polroles = ARRAY[0::oid]\n"
-        "          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =\n"
-        f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
-        "          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =\n"
-        f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
-        "    ) THEN"
-    )
+    add_policy_guard = _canonical_policy_guard()
     add_policy_at = migration.index(add_policy_guard)
     create_policy_at = migration.index(f"CREATE POLICY {_CANONICAL_POLICY}", add_policy_at)
 
@@ -151,6 +156,20 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
         last_drop_at = drop_policy_at
 
     assert "DROP POLICY IF EXISTS" not in migration
+
+
+def test_outbox_migration_verifies_final_canonical_rls_policy() -> None:
+    """Fresh and repaired installs must verify the stored policy expression tree."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    guard = _canonical_policy_guard()
+    first_guard_at = migration.index(guard)
+    verification_guard_at = migration.index(guard, first_guard_at + len(guard))
+    verification_raise_at = migration.index(
+        "RAISE EXCEPTION 'lifecycle outbox row-security policy failed canonical verification'",
+        verification_guard_at,
+    )
+    first_legacy_drop_at = migration.index(f"DROP POLICY {_LEGACY_POLICIES[0]}")
+    assert first_guard_at < verification_guard_at < verification_raise_at < first_legacy_drop_at
 
 
 def test_outbox_migration_fails_closed_on_unknown_rls_policy() -> None:
