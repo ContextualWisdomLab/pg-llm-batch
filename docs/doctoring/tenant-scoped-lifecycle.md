@@ -40,15 +40,24 @@ before v1/legacy policy retirement. A semantically current v2 remains unchanged
 on idempotent reapplication (PostgreSQL Global Development Group, 2026e, 2026f,
 2026h).
 
-Timestamp CHECK convergence is also catalog-verified. PostgreSQL stores the
-constraint name, kind, validation status, and inheritance behavior separately
-in `pg_constraint`; a matching name alone does not establish that the reviewed
-CHECK is active. Migration 0008 accepts each canonical `valid_time` and
-`system_time` constraint only when `contype = 'c'`, `convalidated` is true, and
-`connoinherit` is false. A same-name wrong-kind, unvalidated, or `NO INHERIT`
-constraint is removed and rebuilt as the canonical CHECK before the legacy
-constraint is retired; a current canonical constraint is left untouched
-(PostgreSQL Global Development Group, 2026i).
+Timestamp CHECK convergence also requires more than a name. PostgreSQL stores
+constraint kind, validation status, and inheritance behavior separately in
+`pg_constraint`. Migration 0008 accepts each canonical `valid_time` and
+`system_time` constraint only when `contype = 'c'`, `convalidated` is true,
+`connoinherit` is false, and `obj_description` returns the expected package
+SHA-256 semantic stamp. A same-name wrong-kind, unvalidated, `NO INHERIT`, or
+unstamped constraint is removed and rebuilt as the reviewed canonical CHECK,
+then stamped before the legacy constraint is retired. A current stamped CHECK
+is untouched (PostgreSQL Global Development Group, 2026i).
+
+The semantic stamp is deliberately bounded evidence. PostgreSQL discards the
+old constraint comment when a constraint is normally dropped, so an accidental
+or ordinary operator same-name recreation cannot pass the migration guard
+without also carrying the reviewed package stamp. A database administrator who
+intentionally creates a different CHECK and copies that stamp can forge this
+evidence; such an administrator already owns migration/catalog authority and is
+outside the application isolation claim. The stamp is not advertised as a
+cryptographic defense against hostile database administration.
 
 The lifecycle outbox also removes ambient PostgreSQL `search_path` from object
 authority, but the runtime seam does so without changing caller transaction
@@ -123,12 +132,12 @@ default-deny behavior, exact schema mirroring, versioned policy convergence,
 explicit `pg_catalog` operator/function binding, full canonical `pg_policy`
 command/role/expression identity, unknown-policy fail-closed behavior,
 post-create/post-repair policy verification, canonical timestamp CHECK
-kind/validation/inheritance authority, same-name timestamp constraint repair,
-runtime schema qualification without caller `search_path` mutation,
-installer/rollback search-path binding, non-exposure of an admitted
-credential-bearing outbox DSN, and documentation of the bounded assurance
-claim. Production statement, branch, and public-docstring coverage remain at
-100% only when exact-head CI proves those gates.
+kind/validation/inheritance authority, package semantic-stamp identity and
+same-name timestamp constraint repair, runtime schema qualification without
+caller `search_path` mutation, installer/rollback search-path binding,
+non-exposure of an admitted credential-bearing outbox DSN, and documentation of
+the bounded assurance claim. Production statement, branch, and public-docstring
+coverage remain at 100% only when exact-head CI proves those gates.
 
 Live PostgreSQL verification uses a `NOSUPERUSER NOBYPASSRLS` role, persists the
 same provider identifier in two tenant scopes, and confirms each package-bound
@@ -138,7 +147,7 @@ SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
 migration 0008 so PostgreSQL evaluates the final policy and timestamp-constraint
-catalog conditions.
+catalog/stamp conditions.
 
 ## References
 
