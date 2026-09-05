@@ -50,6 +50,14 @@ success must therefore establish the usable replay arbiter explicitly rather
 than deferring that failure to the first enqueue (PostgreSQL Global Development
 Group, 2026f, 2026g).
 
+The outbox is also a durability boundary, not merely a row shape. PostgreSQL
+permits an ordinary table to be converted to `UNLOGGED` while retaining its
+columns, constraints, RLS policies, and indexes. Unlogged-table data is not
+written to WAL, is truncated after a crash or unclean shutdown, and is not
+replicated to standby servers. A same-shaped unlogged relation can therefore
+pass column and constraint checks while violating the durable publication-intent
+contract (PostgreSQL Global Development Group, 2026g).
+
 ## Decision
 
 Shared-table deployments must provide a trusted local `tenant_scope` selected
@@ -85,6 +93,17 @@ constraint, RLS-policy, or index convergence. The migration does not silently
 rewrite collation because doing so can change equality/order semantics and
 require data or index work; operator reconciliation is required for a drifted
 production relation (PostgreSQL Global Development Group, 2026h, 2026i).
+
+Migration 0008 also treats relation persistence and relation kind as structural
+durability authority. The canonical outbox must resolve to one ordinary table
+(`pg_class.relkind = 'r'`) in `public` and must be permanently logged
+(`pg_class.relpersistence = 'p'`). A view, partitioned relation, temporary table,
+or `UNLOGGED` table does not satisfy this admission check. Persistence drift
+fails with the same fixed structural-schema error before later constraint, RLS,
+or index convergence. The migration deliberately does not run `ALTER TABLE ...
+SET LOGGED`: converting a production relation can rewrite storage and has
+availability/WAL implications that require an operator-controlled maintenance
+window (PostgreSQL Global Development Group, 2026g).
 
 Versioned lifecycle-outbox policies must bind their equality operator and
 `current_setting` lookup explicitly to `pg_catalog`. PostgreSQL stores policy
@@ -190,6 +209,13 @@ auto-convert the column: operators must determine whether existing data and
 indexes can be safely rewritten and then return the relation to canonical
 collation before reapplying migration. This admission check does not freeze ICU,
 libc, operating-system locale data, or cluster configuration after validation.
+
+An outbox converted to `UNLOGGED`, or replaced by another relation kind, is an
+explicit migration finding even when its visible columns and constraints still
+match. Operators must decide whether data survived, restore or reconcile it if
+needed, and return the object to an ordinary logged table before migration can
+succeed. This prevents a successful migration from being used as evidence of
+durability when WAL/crash-recovery/standby semantics have been weakened.
 
 An unexpected lifecycle-outbox policy is now a migration finding, not an
 extension point. Operators that intentionally need a different policy set must
