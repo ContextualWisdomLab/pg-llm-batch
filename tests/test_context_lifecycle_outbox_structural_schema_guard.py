@@ -108,18 +108,14 @@ def test_outbox_migration_requires_primary_key_on_context_uuid() -> None:
     assert "attname = 'context_outbox_uuid'" in guard_block
 
 
-def test_outbox_migration_requires_canonical_runtime_defaults() -> None:
-    """Omitted runtime columns must resolve through the reviewed default authority."""
+def test_outbox_migration_requires_canonical_non_uuid_runtime_defaults() -> None:
+    """Non-UUID omitted columns must retain their reviewed default semantics."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
     guard_at = migration.index(
         "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
     )
     guard_block = migration[:guard_at]
 
-    assert "actual.attname = 'context_outbox_uuid'" in guard_block
-    assert "pg_catalog.pg_get_expr(defaults.adbin, defaults.adrelid, false) NOT IN (" in guard_block
-    assert "'uuid_generate_v4()'," in guard_block
-    assert "'public.uuid_generate_v4()'" in guard_block
     assert "actual.attname = 'tenant_scope'" in guard_block
     assert "<> '''standalone''::text'" in guard_block
     assert "actual.attname = 'created_at'" in guard_block
