@@ -369,8 +369,10 @@ class PostgresContextLifecycleOutboxStore:
         row locking explicit. Durable evidence is revalidated and must retain the
         tenant identity explicitly bound to this store before it can return to
         application code. Security-critical function and relation authority is
-        explicitly schema-qualified so the outbox does not mutate or inherit the
-        caller transaction's ``search_path``.
+        explicitly schema-qualified, and ``ONLY`` prevents inherited relations from
+        widening the canonical durable row source if an inheritance edge appears
+        after migration admission. The outbox does not mutate or inherit the caller
+        transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
@@ -399,7 +401,7 @@ class PostgresContextLifecycleOutboxStore:
         )
         locking = " FOR UPDATE" if for_update else ""
         cursor.execute(
-            f"SELECT {_OUTBOX_COLUMNS} FROM public.llm_context_lifecycle_outbox "
+            f"SELECT {_OUTBOX_COLUMNS} FROM ONLY public.llm_context_lifecycle_outbox "
             "WHERE tenant_scope = %s AND evidence_id = %s" + locking,
             (self.tenant_scope, probe.evidence_id),
         )
