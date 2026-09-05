@@ -66,7 +66,10 @@ caller's transaction and could alter unrelated domain SQL resolution.
 
 Forward migration and rollback are installer-owned atomic statements, so their
 `DO` blocks bind the reviewed order `pg_catalog, public, pg_temp` with fully
-qualified `pg_catalog.set_config(..., true)` before any object lookup or DDL.
+qualified `pg_catalog.set_config(..., true)` before object lookup or DDL.
+Because PostgreSQL uses the first existing search-path schema as the current
+schema for unqualified creation, migration 0008 explicitly creates
+`public.llm_context_lifecycle_outbox` rather than relying on that lookup order.
 Explicitly placing `pg_temp` last prevents its implicit relation precedence. The
 `public` schema remains the package's application schema; granting untrusted
 principals `CREATE` there remains outside this assurance and must be prevented
