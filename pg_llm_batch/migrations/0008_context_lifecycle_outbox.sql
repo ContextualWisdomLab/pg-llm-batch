@@ -734,6 +734,34 @@ BEGIN
                 AND attname = 'created_at'
                 AND NOT attisdropped
           )
+          AND operational_index.indcollation[0] = (
+              SELECT attcollation
+              FROM pg_attribute
+              WHERE attrelid = 'llm_context_lifecycle_outbox'::regclass
+                AND attname = 'tenant_scope'
+                AND NOT attisdropped
+          )
+          AND operational_index.indcollation[1] = 0
+          AND operational_index.indclass[0] = (
+              SELECT opclass.oid
+              FROM pg_opclass AS opclass
+              JOIN pg_am AS opclass_method
+                ON opclass_method.oid = opclass.opcmethod
+              WHERE opclass_method.amname = 'btree'
+                AND opclass.opcdefault
+                AND opclass.opcintype = 'text'::regtype
+          )
+          AND operational_index.indclass[1] = (
+              SELECT opclass.oid
+              FROM pg_opclass AS opclass
+              JOIN pg_am AS opclass_method
+                ON opclass_method.oid = opclass.opcmethod
+              WHERE opclass_method.amname = 'btree'
+                AND opclass.opcdefault
+                AND opclass.opcintype = 'timestamptz'::regtype
+          )
+          AND operational_index.indoption[0] = 0
+          AND operational_index.indoption[1] = 0
     ) THEN
         IF pg_catalog.to_regclass(
             'public.idx_llm_context_lifecycle_outbox_tenant_created'
