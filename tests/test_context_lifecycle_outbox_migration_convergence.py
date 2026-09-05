@@ -18,8 +18,11 @@ _TIMESTAMP_CONSTRAINTS = (
         "ck_llm_context_lifecycle_outbox_system_time_canonical_v1",
     ),
 )
-_LEGACY_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope"
-_CANONICAL_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1"
+_LEGACY_POLICIES = (
+    "plc_llm_context_lifecycle_outbox_tenant_scope",
+    "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v1",
+)
+_CANONICAL_POLICY = "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2"
 
 
 def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> None:
@@ -102,14 +105,26 @@ def test_outbox_migration_avoids_relocking_current_rls_policy() -> None:
     add_policy_at = migration.index(add_policy_guard)
     create_policy_at = migration.index(f"CREATE POLICY {_CANONICAL_POLICY}", add_policy_at)
 
-    drop_policy_guard = (
-        "IF EXISTS (\n"
-        "        SELECT 1\n"
-        "        FROM pg_policy\n"
-        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
-        f"          AND polname = '{_LEGACY_POLICY}'\n"
-        "    ) THEN"
+    policy_end = migration.index("    END IF;", create_policy_at)
+    policy_block = migration[create_policy_at:policy_end]
+    qualified_predicate = (
+        "tenant_scope OPERATOR(pg_catalog.=) "
+        "pg_catalog.current_setting('pg_llm_batch.tenant_scope', true)"
     )
-    drop_policy_at = migration.index(drop_policy_guard, create_policy_at)
-    assert migration.index(f"DROP POLICY {_LEGACY_POLICY}", drop_policy_at) > drop_policy_at
+    assert policy_block.count(qualified_predicate) == 2
+
+    last_drop_at = create_policy_at
+    for legacy_policy in _LEGACY_POLICIES:
+        drop_policy_guard = (
+            "IF EXISTS (\n"
+            "        SELECT 1\n"
+            "        FROM pg_policy\n"
+            "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+            f"          AND polname = '{legacy_policy}'\n"
+            "    ) THEN"
+        )
+        drop_policy_at = migration.index(drop_policy_guard, last_drop_at)
+        assert migration.index(f"DROP POLICY {legacy_policy}", drop_policy_at) > drop_policy_at
+        last_drop_at = drop_policy_at
+
     assert "DROP POLICY IF EXISTS" not in migration
