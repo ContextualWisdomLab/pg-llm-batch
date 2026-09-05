@@ -8,8 +8,8 @@ from pathlib import Path
 import pg_llm_batch.context_lifecycle_outbox as lifecycle_outbox
 
 
-def test_canonical_rls_policy_rejects_shadow_function_or_operator_dependencies() -> None:
-    """Deparsed policy text alone must not authenticate shadow-bound SQL authority."""
+def test_canonical_rls_policy_checks_function_and_operator_dependency_authority() -> None:
+    """Admission must supplement deparsed policy text with tracked dependency OIDs."""
     migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
 
     dependency_guard = "FROM pg_catalog.pg_depend AS unexpected_policy_dependency"
