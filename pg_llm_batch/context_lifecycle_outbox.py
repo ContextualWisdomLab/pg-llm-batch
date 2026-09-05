@@ -278,11 +278,12 @@ class PostgresContextLifecycleOutboxStore:
     that binding so a tenant-qualified row cannot claim another tenant identity.
 
     Validated database and tenant authority lives in a package-owned weak registry,
-    not caller-writable instance slots. This keeps later SQL/RLS decisions bound to
-    construction-time authority even if a hostile caller invokes ``object.__setattr__``
-    or ``object.__delattr__`` directly against the admitted store object. The concrete
+    not caller-writable instance slots. The database target may contain credentials,
+    so it remains internal connection authority and has no public accessor. This keeps
+    later SQL/RLS decisions bound to construction-time authority without making a DSN
+    available to routine logging, serialization, or diagnostics. The concrete
     authority-bearing adapter is intentionally non-subclassable so inheritance cannot
-    replace those database/RLS properties through virtual dispatch; callers extend the
+    replace database/RLS properties through virtual dispatch; callers extend the
     boundary by composition behind a port instead.
     """
 
@@ -321,11 +322,6 @@ class PostgresContextLifecycleOutboxStore:
         )
 
     @property
-    def postgres_dsn(self) -> str:
-        """Return the explicit database target fixed when this store was admitted."""
-        return _OUTBOX_STORE_BINDINGS[self][0]
-
-    @property
     def tenant_scope(self) -> str:
         """Return the trusted local RLS tenant fixed when this store was admitted."""
         return _OUTBOX_STORE_BINDINGS[self][1]
@@ -355,7 +351,7 @@ class PostgresContextLifecycleOutboxStore:
     def load(self, evidence_id: str) -> Optional[ContextLifecycleEvidenceSeed]:
         """Load one durable event through a package-owned read transaction."""
         _require_psycopg()
-        with psycopg.connect(self.postgres_dsn) as conn:
+        with psycopg.connect(_OUTBOX_STORE_BINDINGS[self][0]) as conn:
             with conn.cursor() as cur:
                 return self.load_in_transaction(cur, evidence_id)
 
@@ -410,7 +406,7 @@ class PostgresContextLifecycleOutboxStore:
     ) -> ContextLifecycleEvidenceSeed:
         """Persist one event in a package-owned transaction and commit it."""
         _require_psycopg()
-        with psycopg.connect(self.postgres_dsn) as conn:
+        with psycopg.connect(_OUTBOX_STORE_BINDINGS[self][0]) as conn:
             with conn.cursor() as cur:
                 stored = self.enqueue_in_transaction(cur, evidence)
             conn.commit()
