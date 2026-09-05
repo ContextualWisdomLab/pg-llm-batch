@@ -122,3 +122,32 @@ def test_live_migration_repairs_missing_and_noncanonical_replay_arbiter() -> Non
     finally:
         if _replay_arbiter_catalog(_DSN) != _CANONICAL_CATALOG:
             _restore_canonical_replay_arbiter(_DSN)
+
+
+@_SKIP_NO_DB
+def test_live_migration_rejects_unexpected_outbox_columns() -> None:
+    """A stale additive column must not become undeclared durable data authority."""
+    assert _DSN is not None
+    import psycopg
+
+    apply_context_lifecycle_outbox_schema(_DSN)
+    with psycopg.connect(_DSN) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "ALTER TABLE public.llm_context_lifecycle_outbox "
+                "ADD COLUMN undeclared_payload text"
+            )
+        connection.commit()
+
+    try:
+        with pytest.raises(psycopg.Error, match="structural schema mismatch"):
+            apply_context_lifecycle_outbox_schema(_DSN)
+    finally:
+        with psycopg.connect(_DSN) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "ALTER TABLE public.llm_context_lifecycle_outbox "
+                    "DROP COLUMN IF EXISTS undeclared_payload"
+                )
+            connection.commit()
+        apply_context_lifecycle_outbox_schema(_DSN)
