@@ -157,3 +157,142 @@ DROP FUNCTION public.pg_llm_batch_outbox_expression_probe(text);
 SQL
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# A simple non-unique index that uses PostgreSQL's default pg_catalog operator class
+# remains ordinary core index authority even when the access method is not btree.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE INDEX ix_outbox_core_hash_probe ON public.llm_context_lifecycle_outbox USING hash(event_type);'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP INDEX public.ix_outbox_core_hash_probe;'
+
+# A plain non-unique column index can also execute operator-selected support functions
+# through a custom operator class. Prove that this authority can reject a canonical
+# event even though indexprs/indpred are both NULL, then require migration 0009 to
+# reject the custom opclass rather than treating "simple column" as sufficient proof.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE FUNCTION public.pg_llm_batch_outbox_text_cmp(left_value text, right_value text)
+RETURNS integer
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $$
+BEGIN
+    IF left_value = 'batch.lifecycle.blocked'
+       OR right_value = 'batch.lifecycle.blocked' THEN
+        RAISE EXCEPTION 'operator class rejected canonical event';
+    END IF;
+    IF left_value < right_value THEN
+        RETURN -1;
+    END IF;
+    IF left_value > right_value THEN
+        RETURN 1;
+    END IF;
+    RETURN 0;
+END;
+$$;
+
+CREATE OPERATOR CLASS public.pg_llm_batch_outbox_text_ops
+FOR TYPE text USING btree AS
+    OPERATOR 1 < (text, text),
+    OPERATOR 2 <= (text, text),
+    OPERATOR 3 = (text, text),
+    OPERATOR 4 >= (text, text),
+    OPERATOR 5 > (text, text),
+    FUNCTION 1 public.pg_llm_batch_outbox_text_cmp(text, text);
+
+CREATE INDEX ix_outbox_operator_class_probe
+    ON public.llm_context_lifecycle_outbox (
+        event_type public.pg_llm_batch_outbox_text_ops
+    );
+
+INSERT INTO public.llm_context_lifecycle_outbox (
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256
+) VALUES (
+    'operator-class-seed',
+    'batch.lifecycle.allowed',
+    repeat('0', 64),
+    repeat('1', 64),
+    repeat('2', 64),
+    repeat('3', 64),
+    'observed',
+    '1970-01-01T00:00:00Z',
+    '1970-01-01T00:00:00Z',
+    repeat('4', 64),
+    repeat('5', 64)
+);
+SQL
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
+    >/tmp/pg-llm-batch-outbox-opclass-write.out 2>&1; then
+INSERT INTO public.llm_context_lifecycle_outbox (
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256
+) VALUES (
+    'operator-class-red',
+    'batch.lifecycle.blocked',
+    repeat('0', 64),
+    repeat('1', 64),
+    repeat('2', 64),
+    repeat('3', 64),
+    'observed',
+    '1970-01-01T00:00:00Z',
+    '1970-01-01T00:00:00Z',
+    repeat('4', 64),
+    repeat('5', 64)
+);
+SQL
+  cat /tmp/pg-llm-batch-outbox-opclass-write.out >&2
+  echo "custom operator class did not demonstrate hidden write-time authority" >&2
+  exit 1
+fi
+if ! grep -Fq "operator class rejected canonical event" \
+  /tmp/pg-llm-batch-outbox-opclass-write.out; then
+  cat /tmp/pg-llm-batch-outbox-opclass-write.out >&2
+  echo "operator-class RED failed for the wrong reason" >&2
+  exit 1
+fi
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-admission-opclass.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-admission-opclass.out >&2
+  echo "row-admission migration admitted a custom index operator class" >&2
+  exit 1
+fi
+if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-admission-opclass.out; then
+  cat /tmp/pg-llm-batch-outbox-admission-opclass.out >&2
+  echo "custom operator class failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP INDEX public.ix_outbox_operator_class_probe;
+DROP OPERATOR CLASS public.pg_llm_batch_outbox_text_ops USING btree;
+DROP FUNCTION public.pg_llm_batch_outbox_text_cmp(text, text);
+DELETE FROM public.llm_context_lifecycle_outbox
+WHERE evidence_id = 'operator-class-seed';
+SQL
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
