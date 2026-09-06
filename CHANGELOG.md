@@ -18,16 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Lifecycle-outbox runtime now verifies the effective PostgreSQL `CURRENT_USER`
-  before binding tenant state or touching durable outbox rows. Application data
-  access is admitted only for an exact `NOSUPERUSER NOBYPASSRLS` role; a
-  superuser, `BYPASSRLS` role, missing/ambiguous catalog identity, or malformed
-  role row fails closed. Installation/migration authority remains separate and
-  may use the operator role. Unit tests pin the catalog query and validation
-  order, while a wired real-PostgreSQL smoke proves ordinary-role tenant
-  isolation, demonstrates `BYPASSRLS` cross-tenant visibility without the
-  package guard, and exercises the production store under `SET ROLE` so
-  admission follows effective role rather than DSN text.
+- Lifecycle-outbox runtime now verifies both the effective PostgreSQL
+  `CURRENT_USER` and the live relation-level RLS/owner boundary before binding
+  tenant state or touching durable outbox rows. Application data access requires
+  `NOSUPERUSER NOBYPASSRLS`, enabled and forced RLS, exact separation from the
+  table owner, and no exercisable owner-role authority through inherited
+  `USAGE`, `SET ROLE`, or membership administration; inert membership alone is
+  not rejected. Missing/malformed catalog evidence fails closed. Installation
+  and migration remain separate operator authority. The real PostgreSQL smoke
+  proves ordinary-role tenant isolation, raw `BYPASSRLS` visibility, and that a
+  normal table owner can disable `FORCE ROW LEVEL SECURITY` and see both tenant
+  rows, then requires the production store to reject BYPASSRLS, superuser, and
+  owner authority under `SET ROLE`. The admission follows effective role rather
+  than DSN text and adds no second catalog round trip.
 - Lifecycle-outbox final row-admission now verifies the retained
   `tenant_scope DEFAULT 'standalone'` expression in addition to the database-owned
   UUID and created-at defaults. Package writes still validate and supply tenant
