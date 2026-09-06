@@ -48,18 +48,23 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   `SELECT`/`INSERT` grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`,
   or `TRIGGER`; or when the owner can redistribute through membership
   `ADMIN OPTION` a role that directly, or through an all-`SET TRUE` path, carries
-  forbidden runtime/operator authority including `CREATEDB`. PostgreSQL permits
-  a role administrator to grant the administered role to a new principal even
-  when the administrator's own membership is `INHERIT FALSE, SET FALSE`; the
-  new principal can then use the granted role's selectable path after the
-  definer returns. `SECURITY DEFINER` similarly executes with its owner's
-  privileges. Direct runtime `CREATEDB` and `CREATEROLE` are database/role
-  administration capabilities outside an application identity; callable
-  `CREATEROLE` is rejected because it is executable within the definer boundary,
-  while `CREATEDB` remains covered when membership administration can grant that
-  authority onward for later invoker-context use. `REPLICATION` is separate
-  cluster-level connection and replication-slot authority and must not be
-  co-located with a tenant application identity either directly or through an
+  forbidden runtime/operator authority including `CREATEDB`. This executable
+  authority check is transitive across user-schema `SECURITY DEFINER` routines:
+  after admission enters one definer owner principal, it must also inspect every
+  further definer owner that principal can invoke through schema `USAGE` plus
+  routine `EXECUTE`, with cycle-safe closure rather than only direct caller
+  visibility. PostgreSQL permits a role administrator to grant the administered
+  role to a new principal even when the administrator's own membership is
+  `INHERIT FALSE, SET FALSE`; the new principal can then use the granted role's
+  selectable path after the definer returns. `SECURITY DEFINER` similarly
+  executes with its owner's privileges, so a safe outer owner does not make a
+  privileged nested definer safe. Direct runtime `CREATEDB` and `CREATEROLE` are
+  database/role administration capabilities outside an application identity;
+  callable `CREATEROLE` is rejected because it is executable within the definer
+  boundary, while `CREATEDB` remains covered when membership administration can
+  grant that authority onward for later invoker-context use. `REPLICATION` is
+  separate cluster-level connection and replication-slot authority and must not
+  be co-located with a tenant application identity either directly or through an
   executable definer; `SELECT`/`INSERT` grant options, DML-bearing role
   administration, and executable privileged definer authority are authorization
   capabilities rather than application DML; `TRUNCATE` is outside RLS;
