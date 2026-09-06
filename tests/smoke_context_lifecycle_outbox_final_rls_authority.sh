@@ -34,7 +34,7 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE pg_llm_batch_outbox_rls_probe NOLOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT SELECT ON public.llm_context_lifecycle_outbox TO pg_llm_batch_outbox_rls_probe;
 
@@ -86,7 +86,7 @@ SQL
 # predicates after migration 0008 was recorded as applied. Prove the drift widens
 # an ordinary NOSUPERUSER/NOBYPASSRLS reader, then require migration 0009 to reject
 # the catalog state instead of treating the canonical name as final authority.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 DROP POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2
     ON public.llm_context_lifecycle_outbox;
 CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2
@@ -97,7 +97,7 @@ CREATE POLICY plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2
 SQL
 
 visible_rows="$(
-  docker exec "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
 SET LOCAL ROLE pg_llm_batch_outbox_rls_probe;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
@@ -135,7 +135,7 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'ALTER TABLE public.llm_context_lifecycle_outbox DISABLE ROW LEVEL SECURITY;'
 
 visible_rows="$(
-  docker exec "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
 SET LOCAL ROLE pg_llm_batch_outbox_rls_probe;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
