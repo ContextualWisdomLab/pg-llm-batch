@@ -17,15 +17,18 @@
   arbitrary tenant scope, so generic tenant-controlled SQL, SQL injection, and
   incorrect identity mapping remain outside the RLS guarantee.
 - Keep row-level security enabled and forced. Runtime admission must reject
-  `SUPERUSER`/`REPLICATION`/`BYPASSRLS`, owner/destructive/programming authority
-  reachable from `CURRENT_USER`, `SESSION_USER`, or the
-  session-selectable/administerable role closure, and must re-prove the sole
-  canonical tenant policy's command, role scope, permissive mode, `USING`/
-  `WITH CHECK` predicates, and reviewed catalog dependencies before tenant
-  binding or outbox SQL. `REPLICATION` is separate cluster-level connection and
-  slot authority, not application DML; runtime identities remain
-  `NOSUPERUSER NOREPLICATION NOBYPASSRLS`. Migration success is point-in-time
-  evidence, not continuing authority after policy or role-attribute DDL.
+  `SUPERUSER`/`CREATEDB`/`CREATEROLE`/`REPLICATION`/`BYPASSRLS`,
+  owner/destructive/programming authority reachable from `CURRENT_USER`,
+  `SESSION_USER`, or the session-selectable/administerable role closure, and
+  must re-prove the sole canonical tenant policy's command, role scope,
+  permissive mode, `USING`/`WITH CHECK` predicates, and reviewed catalog
+  dependencies before tenant binding or outbox SQL. `CREATEDB` and `CREATEROLE`
+  are database/role administration capabilities, and `REPLICATION` is separate
+  cluster-level connection and slot authority; none belong to application DML.
+  Runtime identities remain
+  `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`. Migration
+  success is point-in-time evidence, not continuing authority after policy or
+  role-attribute DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
