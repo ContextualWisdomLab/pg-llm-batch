@@ -124,3 +124,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_row_admission_authority.sh
       - name: Run lifecycle-outbox CHECK-expression authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_check_expression_authority.sh
+      - name: Run lifecycle-outbox final RLS authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_final_rls_authority.sh
