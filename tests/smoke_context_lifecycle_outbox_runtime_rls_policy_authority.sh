@@ -34,11 +34,11 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_policy_owner LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_policy_runtime LOGIN NOSUPERUSER NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO pg_llm_batch_outbox_policy_owner, pg_llm_batch_outbox_policy_runtime;
-ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO pg_llm_batch_outbox_policy_owner;
-GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox TO pg_llm_batch_outbox_policy_runtime;
+CREATE ROLE cwl_llm_batch_outbox_policy_owner LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_policy_runtime LOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_policy_owner, cwl_llm_batch_outbox_policy_runtime;
+ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO cwl_llm_batch_outbox_policy_owner;
+GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox TO cwl_llm_batch_outbox_policy_runtime;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
@@ -86,7 +86,7 @@ SQL
 
 canonical_visible="$(
   docker exec -i "${container}" psql \
-      -h 127.0.0.1 -U pg_llm_batch_outbox_policy_runtime -d postgres \
+      -h 127.0.0.1 -U cwl_llm_batch_outbox_policy_runtime -d postgres \
       -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
@@ -113,7 +113,7 @@ SQL
 
 drift_visible="$(
   docker exec -i "${container}" psql \
-      -h 127.0.0.1 -U pg_llm_batch_outbox_policy_runtime -d postgres \
+      -h 127.0.0.1 -U cwl_llm_batch_outbox_policy_runtime -d postgres \
       -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
@@ -133,12 +133,12 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_policy_runtime@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_policy_runtime@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
 with psycopg.connect(
-    "postgresql://pg_llm_batch_outbox_policy_runtime@127.0.0.1/postgres"
+    "postgresql://cwl_llm_batch_outbox_policy_runtime@127.0.0.1/postgres"
 ) as connection:
     with connection.cursor() as cursor:
         try:
