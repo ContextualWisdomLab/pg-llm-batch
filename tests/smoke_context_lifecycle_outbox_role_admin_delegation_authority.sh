@@ -34,30 +34,30 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_dml_group NOLOGIN
+CREATE ROLE cwl_llm_batch_outbox_dml_group NOLOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_role_admin LOGIN
+CREATE ROLE cwl_llm_batch_outbox_role_admin LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_role_delegate LOGIN
+CREATE ROLE cwl_llm_batch_outbox_role_delegate LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
-    TO pg_llm_batch_outbox_dml_group,
-       pg_llm_batch_outbox_role_admin,
-       pg_llm_batch_outbox_role_delegate;
+    TO cwl_llm_batch_outbox_dml_group,
+       cwl_llm_batch_outbox_role_admin,
+       cwl_llm_batch_outbox_role_delegate;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_dml_group;
-GRANT pg_llm_batch_outbox_dml_group
-    TO pg_llm_batch_outbox_role_admin WITH ADMIN OPTION;
+    TO cwl_llm_batch_outbox_dml_group;
+GRANT cwl_llm_batch_outbox_dml_group
+    TO cwl_llm_batch_outbox_role_admin WITH ADMIN OPTION;
 SQL
 
 docker exec -i "${container}" psql -h 127.0.0.1 \
-  -U pg_llm_batch_outbox_role_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-GRANT pg_llm_batch_outbox_dml_group TO pg_llm_batch_outbox_role_delegate;
+  -U cwl_llm_batch_outbox_role_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+GRANT cwl_llm_batch_outbox_dml_group TO cwl_llm_batch_outbox_role_delegate;
 SQL
 
 delegated="$(
   docker exec "${container}" psql -U postgres -d postgres -Atqc \
-    "SELECT pg_catalog.has_table_privilege('pg_llm_batch_outbox_role_delegate', 'public.llm_context_lifecycle_outbox', 'SELECT')"
+    "SELECT pg_catalog.has_table_privilege('cwl_llm_batch_outbox_role_delegate', 'public.llm_context_lifecycle_outbox', 'SELECT')"
 )"
 if [[ "${delegated}" != "t" ]]; then
   echo "role ADMIN OPTION specimen did not delegate outbox read authority" >&2
@@ -66,7 +66,7 @@ fi
 
 delegate_visible="$(
   docker exec "${container}" psql -h 127.0.0.1 \
-    -U pg_llm_batch_outbox_role_delegate -d postgres -Atqc \
+    -U cwl_llm_batch_outbox_role_delegate -d postgres -Atqc \
     "SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
 )"
 if [[ "${delegate_visible}" != "0" ]]; then
@@ -79,7 +79,7 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_role_admin@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_role_admin@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
@@ -95,39 +95,39 @@ else:
 PY
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_dml_leaf NOLOGIN
+CREATE ROLE cwl_llm_batch_outbox_dml_leaf NOLOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_admin_bridge NOLOGIN
+CREATE ROLE cwl_llm_batch_outbox_admin_bridge NOLOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_transitive_admin LOGIN
+CREATE ROLE cwl_llm_batch_outbox_transitive_admin LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_transitive_delegate LOGIN
+CREATE ROLE cwl_llm_batch_outbox_transitive_delegate LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
-    TO pg_llm_batch_outbox_dml_leaf,
-       pg_llm_batch_outbox_admin_bridge,
-       pg_llm_batch_outbox_transitive_admin,
-       pg_llm_batch_outbox_transitive_delegate;
+    TO cwl_llm_batch_outbox_dml_leaf,
+       cwl_llm_batch_outbox_admin_bridge,
+       cwl_llm_batch_outbox_transitive_admin,
+       cwl_llm_batch_outbox_transitive_delegate;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_dml_leaf,
-       pg_llm_batch_outbox_transitive_admin;
-GRANT pg_llm_batch_outbox_dml_leaf
-    TO pg_llm_batch_outbox_admin_bridge WITH INHERIT FALSE, SET TRUE;
-GRANT pg_llm_batch_outbox_admin_bridge
-    TO pg_llm_batch_outbox_transitive_admin
+    TO cwl_llm_batch_outbox_dml_leaf,
+       cwl_llm_batch_outbox_transitive_admin;
+GRANT cwl_llm_batch_outbox_dml_leaf
+    TO cwl_llm_batch_outbox_admin_bridge WITH INHERIT FALSE, SET TRUE;
+GRANT cwl_llm_batch_outbox_admin_bridge
+    TO cwl_llm_batch_outbox_transitive_admin
     WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
 SQL
 
 docker exec -i "${container}" psql -h 127.0.0.1 \
-  -U pg_llm_batch_outbox_transitive_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-GRANT pg_llm_batch_outbox_admin_bridge
-    TO pg_llm_batch_outbox_transitive_delegate WITH INHERIT FALSE, SET TRUE;
+  -U cwl_llm_batch_outbox_transitive_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+GRANT cwl_llm_batch_outbox_admin_bridge
+    TO cwl_llm_batch_outbox_transitive_delegate WITH INHERIT FALSE, SET TRUE;
 SQL
 
 transitive_visible="$(
   docker exec "${container}" psql -h 127.0.0.1 \
-    -U pg_llm_batch_outbox_transitive_delegate -d postgres -Atqc \
-    "SET ROLE pg_llm_batch_outbox_dml_leaf; SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
+    -U cwl_llm_batch_outbox_transitive_delegate -d postgres -Atqc \
+    "SET ROLE cwl_llm_batch_outbox_dml_leaf; SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
 )"
 if [[ "${transitive_visible}" != "0" ]]; then
   echo "role ADMIN OPTION specimen did not delegate SET-reachable outbox DML" >&2
@@ -139,7 +139,7 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_transitive_admin@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_transitive_admin@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
@@ -180,7 +180,7 @@ INSERT INTO public.llm_context_lifecycle_outbox (
     '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', repeat('0', 64), repeat('1', 64)
 );
 
-CREATE FUNCTION public.pg_llm_batch_outbox_security_definer_probe()
+CREATE FUNCTION public.cwl_llm_batch_outbox_security_definer_probe()
 RETURNS bigint
 LANGUAGE sql
 SECURITY DEFINER
@@ -191,9 +191,9 @@ SQL
 security_definer_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_role_delegate;
+SET LOCAL ROLE cwl_llm_batch_outbox_role_delegate;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
-SELECT public.pg_llm_batch_outbox_security_definer_probe();
+SELECT public.cwl_llm_batch_outbox_security_definer_probe();
 ROLLBACK;
 SQL
 )"
@@ -207,7 +207,7 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_role_delegate@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_role_delegate@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
