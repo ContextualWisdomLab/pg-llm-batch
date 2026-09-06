@@ -37,11 +37,17 @@ docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<
 CREATE ROLE pg_llm_batch_outbox_safe LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_bypass LOGIN NOSUPERUSER BYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_inert LOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
-    TO pg_llm_batch_outbox_safe, pg_llm_batch_outbox_bypass, pg_llm_batch_outbox_owner;
+    TO pg_llm_batch_outbox_safe,
+       pg_llm_batch_outbox_bypass,
+       pg_llm_batch_outbox_owner,
+       pg_llm_batch_outbox_inert;
 GRANT CREATE ON SCHEMA public TO pg_llm_batch_outbox_owner;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_safe, pg_llm_batch_outbox_bypass;
+    TO pg_llm_batch_outbox_safe,
+       pg_llm_batch_outbox_bypass,
+       pg_llm_batch_outbox_inert;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
@@ -69,6 +75,8 @@ INSERT INTO public.llm_context_lifecycle_outbox (
 );
 
 ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO pg_llm_batch_outbox_owner;
+GRANT pg_llm_batch_outbox_owner TO pg_llm_batch_outbox_inert
+    WITH INHERIT FALSE, SET FALSE;
 SQL
 
 safe_visible="$(
@@ -82,6 +90,39 @@ SQL
 )"
 if [[ "${safe_visible}" != "1" ]]; then
   echo "ordinary application role did not remain tenant-isolated" >&2
+  exit 1
+fi
+
+inert_visible="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_inert;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
+ROLLBACK;
+SQL
+)"
+if [[ "${inert_visible}" != "1" ]]; then
+  echo "inert owner-role membership unexpectedly changed tenant visibility" >&2
+  exit 1
+fi
+
+inert_authority="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_inert;
+SELECT pg_catalog.concat_ws(
+    ',',
+    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'MEMBER'),
+    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'USAGE'),
+    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'SET'),
+    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'MEMBER WITH ADMIN OPTION')
+);
+ROLLBACK;
+SQL
+)"
+if [[ "${inert_authority}" != "true,false,false,false" ]]; then
+  echo "inert membership specimen did not preserve the intended PostgreSQL role semantics" >&2
   exit 1
 fi
 
@@ -135,6 +176,12 @@ store = PostgresContextLifecycleOutboxStore(
 with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
     with connection.cursor() as cursor:
         cursor.execute("SET ROLE pg_llm_batch_outbox_safe")
+        row = store.load_in_transaction(cursor, "role-authority-a")
+        assert row is not None
+        assert row.evidence_id == "role-authority-a"
+        cursor.execute("RESET ROLE")
+
+        cursor.execute("SET ROLE pg_llm_batch_outbox_inert")
         row = store.load_in_transaction(cursor, "role-authority-a")
         assert row is not None
         assert row.evidence_id == "role-authority-a"
