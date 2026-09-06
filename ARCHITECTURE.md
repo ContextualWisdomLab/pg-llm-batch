@@ -91,6 +91,16 @@ unknown user triggers and rules are not silently deleted because the package
 cannot prove their ownership, external dependencies, or side effects. ADR 0024
 records this boundary and the PostgreSQL catalog evidence behind it.
 
+Index-program authority extends beyond explicit expressions and predicates.
+Migration 0009 rejects expression and partial indexes and requires every direct
+index key to use the default `pg_catalog` operator class for the exact indexed
+column type and the index relation's access method. This permits ordinary
+PostgreSQL-core simple-column indexes, including a nonunique hash index, while
+rejecting a custom operator class whose support functions would execute during
+index maintenance. Unknown index programs are not auto-dropped because their
+function dependencies, performance role, and ownership require operator
+reconciliation. ADR 0025 records this boundary.
+
 Migration 0008 and its destructive rollback are installer-owned atomic
 statements and bind `pg_catalog, public, pg_temp` with fully qualified
 `pg_catalog.set_config` inside their `DO` blocks before object lookup or DDL.
@@ -176,18 +186,20 @@ same-runtime parsed-expression identity, review-stamp traceability, post-repair
 CHECK verification, canonical replay UNIQUE kind/validation/deferrability/column
 identity, ordinary logged-public relation identity, exact live-column cardinality,
 dropped-column tombstone rejection, non-internal trigger and rewrite-rule
-rejection, runtime schema qualification without caller `search_path` mutation,
-installer/rollback search-path authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage. Live
+rejection, expression/partial/custom-operator-class index-program rejection,
+default-core simple-index admission, runtime schema qualification without caller
+`search_path` mutation, installer/rollback search-path authority, schema mirroring,
+operator documentation, and 100% production statement and branch coverage. Live
 PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
 identical provider identifiers in different tenants remain independently
 addressable and mutually invisible when access occurs through the trusted
 package boundary. Exact-head runtime evidence must also exercise a non-default
 caller `search_path`, verify the canonical outbox relation is still selected,
-verify the caller path is unchanged afterward, and execute migration 0008
+verify the caller path is unchanged afterward, and execute migration 0008/0009
 against stale replay-key, spoofed canonical-CHECK, UNLOGGED-relation,
 undeclared-live-column, dropped-column-tombstone, inheritance-edge,
-user-trigger, and rewrite-rule variants so PostgreSQL evaluates canonical
-policy, CHECK-predicate, UPSERT-arbiter, executable-table-program, and
-durability/schema catalog conditions. These tests do not claim isolation after
-arbitrary SQL or untrusted schema-creation authority is granted.
+user-trigger, rewrite-rule, executable-index, and custom-operator-class variants
+so PostgreSQL evaluates canonical policy, CHECK-predicate, UPSERT-arbiter,
+executable-table/index-program, and durability/schema catalog conditions. These
+tests do not claim isolation after arbitrary SQL or untrusted schema-creation
+authority is granted.
