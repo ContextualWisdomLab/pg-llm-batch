@@ -46,6 +46,16 @@ stored predicate again. Already-current durable constraints avoid replacement
 DDL. The comment remains traceability evidence but cannot by itself make a
 same-name different predicate canonical.
 
+Final row-admission independently repeats that semantic proof. Migration 0009
+constructs its own same-runtime payload, valid-time, and system-time CHECK probe,
+then admits each package-owned CHECK only when its exact canonical name,
+validation/inheritance state, and `pg_get_expr` output match the corresponding
+probe expression. This catches restore or operator drift that occurs after
+migration 0008 was previously recorded as applied. Migration 0009 does not
+repair a mismatched CHECK; migration 0008 remains the sole convergence owner and
+the final gate fails closed for explicit operator reconciliation. ADR 0026
+records this separation of convergence and final semantic admission authority.
+
 Lifecycle-outbox replay idempotency has a separate catalog invariant. Runtime
 uses `ON CONFLICT (tenant_scope, evidence_id) DO NOTHING`; migration 0008
 therefore converges `uq_llm_context_lifecycle_outbox_tenant_evidence` after
@@ -182,24 +192,25 @@ idempotency, malformed database rows, default-deny policy text, explicit
 `pg_catalog` policy predicate authority, `pg_policy` command/role/expression
 identity, unknown-policy fail-closed behavior, post-repair canonical policy
 verification, canonical payload/timestamp CHECK type/validation/inheritance,
-same-runtime parsed-expression identity, review-stamp traceability, post-repair
-CHECK verification, canonical replay UNIQUE kind/validation/deferrability/column
-identity, ordinary logged-public relation identity, exact live-column cardinality,
-dropped-column tombstone rejection, non-internal trigger and rewrite-rule
-rejection, expression/partial/custom-operator-class index-program rejection,
-default-core simple-index admission, runtime schema qualification without caller
-`search_path` mutation, installer/rollback search-path authority, schema mirroring,
-operator documentation, and 100% production statement and branch coverage. Live
+same-runtime parsed-expression identity in both convergence and final
+row-admission, review-stamp traceability, post-repair CHECK verification,
+canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
+logged-public relation identity, exact live-column cardinality, dropped-column
+tombstone rejection, non-internal trigger and rewrite-rule rejection,
+expression/partial/custom-operator-class index-program rejection, default-core
+simple-index admission, runtime schema qualification without caller `search_path`
+mutation, installer/rollback search-path authority, schema mirroring, operator
+documentation, and 100% production statement and branch coverage. Live
 PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
 identical provider identifiers in different tenants remain independently
 addressable and mutually invisible when access occurs through the trusted
 package boundary. Exact-head runtime evidence must also exercise a non-default
 caller `search_path`, verify the canonical outbox relation is still selected,
 verify the caller path is unchanged afterward, and execute migration 0008/0009
-against stale replay-key, spoofed canonical-CHECK, UNLOGGED-relation,
-undeclared-live-column, dropped-column-tombstone, inheritance-edge,
-user-trigger, rewrite-rule, executable-index, and custom-operator-class variants
-so PostgreSQL evaluates canonical policy, CHECK-predicate, UPSERT-arbiter,
-executable-table/index-program, and durability/schema catalog conditions. These
-tests do not claim isolation after arbitrary SQL or untrusted schema-creation
-authority is granted.
+against stale replay-key, spoofed canonical-CHECK, final-gate same-name
+CHECK-expression drift, UNLOGGED-relation, undeclared-live-column,
+dropped-column-tombstone, inheritance-edge, user-trigger, rewrite-rule,
+executable-index, and custom-operator-class variants so PostgreSQL evaluates
+canonical policy, CHECK-predicate, UPSERT-arbiter, executable-table/index-program,
+and durability/schema catalog conditions. These tests do not claim isolation
+after arbitrary SQL or untrusted schema-creation authority is granted.
