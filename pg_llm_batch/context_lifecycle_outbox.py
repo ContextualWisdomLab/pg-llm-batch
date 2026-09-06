@@ -186,6 +186,7 @@ def _require_rls_application_role(cursor: Any) -> None:
         "selectable_role.oid, executable_definer.oid, 'EXECUTE') "
         "AND (definer_role.rolsuper "
         "OR definer_role.rolcreaterole "
+        "OR definer_role.rolreplication "
         "OR definer_role.rolbypassrls "
         "OR definer_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner "
         "OR pg_catalog.pg_has_role("
