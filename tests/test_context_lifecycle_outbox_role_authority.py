@@ -205,3 +205,28 @@ def test_role_authority_query_rejects_executable_security_definer_escape() -> No
         "'TRIGGER')"
     ) in sql
     assert params == ()
+
+
+def test_role_authority_query_rejects_unsafe_security_definer_search_path() -> None:
+    """Every callable definer edge must pin catalog lookup ahead of temporary objects."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "WITH RECURSIVE executable_definer_owner(role_oid, routine_oid) AS" in sql
+    assert "SELECT executable_definer.proowner, executable_definer.oid" in sql
+    assert (
+        "SELECT nested_executable_definer.proowner, nested_executable_definer.oid"
+        in sql
+    )
+    assert "JOIN pg_catalog.pg_proc AS admitted_definer" in sql
+    assert (
+        "admitted_definer.oid OPERATOR(pg_catalog.=) "
+        "executable_definer_owner.routine_oid"
+    ) in sql
+    assert (
+        "NOT (admitted_definer.proconfig OPERATOR(pg_catalog.@>) "
+        "ARRAY['search_path=pg_catalog, pg_temp']::pg_catalog.text[])"
+    ) in sql
+    assert params == ()
