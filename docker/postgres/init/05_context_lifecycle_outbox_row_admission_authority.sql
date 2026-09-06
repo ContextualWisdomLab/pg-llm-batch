@@ -13,24 +13,28 @@ BEGIN
         RAISE EXCEPTION 'lifecycle outbox relation is unavailable';
     END IF;
 
-    -- Relation durability/topology is final authority, not only migration-0008
-    -- convergence evidence. A restore/operator can SET UNLOGGED or attach an
-    -- inheritance edge after 0008 was recorded as applied while leaving column,
-    -- constraint, RLS, trigger/rule, default, and index catalogs otherwise canonical.
-    -- Final admission therefore requires one ordinary logged table in public with no
-    -- parent or child inheritance edge. Drift is operator-owned and is never repaired
-    -- by this verifier because storage rewrites and hierarchy changes have data/WAL/
-    -- recovery consequences that migration 0009 cannot prove safe.
+    -- Relation durability/topology/storage is final authority, not only migration-0008
+    -- convergence evidence. A restore/operator can SET UNLOGGED, attach an inheritance
+    -- edge, or replace the table access method after 0008 was recorded as applied while
+    -- leaving column, constraint, RLS, trigger/rule, default, and index catalogs
+    -- otherwise canonical. Final admission therefore requires one ordinary logged heap
+    -- table in public with no parent or child inheritance edge. Drift is operator-owned
+    -- and is never repaired by this verifier because storage rewrites and hierarchy
+    -- changes have data/WAL/recovery consequences that migration 0009 cannot prove safe.
     IF NOT EXISTS (
         SELECT 1
         FROM pg_catalog.pg_class AS admission_relation
         JOIN pg_catalog.pg_namespace AS admission_namespace
           ON admission_namespace.oid = admission_relation.relnamespace
+        JOIN pg_catalog.pg_am AS admission_table_access_method
+          ON admission_table_access_method.oid = admission_relation.relam
         WHERE admission_relation.oid =
               'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
           AND admission_relation.relkind OPERATOR(pg_catalog.=) 'r'
           AND admission_relation.relpersistence OPERATOR(pg_catalog.=) 'p'
           AND admission_namespace.nspname OPERATOR(pg_catalog.=) 'public'
+          AND admission_table_access_method.amname OPERATOR(pg_catalog.=) 'heap'
+          AND admission_table_access_method.amtype OPERATOR(pg_catalog.=) 't'
     ) OR EXISTS (
         SELECT 1
         FROM pg_catalog.pg_inherits AS inheritance_edge
