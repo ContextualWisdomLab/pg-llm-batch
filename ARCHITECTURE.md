@@ -75,6 +75,22 @@ different event. ADR 0031 and
 `docs/doctoring/lifecycle-outbox-runtime-role-authority.md` record the operator /
 runtime separation and audit surface.
 
+Executable user-schema definer code is also relation authority, not merely code
+metadata. PostgreSQL executes a `SECURITY DEFINER` routine with its owner's
+privileges, so runtime admission inspects callable non-system-schema routines in
+the same catalog round trip. A selectable/administerable runtime role is rejected
+when it has schema `USAGE` and function `EXECUTE` on a `SECURITY DEFINER` whose
+owner is a superuser, has `BYPASSRLS`, owns the outbox exactly or through
+exercisable owner-role membership, carries outbox `SELECT`/`INSERT` grant option,
+or holds `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`. The guard is
+based on executable authority rather than parsing mutable function bodies. This
+matters independently of RLS: PostgreSQL does not subject whole-table
+`TRUNCATE` or `REFERENCES` operations to row security, and a non-owner ordinary
+definer can hold either privilege without satisfying a simple owner/superuser
+check. System schemas remain excluded from this application-schema guard; ACL,
+routine, and owner-role reconciliation remains operator authority. ADR 0032
+records the delegation and executable-definer boundary.
+
 Lifecycle-outbox RLS policy authority is catalog-verified, not name-inferred.
 Canonical v2 uses `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` for
 both `USING` and `WITH CHECK`. Migration 0008 accepts an existing v2 without DDL
@@ -314,26 +330,28 @@ effective `CURRENT_USER`, `SESSION_USER`, and every
 session-selectable/administerable role; live enabled/forced RLS; exact owner
 inequality; absence of `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, and
 `BYPASSRLS`; absence of exercisable/administerable owner-role `USAGE`, `SET`, or
-membership-admin authority; and absence of outbox `TRUNCATE`, `DELETE`,
-table/column `UPDATE`, table/column `REFERENCES`, or `TRIGGER` authority anywhere
-in that role closure before tenant state or outbox-row access,
-transaction-advisory-lock serialization without `SELECT ... FOR UPDATE`,
-canonical payload/timestamp CHECK type/validation/inheritance, same-runtime
-parsed-expression identity in both convergence and final row-admission,
-review-stamp traceability, post-repair CHECK verification, canonical replay
-UNIQUE kind/validation/deferrability/column identity, ordinary logged-public
-relation identity at convergence and final admission, exact live-column
-cardinality, dropped-column tombstone rejection, complete final `pg_attribute`
-type/collation/nullability/default-presence/generated/identity/cardinality
-re-verification, no outbox inheritance edge at convergence or final admission,
-built-in `heap` TABLE access-method identity at final admission, non-internal
-trigger and rewrite-rule rejection at both convergence and final admission,
-exact retained `tenant_scope` standalone plus omitted-column UUID/created-at
-default authority at final admission, expression/partial/custom-operator-class
-index-program rejection, default-core simple-index admission, runtime schema
-qualification without caller `search_path` mutation, installer/rollback
-search-path authority, schema mirroring, operator documentation, and 100%
-production statement and branch coverage.
+membership-admin authority; absence of outbox `TRUNCATE`, `DELETE`, table/column
+`UPDATE`, table/column `REFERENCES`, or `TRIGGER` authority anywhere in that role
+closure; and absence of callable non-system-schema `SECURITY DEFINER` authority
+whose owner reintroduces exact/inherited ownership, grant options, `TRUNCATE`,
+`DELETE`, `UPDATE`, `REFERENCES`, `TRIGGER`, superuser, or `BYPASSRLS` authority
+before tenant state or outbox-row access, transaction-advisory-lock
+serialization without `SELECT ... FOR UPDATE`, canonical payload/timestamp CHECK
+type/validation/inheritance, same-runtime parsed-expression identity in both
+convergence and final row-admission, review-stamp traceability, post-repair CHECK
+verification, canonical replay UNIQUE kind/validation/deferrability/column
+identity, ordinary logged-public relation identity at convergence and final
+admission, exact live-column cardinality, dropped-column tombstone rejection,
+complete final `pg_attribute` type/collation/nullability/default-presence/
+generated/identity/cardinality re-verification, no outbox inheritance edge at
+convergence or final admission, built-in `heap` TABLE access-method identity at
+final admission, non-internal trigger and rewrite-rule rejection at both
+convergence and final admission, exact retained `tenant_scope` standalone plus
+omitted-column UUID/created-at default authority at final admission,
+expression/partial/custom-operator-class index-program rejection, default-core
+simple-index admission, runtime schema qualification without caller `search_path`
+mutation, installer/rollback search-path authority, schema mirroring, operator
+documentation, and 100% production statement and branch coverage.
 
 Live PostgreSQL isolation tests use
 `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` runtime roles and
@@ -365,8 +383,12 @@ must reject that session-level escape. Another specimen must preserve both RLS
 flags while replacing the sole canonical policy under the same name with
 `USING (true) WITH CHECK (true)`, prove that raw runtime SQL then sees both
 tenants, and require package admission to fail before tenant binding or data SQL.
-Admin- or replication-originated connections that deliberately downgrade after
-connection establishment are not claimed safe.
+The executable-definer specimen must also prove that an ordinary non-owner,
+non-superuser, non-`BYPASSRLS` function owner carrying outbox `TRUNCATE` can make
+that whole-table operation executable by an otherwise ordinary runtime login,
+then require package admission to reject the callable function before tenant
+binding or outbox data SQL. Admin- or replication-originated connections that
+deliberately downgrade after connection establishment are not claimed safe.
 
 The same evidence must exercise a non-default caller `search_path`, verify the
 canonical outbox relation is still selected, verify the caller path is unchanged
