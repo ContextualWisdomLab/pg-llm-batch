@@ -100,7 +100,7 @@ def test_role_authority_query_uses_effective_current_user_and_live_relation() ->
     assert "rolbypassrls" in sql
     assert "NOT admitted_relation.relrowsecurity" in sql
     assert "NOT admitted_relation.relforcerowsecurity" in sql
-    assert "admitted_relation.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
+    assert "admitted_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
     assert "pg_catalog.pg_has_role" in sql
     assert "'USAGE'" in sql
     assert "'SET'" in sql
