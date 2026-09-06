@@ -17,7 +17,7 @@ TENANT_SCOPE_SHA256 = "a" * 64
 
 
 class RecordingCursor:
-    """Record SQL order while returning an empty durable outbox result."""
+    """Record SQL order while emulating admitted role authority and an empty outbox."""
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
@@ -28,7 +28,9 @@ class RecordingCursor:
         normalized = " ".join(sql.split())
         parameters = params or ()
         self.calls.append((normalized, parameters))
-        if normalized.startswith("SELECT pg_catalog.set_config"):
+        if normalized.startswith("SELECT admitted_role.rolsuper"):
+            self.result = (False, False)
+        elif normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
         elif normalized.startswith("SELECT evidence_id"):
             self.result = None
@@ -53,9 +55,10 @@ def test_runtime_qualifies_authority_without_mutating_caller_search_path() -> No
 
     statements = [sql for sql, _ in cursor.calls]
     assert all(not sql.startswith("SET LOCAL search_path") for sql in statements)
-    assert statements[0].startswith("SELECT pg_catalog.set_config")
+    assert statements[0].startswith("SELECT admitted_role.rolsuper")
+    assert statements[1].startswith("SELECT pg_catalog.set_config")
     # ONLY is intentional: inherited relations are outside the canonical owner table.
-    assert "FROM ONLY public.llm_context_lifecycle_outbox" in statements[1]
+    assert "FROM ONLY public.llm_context_lifecycle_outbox" in statements[2]
 
 
 def test_forward_and_rollback_migrations_pin_search_path_inside_do_block() -> None:
