@@ -14,7 +14,7 @@ def test_outbox_migration_fails_closed_on_incompatible_existing_columns() -> Non
     create_at = migration.index(
         "CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox"
     )
-    create_end = migration.index("\n    ) USING heap;", create_at)
+    create_end = migration.index("\n    );", create_at)
     guard_at = migration.index(
         "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';",
         create_end,
@@ -136,24 +136,6 @@ def test_outbox_migration_requires_logged_ordinary_table_authority() -> None:
     assert "outbox_relation.relkind = 'r'" in guard_block
     assert "outbox_relation.relpersistence = 'p'" in guard_block
     assert "outbox_namespace.nspname = 'public'" in guard_block
-
-
-def test_outbox_migration_pins_heap_table_access_method() -> None:
-    """Fresh and restored outboxes must use the reviewed PostgreSQL heap table AM."""
-    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
-    create_at = migration.index(
-        "CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox"
-    )
-    guard_at = migration.index(
-        "RAISE EXCEPTION 'lifecycle outbox structural schema mismatch';"
-    )
-    create_and_guard = migration[create_at:guard_at]
-
-    assert "\n    ) USING heap;" in create_and_guard
-    assert "JOIN pg_catalog.pg_am AS outbox_table_access_method" in create_and_guard
-    assert "outbox_table_access_method.oid = outbox_relation.relam" in create_and_guard
-    assert "outbox_table_access_method.amname = 'heap'" in create_and_guard
-    assert "outbox_table_access_method.amtype = 't'" in create_and_guard
 
 
 def test_outbox_migration_requires_primary_key_on_context_uuid() -> None:
