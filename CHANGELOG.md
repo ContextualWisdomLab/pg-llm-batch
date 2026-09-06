@@ -18,6 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime role admission now rejects PostgreSQL `REPLICATION`
+  authority across the effective/session-selectable/administerable role closure.
+  The application connection needs only outbox `SELECT` and `INSERT`; replication
+  mode and replication-slot authority remain a separate operator boundary.
+  A PostgreSQL smoke uses a `LOGIN NOSUPERUSER NOBYPASSRLS REPLICATION` role
+  with only outbox `SELECT, INSERT` to require fail-closed package admission.
+  This separation is not described as an automatic RLS bypass: the repair is a
+  least-privilege and cluster-authority boundary.
 - Lifecycle-outbox runtime admission now re-proves the live canonical tenant
   policy rather than treating successful migration history plus enabled/forced
   RLS flags as continuing authority. The existing single catalog round trip
