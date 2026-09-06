@@ -82,6 +82,26 @@ BEGIN
         RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
     END IF;
 
+    -- Table-attached programs are final row-admission authority too. Migration 0008
+    -- rejects them while converging the schema, but an operator or restore can attach
+    -- a user trigger or rewrite rule after 0008 was recorded as applied. Internal
+    -- constraint triggers remain PostgreSQL-owned; every user trigger and every rule
+    -- requires explicit reconciliation before this final admission gate can pass.
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_trigger AS outbox_trigger
+        WHERE outbox_trigger.tgrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND NOT outbox_trigger.tgisinternal
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_rewrite AS outbox_rule
+        WHERE outbox_rule.ev_class =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+    ) THEN
+        RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
+    END IF;
+
     -- Migration 0009 is the final row-admission gate and must independently verify
     -- CHECK semantics even when migration 0008 was recorded as applied before later
     -- restore/operator drift. Derive parser-normalized canonical expressions from this
