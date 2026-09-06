@@ -30,6 +30,10 @@ from .db import (
 from .exceptions import ConfigError, PgLlmBatchError, ValidationError
 
 MIGRATION_PATH = Path(__file__).with_name("migrations") / "0008_context_lifecycle_outbox.sql"
+_ROW_ADMISSION_AUTHORITY_MIGRATION_PATH = (
+    Path(__file__).with_name("migrations")
+    / "0009_context_lifecycle_outbox_row_admission_authority.sql"
+)
 ROLLBACK_PATH = (
     Path(__file__).with_name("migrations")
     / "rollback"
@@ -248,16 +252,21 @@ def apply_context_lifecycle_outbox_schema(
     target. Operators may supply a reviewed regular UTF-8 migration file for
     installation tooling; the package pins its descriptor, rejects group/other write
     authority, enforces a finite byte budget, and rejects observed mutation before
-    SQL reaches PostgreSQL. Normal callers use the same checks on the package-owned
-    migration.
+    SQL reaches PostgreSQL. Normal callers apply the package-owned base and
+    row-admission-authority migrations in one database transaction.
     """
     dsn = _validated_postgres_dsn(postgres_dsn)
     _require_psycopg()
-    path = Path(migration_path) if migration_path else MIGRATION_PATH
-    sql = _read_migration_sql(path)
+    paths = (
+        (Path(migration_path),)
+        if migration_path
+        else (MIGRATION_PATH, _ROW_ADMISSION_AUTHORITY_MIGRATION_PATH)
+    )
+    sql_statements = tuple(_read_migration_sql(path) for path in paths)
     with psycopg.connect(dsn) as conn:
         with conn.cursor() as cur:
-            cur.execute(sql)
+            for sql in sql_statements:
+                cur.execute(sql)
         conn.commit()
 
 
