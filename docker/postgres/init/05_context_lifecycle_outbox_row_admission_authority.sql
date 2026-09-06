@@ -2,6 +2,10 @@
 -- Reject hidden row-admission authority on the canonical lifecycle outbox.
 
 DO $$
+DECLARE
+    canonical_payload_check_expression TEXT;
+    canonical_valid_time_check_expression TEXT;
+    canonical_system_time_check_expression TEXT;
 BEGIN
     PERFORM pg_catalog.set_config('search_path', 'pg_catalog, public, pg_temp', true);
 
@@ -9,10 +13,109 @@ BEGIN
         RAISE EXCEPTION 'lifecycle outbox relation is unavailable';
     END IF;
 
+    -- Migration 0009 is the final row-admission gate and must independently verify
+    -- CHECK semantics even when migration 0008 was recorded as applied before later
+    -- restore/operator drift. Derive parser-normalized canonical expressions from this
+    -- PostgreSQL runtime instead of trusting names or version-sensitive hard-coded text.
+    CREATE TEMPORARY TABLE pg_llm_batch_outbox_admission_probe_v1 (
+        tenant_scope TEXT NOT NULL,
+        evidence_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        tenant_scope_sha256 TEXT NOT NULL,
+        subject_ref_sha256 TEXT NOT NULL,
+        authority_ref_sha256 TEXT NOT NULL,
+        origin_ref_sha256 TEXT NOT NULL,
+        truth_status TEXT NOT NULL,
+        valid_time TEXT NOT NULL,
+        system_time TEXT NOT NULL,
+        provenance_ref_sha256 TEXT NOT NULL,
+        evidence_ref_sha256 TEXT NOT NULL,
+        CONSTRAINT pg_llm_batch_outbox_payload_admission_probe_v1
+            CHECK (
+                tenant_scope ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                AND evidence_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'
+                AND event_type ~ '^[a-z][a-z0-9._:-]{0,127}$'
+                AND tenant_scope_sha256 ~ '^[0-9a-f]{64}$'
+                AND subject_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND authority_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND origin_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND truth_status IN (
+                    'authoritative',
+                    'observed',
+                    'inferred',
+                    'proposed',
+                    'superseded',
+                    'rejected'
+                )
+                AND provenance_ref_sha256 ~ '^[0-9a-f]{64}$'
+                AND evidence_ref_sha256 ~ '^[0-9a-f]{64}$'
+            ),
+        CONSTRAINT pg_llm_batch_outbox_valid_time_admission_probe_v1
+            CHECK (
+                valid_time ~
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+                AND valid_time::timestamptz IS NOT NULL
+                AND valid_time !~ '[.]000000Z$'
+                AND valid_time = CASE
+                    WHEN valid_time ~ '[.]' THEN
+                        to_char(
+                            valid_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                        )
+                    ELSE
+                        to_char(
+                            valid_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                        )
+                END
+            ),
+        CONSTRAINT pg_llm_batch_outbox_system_time_admission_probe_v1
+            CHECK (
+                system_time ~
+                '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+                AND system_time::timestamptz IS NOT NULL
+                AND system_time !~ '[.]000000Z$'
+                AND system_time = CASE
+                    WHEN system_time ~ '[.]' THEN
+                        to_char(
+                            system_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                        )
+                    ELSE
+                        to_char(
+                            system_time::timestamptz AT TIME ZONE 'UTC',
+                            'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                        )
+                END
+            )
+    ) ON COMMIT DROP;
+
+    SELECT pg_catalog.pg_get_expr(conbin, conrelid, false)
+    INTO STRICT canonical_payload_check_expression
+    FROM pg_catalog.pg_constraint
+    WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_admission_probe_v1'::pg_catalog.regclass
+      AND conname = 'pg_llm_batch_outbox_payload_admission_probe_v1';
+
+    SELECT pg_catalog.pg_get_expr(conbin, conrelid, false)
+    INTO STRICT canonical_valid_time_check_expression
+    FROM pg_catalog.pg_constraint
+    WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_admission_probe_v1'::pg_catalog.regclass
+      AND conname = 'pg_llm_batch_outbox_valid_time_admission_probe_v1';
+
+    SELECT pg_catalog.pg_get_expr(conbin, conrelid, false)
+    INTO STRICT canonical_system_time_check_expression
+    FROM pg_catalog.pg_constraint
+    WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_admission_probe_v1'::pg_catalog.regclass
+      AND conname = 'pg_llm_batch_outbox_system_time_admission_probe_v1';
+
+    DROP TABLE pg_temp.pg_llm_batch_outbox_admission_probe_v1;
+
     -- Migration 0008 has already converged and verified the five package-owned
     -- row-admission constraints. Any additional CHECK/FK/PK/UNIQUE/EXCLUDE object can
     -- narrow or redirect otherwise-valid writes, so unknown authority requires
-    -- explicit operator reconciliation rather than package-owned deletion.
+    -- explicit operator reconciliation rather than package-owned deletion. Names alone
+    -- are insufficient for CHECKs: a restore or operator can replace a canonical name
+    -- with a different Boolean expression after migration 0008 was previously applied.
     IF (
         SELECT pg_catalog.count(*)
         FROM pg_catalog.pg_constraint AS outbox_constraint
@@ -75,10 +178,34 @@ BEGIN
                   outbox_constraint.contype OPERATOR(pg_catalog.=) 'c'
                   AND outbox_constraint.convalidated
                   AND NOT outbox_constraint.connoinherit
-                  AND outbox_constraint.conname IN (
-                      'ck_llm_context_lifecycle_outbox_payload_canonical_v1',
-                      'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1',
-                      'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'
+                  AND (
+                      (
+                          outbox_constraint.conname OPERATOR(pg_catalog.=)
+                              'ck_llm_context_lifecycle_outbox_payload_canonical_v1'
+                          AND pg_catalog.pg_get_expr(
+                              outbox_constraint.conbin,
+                              outbox_constraint.conrelid,
+                              false
+                          ) OPERATOR(pg_catalog.=) canonical_payload_check_expression
+                      )
+                      OR (
+                          outbox_constraint.conname OPERATOR(pg_catalog.=)
+                              'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'
+                          AND pg_catalog.pg_get_expr(
+                              outbox_constraint.conbin,
+                              outbox_constraint.conrelid,
+                              false
+                          ) OPERATOR(pg_catalog.=) canonical_valid_time_check_expression
+                      )
+                      OR (
+                          outbox_constraint.conname OPERATOR(pg_catalog.=)
+                              'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'
+                          AND pg_catalog.pg_get_expr(
+                              outbox_constraint.conbin,
+                              outbox_constraint.conrelid,
+                              false
+                          ) OPERATOR(pg_catalog.=) canonical_system_time_check_expression
+                      )
                   )
               )
           )
