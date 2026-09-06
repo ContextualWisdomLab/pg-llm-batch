@@ -28,11 +28,14 @@ def test_final_row_admission_reproves_logged_ordinary_public_relation() -> None:
 
     relation_block = package_sql[relation_guard_at:rls_guard_at]
     assert "JOIN pg_catalog.pg_namespace AS admission_namespace" in relation_block
+    assert "JOIN pg_catalog.pg_am AS admission_table_access_method" in relation_block
     assert "admission_relation.oid =" in relation_block
     assert "'public.llm_context_lifecycle_outbox'::pg_catalog.regclass" in relation_block
     assert "admission_relation.relkind OPERATOR(pg_catalog.=) 'r'" in relation_block
     assert "admission_relation.relpersistence OPERATOR(pg_catalog.=) 'p'" in relation_block
     assert "admission_namespace.nspname OPERATOR(pg_catalog.=) 'public'" in relation_block
+    assert "admission_table_access_method.amname OPERATOR(pg_catalog.=) 'heap'" in relation_block
+    assert "admission_table_access_method.amtype OPERATOR(pg_catalog.=) 't'" in relation_block
     assert "FROM pg_catalog.pg_inherits AS inheritance_edge" in relation_block
     assert "inheritance_edge.inhrelid =" in relation_block
     assert "inheritance_edge.inhparent =" in relation_block
