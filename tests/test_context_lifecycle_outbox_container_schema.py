@@ -24,7 +24,9 @@ def test_outbox_migration_uses_canonical_lifecycle_timestamp_identity() -> None:
     assert "pg_llm_batch_outbox_system_time_probe_v1" in schema
     assert schema.count(r"([.]\d{6})?Z$") == 4
     assert r"\d{1,6}" not in schema
-    assert schema.count("AT TIME ZONE 'UTC'") == 4
+    # Each timestamp dimension appears once in the runtime probe and once in the
+    # durable CHECK; each expression has fractional and whole-second formatter arms.
+    assert schema.count("AT TIME ZONE 'UTC'") == 8
     assert schema.count("!~ '[.]000000Z$'") == 4
     assert schema.count("HH24:MI:SS.US") == 4
     assert schema.count("HH24:MI:SS\"Z\"") == 4
