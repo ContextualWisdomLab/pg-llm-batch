@@ -141,17 +141,22 @@ dependencies, or side effects. Migration 0008 remains the convergence owner and
 0009 remains fail-closed verification. ADR 0024 records this boundary and the
 PostgreSQL catalog evidence behind it.
 
-Omitted-column defaults are executable row-admission authority too. The runtime
-INSERT deliberately omits `context_outbox_uuid` and `created_at`, so PostgreSQL
-evaluates their defaults for every newly persisted publication intent. Migration
-0008 converges those defaults, but a restore or later operator DDL can replace a
-default after 0008 was recorded as applied without changing CHECK, RLS,
+Declared defaults are executable row-admission authority whenever a caller omits
+a column or explicitly requests `DEFAULT`. The package runtime deliberately
+omits `context_outbox_uuid` and `created_at`, while the reviewed schema retains
+`tenant_scope DEFAULT 'standalone'` for direct/operator SQL compatibility even
+though package writes validate and supply tenant scope explicitly. Migration
+0008 converges all three default contracts, but a restore or later operator DDL
+can replace one after 0008 was recorded as applied without changing CHECK, RLS,
 trigger/rule, replay, or index state. Migration 0009 therefore re-reads
-`pg_attribute` and `pg_attrdef` and admits only a live NOT NULL `uuid` column with
-exact `gen_random_uuid()` default plus a live NOT NULL `timestamptz` column with
-exact `now()` default; generated/identity substitutes are rejected. The final
-gate never rewrites a drifted default, leaving migration 0008 as the single
-convergence authority. ADR 0028 records this boundary.
+`pg_attribute` and `pg_attrdef` and admits only `tenant_scope` as live NOT NULL
+`text` with exact `'standalone'::text`, `context_outbox_uuid` as live NOT NULL
+`uuid` with exact `gen_random_uuid()`, and `created_at` as live NOT NULL
+`timestamptz` with exact `now()`; generated/identity substitutes are rejected.
+The final gate never rewrites a drifted default, leaving migration 0008 as the
+single convergence authority. The standalone default is compatibility schema,
+not tenant-authentication authority; arbitrary direct SQL remains outside the
+package RLS guarantee. ADR 0028 records this boundary.
 
 Index-program authority extends beyond explicit expressions and predicates.
 Migration 0009 rejects expression and partial indexes and requires every direct
@@ -254,9 +259,10 @@ live-column cardinality, dropped-column tombstone rejection, complete final
 cardinality re-verification, no outbox inheritance edge at convergence or final
 admission, built-in `heap` TABLE access-method identity at final admission,
 non-internal trigger and rewrite-rule rejection at both convergence and final
-admission, exact omitted-column UUID/created-at default authority at final
-admission, expression/partial/custom-operator-class index-program rejection,
-default-core simple-index admission, runtime schema qualification without caller
+admission, exact retained `tenant_scope` standalone plus omitted-column
+UUID/created-at default authority at final admission,
+expression/partial/custom-operator-class index-program rejection, default-core
+simple-index admission, runtime schema qualification without caller
 `search_path` mutation, installer/rollback search-path authority, schema
 mirroring, operator documentation, and 100% production statement and branch
 coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role
@@ -271,9 +277,10 @@ UNLOGGED-relation at convergence and after convergence, undeclared-live-column,
 dropped-column-tombstone, post-convergence column-nullability drift,
 inheritance-edge at convergence and after convergence, post-convergence
 non-`heap` table-access-method drift, convergence-time and post-convergence
-user-trigger/rewrite-rule, omitted-column default-program, executable-index, and
+user-trigger/rewrite-rule, omitted-column default-program including retained
+`tenant_scope` compatibility-default drift, executable-index, and
 custom-operator-class variants so PostgreSQL evaluates canonical RLS policy,
-CHECK-predicate, UPSERT-arbiter, relation/column catalog, omitted-column-default,
+CHECK-predicate, UPSERT-arbiter, relation/column catalog, declared-default,
 executable-table/index-program, storage-method, and durability/schema conditions.
 These tests do not claim isolation after arbitrary SQL or untrusted
 schema-creation authority is granted.
