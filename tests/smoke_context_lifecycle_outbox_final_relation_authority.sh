@@ -98,3 +98,40 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'DROP TABLE public.llm_context_lifecycle_outbox_post_convergence_shadow;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# Table access methods are executable storage authority. PostgreSQL permits a
+# superuser/operator to register an additional table AM and ALTER an existing table to
+# it after migration 0008. Reuse heap's handler here so the specimen needs no external
+# extension while still proving that migration history alone cannot establish the
+# currently selected access-method identity.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE ACCESS METHOD pg_llm_batch_shadow_heap TYPE TABLE HANDLER heap_tableam_handler;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'ALTER TABLE public.llm_context_lifecycle_outbox SET ACCESS METHOD pg_llm_batch_shadow_heap;'
+
+access_method="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT am.amname FROM pg_class AS c JOIN pg_am AS am ON am.oid = c.relam WHERE c.oid = 'public.llm_context_lifecycle_outbox'::regclass")"
+if [[ "${access_method}" != "pg_llm_batch_shadow_heap" ]]; then
+  echo "SET ACCESS METHOD did not reproduce relation storage-authority drift" >&2
+  exit 1
+fi
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-final-access-method.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-final-access-method.out >&2
+  echo "row-admission migration admitted post-0008 table access-method drift" >&2
+  exit 1
+fi
+if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-final-access-method.out; then
+  cat /tmp/pg-llm-batch-outbox-final-access-method.out >&2
+  echo "final access-method drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'ALTER TABLE public.llm_context_lifecycle_outbox SET ACCESS METHOD heap;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP ACCESS METHOD pg_llm_batch_shadow_heap;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
