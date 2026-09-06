@@ -255,7 +255,7 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
 # must restore a validated stamped check after CREATE TABLE IF NOT EXISTS is skipped.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
 ALTER TABLE public.llm_context_lifecycle_outbox
-  DROP CONSTRAINT ck_llm_context_lifecycle_outbox_event_type;
+  DROP CONSTRAINT IF EXISTS ck_llm_context_lifecycle_outbox_event_type;
 ALTER TABLE public.llm_context_lifecycle_outbox
   DROP CONSTRAINT ${payload_constraint};
 SQL
