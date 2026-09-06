@@ -146,7 +146,7 @@ def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> N
 
 
 def test_role_authority_query_rejects_executable_security_definer_escape() -> None:
-    """Callable definer code must not reintroduce owner or RLS-bypass authority."""
+    """Callable definer code must not reintroduce forbidden outbox authority."""
     cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
@@ -167,4 +167,36 @@ def test_role_authority_query_rejects_executable_security_definer_escape() -> No
     assert "definer_role.rolsuper" in sql
     assert "definer_role.rolbypassrls" in sql
     assert "definer_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
+    assert (
+        "pg_catalog.pg_has_role(definer_role.oid, admitted_relation.relowner, 'USAGE')"
+        in sql
+    )
+    assert (
+        "pg_catalog.has_any_column_privilege(definer_role.oid, admitted_relation.oid, "
+        "'SELECT WITH GRANT OPTION')"
+    ) in sql
+    assert (
+        "pg_catalog.has_any_column_privilege(definer_role.oid, admitted_relation.oid, "
+        "'INSERT WITH GRANT OPTION')"
+    ) in sql
+    assert (
+        "pg_catalog.has_table_privilege(definer_role.oid, admitted_relation.oid, "
+        "'TRUNCATE')"
+    ) in sql
+    assert (
+        "pg_catalog.has_table_privilege(definer_role.oid, admitted_relation.oid, "
+        "'DELETE')"
+    ) in sql
+    assert (
+        "pg_catalog.has_any_column_privilege(definer_role.oid, admitted_relation.oid, "
+        "'UPDATE')"
+    ) in sql
+    assert (
+        "pg_catalog.has_any_column_privilege(definer_role.oid, admitted_relation.oid, "
+        "'REFERENCES')"
+    ) in sql
+    assert (
+        "pg_catalog.has_table_privilege(definer_role.oid, admitted_relation.oid, "
+        "'TRIGGER')"
+    ) in sql
     assert params == ()
