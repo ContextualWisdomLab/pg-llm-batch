@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox final row-admission now independently re-verifies the two
+  column defaults executed because runtime INSERTs omit `context_outbox_uuid`
+  and `created_at`. Migration 0009 requires exact PostgreSQL-core
+  `gen_random_uuid()` and `now()` defaults through `pg_attribute`/`pg_attrdef`
+  and fails closed on restore/operator drift without repairing it. A wired
+  PostgreSQL smoke replaces `created_at` with a volatile operator function,
+  proves that the default can reject an otherwise canonical insert, then
+  requires final admission to reject that catalog state and clean reapplication
+  to succeed after explicit restoration. Migration 0008 remains the convergence
+  owner; package and Docker migration 0009 remain byte-identical.
 - Lifecycle-outbox final row-admission now independently rejects user triggers
   and query-rewrite rules attached after migration 0008 had already converged.
   Migration 0009 re-reads `pg_trigger` and `pg_rewrite`, permits only
