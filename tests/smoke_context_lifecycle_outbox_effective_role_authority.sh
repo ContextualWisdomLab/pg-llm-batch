@@ -75,6 +75,13 @@ GRANT REFERENCES (tenant_scope, evidence_id)
 GRANT TRIGGER ON public.llm_context_lifecycle_outbox
     TO cwl_llm_batch_outbox_trigger;
 
+CREATE TABLE public.cwl_llm_batch_outbox_reference_probe (
+    tenant_scope text NOT NULL,
+    evidence_id text NOT NULL
+);
+ALTER TABLE public.cwl_llm_batch_outbox_reference_probe
+    OWNER TO cwl_llm_batch_outbox_references;
+
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
     evidence_id,
@@ -236,15 +243,13 @@ references_created="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
 SET LOCAL ROLE cwl_llm_batch_outbox_references;
-CREATE TEMPORARY TABLE cwl_llm_batch_outbox_reference_probe (
-    tenant_scope text NOT NULL,
-    evidence_id text NOT NULL,
-    FOREIGN KEY (tenant_scope, evidence_id)
-        REFERENCES public.llm_context_lifecycle_outbox (tenant_scope, evidence_id)
-) ON COMMIT DROP;
+ALTER TABLE public.cwl_llm_batch_outbox_reference_probe
+ADD CONSTRAINT cwl_llm_batch_outbox_reference_probe_fk
+FOREIGN KEY (tenant_scope, evidence_id)
+REFERENCES public.llm_context_lifecycle_outbox (tenant_scope, evidence_id);
 SELECT pg_catalog.count(*)
 FROM pg_catalog.pg_constraint
-WHERE conrelid = 'pg_temp.cwl_llm_batch_outbox_reference_probe'::pg_catalog.regclass
+WHERE conrelid = 'public.cwl_llm_batch_outbox_reference_probe'::pg_catalog.regclass
   AND contype OPERATOR(pg_catalog.=) 'f';
 ROLLBACK;
 SQL
