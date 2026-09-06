@@ -37,21 +37,21 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   exercisable/administerable owner authority via inherited `USAGE`, `SET ROLE`,
   or membership administration, hold PostgreSQL `CREATEDB`, `CREATEROLE`, or
   `REPLICATION`, hold `SELECT WITH GRANT OPTION` or `INSERT WITH GRANT OPTION`
-  on the table or any column, or hold `TRUNCATE`, `DELETE`, `UPDATE`, `TRIGGER`,
-  or table/column `REFERENCES` authority on the outbox. A session identity also
-  must not hold membership `ADMIN OPTION` over any role that carries outbox
-  `SELECT`/`INSERT` directly, inherits it, or can reach a DML-bearing role
-  through an all-`SET TRUE` membership path. Callable non-system-schema
+  on the table or any column, or hold `MAINTAIN`, `TRUNCATE`, `DELETE`, `UPDATE`,
+  `TRIGGER`, or table/column `REFERENCES` authority on the outbox. A session
+  identity also must not hold membership `ADMIN OPTION` over any role that carries
+  outbox `SELECT`/`INSERT`/`MAINTAIN` directly, inherits it, or can reach such
+  authority through an all-`SET TRUE` membership path. Callable non-system-schema
   `SECURITY DEFINER` routines are likewise outside the runtime envelope when
   their owner can exercise forbidden authority through superuser, `CREATEROLE`,
   `REPLICATION`, or `BYPASSRLS` status, exact/inherited table ownership,
-  `SELECT`/`INSERT` grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`,
-  or `TRIGGER`; or when the owner can redistribute through membership
+  `SELECT`/`INSERT` grant options, `MAINTAIN`, `TRUNCATE`, `DELETE`, `UPDATE`,
+  `REFERENCES`, or `TRIGGER`; or when the owner can redistribute through membership
   `ADMIN OPTION` a role that directly, or through an all-`SET TRUE` path, carries
-  forbidden runtime/operator authority including `CREATEDB`. This executable
-  authority check is transitive across user-schema `SECURITY DEFINER` routines:
-  after admission enters one definer owner principal, it must also inspect every
-  further definer owner that principal can invoke through schema `USAGE` plus
+  forbidden runtime/operator authority including `CREATEDB` or `MAINTAIN`. This
+  executable authority check is transitive across user-schema `SECURITY DEFINER`
+  routines: after admission enters one definer owner principal, it must also inspect
+  every further definer owner that principal can invoke through schema `USAGE` plus
   routine `EXECUTE`, with cycle-safe closure rather than only direct caller
   visibility. PostgreSQL permits a role administrator to grant the administered
   role to a new principal even when the administrator's own membership is
@@ -65,27 +65,29 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   grant that authority onward for later invoker-context use. `REPLICATION` is
   separate cluster-level connection and replication-slot authority and must not
   be co-located with a tenant application identity either directly or through an
-  executable definer; `SELECT`/`INSERT` grant options, DML-bearing role
-  administration, and executable privileged definer authority are authorization
-  capabilities rather than application DML; `TRUNCATE` is outside RLS;
-  tenant-local `DELETE` or `UPDATE` violates the append-only durable-intent
-  invariant; and `REFERENCES`/`TRIGGER` can install relation behavior outside the
-  package DML contract. Inert membership alone is not a bypass. Re-prove live
-  enabled/forced RLS, the sole canonical tenant policy identity/command/role
-  scope, parser-normalized `USING`/`WITH CHECK` predicates and allowed catalog
-  dependencies, and the complete effective/session-selectable authority envelope
-  before tenant binding or outbox data SQL. A migration success record is
-  point-in-time evidence and does not authorize later same-name policy, ACL,
-  membership, routine, or role-authority drift. The normal runtime role needs
-  only non-grantable `SELECT` and `INSERT` on the outbox. Replay serialization
-  must use transaction-scoped advisory locking on the validated tenant/event
-  identity rather than `SELECT ... FOR UPDATE`, so serialization never requires
-  ambient row-mutation authority. Do not authenticate runtime connections as a
-  database creator, role administrator, replication identity, DML delegator,
-  privileged definer gateway, or other administrator and rely on `SET ROLE` or
-  `SET SESSION AUTHORIZATION` as a downgrade; administrative, replication,
-  grant-capable, membership-delegating, executable-privileged, and owner-capable
-  login sessions are outside the application isolation guarantee.
+  executable definer; `MAINTAIN` is relation-wide operational authority permitting
+  PostgreSQL maintenance and `LOCK TABLE`, not tenant application DML;
+  `SELECT`/`INSERT` grant options, DML-bearing role administration, and executable
+  privileged definer authority are authorization capabilities rather than
+  application DML; `TRUNCATE` is outside RLS; tenant-local `DELETE` or `UPDATE`
+  violates the append-only durable-intent invariant; and `REFERENCES`/`TRIGGER`
+  can install relation behavior outside the package DML contract. Inert membership
+  alone is not a bypass. Re-prove live enabled/forced RLS, the sole canonical tenant
+  policy identity/command/role scope, parser-normalized `USING`/`WITH CHECK`
+  predicates and allowed catalog dependencies, and the complete effective/session-
+  selectable authority envelope before tenant binding or outbox data SQL. A
+  migration success record is point-in-time evidence and does not authorize later
+  same-name policy, ACL, membership, routine, or role-authority drift. The normal
+  runtime role needs only non-grantable `SELECT` and `INSERT` on the outbox. Replay
+  serialization must use transaction-scoped advisory locking on the validated
+  tenant/event identity rather than `SELECT ... FOR UPDATE`, so serialization never
+  requires ambient row-mutation authority. Do not authenticate runtime connections
+  as a database creator, role administrator, replication identity, relation
+  maintainer, DML delegator, privileged definer gateway, or other administrator and
+  rely on `SET ROLE` or `SET SESSION AUTHORIZATION` as a downgrade;
+  administrative, replication, maintenance, grant-capable, membership-delegating,
+  executable-privileged, and owner-capable login sessions are outside the application
+  isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
