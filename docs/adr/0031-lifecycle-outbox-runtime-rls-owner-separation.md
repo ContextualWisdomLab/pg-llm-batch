@@ -33,6 +33,14 @@ holding any of these authorities is therefore not a bounded lifecycle
 application identity even when the live RLS flags and policy catalog are
 canonical.
 
+A third review found a distinct durability gap in `DELETE`. Unlike `TRUNCATE`,
+`DELETE` is subject to the outbox RLS policy, so this is not a cross-tenant RLS
+bypass. It is nevertheless incompatible with the outbox's append-only durability
+contract. A tenant runtime role with `DELETE` can erase its own committed
+publication intent. A later replay of the same event identity can then appear to
+be a first write, defeating durable replay/conflict evidence without crossing a
+tenant boundary. The package runtime does not require `DELETE`.
+
 Migration-time verification alone also does not prove that `relrowsecurity` and
 `relforcerowsecurity` remain enabled, or that dangerous application-role grants
 have not been added, when a later runtime operation begins.
@@ -55,7 +63,9 @@ have not been added, when a later runtime operation begins.
 - Preserve the ordinary DML privileges needed by the store. In particular,
   `SELECT ... FOR UPDATE` requires `UPDATE` privilege on at least one column;
   rejecting all non-SELECT privileges would break the existing compare-and-swap
-  path without improving the specific RLS-exempt/programming boundary.
+  path.
+- Reject `DELETE` because no current package path requires it and tenant-local
+  deletion violates durable append-only publication intent.
 - Detect column-level `REFERENCES`, not only a table-level grant.
 
 ## Decision
@@ -77,6 +87,7 @@ true:
 - `CURRENT_USER` lacks owner-role admin authority that could grant such access
   (`pg_has_role(..., 'MEMBER WITH ADMIN OPTION') = false`);
 - `CURRENT_USER` does not hold `TRUNCATE` on the outbox;
+- `CURRENT_USER` does not hold `DELETE` on the outbox;
 - `CURRENT_USER` does not hold table-level or column-level `REFERENCES` on the
   outbox, proved with `has_any_column_privilege(..., 'REFERENCES')`; and
 - `CURRENT_USER` does not hold `TRIGGER` on the outbox.
@@ -90,8 +101,10 @@ implicitly or through `SET ROLE`. The causal repair therefore does not reject
 membership that has no owner privilege path. Exact owner identity remains an
 explicit OID comparison.
 
-The table-privilege checks are intentionally narrower than a blanket ACL ban.
+The privilege checks are intentionally narrower than a blanket ACL ban.
 `TRUNCATE` is destructive whole-table authority outside row-security filtering.
+`DELETE` remains RLS-filtered but is rejected because the outbox is append-only
+durable evidence and runtime deletion is not a supported package operation.
 `REFERENCES` is checked through `has_any_column_privilege` because PostgreSQL can
 grant it to specific columns as well as the full table. `TRIGGER` is executable
 relation-programming authority. Ordinary `SELECT`, `INSERT`, and the minimum
@@ -104,31 +117,31 @@ canonical relation produces no admissible row rather than falling back to caller
 `search_path`.
 
 Any missing, malformed, owner-capable, RLS-disabled, RLS-unforced,
-RLS-exempt/programming-privileged, superuser, or `BYPASSRLS` result raises the
-same content-free `ConfigError` before tenant GUC binding or outbox data SQL.
+RLS-exempt/destructive/programming-privileged, superuser, or `BYPASSRLS` result
+raises the same content-free `ConfigError` before tenant GUC binding or outbox
+data SQL.
 
 This runtime guard complements rather than replaces migration 0009. Full policy,
 CHECK, default, trigger/rule, index, relation-storage, and replay-arbiter
 semantics remain installer/final-admission authority. Privileged operator DDL or
 grant changes racing after a successful runtime catalog read remain an
 administrative boundary; application identities admitted here cannot themselves
-exercise the reviewed owner, truncate, reference, or trigger authority paths at
-the time of admission.
+exercise the reviewed owner, truncate, delete, reference, or trigger authority
+paths at the time of admission.
 
 ## Alternatives considered
 
 ### Keep the `NOSUPERUSER NOBYPASSRLS` check only
 
 Rejected. It admits a normal role that owns the outbox, can exercise its owning
-role, or holds relation authority that sits outside or can program around the
-row-security boundary.
+role, or holds relation authority that violates the durable/RLS boundary.
 
 ### Reject only exact `relowner = CURRENT_USER`
 
 Rejected. PostgreSQL role privileges can make an owning role immediately usable,
 selectable, or administratively self-grantable without `CURRENT_USER` itself
 being the exact owner OID. It also does not address independent `TRUNCATE`,
-`REFERENCES`, or `TRIGGER` grants.
+`DELETE`, `REFERENCES`, or `TRIGGER` grants.
 
 ### Reject every direct or indirect `MEMBER` edge
 
@@ -136,6 +149,15 @@ Rejected after review. PostgreSQL 16+ can retain a membership while both
 inheritance/usage and `SET` are disabled. Membership alone therefore overstates
 the authority that can affect this runtime boundary. The final repair checks
 exact ownership plus `USAGE`, `SET`, and membership-with-admin-option instead.
+
+### Permit `DELETE` because RLS still filters it
+
+Rejected. RLS prevents cross-tenant deletion but does not preserve the
+append-only durability invariant within the authorized tenant. Erasing committed
+outbox intent destroys the durable replay/conflict record and is not required by
+any package runtime operation. Retention or erasure, if introduced, must be a
+separate operator-governed lifecycle with explicit evidence rather than an
+ambient runtime privilege.
 
 ### Check only table-level `REFERENCES`
 
@@ -148,9 +170,9 @@ both table-wide and any column-level grant.
 
 Rejected. The package intentionally uses `SELECT ... FOR UPDATE` in the
 compare-and-swap path, and PostgreSQL requires `UPDATE` authority for that lock.
-A blanket privilege allow-list would conflate RLS-subject DML with the distinct
-whole-table/programming authorities addressed here and would break current
-runtime behavior.
+A blanket privilege allow-list would break current runtime behavior. The
+reviewed guard instead rejects concrete owner, destructive, and programming
+authorities while retaining the minimum supported DML set.
 
 ### Rerun migration 0009 on every runtime access
 
@@ -201,13 +223,22 @@ TDD lineage for this decision:
   attach a user trigger, and requires production admission to reject each role;
 - causal production repair `86db8aa93e877186819e4698ac43bff6ba9be582`
   adds schema-qualified `has_table_privilege` / `has_any_column_privilege`
-  checks to the existing one-round-trip authority verdict.
+  checks to the existing one-round-trip authority verdict;
+- append-only static RED `513686c89e9922f7b536494ec3f126cfd14a06c1`
+  requires the same runtime query to reject `DELETE` authority;
+- executable PostgreSQL specimen `68079570fced0010ff3771706bb632e5f761728b`
+  grants `DELETE` to an ordinary tenant role, proves that role can erase its own
+  committed outbox intent while RLS keeps the other tenant row intact, and
+  requires production admission to reject that role; and
+- causal production repair `6bef0692451cb0a512bb587a2f392c27ead65c4b`
+  adds the schema-qualified `has_table_privilege(..., 'DELETE')` check without
+  changing supported runtime DML.
 
 The new executable specimen is committed to the PostgreSQL/container lane but is
-not claimed as hosted GREEN while the exact-head workflow remains queued. Keep
-this ADR Proposed until the exact repaired head executes that specimen and the
-repository quality gates successfully. Promotion to Accepted requires hosted
-exact-head evidence, not predecessor-head success.
+not claimed as hosted GREEN until the exact repaired final head executes it. Keep
+this ADR Proposed until that execution and the repository quality gates succeed.
+Promotion to Accepted requires hosted exact-head evidence, not predecessor-head
+success.
 
 ## Consequences
 
@@ -215,14 +246,15 @@ Application deployments now require separation between the lifecycle outbox
 owner authority and the runtime role, in addition to `NOSUPERUSER NOBYPASSRLS`.
 An exact owner or a runtime role that can inherit, select, or administratively
 acquire the owner role fails before tenant binding or durable-row access. A role
-holding outbox `TRUNCATE`, `TRIGGER`, or any table/column `REFERENCES` authority
-also fails at the same boundary. An inert membership with no such privilege path
-is not rejected solely for membership.
+holding outbox `TRUNCATE`, `DELETE`, `TRIGGER`, or any table/column `REFERENCES`
+authority also fails at the same boundary. An inert membership with no such
+privilege path is not rejected solely for membership.
 
 Deployments must therefore grant the runtime role only the RLS-subject DML
-needed by the package and keep relation-maintenance/programming authority on a
-separate operator identity. Existing deployments that bundled these grants into
-the application role will fail closed until privileges are separated.
+needed by the package and keep relation-maintenance, deletion, and programming
+authority on a separate operator identity. Existing deployments that bundled
+these grants into the application role will fail closed until privileges are
+separated.
 
 The hot path still performs one role/catalog round trip, as before; the query is
 wider but does not add another network round trip. This decision does not claim a
@@ -254,7 +286,3 @@ https://www.postgresql.org/docs/16/functions-info.html
 
 PostgreSQL Global Development Group. (2026g). *Privileges*. In *PostgreSQL 16
 documentation*. https://www.postgresql.org/docs/16/ddl-priv.html
-
-PostgreSQL Global Development Group. (2026h). *System information functions and
-operators*. In *PostgreSQL 18 documentation*.
-https://www.postgresql.org/docs/18/functions-info.html
