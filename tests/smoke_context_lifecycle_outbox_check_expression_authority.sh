@@ -37,7 +37,7 @@ fi
 # while replacing its expression after migration 0008 was already recorded as applied.
 # Prove that such same-name drift can reject an otherwise canonical event, then require
 # the final row-admission migration to detect the expression mismatch itself.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
     DROP CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1;
 ALTER TABLE public.llm_context_lifecycle_outbox
@@ -45,7 +45,7 @@ ALTER TABLE public.llm_context_lifecycle_outbox
     CHECK (event_type <> 'batch.lifecycle.blocked');
 SQL
 
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
     >/tmp/pg-llm-batch-outbox-check-expression-write.out 2>&1; then
 INSERT INTO public.llm_context_lifecycle_outbox (
     evidence_id,
