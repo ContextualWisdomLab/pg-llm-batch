@@ -153,3 +153,71 @@ else:
         "runtime role with ADMIN OPTION over SET-reachable DML role reached tenant data SQL"
     )
 PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO public.llm_context_lifecycle_outbox (
+    tenant_scope,
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256
+) VALUES
+(
+    'tenant-a', 'security-definer-authority-a', 'batch.lifecycle.observed', repeat('a', 64),
+    repeat('b', 64), repeat('c', 64), repeat('d', 64), 'observed',
+    '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', repeat('e', 64), repeat('f', 64)
+),
+(
+    'tenant-b', 'security-definer-authority-b', 'batch.lifecycle.observed', repeat('6', 64),
+    repeat('7', 64), repeat('8', 64), repeat('9', 64), 'observed',
+    '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', repeat('0', 64), repeat('1', 64)
+);
+
+CREATE FUNCTION public.pg_llm_batch_outbox_security_definer_probe()
+RETURNS bigint
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS 'SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox';
+SQL
+
+security_definer_visible="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_role_delegate;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT public.pg_llm_batch_outbox_security_definer_probe();
+ROLLBACK;
+SQL
+)"
+if [[ "${security_definer_visible}" != "2" ]]; then
+  echo "SECURITY DEFINER specimen did not expose cross-tenant outbox authority" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://pg_llm_batch_outbox_role_delegate@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+
+try:
+    store.load("security-definer-authority-a")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime role with executable superuser SECURITY DEFINER function reached tenant data SQL"
+    )
+PY
