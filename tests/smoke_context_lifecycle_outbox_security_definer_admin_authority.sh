@@ -133,8 +133,10 @@ if [[ "${remaining}" != "0" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+SET ROLE cwl_llm_batch_outbox_definer_admin_owner;
 REVOKE cwl_llm_batch_outbox_definer_admin_bridge
     FROM cwl_llm_batch_outbox_definer_admin_caller;
+RESET ROLE;
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
     evidence_id,
