@@ -86,6 +86,9 @@ class FakeCursor:
         if normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
             return
+        if normalized.startswith("SELECT pg_catalog.pg_advisory_xact_lock"):
+            self.result = (None,)
+            return
         if normalized.startswith("SELECT evidence_id"):
             self.result = self.database.rows.get(parameters)
             return

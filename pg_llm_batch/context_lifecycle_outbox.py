@@ -11,6 +11,7 @@ or arbitrary metadata is accepted by this module.
 
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import stat
@@ -83,6 +84,16 @@ def _validated_postgres_dsn(value: Any) -> str:
     return value
 
 
+def _event_identity_lock_key(tenant_scope: str, evidence_id: str) -> int:
+    """Derive one stable signed 64-bit advisory-lock key for a tenant/event identity."""
+    material = tenant_scope.encode("utf-8") + b"\x00" + evidence_id.encode("utf-8")
+    return int.from_bytes(
+        hashlib.sha256(material).digest()[:8],
+        byteorder="big",
+        signed=True,
+    )
+
+
 def _require_rls_application_role(cursor: Any) -> None:
     """Reject effective roles with RLS bypass or destructive/executable authority."""
     cursor.execute(
@@ -100,6 +111,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "CURRENT_USER, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
         "CURRENT_USER, admitted_relation.oid, 'DELETE') "
+        "OR pg_catalog.has_any_column_privilege("
+        "CURRENT_USER, admitted_relation.oid, 'UPDATE') "
         "OR pg_catalog.has_any_column_privilege("
         "CURRENT_USER, admitted_relation.oid, 'REFERENCES') "
         "OR pg_catalog.has_table_privilege("
@@ -409,18 +422,22 @@ class PostgresContextLifecycleOutboxStore:
 
         The identifier is validated through the same evidence contract before SQL is
         executed, avoiding a second, subtly different event-id grammar. ``for_update``
-        is an exact built-in boolean reserved for compare-and-swap writers and keeps
-        row locking explicit. Durable evidence is revalidated and must retain the
-        tenant identity explicitly bound to this store before it can return to
-        application code. The effective PostgreSQL role must be a normal RLS subject
-        (`NOSUPERUSER NOBYPASSRLS`) without outbox-owner privileges that are already
-        usable, selectable through `SET ROLE`, or self-grantable through role admin,
-        while the canonical relation still has RLS enabled and forced. That live
-        admission is checked before tenant state is bound or durable rows are touched.
-        Security-critical function and relation authority is explicitly schema-qualified,
-        and ``ONLY`` prevents inherited relations from widening the canonical durable
-        row source if an inheritance edge appears after migration admission. The outbox
-        does not mutate or inherit the caller transaction's ``search_path``.
+        remains the compatibility name for serialized compare-and-swap reads, but the
+        store uses a transaction-scoped advisory lock on the validated tenant/event
+        identity rather than PostgreSQL ``SELECT ... FOR UPDATE``. That preserves
+        package-level same-identity serialization without granting ambient ``UPDATE``
+        authority over append-only durable evidence. Durable evidence is revalidated
+        and must retain the tenant identity explicitly bound to this store before it
+        can return to application code. The effective PostgreSQL role must be a normal
+        RLS subject (`NOSUPERUSER NOBYPASSRLS`) without outbox-owner privileges that
+        are already usable, selectable through `SET ROLE`, or self-grantable through
+        role admin, while the canonical relation still has RLS enabled and forced.
+        That live admission is checked before tenant state is bound or durable rows are
+        touched. Security-critical function and relation authority is explicitly
+        schema-qualified, and ``ONLY`` prevents inherited relations from widening the
+        canonical durable row source if an inheritance edge appears after migration
+        admission. The outbox does not mutate or inherit the caller transaction's
+        ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
@@ -448,10 +465,15 @@ class PostgresContextLifecycleOutboxStore:
             "SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', %s, true)",
             (self.tenant_scope,),
         )
-        locking = " FOR UPDATE" if for_update else ""
+        if for_update:
+            cursor.execute(
+                "SELECT pg_catalog.pg_advisory_xact_lock(%s)",
+                (_event_identity_lock_key(self.tenant_scope, probe.evidence_id),),
+            )
+            cursor.fetchone()
         cursor.execute(
             f"SELECT {_OUTBOX_COLUMNS} FROM ONLY public.llm_context_lifecycle_outbox "
-            "WHERE tenant_scope = %s AND evidence_id = %s" + locking,
+            "WHERE tenant_scope = %s AND evidence_id = %s",
             (self.tenant_scope, probe.evidence_id),
         )
         row = cursor.fetchone()
