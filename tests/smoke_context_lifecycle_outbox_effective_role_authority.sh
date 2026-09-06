@@ -38,16 +38,32 @@ CREATE ROLE pg_llm_batch_outbox_safe LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_bypass LOGIN NOSUPERUSER BYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_inert LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_truncate LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_references LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_trigger LOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
     TO pg_llm_batch_outbox_safe,
        pg_llm_batch_outbox_bypass,
        pg_llm_batch_outbox_owner,
-       pg_llm_batch_outbox_inert;
+       pg_llm_batch_outbox_inert,
+       pg_llm_batch_outbox_truncate,
+       pg_llm_batch_outbox_references,
+       pg_llm_batch_outbox_trigger;
 GRANT CREATE ON SCHEMA public TO pg_llm_batch_outbox_owner;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_safe,
        pg_llm_batch_outbox_bypass,
-       pg_llm_batch_outbox_inert;
+       pg_llm_batch_outbox_inert,
+       pg_llm_batch_outbox_truncate,
+       pg_llm_batch_outbox_references,
+       pg_llm_batch_outbox_trigger;
+GRANT TRUNCATE ON public.llm_context_lifecycle_outbox
+    TO pg_llm_batch_outbox_truncate;
+GRANT REFERENCES (tenant_scope, evidence_id)
+    ON public.llm_context_lifecycle_outbox
+    TO pg_llm_batch_outbox_references;
+GRANT TRIGGER ON public.llm_context_lifecycle_outbox
+    TO pg_llm_batch_outbox_trigger;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
@@ -158,6 +174,83 @@ if [[ "${owner_bypass_visible}" != "2" ]]; then
   exit 1
 fi
 
+# PostgreSQL row security does not apply to whole-table TRUNCATE. A normal application
+# identity with this table privilege can therefore destroy every tenant row while both
+# relrowsecurity and relforcerowsecurity remain true. The transaction is rolled back so
+# later production admission exercises the original durable rows.
+truncate_visible="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_truncate;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+TRUNCATE public.llm_context_lifecycle_outbox;
+SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
+ROLLBACK;
+SQL
+)"
+if [[ "${truncate_visible}" != "0" ]]; then
+  echo "TRUNCATE specimen did not demonstrate RLS-exempt destructive authority" >&2
+  exit 1
+fi
+
+# Column-level REFERENCES is independently grantable. Prove the role can create a
+# foreign-key dependency on the canonical replay key; production admission below must
+# reject that authority even though it is not a table-level REFERENCES grant.
+references_created="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_references;
+CREATE TEMPORARY TABLE pg_llm_batch_outbox_reference_probe (
+    tenant_scope text NOT NULL,
+    evidence_id text NOT NULL,
+    FOREIGN KEY (tenant_scope, evidence_id)
+        REFERENCES public.llm_context_lifecycle_outbox (tenant_scope, evidence_id)
+) ON COMMIT DROP;
+SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_constraint
+WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_reference_probe'::pg_catalog.regclass
+  AND contype OPERATOR(pg_catalog.=) 'f';
+ROLLBACK;
+SQL
+)"
+if [[ "${references_created}" != "1" ]]; then
+  echo "column-level REFERENCES specimen did not create the expected foreign key" >&2
+  exit 1
+fi
+
+# TRIGGER is executable relation authority independent of RLS policy identity. Prove a
+# normal non-owner role holding only TRIGGER plus the ordinary data privileges can
+# attach a user trigger. Roll back the trigger before production admission checks run.
+trigger_created="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_trigger;
+CREATE TEMPORARY TABLE pg_llm_batch_outbox_trigger_probe (probe integer) ON COMMIT DROP;
+CREATE FUNCTION pg_temp.pg_llm_batch_outbox_trigger_probe()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER pg_llm_batch_outbox_runtime_authority_probe
+BEFORE INSERT ON public.llm_context_lifecycle_outbox
+FOR EACH ROW
+EXECUTE FUNCTION pg_temp.pg_llm_batch_outbox_trigger_probe();
+SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_trigger
+WHERE tgrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+  AND tgname OPERATOR(pg_catalog.=) 'pg_llm_batch_outbox_runtime_authority_probe'
+  AND NOT tgisinternal;
+ROLLBACK;
+SQL
+)"
+if [[ "${trigger_created}" != "1" ]]; then
+  echo "TRIGGER specimen did not attach executable row-admission authority" >&2
+  exit 1
+fi
+
 # Share the PostgreSQL network namespace so the production package talks to this
 # exact database. SET ROLE proves admission follows effective CURRENT_USER rather
 # than connection/DSN text; the operator connection is deliberately superuser.
@@ -186,6 +279,22 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
         assert row is not None
         assert row.evidence_id == "role-authority-a"
         cursor.execute("RESET ROLE")
+
+        for unsafe_role in (
+            "pg_llm_batch_outbox_truncate",
+            "pg_llm_batch_outbox_references",
+            "pg_llm_batch_outbox_trigger",
+        ):
+            cursor.execute(f"SET ROLE {unsafe_role}")
+            try:
+                store.load_in_transaction(cursor, "role-authority-a")
+            except ConfigError as exc:
+                assert "separated forced RLS authority" in str(exc)
+            else:
+                raise AssertionError(
+                    f"{unsafe_role} reached lifecycle outbox data SQL with RLS-exempt authority"
+                )
+            cursor.execute("RESET ROLE")
 
         cursor.execute("SET ROLE pg_llm_batch_outbox_bypass")
         try:
