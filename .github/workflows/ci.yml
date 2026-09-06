@@ -115,7 +115,7 @@ jobs:
       - name: Run legacy SQL cleanup integration smoke
         run: bash tests/smoke_legacy_sql_cleanup.sh
       - name: Run lifecycle-outbox replay-arbiter smoke
-        run: bash tests/smoke_context_lifecycle_outbox_replay_arbiter.sh
+        run: bash -x tests/smoke_context_lifecycle_outbox_replay_arbiter.sh
       - name: Run lifecycle-outbox exact-column smoke
         run: bash tests/smoke_context_lifecycle_outbox_exact_columns.sh
       - name: Run lifecycle-outbox UUID default-authority smoke
