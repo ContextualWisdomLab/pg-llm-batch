@@ -96,6 +96,8 @@ def test_role_authority_query_covers_effective_and_authenticated_role_closure() 
     assert "'UPDATE'" in sql
     assert "'REFERENCES'" in sql
     assert "'TRIGGER'" in sql
+    assert "'SELECT WITH GRANT OPTION'" in sql
+    assert "'INSERT WITH GRANT OPTION'" in sql
     assert "pg_catalog.to_regclass" in sql
     assert "CURRENT_USER" in sql
     assert "SESSION_USER" in sql
