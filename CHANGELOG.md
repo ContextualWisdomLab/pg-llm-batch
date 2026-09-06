@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime admission now rejects callable non-system-schema
+  `SECURITY DEFINER` routines whose owner has PostgreSQL `CREATEROLE`. Direct
+  runtime identities already excluded role administration; this closes the
+  indirect executable path where an otherwise ordinary `NOCREATEROLE` login can
+  invoke owner-privileged code that creates cluster roles. A wired PostgreSQL
+  smoke proves that role creation actually executes through the definer and then
+  requires package admission to fail closed before tenant binding or outbox data
+  SQL. This is operator/runtime least-authority separation, not a claim that
+  `CREATEROLE` automatically bypasses RLS.
 - Lifecycle-outbox runtime role admission now rejects PostgreSQL `CREATEDB` and
   `CREATEROLE` authority across the effective/session-selectable/administerable
   role closure. The application connection still needs only outbox `SELECT` and
