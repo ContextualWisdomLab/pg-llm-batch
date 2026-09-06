@@ -94,10 +94,11 @@ def test_outbox_migration_reapplies_timestamp_identity_constraints_once() -> Non
         )
         assert comment_at < drop_at < drop_constraint_at
 
-    # One probe and one durable CHECK exist for each timestamp dimension.
+    # Each dimension has one runtime probe and one durable CHECK. Both expressions
+    # contain fractional and whole-second UTC formatter branches.
     assert migration.count("valid_time !~ '[.]000000Z$'") == 2
     assert migration.count("system_time !~ '[.]000000Z$'") == 2
-    assert migration.count("AT TIME ZONE 'UTC'") == 4
+    assert migration.count("AT TIME ZONE 'UTC'") == 8
 
 
 def _canonical_policy_guard() -> str:
@@ -105,16 +106,41 @@ def _canonical_policy_guard() -> str:
     return (
         "IF NOT EXISTS (\n"
         "        SELECT 1\n"
-        "        FROM pg_policy\n"
-        "        WHERE polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
-        f"          AND polname = '{_CANONICAL_POLICY}'\n"
-        "          AND polcmd = '*'\n"
-        "          AND polpermissive\n"
-        "          AND polroles = ARRAY[0::oid]\n"
-        "          AND pg_catalog.pg_get_expr(polqual, polrelid, false) =\n"
+        "        FROM pg_catalog.pg_policy AS policy_row\n"
+        "        WHERE policy_row.polrelid = 'llm_context_lifecycle_outbox'::regclass\n"
+        f"          AND policy_row.polname = '{_CANONICAL_POLICY}'\n"
+        "          AND policy_row.polcmd = '*'\n"
+        "          AND policy_row.polpermissive\n"
+        "          AND policy_row.polroles = ARRAY[0::oid]\n"
+        "          AND pg_catalog.pg_get_expr(policy_row.polqual, policy_row.polrelid, false) =\n"
         f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
-        "          AND pg_catalog.pg_get_expr(polwithcheck, polrelid, false) =\n"
+        "          AND pg_catalog.pg_get_expr(policy_row.polwithcheck, policy_row.polrelid, false) =\n"
         f"              '{_EXPECTED_POLICY_EXPRESSION_SQL}'\n"
+        "          AND NOT EXISTS (\n"
+        "              SELECT 1\n"
+        "              FROM pg_catalog.pg_depend AS unexpected_policy_dependency\n"
+        "              WHERE unexpected_policy_dependency.classid OPERATOR(pg_catalog.=)\n"
+        "                    'pg_catalog.pg_policy'::pg_catalog.regclass\n"
+        "                AND unexpected_policy_dependency.objid OPERATOR(pg_catalog.=)\n"
+        "                    policy_row.oid\n"
+        "                AND unexpected_policy_dependency.objsubid OPERATOR(pg_catalog.=) 0\n"
+        "                AND unexpected_policy_dependency.refobjsubid OPERATOR(pg_catalog.=) 0\n"
+        "                AND unexpected_policy_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'\n"
+        "                AND (\n"
+        "                    (\n"
+        "                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)\n"
+        "                            'pg_catalog.pg_proc'::pg_catalog.regclass\n"
+        "                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)\n"
+        "                            'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure\n"
+        "                    )\n"
+        "                    OR (\n"
+        "                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)\n"
+        "                            'pg_catalog.pg_operator'::pg_catalog.regclass\n"
+        "                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)\n"
+        "                            'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator\n"
+        "                    )\n"
+        "                )\n"
+        "          )\n"
         "    ) THEN"
     )
 
