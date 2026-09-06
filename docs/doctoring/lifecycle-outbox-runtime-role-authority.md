@@ -19,7 +19,7 @@ Before the package binds `pg_llm_batch.tenant_scope` or executes outbox data SQL
 - no role in that closure has `TRUNCATE`, `DELETE`, or table/column `UPDATE` privilege on the outbox;
 - no role in that closure has table-level or column-level `REFERENCES` privilege;
 - no role in that closure has `TRIGGER` privilege; and
-- no selectable/administerable role can execute a non-system-schema `SECURITY DEFINER` routine whose owner is a superuser, `CREATEROLE`, `BYPASSRLS`, the exact/inherited outbox owner, or holds outbox `SELECT`/`INSERT` grant option, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER` authority.
+- no selectable/administerable role can execute a non-system-schema `SECURITY DEFINER` routine whose owner is a superuser, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, the exact/inherited outbox owner, or holds outbox `SELECT`/`INSERT` grant option, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER` authority.
 
 Inert membership remains allowed when it cannot be inherited, selected, or made selectable through admin authority. PostgreSQL 16+ distinguishes membership from inherited `USAGE`, `SET ROLE`, and membership administration. A least-privilege login wrapper may therefore `SET ROLE` to a separate application role, provided neither identity nor any session-selectable/administerable role carries authority outside the append-only envelope.
 
@@ -28,6 +28,8 @@ Inert membership remains allowed when it cannot be inherited, selected, or made 
 The same boundary applies when `CREATEROLE` is reachable through executable definer code. PostgreSQL executes a `SECURITY DEFINER` routine with the function owner's authority rather than the caller's. A non-superuser function owner carrying `CREATEROLE` can therefore execute role-administration statements even when the runtime login itself is `NOCREATEROLE`. PostgreSQL's `CREATE FUNCTION` documentation specifically addresses security-definer functions that create roles by requiring an explicit `createrole_self_grant` setting when their behavior depends on how the created role is granted. The package does not parse a mutable function body to decide whether that authority is harmless; callable user-schema definers are admitted only when their owners remain inside the same reviewed runtime authority envelope. This is role-administration separation, not an assertion that `CREATEROLE` itself bypasses RLS.
 
 `REPLICATION` is a separate cluster-level authority. PostgreSQL requires it (or superuser) for replication-mode connections and for creating or dropping replication slots, and describes the attribute as very highly privileged. The exclusion here is not a claim that `REPLICATION` automatically bypasses RLS; PostgreSQL can still apply publisher row-security policies for a non-superuser replication role without `BYPASSRLS`. The application contract simply has no need for replication connection/slot authority, so co-locating it with tenant DML would violate least privilege and the operator/runtime separation.
+
+That rule also applies to executable definer owners. A `NOREPLICATION` runtime login can have schema `USAGE` and routine `EXECUTE` on a user-schema `SECURITY DEFINER` function whose owner is a separate `REPLICATION` role. Because the routine executes with the owner's privileges, PostgreSQL's SQL-callable `pg_create_physical_replication_slot` can then create a physical replication slot even though the caller itself has no `REPLICATION` attribute. Runtime admission therefore inspects `definer_role.rolreplication` in the same callable-definer catalog predicate and fails before tenant binding or outbox data SQL. This is indirect replication operator authority, not an RLS-bypass claim.
 
 `SELECT WITH GRANT OPTION` and `INSERT WITH GRANT OPTION` are authorization-delegation capabilities, not additional data operations required by the application. PostgreSQL lets a grant-option holder grant the corresponding privilege onward. An ordinary delegated role remains subject to RLS, so this is not treated as an automatic RLS bypass. The boundary is narrower: the runtime identity must not be able to manufacture additional outbox readers or writers. `pg_catalog.has_any_column_privilege(..., '... WITH GRANT OPTION')` covers whole-table and column-level forms without parsing ACL text.
 
@@ -41,7 +43,7 @@ Use distinct connection identities for runtime, database/role administration, re
 
 Do not authenticate a runtime connection as a superuser, database creator, role administrator, owner, replication identity, DML delegator, or privileged-definer gateway and rely on `SET ROLE` as a downgrade. PostgreSQL allows the session user to regain/select roles according to its session authority. Likewise, an initially authenticated superuser can change `SESSION_USER` with `SET SESSION AUTHORIZATION` and later reset to the original identity. The package cannot prove away hidden initial administrative, replication, delegation, or privileged-definer authority after deliberate session-authority changes; those connections are outside the supported runtime deployment boundary.
 
-A representative operator audit should inspect both current/session identities and the session-selectable/administerable closure rather than only one role record. The package's executable query is authoritative; the following shape illustrates the direct role closure to review. Executable-definer authority must be reviewed separately through `pg_proc`, function ownership, schema `USAGE`, routine `EXECUTE`, owner role attributes, owner membership, and owner relation privileges; the package query performs that proof in the same admission round trip.
+A representative operator audit should inspect both current/session identities and the session-selectable/administerable closure rather than only one role record. The package's executable query is authoritative; the following shape illustrates the direct role closure to review. Executable-definer authority must be reviewed separately through `pg_proc`, function ownership, schema `USAGE`, routine `EXECUTE`, owner role attributes including `rolcreaterole` and `rolreplication`, owner membership, and owner relation privileges; the package query performs that proof in the same admission round trip.
 
 ```sql
 SELECT
@@ -131,9 +133,9 @@ FROM pg_catalog.pg_policy
 WHERE polrelid = pg_catalog.to_regclass('public.llm_context_lifecycle_outbox');
 ```
 
-For an admitted connection, both RLS flags are true, the sole policy has the reviewed tenant predicate, every role in the selectable/administerable closure is free of the unsafe direct authority above, and no callable non-system-schema `SECURITY DEFINER` route reintroduces forbidden relation or role-administration authority through its owner.
+For an admitted connection, both RLS flags are true, the sole policy has the reviewed tenant predicate, every role in the selectable/administerable closure is free of the unsafe direct authority above, and no callable non-system-schema `SECURITY DEFINER` route reintroduces forbidden relation, role-administration, or replication authority through its owner.
 
-Do not repair a failing runtime identity or policy by weakening forced RLS, granting `UPDATE` for `FOR UPDATE`, keeping DML grant options for operational convenience, suppressing the package guard, authenticating as an administrator or replication role and downgrading only `CURRENT_USER`, allowing a callable `CREATEROLE`/destructive definer for convenience, or accepting same-name policy drift. Revoke/separate the conflicting authority or restore the reviewed policy through the operator-owned migration/reconciliation path.
+Do not repair a failing runtime identity or policy by weakening forced RLS, granting `UPDATE` for `FOR UPDATE`, keeping DML grant options for operational convenience, suppressing the package guard, authenticating as an administrator or replication role and downgrading only `CURRENT_USER`, allowing a callable `CREATEROLE`/`REPLICATION`/destructive definer for convenience, or accepting same-name policy drift. Revoke/separate the conflicting authority or restore the reviewed policy through the operator-owned migration/reconciliation path.
 
 ## Executable acceptance
 
@@ -144,6 +146,8 @@ Do not repair a failing runtime identity or policy by weakening forced RLS, gran
 `tests/smoke_context_lifecycle_outbox_grant_option_authority.sh` creates an otherwise-minimal runtime login with outbox `SELECT, INSERT WITH GRANT OPTION`, grants `SELECT` onward to a separate ordinary role, requires that recipient to execute a real outbox read, and then requires package access through the grant-capable runtime identity to fail before tenant binding or data SQL. The delegated role remains an ordinary RLS subject; the specimen proves usable delegation authority rather than claiming RLS bypass.
 
 `tests/smoke_context_lifecycle_outbox_role_admin_delegation_authority.sh` covers membership and executable-definer delegation. It proves `ADMIN OPTION` can redistribute DML directly and through a `SET TRUE` role chain, proves a callable superuser-owned definer can expose cross-tenant reads, proves an ordinary non-owner definer with only outbox `TRUNCATE` can empty the durable outbox, and proves a non-superuser `CREATEROLE` definer can let an otherwise ordinary `NOCREATEROLE` runtime login create a cluster role. Package admission must fail closed for each callable privileged-definer route before tenant binding or data SQL.
+
+`tests/smoke_context_lifecycle_outbox_security_definer_replication_authority.sh` covers the separate replication-administration edge. It creates an ordinary `LOGIN NOREPLICATION` runtime role and a `NOLOGIN REPLICATION` function owner, exposes a callable `SECURITY DEFINER` routine owned by that replication principal, proves the ordinary caller can execute `pg_create_physical_replication_slot` through the routine and that the slot exists, then requires package admission to fail closed before tenant binding or outbox data SQL.
 
 `tests/smoke_context_lifecycle_outbox_runtime_rls_policy_authority.sh` exercises post-migration policy drift. It first proves the canonical policy exposes only tenant A to a least-privilege runtime role, then recreates the same canonical policy name with `USING (true) WITH CHECK (true)` while leaving RLS enabled and forced. Raw SQL must then see both tenant rows, proving the catalog drift is materially widening. Package access must fail before tenant binding or data SQL instead of trusting the policy name or migration history.
 
@@ -158,6 +162,8 @@ Database/role-administration lineage is static RED `89ae7fa9a0b2723c636477f4a3a4
 DML-delegation lineage is static RED `c9dd5189488d6f5acfdfe1d5919e88dd593c3398`, PostgreSQL RED specimen `4f890a3da639bea9ef7444265dcc670d9a914791`, executable delegation refinement `e50674cc534ea402b99f38f4c3319bddb93e2d52`, CI wiring `8a51ec8a96e1e47f659fc7235f5d118686d5a1c9`, and causal production repair `146e521a439c038e0b418a7c93c114140ad7fc1f`.
 
 Executable-definer role-administration lineage is static RED `6ca1edf1e8405550235deb2a2809876bce373e13`, causal production repair `9921f551d6a64770b93bd769ab599c2cdd1bae0d`, and real PostgreSQL specimen `554189734a8ef257ba9a496f984866f2fea03709`.
+
+Executable-definer replication lineage is static RED `d8f95092b08124063d636537831503710eefaf51`, causal production repair `e2116cf9a87938cac67b41ba17dd4a4e09b5ec48`, executable PostgreSQL specimen `c5c9761583ef91a34d6f3ca5fb1c7d86c935037a`, and PostgreSQL/container CI wiring `439e22b0df22c43af6c5855779128642b9f2a7a4`.
 
 ADR 0031 remains the broader runtime-role separation decision; ADR 0032 records the delegable and executable privilege boundary. ADR 0032 remains Proposed until one exact repaired final head executes the PostgreSQL/container specimens and all repository quality gates successfully.
 
@@ -190,3 +196,5 @@ PostgreSQL Global Development Group. (2026l). *Role attributes*. In *PostgreSQL 
 PostgreSQL Global Development Group. (2026m). *Privileges*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/ddl-priv.html
 
 PostgreSQL Global Development Group. (2026n). *CREATE FUNCTION*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/sql-createfunction.html
+
+PostgreSQL Global Development Group. (2026o). *System administration functions*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/functions-admin.html
