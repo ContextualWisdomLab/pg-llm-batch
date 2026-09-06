@@ -42,3 +42,23 @@ def test_role_admission_inspects_authenticated_session_set_role_escape() -> None
     assert "pg_catalog.has_table_privilege(selectable_role.oid" in sql
     assert "pg_catalog.has_any_column_privilege(selectable_role.oid" in sql
     assert params == ()
+
+
+def test_role_admission_reproves_live_canonical_rls_policy_semantics() -> None:
+    """Runtime admission must reject post-migration policy drift under the same policy name."""
+    cursor = SessionAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "FROM pg_catalog.pg_policy AS outbox_policy" in sql
+    assert "pg_catalog.count(*)" in sql
+    assert "plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2" in sql
+    assert "outbox_policy.polcmd" in sql
+    assert "outbox_policy.polpermissive" in sql
+    assert "outbox_policy.polroles" in sql
+    assert "pg_catalog.pg_get_expr(outbox_policy.polqual" in sql
+    assert "pg_catalog.pg_get_expr(outbox_policy.polwithcheck" in sql
+    assert "current_setting('pg_llm_batch.tenant_scope'::text, true)" in sql
+    assert "FROM pg_catalog.pg_depend AS unexpected_policy_dependency" in sql
+    assert params == ()
