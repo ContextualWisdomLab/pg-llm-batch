@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox final row-admission now independently re-proves the complete
+  canonical column catalog after migration 0008 convergence. Migration 0009
+  requires exactly 14 live columns with the reviewed PostgreSQL types,
+  type-default collations, `NOT NULL` and default-presence state, no
+  generated/identity authority, and no dropped-column tombstones. A wired real
+  PostgreSQL smoke drops `NOT NULL` from `evidence_id`, proves that CHECK
+  `UNKNOWN` plus default UNIQUE null semantics admit two NULL replay identities,
+  then requires final admission to fail closed until the invalid rows and
+  column state are explicitly reconciled. Migration 0009 does not repair drift;
+  package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox final row-admission now independently re-verifies the two
   column defaults executed because runtime INSERTs omit `context_outbox_uuid`
   and `created_at`. Migration 0009 requires exact PostgreSQL-core
