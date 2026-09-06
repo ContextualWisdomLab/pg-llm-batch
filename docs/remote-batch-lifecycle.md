@@ -61,6 +61,17 @@ deleted; and the resulting v2 is verified again before earlier v1/legacy names
 are removed. A semantically current v2 avoids repeated policy DDL on normal
 reapply.
 
+Migration 0009 repeats the RLS proof as a final admission check rather than
+assuming migration 0008's earlier success still describes the live catalog. It
+requires RLS to remain enabled and forced, exactly one policy to remain attached
+to the outbox, and that policy to retain the canonical-v2 name, all-command
+permissive `PUBLIC` scope, exact `USING`/`WITH CHECK` tenant predicates, and the
+reviewed built-in function/operator dependency boundary. This is required
+because PostgreSQL ignores policy rows when RLS is disabled, and a policy can be
+dropped and recreated under the same name with broader predicates. Migration
+0009 never repairs these states: fail closed, determine how tenant authority
+drifted, then reapply migration 0008 under an operator-controlled change.
+
 Package-owned payload and canonical UTC timestamp CHECKs are likewise not
 admitted by name or comment stamp alone. Migration 0008 creates session-local
 temporary probe CHECKs from the reviewed definitions and obtains their parsed
@@ -173,12 +184,22 @@ policy by catalog semantics; converges payload and UTC timestamp CHECKs by
 constraint kind/validation/inheritance, same-runtime parsed predicate identity,
 and review stamp; converges the nondeferrable lifecycle-outbox replay UNIQUE
 constraint required by runtime `ON CONFLICT`; and installs the tenant-qualified
-operational index. Unknown lifecycle-outbox policy names are a fail-closed
-migration finding rather than an implicit extension point. Same-name/same-stamp
-CHECK predicate drift is package-owned drift and is repaired once rather than
-accepted as current state. A stale replay constraint is likewise repaired once;
-duplicate durable identities and noncanonical relation persistence fail migration
-instead of being silently reconciled.
+operational index. Migration 0009 then independently re-verifies final RLS and
+policy semantics before it admits CHECK/constraint/index authority. Unknown
+lifecycle-outbox policy names are a fail-closed migration finding rather than an
+implicit extension point. Same-name/same-stamp CHECK predicate drift is
+package-owned drift and is repaired once rather than accepted as current state.
+A stale replay constraint is likewise repaired once; duplicate durable identities
+and noncanonical relation persistence fail migration instead of being silently
+reconciled.
+
+If migration 0009 reports `unexpected lifecycle outbox row-admission authority`,
+do not work around it by disabling the verifier or adding another permissive
+policy. Inspect `pg_class.relrowsecurity`, `relforcerowsecurity`, and every
+`pg_policy` row on the outbox. If RLS is disabled or the sole canonical-v2 policy
+no longer has the reviewed tenant predicate, identify the restore/manual-DDL
+cause, preserve evidence, and reapply migration 0008. Migration 0009 should then
+succeed only after the catalog is canonical again.
 
 If an existing outbox is found `UNLOGGED`, first determine whether an unclean
 shutdown occurred during the unlogged interval and reconcile product aggregate
@@ -320,7 +341,8 @@ transaction context, tenant-qualified conflict targets and reads, malformed
 database rows, migration preservation and reapplication, forced default-deny
 RLS, search-path-independent lifecycle policy predicate authority, full
 canonical `pg_policy` command/role/expression identity, unknown-policy
-fail-closed behavior, post-create/post-repair policy verification, canonical
+fail-closed behavior, post-create/post-repair policy verification, final
+relation-level RLS enable/force and policy-semantic revalidation, canonical
 payload/timestamp CHECK kind/validation/inheritance and same-runtime parsed
 predicate identity, review-stamp traceability, same-name/same-stamp repair,
 canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
@@ -333,11 +355,14 @@ persists an identical provider identifier in two tenant scopes, and proves that
 a transaction bound to one scope cannot read the other scope through the
 policy. This test verifies policy mechanics under the trusted package model; it
 does not claim protection after arbitrary SQL execution is granted. Exact-head
-runtime execution must also run migration 0008 against stale replay-key schema
-variants, a spoofed same-name/same-stamp canonical payload CHECK, and an
-`UNLOGGED` outbox. PostgreSQL must reject the unlogged durability drift and
-evaluate its final canonical policy, payload/timestamp predicate identity, and
-`ON CONFLICT` arbiter conditions on the exact head.
+runtime execution must also run migration 0008/0009 against stale replay-key
+schema variants, a spoofed same-name/same-stamp canonical payload CHECK, a
+same-name widened canonical-v2 RLS policy, disabled relation-level RLS, and an
+`UNLOGGED` outbox. PostgreSQL must reject the unlogged durability drift, prove
+the two RLS drift cases expose both tenant rows to the ordinary probe before
+repair, and require migration 0009 itself to reject those noncanonical final
+states. The final suite must also evaluate canonical payload/timestamp predicate
+identity and the `ON CONFLICT` arbiter conditions on the exact head.
 
 ## References
 
