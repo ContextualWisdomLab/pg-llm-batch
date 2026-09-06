@@ -80,6 +80,9 @@ class FakeCursor:
         normalized = " ".join(sql.split())
         parameters = params or ()
         self.database.calls.append((normalized, parameters))
+        if normalized.startswith("SELECT admitted_role.rolsuper"):
+            self.result = (False, False)
+            return
         if normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
             return
