@@ -35,6 +35,16 @@ instead of being silently retained or deleted, and the canonical catalog state
 is verified again before v1/legacy policies are retired. Policy names remain
 version markers rather than security evidence.
 
+Final row-admission independently verifies that RLS authority still exists after
+convergence. Migration 0009 requires both `pg_class.relrowsecurity` and
+`relforcerowsecurity`, exactly one outbox policy, and the exact canonical-v2
+command/mode/`PUBLIC` role plus `USING`/`WITH CHECK` expression identity and
+reviewed function/operator dependency boundary. This catches restore/operator
+drift that disables RLS while retaining policy rows or recreates the canonical
+policy name with widened predicates after migration 0008 was previously
+recorded as applied. Migration 0009 does not repair RLS drift; migration 0008
+remains the sole convergence owner. ADR 0027 records the final-verifier boundary.
+
 Lifecycle-outbox payload and timestamp CHECK authority is executable catalog
 identity, not a constraint name or comment alone. Migration 0008 requires each
 canonical CHECK to be validated and inheritable, to carry the expected review
@@ -191,7 +201,8 @@ tenant-qualified SQL parameters, current-state reconciliation, migration
 idempotency, malformed database rows, default-deny policy text, explicit
 `pg_catalog` policy predicate authority, `pg_policy` command/role/expression
 identity, unknown-policy fail-closed behavior, post-repair canonical policy
-verification, canonical payload/timestamp CHECK type/validation/inheritance,
+verification, final relation-level RLS enable/force and policy-semantic
+reverification, canonical payload/timestamp CHECK type/validation/inheritance,
 same-runtime parsed-expression identity in both convergence and final
 row-admission, review-stamp traceability, post-repair CHECK verification,
 canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
@@ -208,9 +219,10 @@ package boundary. Exact-head runtime evidence must also exercise a non-default
 caller `search_path`, verify the canonical outbox relation is still selected,
 verify the caller path is unchanged afterward, and execute migration 0008/0009
 against stale replay-key, spoofed canonical-CHECK, final-gate same-name
-CHECK-expression drift, UNLOGGED-relation, undeclared-live-column,
-dropped-column-tombstone, inheritance-edge, user-trigger, rewrite-rule,
-executable-index, and custom-operator-class variants so PostgreSQL evaluates
-canonical policy, CHECK-predicate, UPSERT-arbiter, executable-table/index-program,
-and durability/schema catalog conditions. These tests do not claim isolation
-after arbitrary SQL or untrusted schema-creation authority is granted.
+CHECK-expression drift, disabled-RLS and same-name widened-policy drift,
+UNLOGGED-relation, undeclared-live-column, dropped-column-tombstone,
+inheritance-edge, user-trigger, rewrite-rule, executable-index, and
+custom-operator-class variants so PostgreSQL evaluates canonical RLS policy,
+CHECK-predicate, UPSERT-arbiter, executable-table/index-program, and
+durability/schema catalog conditions. These tests do not claim isolation after
+arbitrary SQL or untrusted schema-creation authority is granted.
