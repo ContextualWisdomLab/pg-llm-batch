@@ -59,6 +59,6 @@ def test_role_admission_reproves_live_canonical_rls_policy_semantics() -> None:
     assert "outbox_policy.polroles" in sql
     assert "pg_catalog.pg_get_expr(outbox_policy.polqual" in sql
     assert "pg_catalog.pg_get_expr(outbox_policy.polwithcheck" in sql
-    assert "current_setting('pg_llm_batch.tenant_scope'::text, true)" in sql
+    assert "current_setting(''pg_llm_batch.tenant_scope''::text, true)" in sql
     assert "FROM pg_catalog.pg_depend AS unexpected_policy_dependency" in sql
     assert params == ()
