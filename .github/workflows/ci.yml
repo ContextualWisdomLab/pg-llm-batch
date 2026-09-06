@@ -150,3 +150,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_admin_authority.sh
       - name: Run lifecycle-outbox nested SECURITY DEFINER authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_chain_authority.sh
+      - name: Run lifecycle-outbox SECURITY DEFINER search-path authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_search_path_authority.sh
