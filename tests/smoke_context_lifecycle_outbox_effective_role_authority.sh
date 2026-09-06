@@ -97,7 +97,7 @@ fi
 # Share the PostgreSQL network namespace so the production package talks to this
 # exact database. SET ROLE proves admission follows effective CURRENT_USER rather
 # than connection/DSN text; the operator connection is deliberately superuser.
-docker run --rm --network "container:${container}" "${component_image}" python - <<'PY'
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
 import psycopg
 
 from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
