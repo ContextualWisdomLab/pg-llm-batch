@@ -14,6 +14,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+psql_stdin() {
+  docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 "$@"
+}
+
+psql_cmd() {
+  docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c "$1"
+}
+
+apply_migration() {
+  docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    -f "${migration}" >/dev/null
+}
+
 docker run --detach \
   --name "${container}" \
   --env POSTGRES_HOST_AUTH_METHOD=trust \
@@ -147,102 +160,54 @@ assert_canonical_arbiter
 assert_canonical_payload_constraint
 assert_canonical_operational_index
 
-# Existing-table structural specimen: CREATE TABLE IF NOT EXISTS must not admit
-# a relation whose required column contract drifted. The migration is expected
-# to fail closed before attempting constraint/index repair.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
-  "ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN event_type DROP NOT NULL;"
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null 2>&1; then
+# CREATE TABLE IF NOT EXISTS must not admit structural drift.
+psql_cmd "ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN event_type DROP NOT NULL;"
+if apply_migration >/dev/null 2>&1; then
   echo "lifecycle outbox migration admitted structurally incompatible existing table" >&2
   exit 1
 fi
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
-  "ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN event_type SET NOT NULL;"
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+psql_cmd "ALTER TABLE public.llm_context_lifecycle_outbox ALTER COLUMN event_type SET NOT NULL;"
+apply_migration
 assert_canonical_arbiter
 assert_canonical_payload_constraint
 assert_canonical_operational_index
 
-# Existing-table specimen 1: the runtime replay arbiter is absent. Reapplying
-# migration 0008 must install it even though CREATE TABLE IF NOT EXISTS is skipped.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
-  "ALTER TABLE public.llm_context_lifecycle_outbox DROP CONSTRAINT ${constraint};"
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+# Missing replay arbiter must be restored on an existing relation.
+psql_cmd "ALTER TABLE public.llm_context_lifecycle_outbox DROP CONSTRAINT ${constraint};"
+apply_migration
 assert_canonical_arbiter
 
-# Existing-table specimen 2: a same-name UNIQUE exists, but its column order and
-# deferrability make it noncanonical for the package's ON CONFLICT authority.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+# Same-name but wrong-order/deferrable UNIQUE must be replaced.
+psql_stdin <<SQL
 ALTER TABLE public.llm_context_lifecycle_outbox DROP CONSTRAINT ${constraint};
 ALTER TABLE public.llm_context_lifecycle_outbox
   ADD CONSTRAINT ${constraint}
   UNIQUE (evidence_id, tenant_scope) DEFERRABLE INITIALLY IMMEDIATE;
 SQL
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_arbiter
 
-# Prove the runtime conflict target is accepted by PostgreSQL after convergence,
-# not merely that catalog flags look plausible. A duplicate replay remains one row.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+# PostgreSQL itself must accept the exact ON CONFLICT target after convergence.
+psql_stdin <<'SQL'
 INSERT INTO public.llm_context_lifecycle_outbox (
-  tenant_scope,
-  evidence_id,
-  event_type,
-  tenant_scope_sha256,
-  subject_ref_sha256,
-  authority_ref_sha256,
-  origin_ref_sha256,
-  truth_status,
-  valid_time,
-  system_time,
-  provenance_ref_sha256,
-  evidence_ref_sha256
+  tenant_scope, evidence_id, event_type, tenant_scope_sha256,
+  subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, truth_status,
+  valid_time, system_time, provenance_ref_sha256, evidence_ref_sha256
 ) VALUES (
-  'smoke',
-  'replay-arbiter',
-  'context.lifecycle.smoke',
-  repeat('1', 64),
-  repeat('2', 64),
-  repeat('3', 64),
-  repeat('4', 64),
-  'observed',
-  '2026-09-05T00:00:00Z',
-  '2026-09-05T00:00:00Z',
-  repeat('5', 64),
-  repeat('6', 64)
+  'smoke', 'replay-arbiter', 'context.lifecycle.smoke', repeat('1', 64),
+  repeat('2', 64), repeat('3', 64), repeat('4', 64), 'observed',
+  '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z', repeat('5', 64), repeat('6', 64)
 )
 ON CONFLICT (tenant_scope, evidence_id) DO NOTHING;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
-  tenant_scope,
-  evidence_id,
-  event_type,
-  tenant_scope_sha256,
-  subject_ref_sha256,
-  authority_ref_sha256,
-  origin_ref_sha256,
-  truth_status,
-  valid_time,
-  system_time,
-  provenance_ref_sha256,
-  evidence_ref_sha256
+  tenant_scope, evidence_id, event_type, tenant_scope_sha256,
+  subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, truth_status,
+  valid_time, system_time, provenance_ref_sha256, evidence_ref_sha256
 ) VALUES (
-  'smoke',
-  'replay-arbiter',
-  'context.lifecycle.smoke',
-  repeat('1', 64),
-  repeat('2', 64),
-  repeat('3', 64),
-  repeat('4', 64),
-  'observed',
-  '2026-09-05T00:00:00Z',
-  '2026-09-05T00:00:00Z',
-  repeat('5', 64),
-  repeat('6', 64)
+  'smoke', 'replay-arbiter', 'context.lifecycle.smoke', repeat('1', 64),
+  repeat('2', 64), repeat('3', 64), repeat('4', 64), 'observed',
+  '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z', repeat('5', 64), repeat('6', 64)
 )
 ON CONFLICT (tenant_scope, evidence_id) DO NOTHING;
 SQL
@@ -250,48 +215,26 @@ SQL
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT count(*) FROM public.llm_context_lifecycle_outbox WHERE tenant_scope = 'smoke' AND evidence_id = 'replay-arbiter'")" = "1"
 
-# Existing-table specimen 3: older installs can have the CREATE-time event-type
-# check removed and lack the canonical aggregate payload check. Reapplying migration
-# must restore a validated stamped check after CREATE TABLE IF NOT EXISTS is skipped.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+# Missing legacy event check and aggregate payload check must converge to the canonical check.
+psql_stdin <<SQL
 ALTER TABLE public.llm_context_lifecycle_outbox
   DROP CONSTRAINT IF EXISTS ck_llm_context_lifecycle_outbox_event_type;
 ALTER TABLE public.llm_context_lifecycle_outbox
   DROP CONSTRAINT ${payload_constraint};
 SQL
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_payload_constraint
 
-# The converged canonical payload contract must reject a row that the deliberately
-# removed legacy event-type check would otherwise have admitted.
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+# The aggregate payload check must reject an invalid event type.
+if psql_stdin <<'SQL'
 INSERT INTO public.llm_context_lifecycle_outbox (
-  tenant_scope,
-  evidence_id,
-  event_type,
-  tenant_scope_sha256,
-  subject_ref_sha256,
-  authority_ref_sha256,
-  origin_ref_sha256,
-  truth_status,
-  valid_time,
-  system_time,
-  provenance_ref_sha256,
-  evidence_ref_sha256
+  tenant_scope, evidence_id, event_type, tenant_scope_sha256,
+  subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, truth_status,
+  valid_time, system_time, provenance_ref_sha256, evidence_ref_sha256
 ) VALUES (
-  'smoke',
-  'payload-constraint-negative',
-  'Context.Invalid',
-  repeat('1', 64),
-  repeat('2', 64),
-  repeat('3', 64),
-  repeat('4', 64),
-  'observed',
-  '2026-09-05T00:00:00Z',
-  '2026-09-05T00:00:00Z',
-  repeat('5', 64),
-  repeat('6', 64)
+  'smoke', 'payload-constraint-negative', 'Context.Invalid', repeat('1', 64),
+  repeat('2', 64), repeat('3', 64), repeat('4', 64), 'observed',
+  '2026-09-05T00:00:00Z', '2026-09-05T00:00:00Z', repeat('5', 64), repeat('6', 64)
 );
 SQL
 then
@@ -299,21 +242,17 @@ then
   exit 1
 fi
 
-# Existing-table specimen 4: CREATE INDEX IF NOT EXISTS accepts a same-name index
-# even when its key order is wrong. Migration 0008 must repair the catalog shape.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+# Same-name operational index with wrong key order must be rebuilt.
+psql_stdin <<SQL
 DROP INDEX public.${operational_index};
 CREATE INDEX ${operational_index}
   ON public.llm_context_lifecycle_outbox(created_at, tenant_scope);
 SQL
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_operational_index
 
-# Existing-table specimen 5: the same key column numbers can still carry different
-# B-tree semantics through per-key collation, opclass, sort direction, and null order.
-# Migration must rebuild this same-name index rather than treating indkey as identity.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<SQL
+# Same key columns with noncanonical collation/opclass/order/null semantics must be rebuilt.
+psql_stdin <<SQL
 DROP INDEX public.${operational_index};
 CREATE INDEX ${operational_index}
   ON public.llm_context_lifecycle_outbox(
@@ -321,15 +260,11 @@ CREATE INDEX ${operational_index}
     created_at DESC NULLS FIRST
   );
 SQL
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_operational_index
 
-# Existing-table specimen 6: prove convergence is verified after CREATE INDEX, not
-# inferred from successful DDL return. A superuser-only test trigger renames the
-# just-created package index before migration 0008 can finish. The migration must
-# detect the missing canonical catalog state and roll its repair back atomically.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+# Post-DDL verification must catch an event trigger that renames the repaired index.
+psql_stdin <<'SQL'
 DROP INDEX public.idx_llm_context_lifecycle_outbox_tenant_created;
 CREATE FUNCTION public.pg_llm_batch_test_sabotage_outbox_index()
 RETURNS event_trigger
@@ -350,8 +285,7 @@ CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_outbox_index
   WHEN TAG IN ('CREATE INDEX')
   EXECUTE FUNCTION public.pg_llm_batch_test_sabotage_outbox_index();
 SQL
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null 2>&1; then
+if apply_migration >/dev/null 2>&1; then
   echo "lifecycle outbox migration did not post-verify repaired operational index" >&2
   exit 1
 fi
@@ -360,7 +294,7 @@ if ! docker logs "${container}" 2>&1 | \
   echo "lifecycle outbox sabotage trigger did not complete index rename" >&2
   exit 1
 fi
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+psql_stdin <<'SQL'
 DROP EVENT TRIGGER pg_llm_batch_test_sabotage_outbox_index;
 DROP FUNCTION public.pg_llm_batch_test_sabotage_outbox_index();
 SQL
@@ -368,15 +302,11 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT (to_regclass('public.idx_llm_context_lifecycle_outbox_tenant_created') IS NULL)::int")" = "1"
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT (to_regclass('public.idx_llm_context_lifecycle_outbox_tenant_created_sabotaged') IS NULL)::int")" = "1"
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_operational_index
 
-# Existing-table specimen 7: prove UNIQUE convergence is verified after ALTER TABLE,
-# not inferred from successful ADD CONSTRAINT. A superuser-only test trigger renames
-# the just-created replay arbiter before migration 0008 can finish. The migration must
-# detect the missing canonical constraint and roll the repair back atomically.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+# Post-DDL verification must also catch a renamed replay arbiter.
+psql_stdin <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
   DROP CONSTRAINT uq_llm_context_lifecycle_outbox_tenant_evidence;
 CREATE FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter()
@@ -402,8 +332,7 @@ CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_replay_arbiter
   WHEN TAG IN ('ALTER TABLE')
   EXECUTE FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter();
 SQL
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null 2>&1; then
+if apply_migration >/dev/null 2>&1; then
   echo "lifecycle outbox migration did not post-verify repaired replay arbiter" >&2
   exit 1
 fi
@@ -412,19 +341,17 @@ if ! docker logs "${container}" 2>&1 | \
   echo "lifecycle outbox sabotage trigger did not complete arbiter rename" >&2
   exit 1
 fi
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+psql_stdin <<'SQL'
 DROP EVENT TRIGGER pg_llm_batch_test_sabotage_replay_arbiter;
 DROP FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter();
 SQL
 test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT count(*) FROM pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::regclass AND conname IN ('uq_llm_context_lifecycle_outbox_tenant_evidence', 'uq_llm_context_lifecycle_outbox_tenant_evidence_sabotaged')")" = "0"
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_arbiter
 
 # Current state remains idempotently re-applicable without changing any arbiter.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-  -f "${migration}" >/dev/null
+apply_migration
 assert_canonical_arbiter
 assert_canonical_payload_constraint
 assert_canonical_operational_index
