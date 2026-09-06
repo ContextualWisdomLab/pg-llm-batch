@@ -83,6 +83,20 @@ def _validated_postgres_dsn(value: Any) -> str:
     return value
 
 
+def _require_rls_application_role(cursor: Any) -> None:
+    """Reject effective database roles that can bypass the tenant RLS boundary."""
+    cursor.execute(
+        "SELECT admitted_role.rolsuper, admitted_role.rolbypassrls "
+        "FROM pg_catalog.pg_roles AS admitted_role "
+        "WHERE admitted_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER"
+    )
+    role_row = cursor.fetchone()
+    if type(role_row) is not tuple or role_row != (False, False):
+        raise ConfigError(
+            "Lifecycle outbox application role must be NOSUPERUSER NOBYPASSRLS"
+        )
+
+
 def _migration_file_error() -> ConfigError:
     """Return the fixed content-free migration-file authority error."""
     return ConfigError("Lifecycle outbox migration file is unavailable or unsafe")
@@ -377,11 +391,13 @@ class PostgresContextLifecycleOutboxStore:
         is an exact built-in boolean reserved for compare-and-swap writers and keeps
         row locking explicit. Durable evidence is revalidated and must retain the
         tenant identity explicitly bound to this store before it can return to
-        application code. Security-critical function and relation authority is
-        explicitly schema-qualified, and ``ONLY`` prevents inherited relations from
-        widening the canonical durable row source if an inheritance edge appears
-        after migration admission. The outbox does not mutate or inherit the caller
-        transaction's ``search_path``.
+        application code. The effective PostgreSQL role must be a normal RLS subject
+        (`NOSUPERUSER NOBYPASSRLS`) before tenant state is bound or durable rows are
+        touched. Security-critical function and relation authority is explicitly
+        schema-qualified, and ``ONLY`` prevents inherited relations from widening the
+        canonical durable row source if an inheritance edge appears after migration
+        admission. The outbox does not mutate or inherit the caller transaction's
+        ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
@@ -404,6 +420,7 @@ class PostgresContextLifecycleOutboxStore:
                 evidence_ref_sha256="0" * 64,
             )
         )
+        _require_rls_application_role(cursor)
         cursor.execute(
             "SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', %s, true)",
             (self.tenant_scope,),
