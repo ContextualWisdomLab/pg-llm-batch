@@ -165,6 +165,7 @@ def test_role_authority_query_rejects_executable_security_definer_escape() -> No
         "executable_definer.oid, 'EXECUTE')"
     ) in sql
     assert "definer_role.rolsuper" in sql
+    assert "definer_role.rolcreaterole" in sql
     assert "definer_role.rolbypassrls" in sql
     assert "definer_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
     assert (
