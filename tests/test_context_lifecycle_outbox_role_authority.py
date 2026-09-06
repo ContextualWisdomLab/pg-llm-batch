@@ -75,6 +75,7 @@ def test_role_authority_query_covers_effective_and_authenticated_role_closure() 
     assert "pg_catalog.pg_roles" in sql
     assert "pg_catalog.pg_class" in sql
     assert "selectable_role.rolsuper" in sql
+    assert "selectable_role.rolreplication" in sql
     assert "selectable_role.rolbypassrls" in sql
     assert "selectable_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
     assert "pg_catalog.pg_has_role" in sql
