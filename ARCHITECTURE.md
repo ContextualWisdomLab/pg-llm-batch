@@ -38,18 +38,24 @@ operator-authority paths. ADR 0031 records this runtime owner-separation boundar
 
 Runtime relation privileges are part of the same application-authority boundary.
 The application identity is rejected when it holds outbox `TRUNCATE`, `DELETE`,
-any table-level or column-level `REFERENCES`, or `TRIGGER` authority. `TRUNCATE`
-is whole-table authority outside row-security filtering. `DELETE` remains
-RLS-filtered, but the outbox is append-only durable publication intent: a tenant
-runtime role that can delete its own committed row can erase replay/conflict
-evidence and make a later event appear to be a first write. `REFERENCES` and
-`TRIGGER` can establish relation behavior outside the package's tenant-qualified
-DML contract. Admission uses schema-qualified
+`UPDATE`, any table-level or column-level `REFERENCES`, or `TRIGGER` authority.
+`TRUNCATE` is whole-table authority outside row-security filtering. `DELETE` and
+`UPDATE` remain RLS-filtered, but the outbox is append-only durable publication
+intent: a tenant runtime role that can delete or rewrite its own committed row
+can erase or alter replay/conflict evidence while another tenant remains hidden.
+`REFERENCES` and `TRIGGER` can establish relation behavior outside the package's
+tenant-qualified DML contract. Admission uses schema-qualified
 `pg_catalog.has_table_privilege` for `TRUNCATE`/`DELETE`/`TRIGGER` and
-`pg_catalog.has_any_column_privilege` for `REFERENCES`, so column-specific grants
-fail closed too. This does not ban ordinary supported RLS-subject DML: the
-compare-and-swap path deliberately retains the minimum `UPDATE` authority
-PostgreSQL requires for `SELECT ... FOR UPDATE`. ADR 0031 and
+`pg_catalog.has_any_column_privilege` for `UPDATE`/`REFERENCES`, so
+column-specific grants fail closed too. The supported application DML contract
+is `SELECT` plus `INSERT`. Replay compare/adjudication no longer depends on
+`SELECT ... FOR UPDATE`; serialized reads acquire
+`pg_catalog.pg_advisory_xact_lock(bigint)` on a deterministic signed 64-bit key
+derived from the validated tenant/event identity and then issue an ordinary
+qualified `SELECT`. The advisory key is coordination metadata only. Durable
+identity remains the complete `(tenant_scope, evidence_id)` key and exact row
+revalidation, so a 64-bit coordination-key collision can add contention but
+cannot merge durable identities or authorize a different event. ADR 0031 and
 `docs/doctoring/lifecycle-outbox-runtime-role-authority.md` record the operator /
 runtime separation and audit surface.
 
@@ -280,50 +286,56 @@ verification, final relation-level RLS enable/force and policy-semantic
 reverification, effective-`CURRENT_USER` runtime admission requiring exact
 `NOSUPERUSER NOBYPASSRLS`, live enabled/forced RLS, exact owner inequality,
 absence of exercisable owner-role `USAGE`, `SET`, or membership-admin authority,
-and absence of outbox `TRUNCATE`, `DELETE`, table/column `REFERENCES`, or
-`TRIGGER` authority before tenant state or outbox-row access, canonical
-payload/timestamp CHECK type/validation/inheritance, same-runtime
-parsed-expression identity in both convergence and final row-admission,
-review-stamp traceability, post-repair CHECK verification, canonical replay
-UNIQUE kind/validation/deferrability/column identity, ordinary logged-public
-relation identity at convergence and final admission, exact live-column
-cardinality, dropped-column tombstone rejection, complete final `pg_attribute`
-type/collation/nullability/default-presence/generated/identity/cardinality
-re-verification, no outbox inheritance edge at convergence or final admission,
-built-in `heap` TABLE access-method identity at final admission, non-internal
-trigger and rewrite-rule rejection at both convergence and final admission,
-exact retained `tenant_scope` standalone plus omitted-column UUID/created-at
-default authority at final admission, expression/partial/custom-operator-class
-index-program rejection, default-core simple-index admission, runtime schema
-qualification without caller `search_path` mutation, installer/rollback
-search-path authority, schema mirroring, operator documentation, and 100%
-production statement and branch coverage. Live PostgreSQL isolation tests use a
-`NOSUPERUSER NOBYPASSRLS` role and prove that identical provider identifiers in
-different tenants remain independently addressable and mutually invisible when
-access occurs through the trusted package boundary. Exact-head runtime evidence
-must additionally prove that a `BYPASSRLS` role can bypass the policy at
-PostgreSQL level but is rejected by the package before tenant binding/data SQL,
-that superuser effective authority is rejected, that a normal table owner can
-remove `FORCE ROW LEVEL SECURITY` and thereby expose both tenant rows but is
-itself rejected by the package, that a normal non-owner `TRUNCATE` role can
-remove all tenant rows despite forced RLS, that a normal tenant `DELETE` role can
-erase its own committed durable intent while the other tenant remains hidden,
-that column-level `REFERENCES` can create a dependency on the canonical replay
-key, that `TRIGGER` can attach executable relation behavior, and that production
-admission rejects each of those authorities before tenant/data SQL. `SET ROLE`
-must change admission according to effective `CURRENT_USER` rather than DSN
-text. The same evidence must exercise a non-default caller `search_path`, verify
-the canonical outbox relation is still selected, verify the caller path is
-unchanged afterward, and execute migration 0008/0009 against stale replay-key,
-spoofed canonical-CHECK, final-gate same-name CHECK-expression drift,
-disabled-RLS and same-name widened-policy drift, UNLOGGED-relation at convergence
-and after convergence, undeclared-live-column, dropped-column-tombstone,
-post-convergence column-nullability drift, inheritance-edge at convergence and
-after convergence, post-convergence non-`heap` table-access-method drift,
-convergence-time and post-convergence user-trigger/rewrite-rule, omitted-column
-default-program including retained `tenant_scope` compatibility-default drift,
-executable-index, and custom-operator-class variants so PostgreSQL evaluates
-canonical RLS policy, CHECK-predicate, UPSERT-arbiter, relation/column catalog,
-declared-default, executable-table/index-program, storage-method, and
-durability/schema conditions. These tests do not claim isolation after arbitrary
-SQL or untrusted schema-creation authority is granted.
+and absence of outbox `TRUNCATE`, `DELETE`, table/column `UPDATE`,
+table/column `REFERENCES`, or `TRIGGER` authority before tenant state or
+outbox-row access, transaction-advisory-lock serialization without
+`SELECT ... FOR UPDATE`, canonical payload/timestamp CHECK
+type/validation/inheritance, same-runtime parsed-expression identity in both
+convergence and final row-admission, review-stamp traceability, post-repair CHECK
+verification, canonical replay UNIQUE kind/validation/deferrability/column
+identity, ordinary logged-public relation identity at convergence and final
+admission, exact live-column cardinality, dropped-column tombstone rejection,
+complete final `pg_attribute` type/collation/nullability/default-presence/
+generated/identity/cardinality re-verification, no outbox inheritance edge at
+convergence or final admission, built-in `heap` TABLE access-method identity at
+final admission, non-internal trigger and rewrite-rule rejection at both
+convergence and final admission, exact retained `tenant_scope` standalone plus
+omitted-column UUID/created-at default authority at final admission,
+expression/partial/custom-operator-class index-program rejection, default-core
+simple-index admission, runtime schema qualification without caller `search_path`
+mutation, installer/rollback search-path authority, schema mirroring, operator
+documentation, and 100% production statement and branch coverage. Live
+PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
+identical provider identifiers in different tenants remain independently
+addressable and mutually invisible when access occurs through the trusted package
+boundary. Exact-head runtime evidence must additionally prove that a `BYPASSRLS`
+role can bypass the policy at PostgreSQL level but is rejected by the package
+before tenant binding/data SQL, that superuser effective authority is rejected,
+that a normal table owner can remove `FORCE ROW LEVEL SECURITY` and thereby
+expose both tenant rows but is itself rejected by the package, that a normal
+non-owner `TRUNCATE` role can remove all tenant rows despite forced RLS, that a
+normal tenant `DELETE` role can erase its own committed durable intent while the
+other tenant remains hidden, that a normal tenant with only column-level
+`UPDATE (event_type)` can rewrite its own committed lifecycle event while the
+other tenant remains hidden, that column-level `REFERENCES` can create a
+dependency on the canonical replay key, that `TRIGGER` can attach executable
+relation behavior, and that production admission rejects each of those
+authorities before tenant/data SQL. The positive control must execute a real
+enqueue under a role holding only `SELECT` and `INSERT`, proving the advisory
+coordination path does not require row-mutation authority. `SET ROLE` must change
+admission according to effective `CURRENT_USER` rather than DSN text. The same
+evidence must exercise a non-default caller `search_path`, verify the canonical
+outbox relation is still selected, verify the caller path is unchanged afterward,
+and execute migration 0008/0009 against stale replay-key, spoofed canonical-CHECK,
+final-gate same-name CHECK-expression drift, disabled-RLS and same-name
+widened-policy drift, UNLOGGED-relation at convergence and after convergence,
+undeclared-live-column, dropped-column-tombstone, post-convergence
+column-nullability drift, inheritance-edge at convergence and after convergence,
+post-convergence non-`heap` table-access-method drift, convergence-time and
+post-convergence user-trigger/rewrite-rule, omitted-column default-program
+including retained `tenant_scope` compatibility-default drift, executable-index,
+and custom-operator-class variants so PostgreSQL evaluates canonical RLS policy,
+CHECK-predicate, UPSERT-arbiter, relation/column catalog, declared-default,
+executable-table/index-program, storage-method, and durability/schema conditions.
+These tests do not claim isolation after arbitrary SQL or untrusted
+schema-creation authority is granted.
