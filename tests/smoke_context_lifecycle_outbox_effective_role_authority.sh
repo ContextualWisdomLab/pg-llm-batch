@@ -147,8 +147,8 @@ SELECT pg_catalog.concat_ws(
 ROLLBACK;
 SQL
 )"
-if [[ "${inert_authority}" != "true,false,false,false" ]]; then
-  echo "inert membership specimen did not preserve the intended PostgreSQL role semantics" >&2
+if [[ "${inert_authority}" != "t,f,f,f" ]]; then
+  echo "inert membership specimen did not preserve the intended PostgreSQL role semantics: ${inert_authority}" >&2
   exit 1
 fi
 
