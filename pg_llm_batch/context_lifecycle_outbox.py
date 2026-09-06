@@ -175,7 +175,11 @@ def _require_rls_application_role(cursor: Any) -> None:
         "SESSION_USER, selectable_role.oid, 'SET') "
         "OR pg_catalog.pg_has_role("
         "SESSION_USER, selectable_role.oid, 'MEMBER WITH ADMIN OPTION')"
-        ") AND (selectable_role.rolsuper OR selectable_role.rolbypassrls)"
+        ") AND ("
+        "selectable_role.rolsuper "
+        "OR selectable_role.rolreplication "
+        "OR selectable_role.rolbypassrls"
+        ")"
         ") "
         "FROM pg_catalog.pg_class AS admitted_relation "
         "WHERE admitted_relation.oid OPERATOR(pg_catalog.=) "
@@ -487,10 +491,10 @@ class PostgresContextLifecycleOutboxStore:
         and must retain the tenant identity explicitly bound to this store before it
         can return to application code. Both the effective ``CURRENT_USER`` and the
         authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
-        subjects without outbox-owner, destructive, or relation-programming authority,
-        while the canonical relation still has RLS enabled and forced with the sole
-        reviewed tenant policy semantics. The live admission is checked before tenant
-        state is bound or durable rows are touched. Security-critical function,
+        subjects without outbox-owner, destructive, replication, or relation-programming
+        authority, while the canonical relation still has RLS enabled and forced with
+        the sole reviewed tenant policy semantics. The live admission is checked before
+        tenant state is bound or durable rows are touched. Security-critical function,
         relation, and policy authority is explicitly schema-qualified, and ``ONLY``
         prevents inherited relations from widening the canonical durable row source if
         an inheritance edge appears after migration admission. The outbox does not
