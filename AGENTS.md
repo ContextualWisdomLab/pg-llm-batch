@@ -27,21 +27,27 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   do not expose the lifecycle application role through generic tenant-controlled
   SQL, and never describe RLS as a substitute for authorization or
   SQL-injection prevention.
-- Keep PostgreSQL row-level security enabled and forced. Application roles must
-  be `NOSUPERUSER NOBYPASSRLS`, must not own the lifecycle outbox, and must not
-  have exercisable owner authority through inherited `USAGE`, `SET ROLE`, or
-  membership administration. They also must not hold `TRUNCATE`, `DELETE`,
-  `UPDATE`, `TRIGGER`, or table/column `REFERENCES` authority on the outbox:
-  `TRUNCATE` is outside RLS; tenant-local `DELETE` or `UPDATE` violates the
-  append-only durable-intent invariant; and `REFERENCES`/`TRIGGER` can install
-  relation behavior outside the package DML contract. Inert membership alone is
-  not a bypass. Re-prove live enabled/forced RLS, owner separation, and absence
-  of those destructive or programming privileges before tenant binding or
-  outbox data SQL. The normal runtime role needs only `SELECT` and `INSERT` on
-  the outbox. Replay serialization must use transaction-scoped advisory locking
-  on the validated tenant/event identity rather than `SELECT ... FOR UPDATE`,
-  so serialization never requires ambient row-mutation authority.
-  Administrative and owner-capable identities are outside the application
+- Keep PostgreSQL row-level security enabled and forced. Application connections
+  must remain `NOSUPERUSER NOBYPASSRLS` across both effective `CURRENT_USER` and
+  authenticated `SESSION_USER` authority. Admission must include every role the
+  session user can select through `SET ROLE` or make selectable through
+  membership administration; a safe-looking effective role is insufficient if
+  the same login can later become an unsafe role. No role in that closure may
+  own the lifecycle outbox, have exercisable/administerable owner authority via
+  inherited `USAGE`, `SET ROLE`, or membership administration, or hold
+  `TRUNCATE`, `DELETE`, `UPDATE`, `TRIGGER`, or table/column `REFERENCES`
+  authority on the outbox. `TRUNCATE` is outside RLS; tenant-local `DELETE` or
+  `UPDATE` violates the append-only durable-intent invariant; and
+  `REFERENCES`/`TRIGGER` can install relation behavior outside the package DML
+  contract. Inert membership alone is not a bypass. Re-prove live enabled/forced
+  RLS and the complete effective/session-selectable authority envelope before
+  tenant binding or outbox data SQL. The normal runtime role needs only `SELECT`
+  and `INSERT` on the outbox. Replay serialization must use transaction-scoped
+  advisory locking on the validated tenant/event identity rather than
+  `SELECT ... FOR UPDATE`, so serialization never requires ambient row-mutation
+  authority. Do not authenticate runtime connections as an administrator and
+  rely on `SET ROLE` or `SET SESSION AUTHORIZATION` as a downgrade;
+  administrative and owner-capable login sessions are outside the application
   isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
