@@ -24,19 +24,24 @@
   `INSERT WITH GRANT OPTION`. A session identity with membership `ADMIN OPTION`
   over a role that directly/inheritedly carries outbox `SELECT`/`INSERT`, or
   that can reach a DML-bearing role through an all-`SET TRUE` membership path,
-  is also rejected. PostgreSQL lets that administrator grant the role onward,
-  after which the recipient can inherit the DML or use the same `SET ROLE` path
-  even though the table ACLs themselves are non-grantable. Admission must
-  re-prove the sole canonical tenant policy's command, role scope, permissive
-  mode, `USING`/`WITH CHECK` predicates, and reviewed catalog dependencies before
-  tenant binding or outbox SQL. `CREATEDB` and `CREATEROLE` are database/role
-  administration capabilities, `REPLICATION` is separate cluster-level
-  connection and slot authority, and both direct DML grant options and
-  DML-bearing role administration are authorization-delegation authority; none
-  belongs to application DML. Runtime identities remain
+  is also rejected. Callable non-system-schema `SECURITY DEFINER` routines are
+  rejected when their owner can reintroduce forbidden outbox authority through
+  superuser/RLS-bypass status, exact or inherited table ownership, grant
+  options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
+  PostgreSQL lets the membership administrator grant a role onward, after which
+  the recipient can inherit the DML or use the same `SET ROLE` path even though
+  the table ACLs themselves are non-grantable; `SECURITY DEFINER` similarly
+  executes with its owner's privileges rather than the caller's privileges.
+  Admission must re-prove the sole canonical tenant policy's command, role
+  scope, permissive mode, `USING`/`WITH CHECK` predicates, and reviewed catalog
+  dependencies before tenant binding or outbox SQL. `CREATEDB` and `CREATEROLE`
+  are database/role administration capabilities, `REPLICATION` is separate
+  cluster-level connection and slot authority, and both direct DML grant options,
+  DML-bearing role administration, and executable privileged definer authority
+  are outside application DML. Runtime identities remain
   `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only
   non-grantable outbox `SELECT` and `INSERT`. Migration success is point-in-time
-  evidence, not continuing authority after policy, ACL, membership, or
+  evidence, not continuing authority after policy, ACL, membership, routine, or
   role-attribute DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
