@@ -43,8 +43,8 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   `SELECT`/`INSERT` directly, inherits it, or can reach a DML-bearing role
   through an all-`SET TRUE` membership path. Callable non-system-schema
   `SECURITY DEFINER` routines are likewise outside the runtime envelope when
-  their owner can exercise forbidden outbox authority through superuser or
-  `BYPASSRLS` status, exact/inherited table ownership, `SELECT`/`INSERT` grant
+  their owner can exercise forbidden authority through superuser, `CREATEROLE`,
+  or `BYPASSRLS` status, exact/inherited table ownership, `SELECT`/`INSERT` grant
   options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
   PostgreSQL permits a role administrator to grant the administered role to a new
   principal, and the new principal can then inherit the DML or use the same
