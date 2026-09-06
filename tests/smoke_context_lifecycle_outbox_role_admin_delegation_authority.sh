@@ -278,3 +278,65 @@ else:
         "runtime role with executable TRUNCATE-bearing SECURITY DEFINER function reached tenant data SQL"
     )
 PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP FUNCTION public.cwl_llm_batch_outbox_truncate_definer_probe();
+CREATE ROLE cwl_llm_batch_outbox_createrole_definer NOLOGIN
+    NOSUPERUSER NOCREATEDB CREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_createrole_definer;
+
+CREATE FUNCTION public.cwl_llm_batch_outbox_createrole_definer_probe()
+RETURNS text
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+SET createrole_self_grant = 'inherit'
+AS $$
+BEGIN
+    EXECUTE 'CREATE ROLE cwl_llm_batch_outbox_created_by_definer NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS';
+    RETURN 'created';
+END;
+$$;
+ALTER FUNCTION public.cwl_llm_batch_outbox_createrole_definer_probe()
+    OWNER TO cwl_llm_batch_outbox_createrole_definer;
+SQL
+
+createrole_definer_effect="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+      -U cwl_llm_batch_outbox_role_delegate -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+SELECT public.cwl_llm_batch_outbox_createrole_definer_probe();
+SQL
+)"
+if [[ "${createrole_definer_effect}" != "created" ]]; then
+  echo "SECURITY DEFINER specimen did not exercise delegated CREATEROLE authority" >&2
+  exit 1
+fi
+
+created_role="$(
+  docker exec "${container}" psql -U postgres -d postgres -Atqc \
+    "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles WHERE rolname = 'cwl_llm_batch_outbox_created_by_definer'"
+)"
+if [[ "${created_role}" != "1" ]]; then
+  echo "SECURITY DEFINER CREATEROLE specimen did not create the delegated role" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_role_delegate@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+
+try:
+    store.load("security-definer-createrole-authority-probe")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime role with executable CREATEROLE-bearing SECURITY DEFINER function reached tenant data SQL"
+    )
+PY
