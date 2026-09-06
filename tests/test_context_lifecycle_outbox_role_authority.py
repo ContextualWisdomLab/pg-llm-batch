@@ -120,3 +120,26 @@ def test_role_authority_query_rejects_admin_option_over_dml_bearing_role() -> No
         "admitted_relation.oid, 'INSERT'))"
     ) in sql
     assert params == ()
+
+
+def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> None:
+    """Delegation must include DML reachable through an administered role's SET path."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "FROM pg_catalog.pg_roles AS delegated_dml_role" in sql
+    assert (
+        "pg_catalog.pg_has_role(selectable_role.oid, delegated_dml_role.oid, 'SET')"
+        in sql
+    )
+    assert (
+        "pg_catalog.has_any_column_privilege(delegated_dml_role.oid, "
+        "admitted_relation.oid, 'SELECT')"
+    ) in sql
+    assert (
+        "pg_catalog.has_any_column_privilege(delegated_dml_role.oid, "
+        "admitted_relation.oid, 'INSERT')"
+    ) in sql
+    assert params == ()

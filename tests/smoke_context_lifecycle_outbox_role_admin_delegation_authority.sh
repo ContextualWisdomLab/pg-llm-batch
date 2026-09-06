@@ -93,3 +93,63 @@ else:
         "runtime role with ADMIN OPTION over DML-bearing role reached tenant data SQL"
     )
 PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE pg_llm_batch_outbox_dml_leaf NOLOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_admin_bridge NOLOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_transitive_admin LOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_transitive_delegate LOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public
+    TO pg_llm_batch_outbox_dml_leaf,
+       pg_llm_batch_outbox_admin_bridge,
+       pg_llm_batch_outbox_transitive_admin,
+       pg_llm_batch_outbox_transitive_delegate;
+GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
+    TO pg_llm_batch_outbox_dml_leaf,
+       pg_llm_batch_outbox_transitive_admin;
+GRANT pg_llm_batch_outbox_dml_leaf
+    TO pg_llm_batch_outbox_admin_bridge WITH INHERIT FALSE, SET TRUE;
+GRANT pg_llm_batch_outbox_admin_bridge
+    TO pg_llm_batch_outbox_transitive_admin
+    WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
+SQL
+
+docker exec -i "${container}" psql -h 127.0.0.1 \
+  -U pg_llm_batch_outbox_transitive_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+GRANT pg_llm_batch_outbox_admin_bridge
+    TO pg_llm_batch_outbox_transitive_delegate WITH INHERIT FALSE, SET TRUE;
+SQL
+
+transitive_visible="$(
+  docker exec "${container}" psql -h 127.0.0.1 \
+    -U pg_llm_batch_outbox_transitive_delegate -d postgres -Atqc \
+    "SET ROLE pg_llm_batch_outbox_dml_leaf; SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
+)"
+if [[ "${transitive_visible}" != "0" ]]; then
+  echo "role ADMIN OPTION specimen did not delegate SET-reachable outbox DML" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://pg_llm_batch_outbox_transitive_admin@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+
+try:
+    store.load("transitive-role-admin-authority-probe")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime role with ADMIN OPTION over SET-reachable DML role reached tenant data SQL"
+    )
+PY
