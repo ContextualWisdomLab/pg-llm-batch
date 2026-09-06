@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime now verifies the effective PostgreSQL `CURRENT_USER`
+  before binding tenant state or touching durable outbox rows. Application data
+  access is admitted only for an exact `NOSUPERUSER NOBYPASSRLS` role; a
+  superuser, `BYPASSRLS` role, missing/ambiguous catalog identity, or malformed
+  role row fails closed. Installation/migration authority remains separate and
+  may use the operator role. Unit tests pin the catalog query and validation
+  order, while a wired real-PostgreSQL smoke proves ordinary-role tenant
+  isolation, demonstrates `BYPASSRLS` cross-tenant visibility without the
+  package guard, and exercises the production store under `SET ROLE` so
+  admission follows effective role rather than DSN text.
 - Lifecycle-outbox final row-admission now verifies the retained
   `tenant_scope DEFAULT 'standalone'` expression in addition to the database-owned
   UUID and created-at defaults. Package writes still validate and supply tenant
@@ -185,7 +195,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   repaired table cannot silently skip the tenant/event/evidence identifier,
   digest, or truth-status constraints just because the relation already exists.
   After canonical payload v1 is established and post-verified, migration retires
-  exactly the ten known package-owned predecessor payload CHECK names so a stale
+  exactly the ten known package-owned predecessor CHECK names so a stale
   stricter legacy predicate cannot remain a second grammar authority. Unknown
   CHECK names are preserved rather than silently deleted. The PostgreSQL smoke
   restores a stricter legacy event-type predecessor, reapplies migration, and
