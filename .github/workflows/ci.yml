@@ -126,6 +126,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_final_default_authority.sh
       - name: Run lifecycle-outbox final column-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_final_column_authority.sh
+      - name: Run lifecycle-outbox final relation-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_final_relation_authority.sh
       - name: Run lifecycle-outbox CHECK-expression authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_check_expression_authority.sh
       - name: Run lifecycle-outbox final RLS authority smoke
