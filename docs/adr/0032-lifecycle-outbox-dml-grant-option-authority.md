@@ -7,13 +7,15 @@
 
 The lifecycle-outbox runtime is an application DML identity. Its normal database contract is tenant-qualified, forced-RLS `SELECT` and `INSERT`; database administration, role administration, replication, relation programming, destructive/mutating DML, and privilege delegation remain operator authority.
 
-ADR 0031 already requires the effective/authenticated role closure to reject `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, outbox ownership or exercisable owner authority, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, and `TRIGGER`. That direct-role check is necessary but not sufficient because PostgreSQL exposes two further authorization paths.
+ADR 0031 already requires the effective/authenticated role closure to reject `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, outbox ownership or exercisable owner authority, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, and `TRIGGER`. That direct-role check is necessary but not sufficient because PostgreSQL exposes further delegation and executable-authority paths.
 
 First, object and role authority can be delegated. `SELECT WITH GRANT OPTION` and `INSERT WITH GRANT OPTION` let a principal create new outbox readers/writers. `ADMIN OPTION` on a role lets the administrator grant that role onward. An administered bridge role can itself carry no inherited outbox DML yet have an all-`SET TRUE` membership path to another role that does; once the bridge is granted, the recipient can select the downstream authority.
 
-Second, callable `SECURITY DEFINER` code executes with its owner's privileges rather than its caller's. A caller that is an ordinary forced-RLS role can therefore exercise operator authority through a user-schema function owner. Real specimens in this repository establish three distinct executable cases: a non-owner definer with outbox `TRUNCATE`, a `CREATEROLE` definer that can create a cluster role, and a `REPLICATION` definer that can create a physical replication slot. Those are different mechanisms and are not collapsed into an RLS-bypass claim.
+Second, callable `SECURITY DEFINER` code executes with its owner's privileges rather than its caller's. A caller that is an ordinary forced-RLS role can therefore exercise operator authority through a user-schema function owner. Real specimens in this repository establish distinct executable cases: a non-owner definer with outbox `TRUNCATE`, a `CREATEROLE` definer that can create a cluster role, and a `REPLICATION` definer that can create a physical replication slot. Those are different mechanisms and are not collapsed into an RLS-bypass claim.
 
 Fresh review exposed a further delegation case. The callable definer owner can itself be `NOCREATEROLE` and hold no forbidden outbox privilege directly, but hold membership `ADMIN OPTION` over a bridge role. PostgreSQL treats `ADMIN`, `INHERIT`, and `SET` as distinct membership options. The administrator may grant the administered role onward even when its own membership is `INHERIT FALSE, SET FALSE`. PostgreSQL also prohibits `SET ROLE` while a `SECURITY DEFINER` function is executing, but that restriction does not close this path: the function performs `GRANT` under the owner's authority, returns, and the caller can then use the newly granted role's all-`SET TRUE` path in invoker context.
+
+A subsequent review exposed an independent executable chain. A caller-visible `SECURITY DEFINER` may be owned by an otherwise safe role that has no direct forbidden outbox or cluster authority, while that owner has schema `USAGE` plus `EXECUTE` on a second non-system-schema `SECURITY DEFINER` owned by a role with forbidden authority. The outer routine executes as its owner; that owner can invoke the inner routine; the inner routine then executes as its own owner. A two-hop PostgreSQL specimen proves that an ordinary caller can enter a safe outer definer and reach an inner definer whose owner has outbox `TRUNCATE`, even though the caller cannot execute the inner routine directly. Direct-caller inspection therefore does not describe the full executable principal graph.
 
 `CREATEDB` needs one explicit distinction. Direct runtime identities remain `NOCREATEDB` under ADR 0031. A callable definer owner is not rejected merely for `CREATEDB`, because the product has not established an executable in-function `CREATE DATABASE` path and PostgreSQL prohibits `CREATE DATABASE` inside a transaction block. `CREATEDB` is nevertheless forbidden when it is authority that a callable definer owner can grant onward through membership administration, because the caller may exercise that newly granted role later outside the security-definer call. The implemented guard follows this distinction rather than over-claiming direct executable `CREATEDB` semantics.
 
@@ -41,9 +43,9 @@ This follows what the authenticated identity can redistribute, not only what its
 
 ### Callable `SECURITY DEFINER` authority
 
-For each non-system-schema `SECURITY DEFINER` routine that a selectable/administerable runtime role can execute through schema `USAGE` plus routine `EXECUTE`, admission inspects the routine owner.
+For each non-system-schema `SECURITY DEFINER` routine that a selectable/administerable runtime role can execute through schema `USAGE` plus routine `EXECUTE`, admission enters the routine owner's executable-principal closure. The closure is recursive: for every discovered definer owner, admission also follows non-system-schema `SECURITY DEFINER` routines that owner can execute through schema `USAGE` plus routine `EXECUTE`, using `UNION` de-duplication so cyclic routine-owner graphs terminate.
 
-The direct definer-owner authority envelope rejects:
+Every discovered definer owner is checked against the same direct authority envelope:
 
 - `SUPERUSER`;
 - `CREATEROLE`;
@@ -53,7 +55,7 @@ The direct definer-owner authority envelope rejects:
 - outbox `SELECT WITH GRANT OPTION` or `INSERT WITH GRANT OPTION`;
 - outbox `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
 
-The executable-definer membership-administration envelope additionally rejects a definer owner that has `MEMBER WITH ADMIN OPTION` over a role when that administered role either directly carries, or has an all-`SET TRUE` path to, forbidden runtime/operator authority. The target/reachable authority checked by the current implementation includes:
+The executable-definer membership-administration envelope additionally rejects a discovered definer owner that has `MEMBER WITH ADMIN OPTION` over a role when that administered role either directly carries, or has an all-`SET TRUE` path to, forbidden runtime/operator authority. The target/reachable authority checked by the current implementation includes:
 
 - `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, or `BYPASSRLS`;
 - exact/exercisable outbox ownership;
@@ -61,6 +63,8 @@ The executable-definer membership-administration envelope additionally rejects a
 - outbox `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
 
 This target check intentionally uses ordinary `SELECT`/`INSERT` rather than only grant-option forms: after the definer grants the role to the caller, ordinary DML held by that role becomes usable authority. Likewise, `CREATEDB` is checked on an administered/reachable role because that authority can be granted to the caller for later invoker-context use even though direct callable-definer `CREATEDB` is not currently treated as an executable in-function capability.
+
+The recursive closure is intentionally authority-based rather than function-body-based. PostgreSQL documents `SECURITY DEFINER` as executing with the owner's privileges and `EXECUTE` as the privilege that permits routine invocation. The package does not attempt to prove that an arbitrary PL/pgSQL, SQL, extension, or dynamically executed body currently invokes every routine its owner could invoke; instead it refuses to call a definer when entering that owner principal can continue into another privileged definer principal. This is conservative, but it keeps the application/runtime boundary independent of mutable routine bodies and procedural-language parsing.
 
 The guard uses PostgreSQL's own role/privilege inquiry functions and catalogs, including `pg_proc.prosecdef`, function owner OIDs, `pg_roles` attributes, `has_schema_privilege`, `has_function_privilege`, `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')`, `pg_has_role(..., 'SET')`, `has_table_privilege`, and `has_any_column_privilege`. PostgreSQL-owned `pg_*` schemas and `information_schema` remain outside this user-schema definer guard; operator policy may impose a stricter database-wide prohibition.
 
@@ -87,6 +91,10 @@ Rejected as broader than the causal boundary. Administration of a role with no r
 ### Trust an ordinary caller when the privileged work is behind `SECURITY DEFINER`
 
 Rejected. PostgreSQL executes the routine with its owner's privileges. Caller attributes therefore do not describe the authority used by the function.
+
+### Inspect only `SECURITY DEFINER` routines directly executable by the runtime role
+
+Rejected. A directly callable outer definer can execute as a safe owner that in turn has `EXECUTE` on a second definer owned by a destructive/operator principal. The caller does not need direct `EXECUTE` on the inner routine. Static RED `154d2a60324791cead1e41266e54696ba8d51650` and the PostgreSQL chain specimen added in `6c7a4e32e6ccfbb751732af7d3a40e299fb1d8d7` preserve this distinction.
 
 ### Reject only superuser, `BYPASSRLS`, or exact-owner definers
 
@@ -139,9 +147,15 @@ Rejected. Runtime code does not own database authorization policy. Silent ACL or
 - callable definer-owner membership-administration RED `8ae6de147bc9b1746f25d4b29f6de43b6ed7d4a8`;
 - causal query repair `646fadfbefe6c93e9255face270594861695309e` followed by self-review SQL-grouping correction `988ed9b611bc442891e9769ae86a0caf63764ab3`;
 - real PostgreSQL transitive delegation specimen `cba5f92a62f91c6aecee2c2c68f9f1cfcda25e6c`;
-- PostgreSQL/container CI wiring `fb6c3bba7aad728290f0be27e9591888c0584cb6`.
+- PostgreSQL/container CI wiring `fb6c3bba7aad728290f0be27e9591888c0584cb6`;
+- nested callable-definer closure static RED `154d2a60324791cead1e41266e54696ba8d51650`;
+- recursive executable-owner causal repair `a4a4e11381e6bcd6700ddf7ab2fbe945536b81a1`;
+- real nested-definer PostgreSQL specimen `6c7a4e32e6ccfbb751732af7d3a40e299fb1d8d7`;
+- PostgreSQL/container CI wiring `2f8a2fc0f80c83fa2219980ea522f5077380085f`.
 
-The new admin-delegation specimen deliberately gives the definer owner no `CREATEROLE` and no direct destructive relation privilege. It grants an `INHERIT FALSE, SET FALSE` bridge that has `SET TRUE` to an outbox `TRUNCATE` role, proves the ordinary caller can traverse the newly granted role chain and empty the outbox, revokes the caller's materialized bridge membership, and then requires package admission to reject the still-callable latent authority. That separates the causal defect from both direct definer privileges and already-materialized caller authority.
+The nested-definer specimen gives the outer owner no forbidden outbox or cluster authority and revokes the inner routine from `PUBLIC`. Only the outer owner has `EXECUTE` on the inner routine; only the ordinary runtime caller has `EXECUTE` on the outer routine. Calling the outer routine as the runtime user proves the inner owner's RLS-exempt `TRUNCATE` can empty the outbox. The specimen restores a canonical row, requires package admission to reject the latent nested executable edge, then revokes the outer owner's inner-routine `EXECUTE` and requires the same ordinary runtime store to load its tenant row successfully as a positive control.
+
+The admin-delegation specimen deliberately gives the definer owner no `CREATEROLE` and no direct destructive relation privilege. It grants an `INHERIT FALSE, SET FALSE` bridge that has `SET TRUE` to an outbox `TRUNCATE` role, proves the ordinary caller can traverse the newly granted role chain and empty the outbox, revokes the caller's materialized bridge membership, and then requires package admission to reject the still-callable latent authority. That separates the causal defect from both direct definer privileges and already-materialized caller authority.
 
 Earlier heads, partial jobs, and superseded workflow runs are lineage only. ADR 0032 remains Proposed until one unchanged exact repaired head executes the static contracts, full unit/coverage gates, and all wired PostgreSQL/container specimens successfully.
 
@@ -149,7 +163,7 @@ Earlier heads, partial jobs, and superseded workflow runs are lineage only. ADR 
 
 The application connection remains able to perform only its product DML and cannot deliberately act as a privilege-delegation or privileged-function gateway. Security/SOC 2/CSAP evidence can treat ACL changes, role membership administration, role creation, replication administration, destructive relation authority, and privileged user-schema routines as operator-owned changes rather than hidden application behavior.
 
-The check is intentionally authority-based rather than body-based. This is stricter for deployments that intentionally expose privileged user-schema functions to the same runtime identity: those deployments must separate the function behind another role/connection or remove the executable edge. That operational cost is preferred to claiming tenant/application least authority while the same login can exercise or redistribute operator authority.
+The check is intentionally authority-based rather than body-based. This is stricter for deployments that intentionally expose privileged user-schema functions to the same runtime identity or to an owner principal reachable through such a function: those deployments must separate the routine behind another role/connection or remove the executable edge. That operational cost is preferred to claiming tenant/application least authority while the same login can enter an executable principal graph that reaches operator authority.
 
 ## References
 
