@@ -30,7 +30,10 @@ def test_callable_security_definer_authority_closure_is_recursive() -> None:
 
     _require_rls_application_role(cursor)
 
-    assert "WITH RECURSIVE executable_definer_owner(role_oid) AS" in cursor.sql
+    assert (
+        "WITH RECURSIVE executable_definer_owner(role_oid, routine_oid) AS"
+        in cursor.sql
+    )
     assert "nested_executable_definer" in cursor.sql
     assert "nested_definer_schema" in cursor.sql
     assert (
@@ -42,6 +45,7 @@ def test_callable_security_definer_authority_closure_is_recursive() -> None:
         "nested_executable_definer.oid, 'EXECUTE')"
     ) in cursor.sql
     assert (
-        "nested_executable_definer.proowner" in cursor.sql
-        and "UNION" in cursor.sql
+        "SELECT nested_executable_definer.proowner, nested_executable_definer.oid"
+        in cursor.sql
     )
+    assert "UNION" in cursor.sql
