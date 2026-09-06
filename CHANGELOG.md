@@ -18,6 +18,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime role admission now evaluates the connection's full
+  effective/session-selectable authority envelope instead of trusting only a
+  safe-looking `CURRENT_USER`. PostgreSQL evaluates later `SET ROLE` permission
+  against `SESSION_USER`, so admission covers `CURRENT_USER`, `SESSION_USER`,
+  every role the session can select, and every role it can make selectable
+  through membership administration. Any superuser/BYPASSRLS, outbox owner,
+  exercisable/administerable owner authority, or outbox
+  `TRUNCATE`/`DELETE`/`UPDATE`/`REFERENCES`/`TRIGGER` authority in that closure
+  fails before tenant binding or data SQL. A new PostgreSQL smoke proves a
+  non-superuser login can select a safe runtime role while retaining `SET ROLE`
+  access to the outbox owner, and requires the package to reject that connection;
+  a least-privilege login whose only selectable runtime role is safe remains the
+  positive control. Admin-originated sessions hidden with
+  `SET SESSION AUTHORIZATION` are outside the supported runtime deployment
+  boundary rather than being treated as downgraded application identities.
 - Lifecycle-outbox runtime role admission now rejects outbox `TRUNCATE`,
   `DELETE`, table/column `UPDATE`, table/column `REFERENCES`, and `TRIGGER`
   authority in addition to the forced-RLS, superuser/BYPASSRLS, and
@@ -33,19 +48,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `SELECT`. A wired PostgreSQL smoke proves tenant-local column UPDATE is real
   mutation authority and requires production admission to reject it, while the
   positive control performs a real enqueue with only `SELECT` and `INSERT`.
-- Lifecycle-outbox runtime now verifies both the effective PostgreSQL
-  `CURRENT_USER` and the live relation-level RLS/owner boundary before binding
-  tenant state or touching durable outbox rows. Application data access requires
-  `NOSUPERUSER NOBYPASSRLS`, enabled and forced RLS, exact separation from the
-  table owner, and no exercisable owner-role authority through inherited
-  `USAGE`, `SET ROLE`, or membership administration; inert membership alone is
-  not rejected. Missing/malformed catalog evidence fails closed. Installation
-  and migration remain separate operator authority. The real PostgreSQL smoke
-  proves ordinary-role tenant isolation, raw `BYPASSRLS` visibility, and that a
-  normal table owner can disable `FORCE ROW LEVEL SECURITY` and see both tenant
-  rows, then requires the production store to reject BYPASSRLS, superuser, and
-  owner authority under `SET ROLE`. The admission follows effective role rather
-  than DSN text and adds no second catalog round trip.
+- Lifecycle-outbox runtime verifies the live relation-level RLS/owner boundary
+  before binding tenant state or touching durable outbox rows. Application data
+  access requires enabled and forced RLS, separation from the table owner, and
+  no exercisable owner-role authority through inherited `USAGE`, `SET ROLE`, or
+  membership administration; inert membership alone is not rejected.
+  Missing/malformed catalog evidence fails closed. Installation and migration
+  remain separate operator authority. Real PostgreSQL acceptance proves
+  ordinary-role tenant isolation, raw `BYPASSRLS` visibility, and that a normal
+  table owner can disable `FORCE ROW LEVEL SECURITY` and see both tenant rows.
+  Runtime admission applies these constraints across the effective/session role
+  closure while retaining one catalog round trip.
 - Lifecycle-outbox final row-admission now verifies the retained
   `tenant_scope DEFAULT 'standalone'` expression in addition to the database-owned
   UUID and created-at defaults. Package writes still validate and supply tenant
