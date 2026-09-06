@@ -226,7 +226,7 @@ def test_role_authority_query_rejects_unsafe_security_definer_search_path() -> N
         "executable_definer_owner.routine_oid"
     ) in sql
     assert (
-        "NOT (admitted_definer.proconfig OPERATOR(pg_catalog.@>) "
-        "ARRAY['search_path=pg_catalog, pg_temp']::pg_catalog.text[])"
+        "NOT pg_catalog.coalesce(admitted_definer.proconfig OPERATOR(pg_catalog.@>) "
+        "ARRAY['search_path=pg_catalog, pg_temp']::pg_catalog.text[], false)"
     ) in sql
     assert params == ()
