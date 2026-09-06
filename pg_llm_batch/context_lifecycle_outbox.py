@@ -89,8 +89,13 @@ def _require_rls_application_role(cursor: Any) -> None:
         "SELECT admitted_role.rolsuper "
         "OR NOT admitted_relation.relrowsecurity "
         "OR NOT admitted_relation.relforcerowsecurity "
+        "OR admitted_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner "
         "OR pg_catalog.pg_has_role("
-        "CURRENT_USER, admitted_relation.relowner, 'MEMBER'), "
+        "CURRENT_USER, admitted_relation.relowner, 'USAGE') "
+        "OR pg_catalog.pg_has_role("
+        "CURRENT_USER, admitted_relation.relowner, 'SET') "
+        "OR pg_catalog.pg_has_role("
+        "CURRENT_USER, admitted_relation.relowner, 'MEMBER WITH ADMIN OPTION'), "
         "admitted_role.rolbypassrls "
         "FROM pg_catalog.pg_roles AS admitted_role "
         "JOIN pg_catalog.pg_class AS admitted_relation "
@@ -400,7 +405,8 @@ class PostgresContextLifecycleOutboxStore:
         row locking explicit. Durable evidence is revalidated and must retain the
         tenant identity explicitly bound to this store before it can return to
         application code. The effective PostgreSQL role must be a normal RLS subject
-        (`NOSUPERUSER NOBYPASSRLS`), outside the outbox-owning role's membership graph,
+        (`NOSUPERUSER NOBYPASSRLS`) without outbox-owner privileges that are already
+        usable, selectable through `SET ROLE`, or self-grantable through role admin,
         while the canonical relation still has RLS enabled and forced. That live
         admission is checked before tenant state is bound or durable rows are touched.
         Security-critical function and relation authority is explicitly schema-qualified,
