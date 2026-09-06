@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime admission now re-proves the live canonical tenant
+  policy rather than treating successful migration history plus enabled/forced
+  RLS flags as continuing authority. The existing single catalog round trip
+  requires exactly one all-command permissive `PUBLIC` policy under the
+  canonical name, exact parser-normalized tenant `USING`/`WITH CHECK`
+  predicates, and the reviewed function/operator dependency boundary before
+  tenant binding or durable-row SQL. A PostgreSQL smoke keeps both RLS flags
+  enabled, replaces the canonical policy under the same name with
+  `USING (true) WITH CHECK (true)`, proves the least-privilege runtime role can
+  then see both tenants through raw SQL, and requires package admission to fail
+  closed instead of trusting the policy name.
 - Lifecycle-outbox runtime role admission now evaluates the connection's full
   effective/session-selectable authority envelope instead of trusting only a
   safe-looking `CURRENT_USER`. PostgreSQL evaluates later `SET ROLE` permission
