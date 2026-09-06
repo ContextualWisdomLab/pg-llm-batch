@@ -102,6 +102,67 @@ BEGIN
         RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
     END IF;
 
+    -- Column catalog identity is final row-admission authority as well. CHECK predicates
+    -- evaluate UNKNOWN as passing, and UNIQUE admits multiple NULL keys, so post-0008
+    -- nullability drift can bypass the payload and replay-identity contract without
+    -- changing any named CHECK/UNIQUE object. Re-prove the complete live column set,
+    -- exact PostgreSQL types/collations, nullability/default presence, generated/identity
+    -- status, and absence of physical dropped-column tombstones. Drift is operator-owned
+    -- reconciliation work; this final verifier never rewrites a live relation silently.
+    IF EXISTS (
+        SELECT 1
+        FROM (
+            VALUES
+                ('context_outbox_uuid', 'pg_catalog.uuid'::pg_catalog.regtype, true, true),
+                ('tenant_scope', 'pg_catalog.text'::pg_catalog.regtype, true, true),
+                ('evidence_id', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('event_type', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('tenant_scope_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('subject_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('authority_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('origin_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('truth_status', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('valid_time', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('system_time', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('provenance_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('evidence_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
+                ('created_at', 'timestamp with time zone'::pg_catalog.regtype, true, true)
+        ) AS expected(attname, atttypid, attnotnull, atthasdef)
+        LEFT JOIN pg_catalog.pg_attribute AS actual
+          ON actual.attrelid =
+             'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+         AND actual.attname OPERATOR(pg_catalog.=) expected.attname
+         AND actual.attnum OPERATOR(pg_catalog.>) 0
+         AND NOT actual.attisdropped
+        WHERE actual.attnum IS NULL
+           OR actual.atttypid IS DISTINCT FROM expected.atttypid
+           OR actual.attcollation IS DISTINCT FROM (
+               SELECT canonical_type.typcollation
+               FROM pg_catalog.pg_type AS canonical_type
+               WHERE canonical_type.oid = expected.atttypid
+           )
+           OR actual.attnotnull IS DISTINCT FROM expected.attnotnull
+           OR actual.atthasdef IS DISTINCT FROM expected.atthasdef
+           OR actual.attgenerated OPERATOR(pg_catalog.<>) ''
+           OR actual.attidentity OPERATOR(pg_catalog.<>) ''
+    ) OR (
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_attribute AS actual
+        WHERE actual.attrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND actual.attnum OPERATOR(pg_catalog.>) 0
+          AND NOT actual.attisdropped
+    ) OPERATOR(pg_catalog.<>) 14 OR EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_attribute AS dropped_column
+        WHERE dropped_column.attrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND dropped_column.attnum OPERATOR(pg_catalog.>) 0
+          AND dropped_column.attisdropped
+    ) THEN
+        RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
+    END IF;
+
     -- Package INSERTs intentionally omit the generated durable UUID and created-at
     -- timestamp, so those defaults execute on every new outbox row. A restore/operator
     -- can replace either default after migration 0008 was recorded as applied while
