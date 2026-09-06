@@ -34,21 +34,27 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_safe NOLOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_safe LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_escape LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_replication LOGIN NOSUPERUSER NOBYPASSRLS REPLICATION;
+CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_safe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_session_safe LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_session_escape LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_session_replication LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS REPLICATION;
+CREATE ROLE pg_llm_batch_outbox_session_createdb LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_session_createrole LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
     TO pg_llm_batch_outbox_owner,
        pg_llm_batch_outbox_safe,
        pg_llm_batch_outbox_session_safe,
        pg_llm_batch_outbox_session_escape,
-       pg_llm_batch_outbox_session_replication;
+       pg_llm_batch_outbox_session_replication,
+       pg_llm_batch_outbox_session_createdb,
+       pg_llm_batch_outbox_session_createrole;
 ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO pg_llm_batch_outbox_owner;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_safe,
-       pg_llm_batch_outbox_session_replication;
+       pg_llm_batch_outbox_session_replication,
+       pg_llm_batch_outbox_session_createdb,
+       pg_llm_batch_outbox_session_createrole;
 GRANT pg_llm_batch_outbox_safe TO pg_llm_batch_outbox_session_safe
     WITH INHERIT FALSE, SET TRUE;
 GRANT pg_llm_batch_outbox_safe TO pg_llm_batch_outbox_session_escape
@@ -119,6 +125,34 @@ if [[ "${owner_escape}" != "1" ]]; then
   exit 1
 fi
 
+createdb_probe="pg_llm_batch_outbox_createdb_probe_${GITHUB_RUN_ID:-local}_$$"
+docker exec -i "${container}" psql \
+    -h 127.0.0.1 -U pg_llm_batch_outbox_session_createdb -d postgres \
+    -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${createdb_probe}\"" >/dev/null
+if ! docker exec "${container}" psql -U postgres -d postgres -Atq \
+    -v probe="${createdb_probe}" \
+    -c "SELECT pg_catalog.count(*) FROM pg_catalog.pg_database WHERE datname = :'probe'" \
+    | grep -qx '1'; then
+  echo "CREATEDB specimen did not demonstrate database-administration authority" >&2
+  exit 1
+fi
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    -c "DROP DATABASE \"${createdb_probe}\"" >/dev/null
+
+docker exec -i "${container}" psql \
+    -h 127.0.0.1 -U pg_llm_batch_outbox_session_createrole -d postgres \
+    -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
+CREATE ROLE pg_llm_batch_outbox_created_by_runtime NOLOGIN;
+SQL
+if ! docker exec "${container}" psql -U postgres -d postgres -Atq \
+    -c "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles WHERE rolname = 'pg_llm_batch_outbox_created_by_runtime'" \
+    | grep -qx '1'; then
+  echo "CREATEROLE specimen did not demonstrate role-administration authority" >&2
+  exit 1
+fi
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    -c "DROP ROLE pg_llm_batch_outbox_created_by_runtime" >/dev/null
+
 docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
 import psycopg
 
@@ -158,21 +192,26 @@ with psycopg.connect(
                 "safe CURRENT_USER was admitted even though SESSION_USER can SET ROLE to owner"
             )
 
-replication_store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_session_replication@127.0.0.1/postgres",
-    tenant_scope="tenant-a",
-    tenant_scope_sha256="a" * 64,
-)
-with psycopg.connect(
-    "postgresql://pg_llm_batch_outbox_session_replication@127.0.0.1/postgres"
-) as connection:
-    with connection.cursor() as cursor:
-        try:
-            replication_store.load_in_transaction(cursor, "session-authority-a")
-        except ConfigError as exc:
-            assert "separated forced RLS authority" in str(exc)
-        else:
-            raise AssertionError(
-                "runtime login with PostgreSQL REPLICATION authority was admitted"
-            )
+for administrative_role in (
+    "pg_llm_batch_outbox_session_replication",
+    "pg_llm_batch_outbox_session_createdb",
+    "pg_llm_batch_outbox_session_createrole",
+):
+    store = PostgresContextLifecycleOutboxStore(
+        f"postgresql://{administrative_role}@127.0.0.1/postgres",
+        tenant_scope="tenant-a",
+        tenant_scope_sha256="a" * 64,
+    )
+    with psycopg.connect(
+        f"postgresql://{administrative_role}@127.0.0.1/postgres"
+    ) as connection:
+        with connection.cursor() as cursor:
+            try:
+                store.load_in_transaction(cursor, "session-authority-a")
+            except ConfigError as exc:
+                assert "separated forced RLS authority" in str(exc)
+            else:
+                raise AssertionError(
+                    f"runtime login with PostgreSQL administrative authority was admitted: {administrative_role}"
+                )
 PY
