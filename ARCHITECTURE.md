@@ -37,15 +37,19 @@ existing single catalog round trip. Installation and migration remain separate
 operator-authority paths. ADR 0031 records this runtime owner-separation boundary.
 
 Runtime relation privileges are part of the same application-authority boundary.
-The application identity is rejected when it holds outbox `TRUNCATE`, any
-table-level or column-level `REFERENCES`, or `TRIGGER` authority. `TRUNCATE` is
-whole-table authority outside row-security filtering; `REFERENCES` and `TRIGGER`
-can establish relation behavior outside the package's tenant-qualified DML
-contract. Admission uses schema-qualified `pg_catalog.has_table_privilege` for
-`TRUNCATE`/`TRIGGER` and `pg_catalog.has_any_column_privilege` for `REFERENCES`,
-so column-specific grants fail closed too. This does not ban ordinary RLS-subject
-DML: the compare-and-swap path deliberately retains the minimum `UPDATE`
-authority PostgreSQL requires for `SELECT ... FOR UPDATE`. ADR 0031 and
+The application identity is rejected when it holds outbox `TRUNCATE`, `DELETE`,
+any table-level or column-level `REFERENCES`, or `TRIGGER` authority. `TRUNCATE`
+is whole-table authority outside row-security filtering. `DELETE` remains
+RLS-filtered, but the outbox is append-only durable publication intent: a tenant
+runtime role that can delete its own committed row can erase replay/conflict
+evidence and make a later event appear to be a first write. `REFERENCES` and
+`TRIGGER` can establish relation behavior outside the package's tenant-qualified
+DML contract. Admission uses schema-qualified
+`pg_catalog.has_table_privilege` for `TRUNCATE`/`DELETE`/`TRIGGER` and
+`pg_catalog.has_any_column_privilege` for `REFERENCES`, so column-specific grants
+fail closed too. This does not ban ordinary supported RLS-subject DML: the
+compare-and-swap path deliberately retains the minimum `UPDATE` authority
+PostgreSQL requires for `SELECT ... FOR UPDATE`. ADR 0031 and
 `docs/doctoring/lifecycle-outbox-runtime-role-authority.md` record the operator /
 runtime separation and audit surface.
 
@@ -276,32 +280,34 @@ verification, final relation-level RLS enable/force and policy-semantic
 reverification, effective-`CURRENT_USER` runtime admission requiring exact
 `NOSUPERUSER NOBYPASSRLS`, live enabled/forced RLS, exact owner inequality,
 absence of exercisable owner-role `USAGE`, `SET`, or membership-admin authority,
-and absence of outbox `TRUNCATE`, table/column `REFERENCES`, or `TRIGGER`
-authority before tenant state or outbox-row access, canonical payload/timestamp
-CHECK type/validation/inheritance, same-runtime parsed-expression identity in
-both convergence and final row-admission, review-stamp traceability, post-repair
-CHECK verification, canonical replay UNIQUE kind/validation/deferrability/column
-identity, ordinary logged-public relation identity at convergence and final
-admission, exact live-column cardinality, dropped-column tombstone rejection,
-complete final `pg_attribute` type/collation/nullability/default-presence/
-generated/identity/cardinality re-verification, no outbox inheritance edge at
-convergence or final admission, built-in `heap` TABLE access-method identity at
-final admission, non-internal trigger and rewrite-rule rejection at both
-convergence and final admission, exact retained `tenant_scope` standalone plus
-omitted-column UUID/created-at default authority at final admission,
-expression/partial/custom-operator-class index-program rejection, default-core
-simple-index admission, runtime schema qualification without caller `search_path`
-mutation, installer/rollback search-path authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage. Live
-PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
-identical provider identifiers in different tenants remain independently
-addressable and mutually invisible when access occurs through the trusted
-package boundary. Exact-head runtime evidence must additionally prove that a
-`BYPASSRLS` role can bypass the policy at PostgreSQL level but is rejected by the
-package before tenant binding/data SQL, that superuser effective authority is
-rejected, that a normal table owner can remove `FORCE ROW LEVEL SECURITY` and
-thereby expose both tenant rows but is itself rejected by the package, that a
-normal non-owner `TRUNCATE` role can remove all tenant rows despite forced RLS,
+and absence of outbox `TRUNCATE`, `DELETE`, table/column `REFERENCES`, or
+`TRIGGER` authority before tenant state or outbox-row access, canonical
+payload/timestamp CHECK type/validation/inheritance, same-runtime
+parsed-expression identity in both convergence and final row-admission,
+review-stamp traceability, post-repair CHECK verification, canonical replay
+UNIQUE kind/validation/deferrability/column identity, ordinary logged-public
+relation identity at convergence and final admission, exact live-column
+cardinality, dropped-column tombstone rejection, complete final `pg_attribute`
+type/collation/nullability/default-presence/generated/identity/cardinality
+re-verification, no outbox inheritance edge at convergence or final admission,
+built-in `heap` TABLE access-method identity at final admission, non-internal
+trigger and rewrite-rule rejection at both convergence and final admission,
+exact retained `tenant_scope` standalone plus omitted-column UUID/created-at
+default authority at final admission, expression/partial/custom-operator-class
+index-program rejection, default-core simple-index admission, runtime schema
+qualification without caller `search_path` mutation, installer/rollback
+search-path authority, schema mirroring, operator documentation, and 100%
+production statement and branch coverage. Live PostgreSQL isolation tests use a
+`NOSUPERUSER NOBYPASSRLS` role and prove that identical provider identifiers in
+different tenants remain independently addressable and mutually invisible when
+access occurs through the trusted package boundary. Exact-head runtime evidence
+must additionally prove that a `BYPASSRLS` role can bypass the policy at
+PostgreSQL level but is rejected by the package before tenant binding/data SQL,
+that superuser effective authority is rejected, that a normal table owner can
+remove `FORCE ROW LEVEL SECURITY` and thereby expose both tenant rows but is
+itself rejected by the package, that a normal non-owner `TRUNCATE` role can
+remove all tenant rows despite forced RLS, that a normal tenant `DELETE` role can
+erase its own committed durable intent while the other tenant remains hidden,
 that column-level `REFERENCES` can create a dependency on the canonical replay
 key, that `TRIGGER` can attach executable relation behavior, and that production
 admission rejects each of those authorities before tenant/data SQL. `SET ROLE`
