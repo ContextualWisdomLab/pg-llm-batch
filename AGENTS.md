@@ -30,13 +30,15 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - Keep PostgreSQL row-level security enabled and forced. Application roles must
   be `NOSUPERUSER NOBYPASSRLS`, must not own the lifecycle outbox, and must not
   have exercisable owner authority through inherited `USAGE`, `SET ROLE`, or
-  membership administration. They also must not hold `TRUNCATE`, `TRIGGER`, or
-  table/column `REFERENCES` authority on the outbox: `TRUNCATE` is outside RLS,
-  while `REFERENCES` and `TRIGGER` can install executable relation behavior.
-  Inert membership alone is not a bypass. Re-prove live enabled/forced RLS,
-  owner separation, and absence of those RLS-exempt/programming privileges
-  before tenant binding or outbox data SQL. Administrative and owner-capable
-  identities are outside the application isolation guarantee.
+  membership administration. They also must not hold `TRUNCATE`, `DELETE`,
+  `TRIGGER`, or table/column `REFERENCES` authority on the outbox: `TRUNCATE` is
+  outside RLS; tenant-local `DELETE` violates the append-only durable-intent
+  invariant; and `REFERENCES`/`TRIGGER` can install relation behavior outside
+  the package DML contract. Inert membership alone is not a bypass. Re-prove
+  live enabled/forced RLS, owner separation, and absence of those destructive or
+  programming privileges before tenant binding or outbox data SQL.
+  Administrative and owner-capable identities are outside the application
+  isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
