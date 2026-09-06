@@ -155,6 +155,10 @@ def _require_rls_application_role(cursor: Any) -> None:
         "OR pg_catalog.pg_has_role("
         "selectable_role.oid, admitted_relation.relowner, "
         "'MEMBER WITH ADMIN OPTION') "
+        "OR pg_catalog.has_any_column_privilege("
+        "selectable_role.oid, admitted_relation.oid, 'SELECT WITH GRANT OPTION') "
+        "OR pg_catalog.has_any_column_privilege("
+        "selectable_role.oid, admitted_relation.oid, 'INSERT WITH GRANT OPTION') "
         "OR pg_catalog.has_table_privilege("
         "selectable_role.oid, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
@@ -494,14 +498,14 @@ class PostgresContextLifecycleOutboxStore:
         can return to application code. Both the effective ``CURRENT_USER`` and the
         authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
         subjects without outbox-owner, destructive, replication, database/role
-        administration, or relation-programming authority, while the canonical relation
-        still has RLS enabled and forced with the sole reviewed tenant policy semantics.
-        The live admission is checked before tenant state is bound or durable rows are
-        touched. Security-critical function, relation, and policy authority is explicitly
-        schema-qualified, and ``ONLY`` prevents inherited relations from widening the
-        canonical durable row source if an inheritance edge appears after migration
-        admission. The outbox does not mutate or inherit the caller transaction's
-        ``search_path``.
+        administration, delegable DML, or relation-programming authority, while the
+        canonical relation still has RLS enabled and forced with the sole reviewed
+        tenant policy semantics. The live admission is checked before tenant state is
+        bound or durable rows are touched. Security-critical function, relation, and
+        policy authority is explicitly schema-qualified, and ``ONLY`` prevents inherited
+        relations from widening the canonical durable row source if an inheritance edge
+        appears after migration admission. The outbox does not mutate or inherit the
+        caller transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
