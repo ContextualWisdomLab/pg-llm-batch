@@ -7,11 +7,11 @@
 
 The lifecycle-outbox application role is intentionally limited to tenant-qualified `SELECT` and `INSERT`. ADR 0031 already rejects owner authority, `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, and `TRIGGER` across the effective/session-selectable/administerable role closure.
 
-The first delegation gap was direct PostgreSQL object privilege delegation. A principal holding `SELECT` or `INSERT` with `GRANT OPTION` can grant that object privilege onward to another role. The second, distinct mechanism is role-membership administration: a session identity holding `ADMIN OPTION` over a role that itself carries ordinary outbox `SELECT` or `INSERT` can grant that DML-bearing role to another principal even when the table privileges themselves are non-grantable.
+Direct PostgreSQL object privilege delegation is one authorization path: a principal holding `SELECT` or `INSERT` with `GRANT OPTION` can grant that object privilege onward. Role-membership administration is another. A session identity holding `ADMIN OPTION` over a role can grant that role to other principals. If the administered role carries outbox DML itself, inherits it, or can reach a DML-bearing role through an all-`SET TRUE` membership path, the recipient can obtain the same outbox read/write authority even when every table privilege is non-grantable.
 
-Neither mechanism is described as an automatic RLS bypass. An ordinary delegated principal remains subject to PostgreSQL row-security rules. The defect is authorization delegation itself: the tenant application identity can manufacture additional outbox readers or writers, while principal provisioning and privilege delegation belong to the operator/authorization bounded context.
+This is not described as an automatic RLS bypass. An ordinary delegated principal remains subject to PostgreSQL row-security rules. The defect is authorization delegation itself: the tenant application identity can manufacture additional outbox readers or writers, while principal provisioning and privilege delegation belong to the operator/authorization bounded context.
 
-PostgreSQL exposes direct grant-option state through access-privilege inquiry functions. `WITH GRANT OPTION` can be appended to privileges checked by `has_table_privilege`, `has_any_column_privilege`, and related functions. PostgreSQL role membership separately exposes `ADMIN OPTION`; `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')` tests that authority. The runtime guard therefore has to evaluate both object-level delegation and DML-bearing membership delegation.
+PostgreSQL exposes direct grant-option state through access-privilege inquiry functions. `WITH GRANT OPTION` can be appended to privileges checked by `has_table_privilege`, `has_any_column_privilege`, and related functions. PostgreSQL role membership separately exposes `ADMIN OPTION`; `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')` tests that authority. `pg_has_role(..., 'SET')` tests whether a role can be selected directly or indirectly through a membership chain whose edges all permit `SET ROLE`. Runtime admission therefore evaluates both object-level delegation and role-admin delegation through the administered role's effective/SET-reachable DML surface.
 
 ## Decision
 
@@ -20,9 +20,14 @@ PostgreSQL exposes direct grant-option state through access-privilege inquiry fu
 - `SELECT WITH GRANT OPTION` on any outbox column or the whole table; or
 - `INSERT WITH GRANT OPTION` on any outbox column or the whole table.
 
-It also rejects the authenticated `SESSION_USER` when that identity has membership `ADMIN OPTION` over a role whose effective privileges include outbox `SELECT` or `INSERT`. This second check is deliberately scoped to DML-bearing roles: unrelated administrable role memberships are not rejected merely because `ADMIN OPTION` exists.
+It also rejects the authenticated `SESSION_USER` when that identity has membership `ADMIN OPTION` over a role that can confer outbox `SELECT` or `INSERT` after being granted onward. Admission recognizes two ways that administered role can confer DML:
 
-The direct checks use schema-qualified `pg_catalog.has_any_column_privilege` against the already-resolved canonical outbox relation. The membership check combines schema-qualified `pg_catalog.pg_has_role(..., 'MEMBER WITH ADMIN OPTION')` with `has_any_column_privilege(..., 'SELECT'|'INSERT')` for the administered role. Both remain inside the existing single catalog round trip. Ordinary non-grantable `SELECT` and `INSERT` remain the supported application DML contract.
+- the administered role itself has effective outbox `SELECT` or `INSERT`, including inherited privilege; or
+- the administered role can `SET ROLE` directly or indirectly to another role with outbox `SELECT` or `INSERT` through an all-`SET TRUE` path.
+
+The check is deliberately scoped to DML-bearing authority. An unrelated administrable role with neither effective outbox DML nor a `SET` path to such DML is not rejected merely because `ADMIN OPTION` exists.
+
+The direct checks use schema-qualified `pg_catalog.has_any_column_privilege` against the already-resolved canonical outbox relation. The membership check combines schema-qualified `pg_catalog.pg_has_role(..., 'MEMBER WITH ADMIN OPTION')`, `pg_has_role(..., 'SET')`, and `has_any_column_privilege(..., 'SELECT'|'INSERT')`. All checks remain inside the existing single catalog round trip. Ordinary non-grantable `SELECT` and `INSERT` remain the supported application DML contract.
 
 The package does not silently revoke object grant options or role membership administration. Operator/migration authority remains responsible for ACL and membership repair. Runtime admission only proves that the live connection authority is inside the package boundary before tenant binding or outbox data SQL.
 
@@ -38,11 +43,15 @@ Rejected. PostgreSQL permits column-level `SELECT` and `INSERT` grants. `has_any
 
 ### Check only direct `WITH GRANT OPTION`
 
-Rejected. A runtime login can hold no grantable table ACL at all and still redistribute outbox DML by administering membership in a role that already carries ordinary `SELECT` or `INSERT`. That authorization path is materially equivalent from the application/runtime boundary's perspective.
+Rejected. A runtime login can hold no grantable table ACL at all and still redistribute outbox DML by administering membership in a role that already carries ordinary `SELECT` or `INSERT`.
+
+### Check only the administered role's immediate/effective DML
+
+Rejected. PostgreSQL allows `SET ROLE` to a directly or indirectly held role when every membership edge on the path has `SET TRUE`. An administered bridge role can therefore carry no inherited outbox DML itself and still confer a selectable DML role after that bridge is granted to another principal.
 
 ### Reject every membership `ADMIN OPTION`
 
-Rejected as over-broad. The runtime admission query already observes the session-administerable closure, but administration of a role with no outbox DML does not by itself redistribute this bounded context's data privileges. The causal rule rejects `ADMIN OPTION` only when the administered role can use outbox `SELECT` or `INSERT`.
+Rejected as over-broad. Administration of a role with no effective outbox DML and no `SET` path to a DML-bearing role does not redistribute this bounded context's data privileges. The causal rule follows only the DML-bearing authority surface.
 
 ### Parse ACL or membership catalogs directly
 
@@ -64,14 +73,16 @@ Direct object-delegation lineage:
 
 Role-membership delegation lineage:
 
-- static/realistic RED `2131547f79f315008a711bfb5de2db0a2d69b587` requires the live query to reject `SESSION_USER` membership `ADMIN OPTION` over a DML-bearing role, creates an ordinary non-grantable `SELECT, INSERT` group role, delegates that group through `ADMIN OPTION` to a second login, proves the recipient can execute a real outbox read, and wires the specimen into the PostgreSQL/container lane;
-- causal production repair `2cb5af9f4a4af54c0cbbba7949aefae4fbff5c4f` rejects that indirect delegation path by combining the membership-admin check with effective outbox `SELECT`/`INSERT` privilege checks for the administered role.
+- direct-admin RED `2131547f79f315008a711bfb5de2db0a2d69b587` adds a static contract and real PostgreSQL specimen where a runtime login holds `ADMIN OPTION` over a non-grantable DML role, grants it onward, and proves the recipient can execute a real outbox read;
+- first causal repair `2cb5af9f4a4af54c0cbbba7949aefae4fbff5c4f` rejects membership administration over a role whose effective privileges already include outbox `SELECT` or `INSERT`;
+- transitive RED `24a3e2265f29130c2ffe0679baa186a8288e2e52` adds a bridge whose own outbox DML is unavailable through inheritance but whose membership has `SET TRUE` to a DML leaf. The runtime has only `ADMIN OPTION` over that bridge, grants it to another login, and the recipient proves the all-`SET TRUE` chain by selecting the DML leaf and reading the outbox;
+- causal production repair `8f45cc92da06fad1e0639c501f74759f41fd62bb` rejects membership administration when the administered role has effective outbox DML or can `SET` to any role that has it.
 
-Exact-head hosted GREEN is required before this ADR can become Accepted. The executable membership specimen remains evidence design until the exact repaired final head actually runs in the hosted PostgreSQL lane.
+Exact-head hosted GREEN is required before this ADR can become Accepted. The executable membership specimens remain evidence design until the exact repaired final head actually runs in the hosted PostgreSQL lane.
 
 ## Consequences
 
-The runtime identity may use only the DML it needs and may not redistribute that DML either directly through object grant options or indirectly through administration of a DML-bearing role. Security review and SOC 2/CSAP evidence can therefore treat outbox privilege delegation as operator-owned authorization change rather than application behavior. The added predicate remains in the existing single catalog round trip and does not add a second database query.
+The runtime identity may use only the DML it needs and may not redistribute that DML either directly through object grant options or indirectly through administration of a role that carries or can select DML authority. Security review and SOC 2/CSAP evidence can therefore treat outbox privilege delegation as operator-owned authorization change rather than application behavior. The added predicates remain in the existing catalog admission round trip; no second database query or silent ACL repair is introduced.
 
 ## References
 
@@ -82,3 +93,5 @@ PostgreSQL Global Development Group. (2026b). *PostgreSQL 18 documentation: 21.3
 PostgreSQL Global Development Group. (2026c). *PostgreSQL 18 documentation: GRANT*. https://www.postgresql.org/docs/18/sql-grant.html
 
 PostgreSQL Global Development Group. (2026d). *PostgreSQL 18 documentation: 9.27. System information functions and operators*. https://www.postgresql.org/docs/18/functions-info.html
+
+PostgreSQL Global Development Group. (2026e). *PostgreSQL 18 documentation: SET ROLE*. https://www.postgresql.org/docs/18/sql-set-role.html

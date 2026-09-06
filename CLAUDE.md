@@ -22,11 +22,13 @@
   `SESSION_USER`, or the session-selectable/administerable role closure, plus
   table- or column-level `SELECT WITH GRANT OPTION` and
   `INSERT WITH GRANT OPTION`. A session identity with membership `ADMIN OPTION`
-  over any role carrying outbox `SELECT` or `INSERT` is also rejected, because
-  it can grant that DML-bearing role to another principal even when the object
-  privileges themselves are non-grantable. Admission must re-prove the sole
-  canonical tenant policy's command, role scope, permissive mode,
-  `USING`/`WITH CHECK` predicates, and reviewed catalog dependencies before
+  over a role that directly/inheritedly carries outbox `SELECT`/`INSERT`, or
+  that can reach a DML-bearing role through an all-`SET TRUE` membership path,
+  is also rejected. PostgreSQL lets that administrator grant the role onward,
+  after which the recipient can inherit the DML or use the same `SET ROLE` path
+  even though the table ACLs themselves are non-grantable. Admission must
+  re-prove the sole canonical tenant policy's command, role scope, permissive
+  mode, `USING`/`WITH CHECK` predicates, and reviewed catalog dependencies before
   tenant binding or outbox SQL. `CREATEDB` and `CREATEROLE` are database/role
   administration capabilities, `REPLICATION` is separate cluster-level
   connection and slot authority, and both direct DML grant options and
