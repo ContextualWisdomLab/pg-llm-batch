@@ -116,6 +116,18 @@ dependencies, or side effects. Migration 0008 remains the convergence owner and
 0009 remains fail-closed verification. ADR 0024 records this boundary and the
 PostgreSQL catalog evidence behind it.
 
+Omitted-column defaults are executable row-admission authority too. The runtime
+INSERT deliberately omits `context_outbox_uuid` and `created_at`, so PostgreSQL
+evaluates their defaults for every newly persisted publication intent. Migration
+0008 converges those defaults, but a restore or later operator DDL can replace a
+default after 0008 was recorded as applied without changing CHECK, RLS,
+trigger/rule, replay, or index state. Migration 0009 therefore re-reads
+`pg_attribute` and `pg_attrdef` and admits only a live NOT NULL `uuid` column with
+exact `gen_random_uuid()` default plus a live NOT NULL `timestamptz` column with
+exact `now()` default; generated/identity substitutes are rejected. The final
+gate never rewrites a drifted default, leaving migration 0008 as the single
+convergence authority. ADR 0028 records this boundary.
+
 Index-program authority extends beyond explicit expressions and predicates.
 Migration 0009 rejects expression and partial indexes and requires every direct
 index key to use the default `pg_catalog` operator class for the exact indexed
@@ -213,7 +225,8 @@ row-admission, review-stamp traceability, post-repair CHECK verification,
 canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
 logged-public relation identity, exact live-column cardinality, dropped-column
 tombstone rejection, non-internal trigger and rewrite-rule rejection at both
-convergence and final admission, expression/partial/custom-operator-class
+convergence and final admission, exact omitted-column UUID/created-at default
+authority at final admission, expression/partial/custom-operator-class
 index-program rejection, default-core simple-index admission, runtime schema
 qualification without caller `search_path` mutation, installer/rollback
 search-path authority, schema mirroring, operator documentation, and 100%
@@ -227,8 +240,8 @@ afterward, and execute migration 0008/0009 against stale replay-key, spoofed
 canonical-CHECK, final-gate same-name CHECK-expression drift, disabled-RLS and
 same-name widened-policy drift, UNLOGGED-relation, undeclared-live-column,
 dropped-column-tombstone, inheritance-edge, convergence-time and post-convergence
-user-trigger/rewrite-rule, executable-index, and custom-operator-class variants
-so PostgreSQL evaluates canonical RLS policy, CHECK-predicate, UPSERT-arbiter,
-executable-table/index-program, and durability/schema catalog conditions. These
-tests do not claim isolation after arbitrary SQL or untrusted schema-creation
-authority is granted.
+user-trigger/rewrite-rule, omitted-column default-program, executable-index, and
+custom-operator-class variants so PostgreSQL evaluates canonical RLS policy,
+CHECK-predicate, UPSERT-arbiter, omitted-column-default, executable-table/index-
+program, and durability/schema catalog conditions. These tests do not claim
+isolation after arbitrary SQL or untrusted schema-creation authority is granted.
