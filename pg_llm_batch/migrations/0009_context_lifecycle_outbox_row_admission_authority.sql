@@ -102,6 +102,59 @@ BEGIN
         RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
     END IF;
 
+    -- Package INSERTs intentionally omit the generated durable UUID and created-at
+    -- timestamp, so those defaults execute on every new outbox row. A restore/operator
+    -- can replace either default after migration 0008 was recorded as applied while
+    -- leaving constraints, RLS, triggers, rules, and indexes unchanged. Final admission
+    -- therefore re-proves exact PostgreSQL-core default authority and column shape.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_attribute AS admission_attribute
+        JOIN pg_catalog.pg_attrdef AS admission_default
+          ON admission_default.adrelid = admission_attribute.attrelid
+         AND admission_default.adnum = admission_attribute.attnum
+        WHERE admission_attribute.attrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND admission_attribute.attname OPERATOR(pg_catalog.=) 'context_outbox_uuid'
+          AND admission_attribute.attnum OPERATOR(pg_catalog.>) 0
+          AND NOT admission_attribute.attisdropped
+          AND admission_attribute.atttypid OPERATOR(pg_catalog.=)
+              'pg_catalog.uuid'::pg_catalog.regtype
+          AND admission_attribute.attnotnull
+          AND admission_attribute.atthasdef
+          AND admission_attribute.attgenerated OPERATOR(pg_catalog.=) ''
+          AND admission_attribute.attidentity OPERATOR(pg_catalog.=) ''
+          AND pg_catalog.pg_get_expr(
+              admission_default.adbin,
+              admission_default.adrelid,
+              false
+          ) OPERATOR(pg_catalog.=) 'gen_random_uuid()'
+    ) OR NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_attribute AS admission_attribute
+        JOIN pg_catalog.pg_attrdef AS admission_default
+          ON admission_default.adrelid = admission_attribute.attrelid
+         AND admission_default.adnum = admission_attribute.attnum
+        WHERE admission_attribute.attrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND admission_attribute.attname OPERATOR(pg_catalog.=) 'created_at'
+          AND admission_attribute.attnum OPERATOR(pg_catalog.>) 0
+          AND NOT admission_attribute.attisdropped
+          AND admission_attribute.atttypid OPERATOR(pg_catalog.=)
+              'timestamp with time zone'::pg_catalog.regtype
+          AND admission_attribute.attnotnull
+          AND admission_attribute.atthasdef
+          AND admission_attribute.attgenerated OPERATOR(pg_catalog.=) ''
+          AND admission_attribute.attidentity OPERATOR(pg_catalog.=) ''
+          AND pg_catalog.pg_get_expr(
+              admission_default.adbin,
+              admission_default.adrelid,
+              false
+          ) OPERATOR(pg_catalog.=) 'now()'
+    ) THEN
+        RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
+    END IF;
+
     -- Migration 0009 is the final row-admission gate and must independently verify
     -- CHECK semantics even when migration 0008 was recorded as applied before later
     -- restore/operator drift. Derive parser-normalized canonical expressions from this
