@@ -38,8 +38,13 @@ def test_effective_application_role_requires_separated_forced_rls_authority() ->
             "SELECT admitted_role.rolsuper "
             "OR NOT admitted_relation.relrowsecurity "
             "OR NOT admitted_relation.relforcerowsecurity "
+            "OR admitted_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner "
             "OR pg_catalog.pg_has_role("
-            "CURRENT_USER, admitted_relation.relowner, 'MEMBER'), "
+            "CURRENT_USER, admitted_relation.relowner, 'USAGE') "
+            "OR pg_catalog.pg_has_role("
+            "CURRENT_USER, admitted_relation.relowner, 'SET') "
+            "OR pg_catalog.pg_has_role("
+            "CURRENT_USER, admitted_relation.relowner, 'MEMBER WITH ADMIN OPTION'), "
             "admitted_role.rolbypassrls "
             "FROM pg_catalog.pg_roles AS admitted_role "
             "JOIN pg_catalog.pg_class AS admitted_relation "
@@ -85,9 +90,11 @@ def test_role_authority_query_uses_effective_current_user_and_live_relation() ->
     assert "rolbypassrls" in sql
     assert "NOT admitted_relation.relrowsecurity" in sql
     assert "NOT admitted_relation.relforcerowsecurity" in sql
-    assert "admitted_relation.relowner" in sql
+    assert "admitted_relation.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
     assert "pg_catalog.pg_has_role" in sql
-    assert "'MEMBER'" in sql
+    assert "'USAGE'" in sql
+    assert "'SET'" in sql
+    assert "'MEMBER WITH ADMIN OPTION'" in sql
     assert "pg_catalog.to_regclass" in sql
     assert "CURRENT_USER" in sql
     assert params == ()
