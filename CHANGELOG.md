@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox final row-admission now independently rejects user triggers
+  and query-rewrite rules attached after migration 0008 had already converged.
+  Migration 0009 re-reads `pg_trigger` and `pg_rewrite`, permits only
+  PostgreSQL-internal constraint triggers, and fails closed rather than deleting
+  unknown operator programs. The wired PostgreSQL smoke proves a `BEFORE INSERT`
+  trigger can reject an otherwise canonical event and an `INSTEAD NOTHING` rule
+  can suppress one, then requires final admission to reject each catalog state.
+  Migration 0008 remains the convergence owner; package and Docker migration
+  0009 remain byte-identical.
 - Lifecycle-outbox final row-admission now independently re-verifies row-level
   security after migration 0008 convergence. Migration 0009 requires RLS to
   remain enabled and forced, requires exactly one canonical all-command
