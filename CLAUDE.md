@@ -16,8 +16,13 @@
   credential. A database role with arbitrary SQL can call `set_config` for an
   arbitrary tenant scope, so generic tenant-controlled SQL, SQL injection, and
   incorrect identity mapping remain outside the RLS guarantee.
-- Keep row-level security enabled and forced. Production application roles are
-  `NOSUPERUSER NOBYPASSRLS`.
+- Keep row-level security enabled and forced. Runtime admission must reject
+  `SUPERUSER`/`BYPASSRLS`, owner/destructive/programming authority reachable
+  from `CURRENT_USER`, `SESSION_USER`, or the session-selectable/administerable
+  role closure, and must re-prove the sole canonical tenant policy's command,
+  role scope, permissive mode, `USING`/`WITH CHECK` predicates, and reviewed
+  catalog dependencies before tenant binding or outbox SQL. Migration success
+  is point-in-time evidence, not continuing authority after policy DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
