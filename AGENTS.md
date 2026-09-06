@@ -43,25 +43,28 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   `SELECT`/`INSERT` directly, inherits it, or can reach a DML-bearing role
   through an all-`SET TRUE` membership path. Callable non-system-schema
   `SECURITY DEFINER` routines are likewise outside the runtime envelope when
-  their owner can exercise forbidden authority through superuser, `CREATEROLE`,
-  `REPLICATION`, or `BYPASSRLS` status, exact/inherited table ownership,
-  `SELECT`/`INSERT` grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`,
-  or `TRIGGER`. PostgreSQL permits a role administrator to grant the administered
-  role to a new principal, and the new principal can then inherit the DML or use
-  the same `SET ROLE` path even when the object privileges themselves are
-  non-grantable; `SECURITY DEFINER` similarly executes with its owner's
-  privileges. `CREATEDB` and `CREATEROLE` are cluster/database administration
-  capabilities outside an application identity; `REPLICATION` is separate
-  cluster-level connection and replication-slot authority and must not be
-  co-located with a tenant application identity either directly or through an
-  executable definer; `SELECT`/`INSERT` grant options, DML-bearing role
-  administration, and executable privileged definer authority are authorization
-  capabilities rather than application DML; `TRUNCATE` is outside RLS;
-  tenant-local `DELETE` or `UPDATE` violates the append-only durable-intent
-  invariant; and `REFERENCES`/`TRIGGER` can install relation behavior outside
-  the package DML contract. Inert membership alone is not a bypass. Re-prove
-  live enabled/forced RLS, the sole canonical tenant policy identity/command/role
-  scope, parser-normalized `USING`/`WITH CHECK` predicates and allowed catalog
+  their owner can exercise forbidden authority through superuser, `CREATEDB`,
+  `CREATEROLE`, `REPLICATION`, or `BYPASSRLS` status, exact/inherited table
+  ownership, `SELECT`/`INSERT` grant options, `TRUNCATE`, `DELETE`, `UPDATE`,
+  `REFERENCES`, or `TRIGGER`, or can redistribute a role carrying the same
+  forbidden authority directly or through an all-`SET TRUE` path by using
+  membership `ADMIN OPTION`. PostgreSQL permits a role administrator to grant
+  the administered role to a new principal even when the administrator's own
+  membership is `INHERIT FALSE, SET FALSE`; the new principal can then use the
+  granted role's selectable path after the definer returns. `SECURITY DEFINER`
+  similarly executes with its owner's privileges. `CREATEDB` and `CREATEROLE`
+  are cluster/database administration capabilities outside an application
+  identity; `REPLICATION` is separate cluster-level connection and
+  replication-slot authority and must not be co-located with a tenant
+  application identity either directly or through an executable definer;
+  `SELECT`/`INSERT` grant options, DML-bearing role administration, and
+  executable privileged definer authority are authorization capabilities rather
+  than application DML; `TRUNCATE` is outside RLS; tenant-local `DELETE` or
+  `UPDATE` violates the append-only durable-intent invariant; and
+  `REFERENCES`/`TRIGGER` can install relation behavior outside the package DML
+  contract. Inert membership alone is not a bypass. Re-prove live enabled/forced
+  RLS, the sole canonical tenant policy identity/command/role scope,
+  parser-normalized `USING`/`WITH CHECK` predicates and allowed catalog
   dependencies, and the complete effective/session-selectable authority envelope
   before tenant binding or outbox data SQL. A migration success record is
   point-in-time evidence and does not authorize later same-name policy, ACL,
