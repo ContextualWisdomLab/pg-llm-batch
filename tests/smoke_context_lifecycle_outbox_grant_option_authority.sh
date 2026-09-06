@@ -38,7 +38,8 @@ CREATE ROLE pg_llm_batch_outbox_grantable LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_delegate LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO pg_llm_batch_outbox_grantable;
+GRANT USAGE ON SCHEMA public
+    TO pg_llm_batch_outbox_grantable, pg_llm_batch_outbox_delegate;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_grantable WITH GRANT OPTION;
 SQL
@@ -54,6 +55,16 @@ delegated="$(
 )"
 if [[ "${delegated}" != "t" ]]; then
   echo "SELECT WITH GRANT OPTION specimen did not delegate outbox read authority" >&2
+  exit 1
+fi
+
+delegate_visible="$(
+  docker exec "${container}" psql -h 127.0.0.1 \
+    -U pg_llm_batch_outbox_delegate -d postgres -Atqc \
+    "SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
+)"
+if [[ "${delegate_visible}" != "0" ]]; then
+  echo "delegated outbox SELECT did not execute as the recipient role" >&2
   exit 1
 fi
 
