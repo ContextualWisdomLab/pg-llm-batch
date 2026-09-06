@@ -1,6 +1,6 @@
 # Lifecycle outbox runtime role authority
 
-The lifecycle outbox application identity is a tenant-scoped DML identity, not a database-maintenance identity. Runtime admission follows PostgreSQL effective `CURRENT_USER`; DSN text and login identity are not authorization evidence after `SET ROLE`.
+The lifecycle outbox application identity is a tenant-scoped append-only DML identity, not a database-maintenance identity. Runtime admission follows PostgreSQL effective `CURRENT_USER`; DSN text and login identity are not authorization evidence after `SET ROLE`.
 
 Before the package binds `pg_llm_batch.tenant_scope` or executes outbox data SQL, the live role/relation query must prove all of the following at the same admission point:
 
@@ -8,20 +8,21 @@ Before the package binds `pg_llm_batch.tenant_scope` or executes outbox data SQL
 - `public.llm_context_lifecycle_outbox` still has both `relrowsecurity` and `relforcerowsecurity` enabled;
 - `CURRENT_USER` is not the table owner and cannot exercise, select, or administer the owner role through `USAGE`, `SET`, or `MEMBER WITH ADMIN OPTION`;
 - the role has no `TRUNCATE` privilege on the outbox;
+- the role has no `DELETE` privilege on the outbox;
 - the role has no table-level or column-level `REFERENCES` privilege on the outbox; and
 - the role has no `TRIGGER` privilege on the outbox.
 
 Inert owner-role membership granted with `INHERIT FALSE, SET FALSE` and without admin option is not rejected merely because the membership edge exists. PostgreSQL 16+ distinguishes membership from immediately inherited privileges and `SET ROLE` authority.
 
-`TRUNCATE`, `REFERENCES`, and `TRIGGER` are separated from the application identity for different reasons. PostgreSQL row security does not apply to whole-table operations such as `TRUNCATE`, so a normal non-owner role with that privilege can remove every tenant row while forced RLS remains configured. `REFERENCES` can be granted to individual columns as well as the whole table; PostgreSQL warns that a foreign-key creator can arrange for enforcement to invoke arbitrary functions with table-owner privileges. `TRIGGER` permits executable behavior to be attached to the relation and PostgreSQL warns that such triggers execute with the privileges of users modifying the table.
+`TRUNCATE`, `DELETE`, `REFERENCES`, and `TRIGGER` are separated from the application identity for different reasons. PostgreSQL row security does not apply to whole-table operations such as `TRUNCATE`, so a normal non-owner role with that privilege can remove every tenant row while forced RLS remains configured. `DELETE` is different: it is filtered by row security, but this outbox is durable append-only publication intent. A tenant role with `DELETE` can erase its own committed intent and make a later replay appear to be a first write. That is a lifecycle-durability violation even though it is not a cross-tenant RLS bypass. `REFERENCES` can be granted to individual columns as well as the whole table; PostgreSQL warns that a foreign-key creator can arrange for enforcement to invoke arbitrary functions with table-owner privileges. `TRIGGER` permits executable behavior to be attached to the relation and PostgreSQL warns that such triggers execute with the privileges of users modifying the table.
 
-The runtime guard therefore uses `pg_catalog.has_table_privilege` for `TRUNCATE` and `TRIGGER`, and `pg_catalog.has_any_column_privilege(..., 'REFERENCES')` so both table-wide and column-specific reference authority fail closed. A table-only `REFERENCES` check is insufficient.
+The runtime guard therefore uses `pg_catalog.has_table_privilege` for `TRUNCATE`, `DELETE`, and `TRIGGER`, and `pg_catalog.has_any_column_privilege(..., 'REFERENCES')` so both table-wide and column-specific reference authority fail closed. A table-only `REFERENCES` check is insufficient.
 
-Do not replace this boundary with a blanket “SELECT and INSERT only” rule. The package compare-and-swap path uses `SELECT ... FOR UPDATE`; PostgreSQL requires `UPDATE` privilege on at least one column for that lock. Ordinary DML remains subject to forced RLS and the package's tenant-qualified SQL contract. The restriction here targets whole-table or relation-programming authority that is outside, or can program around, that boundary.
+Do not replace this boundary with a blanket “SELECT and INSERT only” rule. The package compare-and-swap path uses `SELECT ... FOR UPDATE`; PostgreSQL requires `UPDATE` privilege on at least one column for that lock. The runtime path does not require `DELETE`, so rejecting it preserves the current package behavior while protecting durable publication intent. Ordinary supported DML remains subject to forced RLS and the package's tenant-qualified SQL contract.
 
 ## Deployment guidance
 
-Use a distinct operator/migration role for schema ownership, grants, triggers, constraints, indexes, migrations, and recovery reconciliation. The runtime application role should receive only the DML needed by the package and must not receive the three authorities above, directly or through an inherited role.
+Use a distinct operator/migration role for schema ownership, grants, triggers, constraints, indexes, migrations, recovery reconciliation, and any explicit lifecycle-retention or deletion process. The runtime application role should receive only the DML needed by the package and must not receive `TRUNCATE`, `DELETE`, `REFERENCES`, or `TRIGGER`, directly or through an inherited role.
 
 A representative audit query is:
 
@@ -45,6 +46,11 @@ SELECT
         c.oid,
         'TRUNCATE'
     ) AS can_truncate,
+    pg_catalog.has_table_privilege(
+        current_user,
+        c.oid,
+        'DELETE'
+    ) AS can_delete,
     pg_catalog.has_any_column_privilege(
         current_user,
         c.oid,
@@ -67,7 +73,7 @@ Do not “repair” a failing runtime identity by weakening forced RLS or suppre
 
 ## Executable acceptance
 
-`tests/smoke_context_lifecycle_outbox_effective_role_authority.sh` contains the real PostgreSQL acceptance surface. It must prove ordinary tenant visibility, inert owner-membership compatibility, raw `BYPASSRLS` visibility, owner ability to remove forced-owner enforcement, RLS-exempt `TRUNCATE` authority, column-level `REFERENCES` authority, and `TRIGGER` attachment authority. Production store calls under the corresponding unsafe effective roles must fail before tenant binding/data SQL.
+`tests/smoke_context_lifecycle_outbox_effective_role_authority.sh` contains the real PostgreSQL acceptance surface. It must prove ordinary tenant visibility, inert owner-membership compatibility, raw `BYPASSRLS` visibility, owner ability to remove forced-owner enforcement, RLS-exempt `TRUNCATE` authority, tenant-local `DELETE` erasure, column-level `REFERENCES` authority, and `TRIGGER` attachment authority. Production store calls under the corresponding unsafe effective roles must fail before tenant binding/data SQL.
 
 ADR 0031 is the decision record. It remains Proposed until the exact repaired head executes this PostgreSQL/container specimen and repository quality gates successfully.
 
