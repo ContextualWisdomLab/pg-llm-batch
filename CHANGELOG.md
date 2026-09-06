@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox final row-admission now independently re-verifies row-level
+  security after migration 0008 convergence. Migration 0009 requires RLS to
+  remain enabled and forced, requires exactly one canonical all-command
+  permissive `PUBLIC` policy, and requires exact `USING`/`WITH CHECK` tenant
+  predicates plus the reviewed function/operator dependency boundary. A wired
+  PostgreSQL smoke proves that same-name `USING (true) WITH CHECK (true)` drift
+  and `DISABLE ROW LEVEL SECURITY` both expose cross-tenant rows to a
+  `NOSUPERUSER NOBYPASSRLS` probe and require the final gate to fail closed.
+  Migration 0009 does not repair drift; migration 0008 remains the convergence
+  owner. Package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox final row-admission no longer treats canonical CHECK names
   as semantic identity. Migration 0009 independently derives same-runtime
   parser-normalized payload, valid-time, and system-time CHECK expressions and
