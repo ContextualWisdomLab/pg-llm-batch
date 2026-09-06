@@ -18,6 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox final row-admission now verifies the retained
+  `tenant_scope DEFAULT 'standalone'` expression in addition to the database-owned
+  UUID and created-at defaults. Package writes still validate and supply tenant
+  scope explicitly; the standalone default remains direct/operator SQL
+  compatibility schema rather than authorization authority. Migration 0009 now
+  re-reads `pg_attrdef` and fails closed if restore/operator DDL replaces that
+  constant with executable or otherwise different semantics. A wired PostgreSQL
+  smoke replaces the tenant default with a volatile function, proves an insert
+  that omits the column executes that function, requires final admission to
+  reject the drift, then restores the canonical default and requires clean
+  re-admission. Migration 0008 remains the convergence owner; package and Docker
+  migration 0009 remain byte-identical.
 - Lifecycle-outbox final row-admission now independently re-proves the complete
   canonical column catalog after migration 0008 convergence. Migration 0009
   requires exactly 14 live columns with the reviewed PostgreSQL types,
