@@ -83,20 +83,32 @@ has schema `USAGE` and function `EXECUTE` on a `SECURITY DEFINER` whose owner is
 a superuser, has `CREATEROLE`, `REPLICATION`, or `BYPASSRLS`, owns the outbox
 exactly or through exercisable owner-role membership, carries outbox
 `SELECT`/`INSERT` grant option, or holds `TRUNCATE`, `DELETE`, `UPDATE`,
-`REFERENCES`, or `TRIGGER`. The guard is based on executable authority rather
-than parsing mutable function bodies. `CREATEROLE` is an operator/cluster
-role-administration capability and `REPLICATION` is cluster connection/slot
-administration authority; neither is an automatic RLS bypass. A callable definer
-carrying either attribute can nevertheless exercise the owner's administrative
-authority even when the runtime caller itself is `NOCREATEROLE NOREPLICATION`.
-The replication acceptance specimen demonstrates this with
-`pg_create_physical_replication_slot`, rather than inferring authority from a
-role flag alone. PostgreSQL also does not subject whole-table `TRUNCATE` or
-`REFERENCES` operations to row security, and a non-owner ordinary definer can
-hold those privileges without satisfying a simple owner/superuser check. System
-schemas remain excluded from this application-schema guard; ACL, role-attribute,
-routine, replication, and owner-role reconciliation remain operator authority.
-ADR 0032 records the delegation and executable-definer boundary.
+`REFERENCES`, or `TRIGGER`. The guard also follows the definer owner's
+membership-administration authority: if that owner has `MEMBER WITH ADMIN
+OPTION` over a role that directly carries forbidden operator/relation authority,
+or can `SET ROLE` through an all-`SET TRUE` path to such a role, the callable
+function is rejected. This matters even when the definer owner's membership is
+`INHERIT FALSE, SET FALSE`; PostgreSQL still lets the administrator grant the
+role onward, after which the caller can select the granted path after the
+security-definer function returns. The administered/reachable envelope includes
+`SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, owner
+control, outbox `SELECT`/`INSERT`, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`,
+and `TRIGGER`. Direct callable-definer `CREATEDB` is not asserted as an
+in-function capability: `CREATE DATABASE` is prohibited inside a transaction
+block. Direct runtime `CREATEDB` remains forbidden, and delegated/reachable
+`CREATEDB` remains forbidden because the definer can grant that role to the
+caller for later invoker-context use. The guard is based on executable and
+delegable authority rather than parsing mutable function bodies. `CREATEROLE`
+is executable role-administration authority and `REPLICATION` is cluster
+connection/slot administration authority; neither is characterized as an
+automatic RLS bypass. The replication acceptance specimen demonstrates this
+with `pg_create_physical_replication_slot`. PostgreSQL also does not subject
+whole-table `TRUNCATE` or `REFERENCES` operations to row security, and an
+ordinary non-owner definer can hold those privileges without satisfying a simple
+owner/superuser check. System schemas remain excluded from this application-schema
+guard; ACL, membership, role-attribute, routine, replication, and owner-role
+reconciliation remain operator authority. ADR 0032 records the delegation and
+executable-definer boundary.
 
 Lifecycle-outbox RLS policy authority is catalog-verified, not name-inferred.
 Canonical v2 uses `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` for
@@ -339,10 +351,14 @@ inequality; absence of `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, and
 `BYPASSRLS`; absence of exercisable/administerable owner-role `USAGE`, `SET`, or
 membership-admin authority; absence of outbox `TRUNCATE`, `DELETE`, table/column
 `UPDATE`, table/column `REFERENCES`, or `TRIGGER` authority anywhere in that role
-closure; and absence of callable non-system-schema `SECURITY DEFINER` authority
-whose owner reintroduces `CREATEROLE`, `REPLICATION`, exact/inherited ownership,
-grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, `TRIGGER`, superuser,
-or `BYPASSRLS` authority before tenant state or outbox-row access,
+closure; absence of callable non-system-schema `SECURITY DEFINER` authority whose
+owner directly reintroduces `CREATEROLE`, `REPLICATION`, exact/inherited
+ownership, grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, `TRIGGER`,
+superuser, or `BYPASSRLS` authority; and absence of a callable definer owner that
+can redistribute through membership `ADMIN OPTION` a role carrying, directly or
+through an all-`SET TRUE` path, `SUPERUSER`, `CREATEDB`, `CREATEROLE`,
+`REPLICATION`, `BYPASSRLS`, owner, outbox DML, destructive/mutating,
+`REFERENCES`, or `TRIGGER` authority before tenant state or outbox-row access,
 transaction-advisory-lock serialization without `SELECT ... FOR UPDATE`,
 canonical payload/timestamp CHECK type/validation/inheritance, same-runtime
 parsed-expression identity in both convergence and final row-admission,
@@ -395,12 +411,17 @@ Executable-definer specimens must prove that an ordinary non-owner,
 non-superuser, non-`BYPASSRLS` function owner carrying outbox `TRUNCATE` can make
 that whole-table operation executable by an otherwise ordinary runtime login;
 that a non-superuser `CREATEROLE` function owner can let a `NOCREATEROLE` runtime
-login create a cluster role; and that a `REPLICATION` function owner can let a
-`NOREPLICATION` runtime login create a physical replication slot through its
-callable `SECURITY DEFINER` routine. Package admission must reject each callable
-authority before tenant binding or outbox data SQL. Admin- or
-replication-originated connections that deliberately downgrade after connection
-establishment are not claimed safe.
+login create a cluster role; that a `REPLICATION` function owner can let a
+`NOREPLICATION` runtime login create a physical replication slot; and that an
+otherwise ordinary `NOCREATEROLE` definer owner holding `ADMIN OPTION` over an
+`INHERIT FALSE, SET FALSE` bridge can grant that bridge to the caller, after
+which the caller can follow the bridge's `SET TRUE` path to an outbox `TRUNCATE`
+role and empty the outbox. The admin-delegation specimen must then revoke the
+materialized caller membership and still require package admission to reject the
+latent callable authority. Package admission must reject each callable authority
+before tenant binding or outbox data SQL. Admin- or replication-originated
+connections that deliberately downgrade after connection establishment are not
+claimed safe.
 
 The same evidence must exercise a non-default caller `search_path`, verify the
 canonical outbox relation is still selected, verify the caller path is unchanged
