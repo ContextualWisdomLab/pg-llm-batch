@@ -9,18 +9,24 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 
 
 class RecordingCursor:
-    """Capture SQL without providing any durable row."""
+    """Capture SQL while emulating admitted role authority and no durable row."""
 
     def __init__(self) -> None:
         self.calls: list[str] = []
+        self.result: Any = None
 
     def execute(self, sql: str, _params: tuple[Any, ...] | None = None) -> None:
-        """Record one normalized SQL statement."""
-        self.calls.append(" ".join(sql.split()))
+        """Record one normalized SQL statement and its bounded result shape."""
+        normalized = " ".join(sql.split())
+        self.calls.append(normalized)
+        if normalized.startswith("SELECT admitted_role.rolsuper"):
+            self.result = (False, False)
+        else:
+            self.result = None
 
-    def fetchone(self) -> None:
-        """Represent an absent durable event."""
-        return None
+    def fetchone(self) -> Any:
+        """Return the result from the preceding statement."""
+        return self.result
 
 
 def test_load_uses_only_canonical_outbox_relation() -> None:
@@ -34,7 +40,11 @@ def test_load_uses_only_canonical_outbox_relation() -> None:
 
     assert store.load_in_transaction(cursor, "event-1") is None
 
-    relation_reads = [sql for sql in cursor.calls if "llm_context_lifecycle_outbox" in sql]
+    relation_reads = [
+        sql
+        for sql in cursor.calls
+        if "FROM ONLY public.llm_context_lifecycle_outbox" in sql
+    ]
     assert relation_reads == [
         "SELECT evidence_id, event_type, tenant_scope_sha256, subject_ref_sha256, "
         "authority_ref_sha256, origin_ref_sha256, truth_status, valid_time, system_time, "
