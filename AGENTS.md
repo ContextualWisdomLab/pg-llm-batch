@@ -31,12 +31,16 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   be `NOSUPERUSER NOBYPASSRLS`, must not own the lifecycle outbox, and must not
   have exercisable owner authority through inherited `USAGE`, `SET ROLE`, or
   membership administration. They also must not hold `TRUNCATE`, `DELETE`,
-  `TRIGGER`, or table/column `REFERENCES` authority on the outbox: `TRUNCATE` is
-  outside RLS; tenant-local `DELETE` violates the append-only durable-intent
-  invariant; and `REFERENCES`/`TRIGGER` can install relation behavior outside
-  the package DML contract. Inert membership alone is not a bypass. Re-prove
-  live enabled/forced RLS, owner separation, and absence of those destructive or
-  programming privileges before tenant binding or outbox data SQL.
+  `UPDATE`, `TRIGGER`, or table/column `REFERENCES` authority on the outbox:
+  `TRUNCATE` is outside RLS; tenant-local `DELETE` or `UPDATE` violates the
+  append-only durable-intent invariant; and `REFERENCES`/`TRIGGER` can install
+  relation behavior outside the package DML contract. Inert membership alone is
+  not a bypass. Re-prove live enabled/forced RLS, owner separation, and absence
+  of those destructive or programming privileges before tenant binding or
+  outbox data SQL. The normal runtime role needs only `SELECT` and `INSERT` on
+  the outbox. Replay serialization must use transaction-scoped advisory locking
+  on the validated tenant/event identity rather than `SELECT ... FOR UPDATE`,
+  so serialization never requires ambient row-mutation authority.
   Administrative and owner-capable identities are outside the application
   isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
