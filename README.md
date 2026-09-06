@@ -210,6 +210,16 @@ all-command permissive `PUBLIC` role and canonical stored expressions. It
 repairs same-name semantic drift, fails closed on unknown policy names, and
 verifies the resulting policy before retiring v1/legacy names.
 
+Migration 0009 is the independent final RLS admission gate. It requires RLS to
+still be enabled and forced on the outbox, exactly one canonical-v2 policy, the
+same all-command/permissive/`PUBLIC` identity, exact `USING` and `WITH CHECK`
+tenant predicates, and the reviewed built-in function/operator dependency
+boundary. A restore or manual DDL sequence that disables RLS while leaving the
+policy row in place, or recreates the same canonical policy name with widened
+predicates, therefore fails closed instead of being admitted as ready. Migration
+0009 does not repair that state; operators reconcile it by reapplying migration
+0008 and investigating why the tenant isolation boundary changed.
+
 Migration 0008 verifies package-owned payload and lifecycle timestamp CHECKs by
 executable catalog identity rather than name or comment alone. It creates
 session-local temporary probe CHECKs from the reviewed definitions and uses the
