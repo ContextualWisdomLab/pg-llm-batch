@@ -40,6 +40,19 @@ before v1/legacy policy retirement. A semantically current v2 remains unchanged
 on idempotent reapplication (PostgreSQL Global Development Group, 2026e, 2026f,
 2026h).
 
+Migration 0009 now repeats the complete RLS proof as final admission authority.
+PostgreSQL documents that policy rows in `pg_policy` apply only while
+`pg_class.relrowsecurity` is set, and that disabling row security leaves those
+rows present but ignored. The final gate therefore requires both
+`relrowsecurity` and `relforcerowsecurity`, exactly one outbox policy, and the
+canonical-v2 all-command permissive `PUBLIC` identity with exact `USING` and
+`WITH CHECK` tenant predicates. It also repeats the reviewed function/operator
+dependency boundary. A restore or manual DDL sequence that disables RLS while
+leaving the policy row intact, or recreates the canonical policy name with
+`USING (true) WITH CHECK (true)`, fails closed. Migration 0009 does not repair
+that drift; migration 0008 remains the sole convergence owner (PostgreSQL Global
+Development Group, 2026b, 2026e).
+
 Canonical v2 admission also authenticates tracked function/operator dependency
 authority rather than treating decompiled expression text as a complete object
 identity proof. PostgreSQL records normal dependencies from a policy expression
@@ -187,14 +200,16 @@ For the Context Fabric lifecycle outbox, `CREATE TABLE IF NOT EXISTS` is followe
 by catalog convergence for relation kind/persistence, the payload/timestamp CHECK
 predicates, runtime replay key, and operational `(tenant_scope, created_at)`
 index. A pre-existing relation must finish migration as an ordinary logged
-`public` table with the post-verified canonical CHECK expressions and stamps, a
-validated NOT DEFERRABLE UNIQUE constraint on `(tenant_scope, evidence_id)`, and
-the exact public B-tree operational index. Current canonical durable objects
-avoid replacement DDL. Stale same-name objects are repaired only when the
-migration can prove they belong to the outbox; noncanonical relation
-persistence/kind, invalid existing payload rows, duplicate replay identities,
-and unrelated name collisions fail for operator reconciliation rather than
-being silently changed.
+`public` table with forced RLS, one canonical-v2 policy, the post-verified
+canonical CHECK expressions and stamps, a validated NOT DEFERRABLE UNIQUE
+constraint on `(tenant_scope, evidence_id)`, and the exact public B-tree
+operational index. Migration 0009 independently proves the final RLS/policy
+state again before admitting later row-authority objects. Current canonical
+durable objects avoid replacement DDL. Stale same-name objects are repaired only
+when the convergence migration can prove they belong to the outbox;
+noncanonical relation persistence/kind, final RLS/policy drift, invalid existing
+payload rows, duplicate replay identities, and unrelated name collisions fail
+for operator reconciliation rather than being silently changed.
 
 Rollback to the former two-column key is unsafe until an operator proves that no
 `(endpoint_alias, remote_batch_id)` pair appears in more than one tenant scope.
@@ -210,6 +225,14 @@ default-deny. Such consumers must migrate to the package helpers or a reviewed
 database interface before deployment. Caller-owned outbox methods require a
 real transaction for the transaction-local tenant GUC, but preserve the
 caller's existing `search_path` rather than imposing one.
+
+If migration 0009 raises `unexpected lifecycle outbox row-admission authority`,
+first inspect relation-level RLS enable/force flags and the complete `pg_policy`
+set before considering constraint or index repair. Do not make the gate pass by
+disabling it or installing a permissive policy. Preserve the drift evidence,
+identify the restore/manual-DDL cause, and reapply migration 0008 to converge the
+package-owned RLS state. Re-run migration 0009 only after the live catalog again
+matches the reviewed tenant boundary.
 
 If migration reports a structural-schema mismatch after an outbox has been made
 `UNLOGGED`, do not treat a successful `ALTER TABLE ... SET LOGGED` as evidence
@@ -230,7 +253,8 @@ default-deny behavior, exact schema mirroring, versioned policy convergence,
 explicit `pg_catalog` operator/function binding, full canonical `pg_policy`
 command/role/expression identity, tracked normal function/operator dependency
 provenance, unknown-policy fail-closed behavior, post-create/post-repair policy
-verification, canonical payload/timestamp CHECK kind/validation/inheritance
+verification, final relation-level RLS enable/force and policy-semantic
+reverification, canonical payload/timestamp CHECK kind/validation/inheritance
 authority, same-runtime parsed-expression identity, review-stamp traceability,
 post-repair CHECK verification, payload predecessor retirement, ordinary
 logged-public relation identity, runtime schema qualification without caller
@@ -249,17 +273,21 @@ under the trusted package model; it does not claim protection after arbitrary
 SQL execution is granted. Exact-head runtime verification must also exercise a
 non-default caller `search_path`, confirm the canonical outbox relation is still
 selected, confirm the caller's path is unchanged afterward, and execute
-migration 0008 against stale-schema fixtures that omit, defer, or mis-key the
-replay UNIQUE constraint, restore a legacy stricter payload CHECK, replace the
-canonical payload CHECK with same-name/same-stamp `CHECK (true)`, convert the
-outbox to `UNLOGGED`, and replace the operational index with a same-name
-`(created_at, tenant_scope)` index. PostgreSQL must reject the unlogged relation,
-repair the spoofed canonical CHECK so the malformed payload row is rejected, and
-evaluate final policy, payload/timestamp constraints, UPSERT arbiter, and
+migration 0008/0009 against stale-schema fixtures that omit, defer, or mis-key
+the replay UNIQUE constraint, restore a legacy stricter payload CHECK, replace
+the canonical payload CHECK with same-name/same-stamp `CHECK (true)`, replace
+the canonical-v2 policy under the same name with `USING (true) WITH CHECK
+(true)`, disable row-level security while leaving policy rows present, convert
+the outbox to `UNLOGGED`, and replace the operational index with a same-name
+`(created_at, tenant_scope)` index. PostgreSQL must prove the two RLS drift
+states expose both tenant rows to an ordinary `NOSUPERUSER NOBYPASSRLS` probe
+before migration 0009 rejects them, reject the unlogged relation, repair the
+spoofed canonical CHECK so the malformed payload row is rejected, and evaluate
+final policy, payload/timestamp constraints, UPSERT arbiter, and
 operational-index catalog conditions on that exact head. The RLS dependency-OID
-regression is currently a deterministic migration-text contract; a hosted
-PostgreSQL specimen that distinguishes it from the existing `pg_get_expr` guard
-must not be claimed until such a distinct executable catalog state is proven.
+regression remains layered with the expression checks; the final RLS smoke
+exercises the end-to-end tenant-visibility consequence rather than only migration
+text.
 
 ## References
 
