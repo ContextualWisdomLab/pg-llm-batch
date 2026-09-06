@@ -35,8 +35,8 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_rls_probe NOLOGIN NOSUPERUSER NOBYPASSRLS;
-GRANT SELECT ON public.llm_context_lifecycle_outbox TO pg_llm_batch_outbox_rls_probe;
+CREATE ROLE cwl_llm_batch_outbox_rls_probe NOLOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT SELECT ON public.llm_context_lifecycle_outbox TO cwl_llm_batch_outbox_rls_probe;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
@@ -99,7 +99,7 @@ SQL
 visible_rows="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_rls_probe;
+SET LOCAL ROLE cwl_llm_batch_outbox_rls_probe;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
 ROLLBACK;
@@ -137,7 +137,7 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
 visible_rows="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_rls_probe;
+SET LOCAL ROLE cwl_llm_batch_outbox_rls_probe;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
 ROLLBACK;
