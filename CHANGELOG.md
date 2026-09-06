@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox row-admission now treats index operator-class support
+  functions as executable write authority even for a plain nonunique column
+  index. Migration 0009 requires every direct index key to use the default
+  `pg_catalog` operator class for its exact table-column type and the index
+  relation's access method, while still permitting PostgreSQL-core simple
+  indexes such as a nonunique hash index. The wired PostgreSQL smoke proves a
+  custom btree comparator can reject an otherwise canonical event and requires
+  migration failure for that catalog state. Unknown index programs are not
+  auto-dropped; package and Docker migration SQL remain byte-identical.
 - Lifecycle-outbox structural admission now rejects unreviewed user triggers
   and query-rewrite rules attached to the canonical table before later
   CHECK/RLS/UNIQUE/index convergence. PostgreSQL-internal triggers remain
