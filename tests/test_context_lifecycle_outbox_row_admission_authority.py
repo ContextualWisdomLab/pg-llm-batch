@@ -86,6 +86,10 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     assert ") OPERATOR(pg_catalog.=) canonical_valid_time_check_expression" in package_sql
     assert "ck_llm_context_lifecycle_outbox_system_time_canonical_v1" in package_sql
     assert ") OPERATOR(pg_catalog.=) canonical_system_time_check_expression" in package_sql
+    assert "FROM pg_catalog.pg_trigger AS outbox_trigger" in package_sql
+    assert "NOT outbox_trigger.tgisinternal" in package_sql
+    assert "FROM pg_catalog.pg_rewrite AS outbox_rule" in package_sql
+    assert "outbox_rule.ev_class =" in package_sql
     assert "FROM pg_catalog.pg_constraint AS outbox_constraint" in package_sql
     assert "outbox_constraint.contype IN ('c', 'f', 'p', 'u', 'x')" in package_sql
     assert "FROM pg_catalog.pg_class AS outbox_relation" in package_sql
