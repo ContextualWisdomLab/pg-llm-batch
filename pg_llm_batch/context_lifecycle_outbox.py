@@ -95,34 +95,53 @@ def _event_identity_lock_key(tenant_scope: str, evidence_id: str) -> int:
 
 
 def _require_rls_application_role(cursor: Any) -> None:
-    """Reject effective roles with RLS bypass or destructive/executable authority."""
+    """Reject effective or login-selectable roles with unsafe outbox authority."""
     cursor.execute(
-        "SELECT admitted_role.rolsuper "
-        "OR NOT admitted_relation.relrowsecurity "
+        "SELECT NOT admitted_relation.relrowsecurity "
         "OR NOT admitted_relation.relforcerowsecurity "
-        "OR admitted_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner "
+        "OR EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_roles AS selectable_role "
+        "WHERE ("
+        "selectable_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER "
+        "OR selectable_role.rolname OPERATOR(pg_catalog.=) SESSION_USER "
         "OR pg_catalog.pg_has_role("
-        "CURRENT_USER, admitted_relation.relowner, 'USAGE') "
+        "SESSION_USER, selectable_role.oid, 'SET') "
         "OR pg_catalog.pg_has_role("
-        "CURRENT_USER, admitted_relation.relowner, 'SET') "
+        "SESSION_USER, selectable_role.oid, 'MEMBER WITH ADMIN OPTION')"
+        ") AND ("
+        "selectable_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner "
         "OR pg_catalog.pg_has_role("
-        "CURRENT_USER, admitted_relation.relowner, 'MEMBER WITH ADMIN OPTION') "
+        "selectable_role.oid, admitted_relation.relowner, 'USAGE') "
+        "OR pg_catalog.pg_has_role("
+        "selectable_role.oid, admitted_relation.relowner, 'SET') "
+        "OR pg_catalog.pg_has_role("
+        "selectable_role.oid, admitted_relation.relowner, "
+        "'MEMBER WITH ADMIN OPTION') "
         "OR pg_catalog.has_table_privilege("
-        "CURRENT_USER, admitted_relation.oid, 'TRUNCATE') "
+        "selectable_role.oid, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
-        "CURRENT_USER, admitted_relation.oid, 'DELETE') "
+        "selectable_role.oid, admitted_relation.oid, 'DELETE') "
         "OR pg_catalog.has_any_column_privilege("
-        "CURRENT_USER, admitted_relation.oid, 'UPDATE') "
+        "selectable_role.oid, admitted_relation.oid, 'UPDATE') "
         "OR pg_catalog.has_any_column_privilege("
-        "CURRENT_USER, admitted_relation.oid, 'REFERENCES') "
+        "selectable_role.oid, admitted_relation.oid, 'REFERENCES') "
         "OR pg_catalog.has_table_privilege("
-        "CURRENT_USER, admitted_relation.oid, 'TRIGGER'), "
-        "admitted_role.rolbypassrls "
-        "FROM pg_catalog.pg_roles AS admitted_role "
-        "JOIN pg_catalog.pg_class AS admitted_relation "
-        "ON admitted_relation.oid OPERATOR(pg_catalog.=) "
-        "pg_catalog.to_regclass('public.llm_context_lifecycle_outbox') "
-        "WHERE admitted_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER"
+        "selectable_role.oid, admitted_relation.oid, 'TRIGGER')"
+        ")), "
+        "EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_roles AS selectable_role "
+        "WHERE ("
+        "selectable_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER "
+        "OR selectable_role.rolname OPERATOR(pg_catalog.=) SESSION_USER "
+        "OR pg_catalog.pg_has_role("
+        "SESSION_USER, selectable_role.oid, 'SET') "
+        "OR pg_catalog.pg_has_role("
+        "SESSION_USER, selectable_role.oid, 'MEMBER WITH ADMIN OPTION')"
+        ") AND (selectable_role.rolsuper OR selectable_role.rolbypassrls)"
+        ") "
+        "FROM pg_catalog.pg_class AS admitted_relation "
+        "WHERE admitted_relation.oid OPERATOR(pg_catalog.=) "
+        "pg_catalog.to_regclass('public.llm_context_lifecycle_outbox')"
     )
     role_row = cursor.fetchone()
     if type(role_row) is not tuple or role_row != (False, False):
@@ -428,16 +447,15 @@ class PostgresContextLifecycleOutboxStore:
         package-level same-identity serialization without granting ambient ``UPDATE``
         authority over append-only durable evidence. Durable evidence is revalidated
         and must retain the tenant identity explicitly bound to this store before it
-        can return to application code. The effective PostgreSQL role must be a normal
-        RLS subject (`NOSUPERUSER NOBYPASSRLS`) without outbox-owner privileges that
-        are already usable, selectable through `SET ROLE`, or self-grantable through
-        role admin, while the canonical relation still has RLS enabled and forced.
-        That live admission is checked before tenant state is bound or durable rows are
-        touched. Security-critical function and relation authority is explicitly
-        schema-qualified, and ``ONLY`` prevents inherited relations from widening the
-        canonical durable row source if an inheritance edge appears after migration
-        admission. The outbox does not mutate or inherit the caller transaction's
-        ``search_path``.
+        can return to application code. Both the effective ``CURRENT_USER`` and the
+        authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
+        subjects without outbox-owner, destructive, or relation-programming authority,
+        while the canonical relation still has RLS enabled and forced. The live
+        admission is checked before tenant state is bound or durable rows are touched.
+        Security-critical function and relation authority is explicitly schema-qualified,
+        and ``ONLY`` prevents inherited relations from widening the canonical durable
+        row source if an inheritance edge appears after migration admission. The outbox
+        does not mutate or inherit the caller transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
