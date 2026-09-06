@@ -131,6 +131,8 @@ CREATE TEMP TABLE cwl_llm_batch_outbox_definer_path_scope (
     tenant_scope text NOT NULL
 );
 INSERT INTO cwl_llm_batch_outbox_definer_path_scope VALUES ('tenant-b');
+GRANT SELECT ON cwl_llm_batch_outbox_definer_path_scope
+    TO cwl_llm_batch_outbox_definer_path_owner;
 SELECT public.cwl_llm_batch_outbox_definer_path_read();
 ROLLBACK;
 SQL
