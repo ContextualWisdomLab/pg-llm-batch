@@ -62,7 +62,7 @@ class _Psycopg:
 
 
 def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None:
-    """Unknown constraints or executable indexes must not become hidden write authority."""
+    """Unknown or semantically drifted admission objects must fail closed."""
     package_path = lifecycle_outbox._ROW_ADMISSION_AUTHORITY_MIGRATION_PATH
     docker_path = (
         Path(__file__).parents[1]
@@ -75,6 +75,17 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     docker_sql = docker_path.read_text(encoding="utf-8")
 
     assert package_sql == docker_sql
+    assert "canonical_payload_check_expression TEXT" in package_sql
+    assert "canonical_valid_time_check_expression TEXT" in package_sql
+    assert "canonical_system_time_check_expression TEXT" in package_sql
+    assert "CREATE TEMPORARY TABLE pg_llm_batch_outbox_admission_probe_v1" in package_sql
+    assert "pg_catalog.pg_get_expr(conbin, conrelid, false)" in package_sql
+    assert "ck_llm_context_lifecycle_outbox_payload_canonical_v1" in package_sql
+    assert ") OPERATOR(pg_catalog.=) canonical_payload_check_expression" in package_sql
+    assert "ck_llm_context_lifecycle_outbox_valid_time_canonical_v1" in package_sql
+    assert ") OPERATOR(pg_catalog.=) canonical_valid_time_check_expression" in package_sql
+    assert "ck_llm_context_lifecycle_outbox_system_time_canonical_v1" in package_sql
+    assert ") OPERATOR(pg_catalog.=) canonical_system_time_check_expression" in package_sql
     assert "FROM pg_catalog.pg_constraint AS outbox_constraint" in package_sql
     assert "outbox_constraint.contype IN ('c', 'f', 'p', 'u', 'x')" in package_sql
     assert "FROM pg_catalog.pg_index AS admission_index" in package_sql
