@@ -21,16 +21,21 @@
   owner/destructive/programming authority reachable from `CURRENT_USER`,
   `SESSION_USER`, or the session-selectable/administerable role closure, plus
   table- or column-level `SELECT WITH GRANT OPTION` and
-  `INSERT WITH GRANT OPTION`. It must re-prove the sole canonical tenant
-  policy's command, role scope, permissive mode, `USING`/`WITH CHECK`
-  predicates, and reviewed catalog dependencies before tenant binding or outbox
-  SQL. `CREATEDB` and `CREATEROLE` are database/role administration
-  capabilities, `REPLICATION` is separate cluster-level connection and slot
-  authority, and DML grant options are authorization-delegation authority; none
+  `INSERT WITH GRANT OPTION`. A session identity with membership `ADMIN OPTION`
+  over any role carrying outbox `SELECT` or `INSERT` is also rejected, because
+  it can grant that DML-bearing role to another principal even when the object
+  privileges themselves are non-grantable. Admission must re-prove the sole
+  canonical tenant policy's command, role scope, permissive mode,
+  `USING`/`WITH CHECK` predicates, and reviewed catalog dependencies before
+  tenant binding or outbox SQL. `CREATEDB` and `CREATEROLE` are database/role
+  administration capabilities, `REPLICATION` is separate cluster-level
+  connection and slot authority, and both direct DML grant options and
+  DML-bearing role administration are authorization-delegation authority; none
   belongs to application DML. Runtime identities remain
   `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only
   non-grantable outbox `SELECT` and `INSERT`. Migration success is point-in-time
-  evidence, not continuing authority after policy, ACL, or role-attribute DDL.
+  evidence, not continuing authority after policy, ACL, membership, or
+  role-attribute DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
