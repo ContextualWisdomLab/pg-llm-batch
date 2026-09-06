@@ -81,6 +81,17 @@ can call `set_config` with an arbitrary tenant scope; therefore RLS is not a
 substitute for authentication, authorization, SQL-injection prevention, or
 restricted database privileges.
 
+Lifecycle-outbox runtime data access enforces the existing application-role
+requirement before tenant state is bound or outbox rows are touched. The package
+queries `pg_catalog.pg_roles` for effective `CURRENT_USER` and admits only an
+exact `rolsuper = false` and `rolbypassrls = false` result. Superuser,
+`BYPASSRLS`, missing, or ambiguous role catalog state fails closed. This uses the
+effective role rather than parsing DSN identity: PostgreSQL documents superuser
+and `BYPASSRLS` roles as bypassing row security, and `pg_roles` exposes both
+attributes. Installation and migration remain separate operator-authority paths
+and do not reuse this application-data admission gate (PostgreSQL Global
+Development Group, 2026k, 2026l).
+
 The existing `DurableBatchAPIClient` remains source compatible under the
 explicit `standalone` scope. Shared deployments use
 `TenantDurableBatchAPIClient` and its tenant-qualified recorder seam. Direct SQL
@@ -218,7 +229,10 @@ prevented operationally.
 Embedding hosts must derive tenant scope from a trusted identity boundary and
 use application roles that are `NOSUPERUSER NOBYPASSRLS`. Provider, model, and
 transport values cannot select scope. Generic tenant-controlled SQL must not use
-the lifecycle application role.
+the lifecycle application role. Runtime outbox access now checks the effective
+PostgreSQL role at the transaction seam, so connecting or switching to a
+superuser/`BYPASSRLS` identity fails before tenant context or durable row access;
+operator migration sessions remain intentionally separate.
 
 The tenant-qualified key allows identical provider identifiers in separate
 tenants without collision. A missing transaction-local scope is default-deny,
@@ -324,3 +338,10 @@ documentation*. https://www.postgresql.org/docs/18/catalog-pg-type.html
 
 PostgreSQL Global Development Group. (2026j). *pg_depend*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/catalog-pg-depend.html
+
+PostgreSQL Global Development Group. (2026k). *Row security policies*. In
+*PostgreSQL 18 documentation*.
+https://www.postgresql.org/docs/18/ddl-rowsecurity.html
+
+PostgreSQL Global Development Group. (2026l). *pg_roles*. In *PostgreSQL 18
+documentation*. https://www.postgresql.org/docs/18/view-pg-roles.html
