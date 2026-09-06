@@ -120,3 +120,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_exact_columns.sh
       - name: Run lifecycle-outbox UUID default-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_uuid_default_authority.sh
+      - name: Run lifecycle-outbox row-admission authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_row_admission_authority.sh
