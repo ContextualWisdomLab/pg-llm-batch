@@ -9,9 +9,11 @@ The lifecycle-outbox application role is intentionally limited to tenant-qualifi
 
 Direct PostgreSQL object privilege delegation is one authorization path: a principal holding `SELECT` or `INSERT` with `GRANT OPTION` can grant that object privilege onward. Role-membership administration is another. A session identity holding `ADMIN OPTION` over a role can grant that role to other principals. If the administered role carries outbox DML itself, inherits it, or can reach a DML-bearing role through an all-`SET TRUE` membership path, the recipient can obtain the same outbox read/write authority even when every table privilege is non-grantable.
 
-A third path is executable definer code. PostgreSQL `SECURITY DEFINER` functions execute with the privileges of their owner, and newly created functions grant `EXECUTE` to `PUBLIC` by default unless that privilege is explicitly revoked. A runtime identity can therefore remain an ordinary forced-RLS subject with no table grant option and still invoke user-schema code owned by a superuser, `BYPASSRLS` role, or the lifecycle-outbox table owner. The executable function may deliberately expose privileged behavior that the runtime role itself does not hold. Function security is therefore part of the live application-authority envelope, not merely a schema-design concern.
+A third path is executable definer code. PostgreSQL `SECURITY DEFINER` functions execute with the privileges of their owner, and newly created functions grant `EXECUTE` to `PUBLIC` by default unless that privilege is explicitly revoked. A runtime identity can therefore remain an ordinary forced-RLS subject with no table grant option and still invoke user-schema code owned by a principal carrying authority that the runtime role is forbidden to hold directly.
 
-The DML-delegation cases are not described as automatic RLS bypasses: an ordinary delegated principal remains subject to row security. The `SECURITY DEFINER` case is different because the function executes as its owner; if that owner has RLS-bypass or outbox-owner authority, the function can execute with that elevated authority. The package does not attempt to prove that an arbitrary user-defined function body is harmless. Instead it requires ordinary lifecycle-outbox runtime identities not to have executable access to privileged `SECURITY DEFINER` code in user schemas.
+The first repair for this path rejected callable user-schema `SECURITY DEFINER` functions owned by a superuser, `BYPASSRLS` role, or the lifecycle-outbox table owner. That was necessary but incomplete. A distinct non-owner, non-superuser, non-`BYPASSRLS` definer can still hold forbidden relation authority such as `TRUNCATE`. PostgreSQL explicitly states that whole-table operations including `TRUNCATE` and `REFERENCES` are not subject to row security. A callable definer carrying those privileges can therefore cross the same isolation/append-only boundary even though neither caller nor function owner satisfies the earlier three high-level predicates. The same authority-envelope problem applies to definer-held owner membership, `SELECT`/`INSERT` grant options, `DELETE`, `UPDATE`, `REFERENCES`, and `TRIGGER` privileges that the package already rejects on the runtime role itself.
+
+The DML-delegation cases are not described as automatic RLS bypasses: an ordinary delegated principal remains subject to row security. The executable-definer case differs because the function executes as its owner. In particular, `TRUNCATE` and `REFERENCES` are outside RLS, while owner/superuser/`BYPASSRLS` authority can bypass or alter the row-security boundary. The package does not attempt to prove that an arbitrary user-defined function body is harmless. Instead it requires ordinary lifecycle-outbox runtime identities not to have executable access to user-schema `SECURITY DEFINER` code whose owner can exercise any outbox authority that the ordinary runtime envelope forbids.
 
 ## Decision
 
@@ -29,11 +31,11 @@ Finally, each selectable/administerable runtime role is rejected when all of the
 
 - a non-system-schema routine is marked `SECURITY DEFINER`;
 - that role has schema `USAGE` and routine `EXECUTE` authority; and
-- the definer is a superuser, a `BYPASSRLS` role, or the canonical lifecycle-outbox table owner.
+- the definer carries any forbidden lifecycle-outbox authority: superuser, `BYPASSRLS`, exact table ownership, inherited/exercisable owner authority, table/column `SELECT WITH GRANT OPTION` or `INSERT WITH GRANT OPTION`, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
 
-The executable-definer check uses `pg_catalog.pg_proc.prosecdef`, the function owner OID, schema identity, `has_schema_privilege(..., 'USAGE')`, and `has_function_privilege(..., 'EXECUTE')` inside the existing catalog admission round trip. PostgreSQL-owned `pg_*` schemas and `information_schema` are excluded from this user-schema guard so the package does not blanket-reject trusted server routines merely because PostgreSQL exposes a system `SECURITY DEFINER` object. The supported application boundary instead prohibits reachable privileged definer code in operator/application schemas. That is deliberately stronger than attempting to parse or allow-list arbitrary function bodies.
+The executable-definer check uses `pg_catalog.pg_proc.prosecdef`, the function owner OID, schema identity, `has_schema_privilege(..., 'USAGE')`, `has_function_privilege(..., 'EXECUTE')`, `pg_has_role(..., relowner, 'USAGE')`, and PostgreSQL's table/column privilege inquiry functions inside the existing catalog admission round trip. PostgreSQL-owned `pg_*` schemas and `information_schema` are excluded from this user-schema guard so the package does not blanket-reject trusted server routines merely because PostgreSQL exposes a system `SECURITY DEFINER` object. The supported application boundary instead prohibits reachable privileged definer code in operator/application schemas. That is deliberately stronger than attempting to parse or allow-list arbitrary function bodies.
 
-The package does not silently revoke object grant options, role membership administration, routine `EXECUTE`, or schema `USAGE`. Operator/migration authority remains responsible for ACL, membership, and routine reconciliation. Runtime admission only proves that the live connection authority is inside the package boundary before tenant binding or outbox data SQL.
+The package does not silently revoke object grant options, role membership administration, routine `EXECUTE`, schema `USAGE`, or definer-owner relation privileges. Operator/migration authority remains responsible for ACL, membership, and routine reconciliation. Runtime admission only proves that the live connection authority is inside the package boundary before tenant binding or outbox data SQL.
 
 ## Alternatives considered
 
@@ -59,7 +61,15 @@ Rejected as over-broad. Administration of a role with no effective outbox DML an
 
 ### Trust callable `SECURITY DEFINER` functions when the runtime role itself is ordinary
 
-Rejected. PostgreSQL executes the function with its owner's privileges, so the caller's own `NOSUPERUSER`/`NOBYPASSRLS` attributes do not describe the authority used inside the function. The executable privilege edge must therefore be part of runtime admission.
+Rejected. PostgreSQL executes the function with its owner's privileges, so the caller's own `NOSUPERUSER`/`NOBYPASSRLS` attributes and direct ACLs do not describe the authority used inside the function. The executable privilege edge must therefore be part of runtime admission.
+
+### Reject only superuser, `BYPASSRLS`, or exact-owner definers
+
+Rejected as incomplete. A separate ordinary definer role can hold `TRUNCATE`, `REFERENCES`, mutation/programming privileges, grant options, or exercisable owner-role authority without satisfying any of those three predicates. `TRUNCATE` is a concrete destructive counterexample because PostgreSQL does not subject it to row security. Runtime admission must compare executable definer authority against the same forbidden outbox relation-authority envelope used for the runtime role itself.
+
+### Reject only definer-held `TRUNCATE`
+
+Rejected as symptom-specific. `TRUNCATE` provides the clearest executable specimen, but fixing only that privilege would leave equivalent indirect paths for the other relation capabilities the package already treats as incompatible with the append-only/least-authority runtime boundary.
 
 ### Parse or allow-list user-defined `SECURITY DEFINER` bodies
 
@@ -75,7 +85,7 @@ Rejected. PostgreSQL already provides access/role inquiry functions that account
 
 ### Revoke delegation or routine authority automatically at runtime
 
-Rejected. Runtime code does not own database authorization policy. Silent ACL, membership, or function privilege mutation would cross the application/operator bounded-context boundary and could invalidate independently managed access-control evidence.
+Rejected. Runtime code does not own database authorization policy. Silent ACL, membership, function, or relation-privilege mutation would cross the application/operator bounded-context boundary and could invalidate independently managed access-control evidence.
 
 ## Verification lineage
 
@@ -99,29 +109,38 @@ Executable-definer lineage:
 - static RED `5df43f259739e1a1a80ec0723a702a4f6e0e2a26` requires live admission to inspect callable `SECURITY DEFINER` routines, their owners, and schema/function execution authority;
 - executable PostgreSQL specimen `07d1181c903b7aa5c50b48e330d9d50d2cf42306` creates a superuser-owned `SECURITY DEFINER` function in `public`, proves a tenant-bound ordinary role can call it and observe both tenant rows, and requires package admission to fail closed before ordinary data SQL;
 - the first hosted attempt of that specimen was blocked earlier in the container lane because PostgreSQL 16.15 rejects role names beginning with the reserved `pg_` prefix. Fixture-only repairs `c7f5b4dee8c8a592fae5b91ef1884c900003146a`, `43de9d87429dad24c3edf6cf519711f64c60b4df`, `98bb2c3b377dd12b6769634e8d7ac045af3dd03f`, `270f27e4f2c1c6273777544fe3df93a545d0aede`, `5ebac6e9990ca9c9f83b0fd9b129db38a0677e48`, and `29f02d77bfea9a23f9fa7484305d6495e43107fb` move the affected acceptance identities to the non-reserved `cwl_` namespace without changing production authorization semantics;
-- causal production repair `df5a3bbbfbf9512ce1fab5bb13e6f15906f216ac` rejects executable privileged user-schema `SECURITY DEFINER` authority in the existing single catalog round trip;
-- documentation-test convergence `02eb46b779235bd3ca6d66c42b7ace828588a874` also makes the operator-documentation contract assert the complete runtime-role attribute boundary rather than a stale adjacent substring.
+- first causal production repair `df5a3bbbfbf9512ce1fab5bb13e6f15906f216ac` rejects executable user-schema `SECURITY DEFINER` authority when the definer is superuser, `BYPASSRLS`, or exact table owner;
+- documentation-test convergence `02eb46b779235bd3ca6d66c42b7ace828588a874` makes the operator-documentation contract assert the complete runtime-role attribute boundary rather than a stale adjacent substring;
+- static extension RED `511ef1ec7ace1cee624495c3d8eaa495647f5ce5` requires callable definers to be checked for inherited owner authority, grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, and `TRIGGER`, not only the three high-level owner/RLS predicates;
+- executable PostgreSQL specimen `0a32e44ef29afb14d1247ce15d5e772e30fe16ed` adds an ordinary non-owner, non-superuser, non-`BYPASSRLS` definer carrying only outbox `TRUNCATE`, proves an ordinary runtime login can execute that function and empty the outbox, and requires package admission to reject the callable authority. Hosted execution of this current lineage remains pending;
+- causal production repair `d1b225635e63448652ca74a63255a955564e11b5` extends the existing single catalog round trip to compare executable definer owners against the full forbidden outbox relation-authority envelope without mutating ACLs.
 
 Exact-head hosted GREEN is required before this ADR can become Accepted. Earlier or partially executed heads are evidence lineage only and are not transferred to the current head.
 
 ## Consequences
 
-The runtime identity may use only the DML it needs and may not redistribute that DML directly, manufacture another DML-bearing membership, or invoke user-schema definer code whose owner reintroduces privileged outbox/RLS authority. Security review and SOC 2/CSAP evidence can therefore treat privilege delegation and privileged definer execution as operator-owned authorization change rather than application behavior. The added predicates remain in the existing catalog admission round trip; no second database query or silent ACL repair is introduced.
+The runtime identity may use only the DML it needs and may not redistribute that DML directly, manufacture another DML-bearing membership, or invoke user-schema definer code whose owner reintroduces forbidden outbox authority. Security review and SOC 2/CSAP evidence can therefore treat privilege delegation and privileged definer execution as operator-owned authorization change rather than application behavior. The added predicates remain in the existing catalog admission round trip; no second database query or silent ACL repair is introduced.
 
-This deliberately narrows the supported deployment envelope. A database that intentionally exposes a superuser-, `BYPASSRLS`-, or outbox-owner-defined `SECURITY DEFINER` API to the same runtime principal must separate that API behind another connection/role or remove the runtime principal's executable path before using the lifecycle outbox. That operational inconvenience is preferable to claiming forced-RLS separation while the same identity can execute owner-level code.
+This deliberately narrows the supported deployment envelope. A database that intentionally exposes a user-schema `SECURITY DEFINER` API whose owner carries superuser, `BYPASSRLS`, lifecycle-outbox ownership, owner-membership, grant-option, destructive/mutating, reference, or trigger authority to the same runtime principal must separate that API behind another connection/role or remove the runtime principal's executable path before using the lifecycle outbox. That operational inconvenience is preferable to claiming forced-RLS/append-only separation while the same identity can execute privileged relation code.
+
+The guard is authority-based rather than body-based. A privileged definer may be harmless today, but admitting it would make a later body replacement an application-isolation change without changing the runtime role itself. Conversely, ordinary `SECURITY DEFINER` functions whose owners do not carry the forbidden outbox authority remain outside this specific rejection predicate; operator policy may choose a stricter database-wide prohibition.
 
 ## References
 
 PostgreSQL Global Development Group. (2026a). *PostgreSQL 18 documentation: 5.8. Privileges*. https://www.postgresql.org/docs/18/ddl-priv.html
 
-PostgreSQL Global Development Group. (2026b). *PostgreSQL 18 documentation: 21.3. Role membership*. https://www.postgresql.org/docs/18/role-membership.html
+PostgreSQL Global Development Group. (2026b). *PostgreSQL 18 documentation: 5.9. Row security policies*. https://www.postgresql.org/docs/18/ddl-rowsecurity.html
 
-PostgreSQL Global Development Group. (2026c). *PostgreSQL 18 documentation: GRANT*. https://www.postgresql.org/docs/18/sql-grant.html
+PostgreSQL Global Development Group. (2026c). *PostgreSQL 18 documentation: 21.3. Role membership*. https://www.postgresql.org/docs/18/role-membership.html
 
-PostgreSQL Global Development Group. (2026d). *PostgreSQL 18 documentation: 9.27. System information functions and operators*. https://www.postgresql.org/docs/18/functions-info.html
+PostgreSQL Global Development Group. (2026d). *PostgreSQL 18 documentation: GRANT*. https://www.postgresql.org/docs/18/sql-grant.html
 
-PostgreSQL Global Development Group. (2026e). *PostgreSQL 18 documentation: SET ROLE*. https://www.postgresql.org/docs/18/sql-set-role.html
+PostgreSQL Global Development Group. (2026e). *PostgreSQL 18 documentation: 9.27. System information functions and operators*. https://www.postgresql.org/docs/18/functions-info.html
 
-PostgreSQL Global Development Group. (2026f). *PostgreSQL 18 documentation: CREATE FUNCTION*. https://www.postgresql.org/docs/18/sql-createfunction.html
+PostgreSQL Global Development Group. (2026f). *PostgreSQL 18 documentation: SET ROLE*. https://www.postgresql.org/docs/18/sql-set-role.html
 
-PostgreSQL Global Development Group. (2026g). *PostgreSQL 18 documentation: 21.6. Function security*. https://www.postgresql.org/docs/18/perm-functions.html
+PostgreSQL Global Development Group. (2026g). *PostgreSQL 18 documentation: CREATE FUNCTION*. https://www.postgresql.org/docs/18/sql-createfunction.html
+
+PostgreSQL Global Development Group. (2026h). *PostgreSQL 18 documentation: 21.6. Function security*. https://www.postgresql.org/docs/18/perm-functions.html
+
+PostgreSQL Global Development Group. (2026i). *PostgreSQL 18 documentation: TRUNCATE*. https://www.postgresql.org/docs/18/sql-truncate.html
