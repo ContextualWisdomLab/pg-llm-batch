@@ -39,6 +39,7 @@ CREATE ROLE pg_llm_batch_outbox_bypass LOGIN NOSUPERUSER BYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_inert LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_truncate LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_delete LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_references LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_trigger LOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
@@ -47,6 +48,7 @@ GRANT USAGE ON SCHEMA public
        pg_llm_batch_outbox_owner,
        pg_llm_batch_outbox_inert,
        pg_llm_batch_outbox_truncate,
+       pg_llm_batch_outbox_delete,
        pg_llm_batch_outbox_references,
        pg_llm_batch_outbox_trigger;
 GRANT CREATE ON SCHEMA public TO pg_llm_batch_outbox_owner;
@@ -55,10 +57,13 @@ GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
        pg_llm_batch_outbox_bypass,
        pg_llm_batch_outbox_inert,
        pg_llm_batch_outbox_truncate,
+       pg_llm_batch_outbox_delete,
        pg_llm_batch_outbox_references,
        pg_llm_batch_outbox_trigger;
 GRANT TRUNCATE ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_truncate;
+GRANT DELETE ON public.llm_context_lifecycle_outbox
+    TO pg_llm_batch_outbox_delete;
 GRANT REFERENCES (tenant_scope, evidence_id)
     ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_references;
@@ -193,6 +198,27 @@ if [[ "${truncate_visible}" != "0" ]]; then
   exit 1
 fi
 
+# DELETE remains subject to RLS, but this outbox is append-only durability evidence.
+# A normal tenant role with DELETE can erase its own committed publication intent and
+# thereby turn an idempotent replay into a new first write. Prove that authority inside
+# a rollback transaction, then require production admission to reject it below.
+delete_remaining="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_delete;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+DELETE FROM public.llm_context_lifecycle_outbox
+WHERE tenant_scope = 'tenant-a' AND evidence_id = 'role-authority-a';
+RESET ROLE;
+SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
+ROLLBACK;
+SQL
+)"
+if [[ "${delete_remaining}" != "1" ]]; then
+  echo "DELETE specimen did not demonstrate tenant-local durable-intent erasure" >&2
+  exit 1
+fi
+
 # Column-level REFERENCES is independently grantable. Prove the role can create a
 # foreign-key dependency on the canonical replay key; production admission below must
 # reject that authority even though it is not a table-level REFERENCES grant.
@@ -282,6 +308,7 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
 
         for unsafe_role in (
             "pg_llm_batch_outbox_truncate",
+            "pg_llm_batch_outbox_delete",
             "pg_llm_batch_outbox_references",
             "pg_llm_batch_outbox_trigger",
         ):
@@ -292,7 +319,7 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
                 assert "separated forced RLS authority" in str(exc)
             else:
                 raise AssertionError(
-                    f"{unsafe_role} reached lifecycle outbox data SQL with RLS-exempt authority"
+                    f"{unsafe_role} reached lifecycle outbox data SQL with unsafe relation authority"
                 )
             cursor.execute("RESET ROLE")
 
