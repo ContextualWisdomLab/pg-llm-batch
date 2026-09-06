@@ -13,6 +13,75 @@ BEGIN
         RAISE EXCEPTION 'lifecycle outbox relation is unavailable';
     END IF;
 
+    -- RLS is final row-admission authority, not merely a migration-0008 side effect.
+    -- A restore/operator can disable relation-level enforcement or replace the sole
+    -- canonical policy under the same name after 0008 was recorded as applied. Final
+    -- admission therefore proves both relation flags and the complete policy catalog
+    -- identity without attempting to repair operator drift.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS outbox_relation
+        WHERE outbox_relation.oid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND outbox_relation.relrowsecurity
+          AND outbox_relation.relforcerowsecurity
+    ) OR (
+        SELECT pg_catalog.count(*)
+        FROM pg_catalog.pg_policy AS outbox_policy
+        WHERE outbox_policy.polrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+    ) OPERATOR(pg_catalog.<>) 1 OR NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_policy AS outbox_policy
+        WHERE outbox_policy.polrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND outbox_policy.polname OPERATOR(pg_catalog.=)
+              'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2'
+          AND outbox_policy.polcmd OPERATOR(pg_catalog.=) '*'
+          AND outbox_policy.polpermissive
+          AND outbox_policy.polroles OPERATOR(pg_catalog.=) ARRAY[0::pg_catalog.oid]
+          AND pg_catalog.pg_get_expr(
+              outbox_policy.polqual,
+              outbox_policy.polrelid,
+              false
+          ) OPERATOR(pg_catalog.=)
+              '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+          AND pg_catalog.pg_get_expr(
+              outbox_policy.polwithcheck,
+              outbox_policy.polrelid,
+              false
+          ) OPERATOR(pg_catalog.=)
+              '(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))'
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pg_catalog.pg_depend AS unexpected_policy_dependency
+              WHERE unexpected_policy_dependency.classid OPERATOR(pg_catalog.=)
+                    'pg_catalog.pg_policy'::pg_catalog.regclass
+                AND unexpected_policy_dependency.objid OPERATOR(pg_catalog.=)
+                    outbox_policy.oid
+                AND unexpected_policy_dependency.objsubid OPERATOR(pg_catalog.=) 0
+                AND unexpected_policy_dependency.refobjsubid OPERATOR(pg_catalog.=) 0
+                AND unexpected_policy_dependency.deptype::pg_catalog.text
+                    OPERATOR(pg_catalog.=) 'n'
+                AND (
+                    (
+                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)
+                            'pg_catalog.pg_proc'::pg_catalog.regclass
+                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)
+                            'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure
+                    )
+                    OR (
+                        unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=)
+                            'pg_catalog.pg_operator'::pg_catalog.regclass
+                        AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>)
+                            'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator
+                    )
+                )
+          )
+    ) THEN
+        RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
+    END IF;
+
     -- Migration 0009 is the final row-admission gate and must independently verify
     -- CHECK semantics even when migration 0008 was recorded as applied before later
     -- restore/operator drift. Derive parser-normalized canonical expressions from this
