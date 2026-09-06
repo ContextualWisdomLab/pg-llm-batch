@@ -68,15 +68,18 @@ selection is not owned by this repository.
   for existing-volume cleanup and rollback compatibility.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
 - Tenant-scoped lifecycle deployments require an application database role with
-  `NOSUPERUSER NOBYPASSRLS`, forced-RLS subject authority, and a trusted host
-  authorization boundary. The lifecycle-outbox runtime role is append-only: it
-  needs `SELECT` and `INSERT` but must not hold `UPDATE`, `DELETE`, `TRUNCATE`,
-  `REFERENCES`, `TRIGGER`, ownership, or exercisable owner-role authority. Replay
-  serialization uses a transaction advisory lock rather than granting UPDATE for
-  `SELECT ... FOR UPDATE`. Runtime admission also re-proves the sole canonical
-  tenant policy's command, role scope, permissive mode, `USING`/`WITH CHECK`
-  predicates, and reviewed catalog dependencies before tenant binding or outbox
-  SQL; migration success alone is not continuing RLS authority.
+  `NOSUPERUSER NOREPLICATION NOBYPASSRLS`, forced-RLS subject authority, and a
+  trusted host authorization boundary. The lifecycle-outbox runtime role is
+  append-only: it needs `SELECT` and `INSERT` but must not hold `UPDATE`,
+  `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`, ownership, exercisable
+  owner-role authority, or PostgreSQL replication authority. `REPLICATION` is a
+  separate cluster-level connection/slot capability and belongs to an operator
+  identity. Replay serialization uses a transaction advisory lock rather than
+  granting UPDATE for `SELECT ... FOR UPDATE`. Runtime admission also re-proves
+  the sole canonical tenant policy's command, role scope, permissive mode,
+  `USING`/`WITH CHECK` predicates, and reviewed catalog dependencies before
+  tenant binding or outbox SQL; migration success alone is not continuing RLS
+  authority.
 
 ---
 
@@ -270,13 +273,14 @@ rewrite explicitly before reapplying the migration.
 
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
-application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
-a generic SQL surface, and still require normal authentication, authorization,
-and SQL-injection controls. Direct SQL consumers that do not establish an
-authorized tenant scope see no lifecycle rows after RLS is enabled. The outbox
-application role must also remain append-only: `UPDATE`, `DELETE`, `TRUNCATE`,
-`REFERENCES`, and `TRIGGER` belong to separated operator identities, not the
-runtime role.
+application roles must be `NOSUPERUSER NOREPLICATION NOBYPASSRLS`, must not be
+exposed through a generic SQL surface, and still require normal authentication,
+authorization, and SQL-injection controls. Direct SQL consumers that do not
+establish an authorized tenant scope see no lifecycle rows after RLS is enabled.
+The outbox application role must also remain append-only: `UPDATE`, `DELETE`,
+`TRUNCATE`, `REFERENCES`, and `TRIGGER` belong to separated operator identities,
+not the runtime role; PostgreSQL replication-mode connection and replication-slot
+authority likewise belongs to a separate replication/operator identity.
 
 See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
 migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
@@ -409,8 +413,6 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
-- [`docs/papers/`](docs/papers/) — CC BY 4.0 reference papers on LLM batching
-  (PagedAttention/vLLM, DeepSpeed-FastGen) with citations.
 
 ## License
 
