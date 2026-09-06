@@ -13,6 +13,12 @@ ARCHITECTURE_PATH = REPOSITORY_ROOT / "ARCHITECTURE.md"
 DOCTORING_PATH = (
     REPOSITORY_ROOT / "docs" / "doctoring" / "tenant-scoped-lifecycle.md"
 )
+RUNTIME_ROLE_DOCTORING_PATH = (
+    REPOSITORY_ROOT
+    / "docs"
+    / "doctoring"
+    / "lifecycle-outbox-runtime-role-authority.md"
+)
 IMPLEMENTATION_PLAN_PATH = (
     REPOSITORY_ROOT
     / "docs"
@@ -66,6 +72,17 @@ def test_architecture_and_doctoring_bound_the_custom_guc_claim() -> None:
         assert "set_config" in document
         assert "trusted application boundary" in document
         assert "not a substitute" in document
+
+
+def test_runtime_role_doctoring_includes_createrole_definer_boundary() -> None:
+    """Operator evidence must cover indirect role administration through definers."""
+    doctoring = _normalized(RUNTIME_ROLE_DOCTORING_PATH)
+
+    assert "SECURITY DEFINER" in doctoring
+    assert "CREATEROLE" in doctoring
+    assert "NOCREATEROLE" in doctoring
+    assert "createrole_self_grant" in doctoring
+    assert "554189734a8ef257ba9a496f984866f2fea03709" in doctoring
 
 
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
