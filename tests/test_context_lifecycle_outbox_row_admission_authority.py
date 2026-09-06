@@ -90,7 +90,7 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     assert "NOT outbox_trigger.tgisinternal" in package_sql
     assert "FROM pg_catalog.pg_rewrite AS outbox_rule" in package_sql
     assert "outbox_rule.ev_class =" in package_sql
-    assert "FROM pg_catalog.pg_attrdef AS admission_default" in package_sql
+    assert "JOIN pg_catalog.pg_attrdef AS admission_default" in package_sql
     assert "admission_attribute.attname OPERATOR(pg_catalog.=) 'context_outbox_uuid'" in package_sql
     assert "'gen_random_uuid()'" in package_sql
     assert "admission_attribute.attname OPERATOR(pg_catalog.=) 'created_at'" in package_sql
