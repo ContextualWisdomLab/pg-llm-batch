@@ -37,27 +37,30 @@
   principal check is transitive: once a caller can enter a user-schema
   `SECURITY DEFINER`, admission must recursively follow any further user-schema
   `SECURITY DEFINER` that the discovered owner can execute through schema `USAGE`
-  plus routine `EXECUTE`, using a cycle-safe owner closure. A safe outer owner
-  therefore cannot hide a dangerous inner definer that the caller cannot execute
-  directly. PostgreSQL lets the membership administrator grant a role onward even
-  when that administrator's own membership is `INHERIT FALSE, SET FALSE`; the
-  recipient can then use the granted selectable path after a security-definer call
-  returns. `SECURITY DEFINER` executes with its owner's privileges rather than the
-  caller's privileges. Admission must re-prove the sole canonical tenant policy's
-  command, role scope, permissive mode, `USING`/`WITH CHECK` predicates, and
-  reviewed catalog dependencies before tenant binding or outbox SQL. Direct
-  runtime `CREATEDB` and `CREATEROLE` are database/role administration
-  capabilities; callable `CREATEROLE` is executable within the definer boundary,
-  while `CREATEDB` remains covered when membership administration grants that
-  authority onward for later invoker-context use. `REPLICATION` is separate
-  cluster-level connection and slot authority whether held directly or anywhere
-  in the callable-definer owner closure, and direct DML grant options, relation
-  maintenance, authority-bearing role administration, and executable privileged
-  definer authority are outside application DML. Runtime identities remain
-  `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only
-  non-grantable outbox `SELECT` and `INSERT`. Migration success is point-in-time
-  evidence, not continuing authority after policy, ACL, membership, routine, or
-  role-attribute DDL.
+  plus routine `EXECUTE`, using a cycle-safe owner closure. Every callable routine
+  in that closure must also pin routine-level `search_path = pg_catalog, pg_temp`;
+  absent or different name-resolution authority is rejected before tenant binding
+  or outbox data SQL rather than inheriting caller temporary-schema state. A safe
+  outer owner therefore cannot hide a dangerous inner definer that the caller
+  cannot execute directly. PostgreSQL lets the membership administrator grant a
+  role onward even when that administrator's own membership is `INHERIT FALSE,
+  SET FALSE`; the recipient can then use the granted selectable path after a
+  security-definer call returns. `SECURITY DEFINER` executes with its owner's
+  privileges rather than the caller's privileges. Admission must re-prove the sole
+  canonical tenant policy's command, role scope, permissive mode, `USING`/`WITH
+  CHECK` predicates, and reviewed catalog dependencies before tenant binding or
+  outbox SQL. Direct runtime `CREATEDB` and `CREATEROLE` are database/role
+  administration capabilities; callable `CREATEROLE` is executable within the
+  definer boundary, while `CREATEDB` remains covered when membership
+  administration grants that authority onward for later invoker-context use.
+  `REPLICATION` is separate cluster-level connection and slot authority whether
+  held directly or anywhere in the callable-definer owner closure, and direct DML
+  grant options, relation maintenance, authority-bearing role administration, and
+  executable privileged definer authority are outside application DML. Runtime
+  identities remain `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
+  NOBYPASSRLS` and need only non-grantable outbox `SELECT` and `INSERT`. Migration
+  success is point-in-time evidence, not continuing authority after policy, ACL,
+  membership, routine, or role-attribute DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
