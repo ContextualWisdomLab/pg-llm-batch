@@ -112,10 +112,14 @@ role or a generic SQL console to untrusted tenants. Use parameterized package
 helpers or a separately reviewed security-definer/role-mapping layer when raw
 SQL access is required.
 
-Production application identities must be `NOSUPERUSER NOBYPASSRLS`. PostgreSQL
-superusers and roles with `BYPASSRLS` always bypass row security. Table owners
-are included only because the schema applies `FORCE ROW LEVEL SECURITY`.
-Administrative bypass roles must not be used by ordinary services.
+Production application identities must be
+`NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`. PostgreSQL
+superusers and roles with `BYPASSRLS` bypass row security, while `CREATEDB`,
+`CREATEROLE`, and `REPLICATION` grant database creation, role administration, or
+cluster-level replication authority unrelated to tenant application DML. Table
+owners are included only because the schema applies `FORCE ROW LEVEL SECURITY`.
+Administrative, owner, database/role-management, and replication identities must
+remain separate operator connections and must not be used by ordinary services.
 
 ## Data model
 
@@ -350,19 +354,23 @@ logged-public outbox relation identity, exact schema mirroring, Python
 3.10/3.12/3.14 compatibility, complete public docstrings, and 100% production
 statement and branch coverage.
 
-The live PostgreSQL integration test uses a `NOSUPERUSER NOBYPASSRLS` role,
-persists an identical provider identifier in two tenant scopes, and proves that
-a transaction bound to one scope cannot read the other scope through the
-policy. This test verifies policy mechanics under the trusted package model; it
-does not claim protection after arbitrary SQL execution is granted. Exact-head
-runtime execution must also run migration 0008/0009 against stale replay-key
-schema variants, a spoofed same-name/same-stamp canonical payload CHECK, a
-same-name widened canonical-v2 RLS policy, disabled relation-level RLS, and an
-`UNLOGGED` outbox. PostgreSQL must reject the unlogged durability drift, prove
-the two RLS drift cases expose both tenant rows to the ordinary probe before
-repair, and require migration 0009 itself to reject those noncanonical final
-states. The final suite must also evaluate canonical payload/timestamp predicate
-identity and the `ON CONFLICT` arbiter conditions on the exact head.
+The live PostgreSQL integration test uses a
+`NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` role, persists
+an identical provider identifier in two tenant scopes, and proves that a
+transaction bound to one scope cannot read the other scope through the policy.
+This test verifies policy mechanics under the trusted package model; it does not
+claim protection after arbitrary SQL execution is granted. Exact-head runtime
+execution must also reject dedicated `CREATEDB`, `CREATEROLE`, and `REPLICATION`
+login specimens that otherwise hold only outbox `SELECT, INSERT`, after the
+PostgreSQL smoke directly proves the corresponding administrative capabilities.
+It must also run migration 0008/0009 against stale replay-key schema variants, a
+spoofed same-name/same-stamp canonical payload CHECK, a same-name widened
+canonical-v2 RLS policy, disabled relation-level RLS, and an `UNLOGGED` outbox.
+PostgreSQL must reject the unlogged durability drift, prove the two RLS drift
+cases expose both tenant rows to the ordinary probe before repair, and require
+migration 0009 itself to reject those noncanonical final states. The final suite
+must also evaluate canonical payload/timestamp predicate identity and the
+`ON CONFLICT` arbiter conditions on the exact head.
 
 ## References
 
@@ -414,3 +422,6 @@ documentation*. https://www.postgresql.org/docs/18/sql-insert.html
 
 PostgreSQL Global Development Group. (2026j). *CREATE TABLE*. In *PostgreSQL 18
 documentation*. https://www.postgresql.org/docs/18/sql-createtable.html
+
+PostgreSQL Global Development Group. (2026k). *Role attributes*. In *PostgreSQL
+18 documentation*. https://www.postgresql.org/docs/18/role-attributes.html

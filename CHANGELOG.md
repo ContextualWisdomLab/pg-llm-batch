@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime role admission now rejects PostgreSQL `CREATEDB` and
+  `CREATEROLE` authority across the effective/session-selectable/administerable
+  role closure. The application connection still needs only outbox `SELECT` and
+  `INSERT`; database creation and role administration remain separate operator
+  capabilities. The PostgreSQL session-authority smoke gives otherwise-minimal
+  runtime logins real `CREATEDB`/`CREATEROLE`, proves those administrative
+  operations execute, and requires package admission to fail closed before
+  tenant binding or outbox data SQL. This is a least-privilege separation, not a
+  claim that either attribute automatically bypasses RLS.
 - Lifecycle-outbox runtime role admission now rejects PostgreSQL `REPLICATION`
   authority across the effective/session-selectable/administerable role closure.
   The application connection needs only outbox `SELECT` and `INSERT`; replication

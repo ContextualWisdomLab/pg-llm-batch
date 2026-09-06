@@ -15,7 +15,11 @@ A later review found that effective `CURRENT_USER` alone is not sufficient. Post
 
 The same live boundary includes the canonical RLS policy itself. Migration 0009 is point-in-time installer evidence: a table owner can later replace the policy under the same name while leaving both relation RLS flags enabled. Runtime therefore checks the sole canonical policy identity, command and role scope, permissive mode, parser-normalized `USING`/`WITH CHECK` expressions, and reviewed catalog dependencies before it binds tenant state or touches durable rows.
 
-Fresh review found one additional authority class missing from that closure: PostgreSQL `REPLICATION`. A `REPLICATION` role can initiate replication connections and create or drop replication slots; PostgreSQL describes it as a very highly privileged role that should only be used for replication. That attribute is not ordinary outbox DML authority and is not, by itself, asserted here to bypass RLS: publisher row-security policies can still execute for a non-superuser replication role without `BYPASSRLS`. The product boundary is narrower and clearer: a tenant application connection that needs only `SELECT` and `INSERT` must not co-locate cluster-level replication connection/slot authority. Replication identities belong to a separate operator boundary.
+Fresh review first found one additional authority class missing from that closure: PostgreSQL `REPLICATION`. A `REPLICATION` role can initiate replication connections and create or drop replication slots; PostgreSQL describes it as a very highly privileged role that should only be used for replication. That attribute is not ordinary outbox DML authority and is not, by itself, asserted here to bypass RLS: publisher row-security policies can still execute for a non-superuser replication role without `BYPASSRLS`. The product boundary is narrower and clearer: a tenant application connection that needs only `SELECT` and `INSERT` must not co-locate cluster-level replication connection/slot authority. Replication identities belong to a separate operator boundary.
+
+The next exact-head review found the same separation gap for `CREATEDB` and `CREATEROLE`. PostgreSQL grants `CREATEDB` the ability to create databases, while `CREATEROLE` permits creating roles and administering roles for which the principal has the required administration authority. These attributes are not needed by lifecycle-outbox DML and are role/database administration authority at the cluster boundary. They therefore belong with migration/operator identities, not the tenant application connection. The decision does not claim either attribute automatically bypasses RLS; it rejects unnecessary administrative capability from a least-privilege runtime identity before any tenant binding or outbox SQL.
+
+PostgreSQL role attributes are not inherited merely because a role membership is inherited. However, a session with `SET` authority can become a role carrying such an attribute. The existing session-selectable/administerable closure is therefore still the relevant runtime authority envelope: every role the authenticated session can become or make selectable must satisfy the same application-role restrictions.
 
 PostgreSQL also permits an initially authenticated superuser to change `SESSION_USER` with `SET SESSION AUTHORIZATION` and later reset it. The package cannot recover a deliberately hidden original database-role identity from the post-change session state. Admin-originated or replication-originated sessions that downgrade after connection establishment are therefore outside the supported runtime deployment boundary.
 
@@ -25,13 +29,13 @@ PostgreSQL also permits an initially authenticated superuser to change `SESSION_
 - Preserve same-tenant/same-event serialization across package writers.
 - Do not parse DSN usernames as authorization evidence; inspect live PostgreSQL role/catalog authority.
 - Re-prove effective `CURRENT_USER`, authenticated `SESSION_USER`, and every session-selectable/administerable role before tenant binding or outbox data SQL.
-- Require the entire admitted closure to remain `NOSUPERUSER NOREPLICATION NOBYPASSRLS` and outside outbox owner/destructive/programming authority.
+- Require the entire admitted closure to remain `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and outside outbox owner/destructive/programming authority.
 - Re-prove the sole canonical RLS policy's live identity, command, role scope, permissive mode, `USING`, `WITH CHECK`, and reviewed catalog dependencies in the same runtime admission round trip.
 - Do not claim to detect an original administrator or replication identity after deliberate session-authorization downgrade; such sessions are unsupported.
 - Do not rerun migration 0009 on every read/write.
 - Do not grant mutation authority merely to obtain a coordination lock.
 - Do not reject inert role-membership edges when neither inherited `USAGE`, `SET`, nor admin authority is exercisable.
-- Runtime authority must remain sufficient for the actual package SQL: `SELECT` and `INSERT`, with no ambient or selectable/administerable `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES`, or `TRIGGER` on the outbox.
+- Runtime authority must remain sufficient for the actual package SQL: `SELECT` and `INSERT`, with no ambient or selectable/administerable database creation, role administration, `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES`, or `TRIGGER` authority.
 - Coordination identity must not expose tenant or evidence content in logs or errors.
 - A coordination-key collision may serialize unrelated work but must not admit incorrect durable state.
 
@@ -48,7 +52,7 @@ The same round trip evaluates the role closure that can still affect the connect
 
 The connection is rejected if any role in that closure:
 
-- is `SUPERUSER`, `REPLICATION`, or `BYPASSRLS`;
+- is `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, or `BYPASSRLS`;
 - owns `public.llm_context_lifecycle_outbox`;
 - can exercise, select, or administer the owner role through `USAGE`, `SET`, or `MEMBER WITH ADMIN OPTION`;
 - has `TRUNCATE` or `DELETE` table privilege;
@@ -56,7 +60,7 @@ The connection is rejected if any role in that closure:
 - has any table-level or column-level `REFERENCES` privilege; or
 - has `TRIGGER` privilege.
 
-This permits a least-privilege login wrapper to `SET ROLE` to a separate runtime role when both identities and every selectable/administerable role remain inside the same append-only authority envelope. It rejects a superficially safe effective role when the authenticated session can later become an owner, replication role, or another unsafe role without reconnecting.
+This permits a least-privilege login wrapper to `SET ROLE` to a separate runtime role when both identities and every selectable/administerable role remain inside the same append-only authority envelope. It rejects a superficially safe effective role when the authenticated session can later become an owner, database creator, role administrator, replication role, or another unsafe role without reconnecting.
 
 The package continues to use transaction-level `pg_catalog.pg_advisory_xact_lock(bigint)` for serialized replay reads. The bigint key is a deterministic signed 64-bit projection of SHA-256 over the already-validated local tenant scope, a NUL separator, and evidence ID. The digest is coordination metadata only, not durable identity or authorization evidence. A collision can create excess serialization; durable identity remains `(tenant_scope, evidence_id)` plus exact row revalidation.
 
@@ -75,6 +79,10 @@ Rejected. A safe login can hold selectable membership in another role without in
 ### Allow `REPLICATION` because ordinary SQL still uses RLS
 
 Rejected. The decision does not rely on a claim that `REPLICATION` automatically bypasses RLS. PostgreSQL separately grants replication-mode connection and replication-slot authority to such roles and calls the attribute very highly privileged. A tenant runtime connection has no product requirement for that cluster-level authority, so co-location violates least privilege and the operator/runtime bounded-context split.
+
+### Allow `CREATEDB` or `CREATEROLE` because they do not directly bypass RLS
+
+Rejected. The package runtime needs only tenant-qualified outbox `SELECT` and `INSERT`. Database creation and role administration are independent administrative capabilities with no runtime requirement. Keeping them on the same authenticated/session-selectable authority envelope needlessly widens blast radius and violates the explicit operator/runtime bounded-context split even when the current outbox policy would still filter ordinary SQL.
 
 ### Trust migration 0009 as continuing RLS policy authority
 
@@ -137,13 +145,19 @@ Replication-authority lineage is:
 - PostgreSQL/container RED specimen `9879fcf1ee0aea9c5eb91d1f1021c9f0efe15487` creates a `LOGIN NOSUPERUSER NOBYPASSRLS REPLICATION` runtime principal with only outbox `SELECT, INSERT` and requires fail-closed admission rather than co-locating replication authority;
 - causal production repair `555d9ebfdd407f7d6b5f6805338c9da236d2a309` rejects `rolreplication` anywhere in the effective/session-selectable/administerable closure.
 
+Database/role-administration lineage is:
+
+- static RED `89ae7fa9a0b2723c636477f4a3a49d2af8336658` requires `rolcreatedb` and `rolcreaterole` in the same live role-closure admission contract;
+- PostgreSQL/container RED specimen `358ce8d08d6ab815efff66f98751e186106c84f7` demonstrates that dedicated runtime-login specimens can actually create a database or role while otherwise holding only outbox `SELECT, INSERT`, and requires package admission to fail closed;
+- causal production repair `03a683e422d036e06327850adb0840560b7db207` rejects both attributes anywhere in the effective/session-selectable/administerable closure before tenant binding or outbox data SQL.
+
 The realistic PostgreSQL specimens are wired into the container acceptance lane. They have not earned hosted GREEN until the exact final repaired head executes successfully. Keep this ADR Proposed until exact-head repository quality gates and PostgreSQL acceptance are terminal successful.
 
 ## Consequences
 
-The supported lifecycle-outbox connection is an append-only RLS subject at both effective and session authority levels, and the tenant filter itself is a live runtime invariant rather than a migration-history assumption. A deployment may use a separate least-privilege login wrapper plus runtime role, but neither that login nor any selectable/administerable role may carry owner, destructive/programming, superuser, replication, or RLS-bypass authority. Maintenance, retention/erasure, relation programming, policy ownership, schema ownership, replication, and administrative authority stay on separate connections/identities.
+The supported lifecycle-outbox connection is an append-only RLS subject at both effective and session authority levels, and the tenant filter itself is a live runtime invariant rather than a migration-history assumption. A deployment may use a separate least-privilege login wrapper plus runtime role, but neither that login nor any selectable/administerable role may carry owner, destructive/programming, superuser, database-creation, role-administration, replication, or RLS-bypass authority. Maintenance, retention/erasure, relation programming, policy ownership, schema ownership, database/role administration, replication, and other administrative authority stay on separate connections/identities.
 
-This closes connection-local role escape, same-name policy drift, and replication-authority co-location without broadening the domain model or changing durable schema. It adds catalog work proportional to the PostgreSQL role set plus one bounded policy/dependency lookup inside the same round trip. No p95 latency claim is made until an exact-head performance lane measures the hot-path query under realistic role cardinality.
+This closes connection-local role escape, same-name policy drift, and administrative-authority co-location without broadening the domain model or changing durable schema. It adds catalog work proportional to the PostgreSQL role set plus one bounded policy/dependency lookup inside the same round trip. No p95 latency claim is made until an exact-head performance lane measures the hot-path query under realistic role cardinality.
 
 ## References
 
@@ -166,3 +180,5 @@ PostgreSQL Global Development Group. (2026h). *pg_policy*. In *PostgreSQL 18 doc
 PostgreSQL Global Development Group. (2026i). *CREATE ROLE*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/sql-createrole.html
 
 PostgreSQL Global Development Group. (2026j). *pg_roles*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/view-pg-roles.html
+
+PostgreSQL Global Development Group. (2026k). *Role attributes*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/role-attributes.html
