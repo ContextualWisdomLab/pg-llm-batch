@@ -62,7 +62,7 @@ class _Psycopg:
 
 
 def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None:
-    """Unknown constraints or unique indexes must not become hidden write authority."""
+    """Unknown constraints or executable indexes must not become hidden write authority."""
     package_path = lifecycle_outbox._ROW_ADMISSION_AUTHORITY_MIGRATION_PATH
     docker_path = (
         Path(__file__).parents[1]
@@ -79,6 +79,8 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     assert "outbox_constraint.contype IN ('c', 'f', 'p', 'u', 'x')" in package_sql
     assert "FROM pg_catalog.pg_index AS admission_index" in package_sql
     assert "admission_index.indisunique" in package_sql
+    assert "admission_index.indexprs IS NOT NULL" in package_sql
+    assert "admission_index.indpred IS NOT NULL" in package_sql
     assert "unexpected lifecycle outbox row-admission authority" in package_sql
 
 
