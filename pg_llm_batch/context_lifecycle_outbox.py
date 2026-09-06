@@ -94,8 +94,22 @@ def _event_identity_lock_key(tenant_scope: str, evidence_id: str) -> int:
     )
 
 
+def _maintain_privilege_sql(role_expression: str) -> str:
+    """Build a PostgreSQL-16-safe probe for the table privilege added in PostgreSQL 17."""
+    return (
+        "CASE WHEN pg_catalog.current_setting('server_version_num')::pg_catalog.int4 "
+        "OPERATOR(pg_catalog.>=) 170000 THEN pg_catalog.has_table_privilege("
+        f"{role_expression}, admitted_relation.oid, 'MAINTAIN') ELSE false END"
+    )
+
+
 def _require_rls_application_role(cursor: Any) -> None:
     """Reject unsafe runtime roles or drifted canonical RLS policy authority."""
+    maintain_selectable = _maintain_privilege_sql("selectable_role.oid")
+    maintain_delegated_dml = _maintain_privilege_sql("delegated_dml_role.oid")
+    maintain_definer = _maintain_privilege_sql("definer_role.oid")
+    maintain_definer_admin = _maintain_privilege_sql("definer_admin_role.oid")
+    maintain_definer_admin_set = _maintain_privilege_sql("definer_admin_set_role.oid")
     cursor.execute(
         "SELECT admitted_role.rolsuper "
         "OR NOT admitted_relation.relrowsecurity "
@@ -162,8 +176,7 @@ def _require_rls_application_role(cursor: Any) -> None:
         "selectable_role.oid, admitted_relation.oid, 'SELECT') OR "
         "pg_catalog.has_any_column_privilege("
         "selectable_role.oid, admitted_relation.oid, 'INSERT') OR "
-        "pg_catalog.has_table_privilege("
-        "selectable_role.oid, admitted_relation.oid, 'MAINTAIN'))) "
+        f"{maintain_selectable})) "
         "OR (pg_catalog.pg_has_role("
         "SESSION_USER, selectable_role.oid, 'MEMBER WITH ADMIN OPTION') AND EXISTS ("
         "SELECT 1 FROM pg_catalog.pg_roles AS delegated_dml_role "
@@ -173,8 +186,7 @@ def _require_rls_application_role(cursor: Any) -> None:
         "delegated_dml_role.oid, admitted_relation.oid, 'SELECT') OR "
         "pg_catalog.has_any_column_privilege("
         "delegated_dml_role.oid, admitted_relation.oid, 'INSERT') OR "
-        "pg_catalog.has_table_privilege("
-        "delegated_dml_role.oid, admitted_relation.oid, 'MAINTAIN')))) "
+        f"{maintain_delegated_dml}))) "
         "OR EXISTS ("
         "WITH RECURSIVE executable_definer_owner(role_oid) AS ("
         "SELECT executable_definer.proowner "
@@ -217,8 +229,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "definer_role.oid, admitted_relation.oid, 'SELECT WITH GRANT OPTION') "
         "OR pg_catalog.has_any_column_privilege("
         "definer_role.oid, admitted_relation.oid, 'INSERT WITH GRANT OPTION') "
-        "OR pg_catalog.has_table_privilege("
-        "definer_role.oid, admitted_relation.oid, 'MAINTAIN') "
+        "OR "
+        f"{maintain_definer} "
         "OR pg_catalog.has_table_privilege("
         "definer_role.oid, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
@@ -250,8 +262,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "definer_admin_role.oid, admitted_relation.oid, 'SELECT') "
         "OR pg_catalog.has_any_column_privilege("
         "definer_admin_role.oid, admitted_relation.oid, 'INSERT') "
-        "OR pg_catalog.has_table_privilege("
-        "definer_admin_role.oid, admitted_relation.oid, 'MAINTAIN') "
+        "OR "
+        f"{maintain_definer_admin} "
         "OR pg_catalog.has_table_privilege("
         "definer_admin_role.oid, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
@@ -278,8 +290,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "definer_admin_set_role.oid, admitted_relation.oid, 'SELECT') "
         "OR pg_catalog.has_any_column_privilege("
         "definer_admin_set_role.oid, admitted_relation.oid, 'INSERT') "
-        "OR pg_catalog.has_table_privilege("
-        "definer_admin_set_role.oid, admitted_relation.oid, 'MAINTAIN') "
+        "OR "
+        f"{maintain_definer_admin_set} "
         "OR pg_catalog.has_table_privilege("
         "definer_admin_set_role.oid, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
@@ -296,8 +308,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "selectable_role.oid, admitted_relation.oid, 'SELECT WITH GRANT OPTION') "
         "OR pg_catalog.has_any_column_privilege("
         "selectable_role.oid, admitted_relation.oid, 'INSERT WITH GRANT OPTION') "
-        "OR pg_catalog.has_table_privilege("
-        "selectable_role.oid, admitted_relation.oid, 'MAINTAIN') "
+        "OR "
+        f"{maintain_selectable} "
         "OR pg_catalog.has_table_privilege("
         "selectable_role.oid, admitted_relation.oid, 'TRUNCATE') "
         "OR pg_catalog.has_table_privilege("
