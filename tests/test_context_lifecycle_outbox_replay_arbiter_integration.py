@@ -93,6 +93,17 @@ def _restore_canonical_replay_arbiter(dsn: str) -> None:
         connection.commit()
 
 
+def _rebuild_canonical_outbox(dsn: str) -> None:
+    """Rebuild the isolated test table after physical row-shape sabotage."""
+    import psycopg
+
+    with psycopg.connect(dsn) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute("DROP TABLE public.llm_context_lifecycle_outbox")
+        connection.commit()
+    apply_context_lifecycle_outbox_schema(dsn)
+
+
 @_SKIP_NO_DB
 def test_live_migration_repairs_missing_and_noncanonical_replay_arbiter() -> None:
     """Migration 0008 must converge stale tables to one usable UPSERT arbiter."""
@@ -126,7 +137,7 @@ def test_live_migration_repairs_missing_and_noncanonical_replay_arbiter() -> Non
 
 @_SKIP_NO_DB
 def test_live_migration_rejects_unexpected_outbox_columns() -> None:
-    """A stale additive column must not become undeclared durable data authority."""
+    """Additive and dropped physical columns must both remain fail-closed."""
     assert _DSN is not None
     import psycopg
 
@@ -142,12 +153,19 @@ def test_live_migration_rejects_unexpected_outbox_columns() -> None:
     try:
         with pytest.raises(psycopg.Error, match="structural schema mismatch"):
             apply_context_lifecycle_outbox_schema(_DSN)
-    finally:
+
         with psycopg.connect(_DSN) as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     "ALTER TABLE public.llm_context_lifecycle_outbox "
-                    "DROP COLUMN IF EXISTS undeclared_payload"
+                    "DROP COLUMN undeclared_payload"
                 )
             connection.commit()
-        apply_context_lifecycle_outbox_schema(_DSN)
+
+        # PostgreSQL keeps an attisdropped catalog/physical slot after DROP COLUMN.
+        # The migration intentionally requires operator-controlled rebuild instead
+        # of treating that state as equivalent to a table that never held the data.
+        with pytest.raises(psycopg.Error, match="structural schema mismatch"):
+            apply_context_lifecycle_outbox_schema(_DSN)
+    finally:
+        _rebuild_canonical_outbox(_DSN)
