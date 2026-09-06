@@ -22,27 +22,30 @@ Package reads and writes bind the validated scope with parameterized,
 transaction-local `set_config('pg_llm_batch.tenant_scope', ..., true)`.
 PostgreSQL row-level security is enabled and forced, so missing context is
 default-deny for ordinary application roles. PostgreSQL superusers and roles
-with `BYPASSRLS` remain administrative escape hatches and must not be used as
-application identities. Lifecycle-outbox runtime data access enforces that
-boundary at each caller-owned transaction seam by joining the live canonical
-relation with PostgreSQL role and policy authority. Before tenant state is bound
-or durable rows are touched, one fail-closed catalog round trip requires
-enabled/forced RLS, exactly one canonical all-command permissive `PUBLIC` tenant
-policy with the reviewed parser-normalized `USING`/`WITH CHECK` predicates and
-function/operator dependency boundary, plus a safe role-selection closure.
-Admission covers effective `CURRENT_USER`, authenticated/current `SESSION_USER`,
-every role that `SESSION_USER` can select with `SET ROLE`, and every role it can
-make selectable through `MEMBER WITH ADMIN OPTION`. PostgreSQL evaluates later
-`SET ROLE` permission against the session user, so a safe-looking effective role
-is insufficient when the same login can still become the outbox owner or another
-unsafe role. Exact owner identity, exercisable owner `USAGE`/`SET`, and owner
-membership administration are rejected throughout that closure; inert
-membership with no inherited, selectable, or self-enablable authority remains
-admissible. DSN text is not authorization evidence. An admin-originated
-connection that deliberately hides initial superuser authority with
-`SET SESSION AUTHORIZATION` is outside the supported runtime deployment
-boundary. Installation and migration remain separate operator-authority paths.
-ADR 0031 records this runtime owner/session/policy-separation boundary.
+with `BYPASSRLS` remain administrative escape hatches, while roles with
+`REPLICATION` retain separate cluster-level replication connection and slot
+authority. None belongs on a tenant application connection. Lifecycle-outbox
+runtime data access enforces that boundary at each caller-owned transaction seam
+by joining the live canonical relation with PostgreSQL role and policy authority.
+Before tenant state is bound or durable rows are touched, one fail-closed catalog
+round trip requires enabled/forced RLS, exactly one canonical all-command
+permissive `PUBLIC` tenant policy with the reviewed parser-normalized
+`USING`/`WITH CHECK` predicates and function/operator dependency boundary, plus a
+safe role-selection closure. Admission covers effective `CURRENT_USER`,
+authenticated/current `SESSION_USER`, every role that `SESSION_USER` can select
+with `SET ROLE`, and every role it can make selectable through
+`MEMBER WITH ADMIN OPTION`. PostgreSQL evaluates later `SET ROLE` permission
+against the session user, so a safe-looking effective role is insufficient when
+the same login can still become the outbox owner, a replication role, or another
+unsafe role. Exact owner identity, exercisable owner `USAGE`/`SET`, owner
+membership administration, `SUPERUSER`, `REPLICATION`, and `BYPASSRLS` are
+rejected throughout that closure; inert membership with no inherited,
+selectable, or self-enablable authority remains admissible. DSN text is not
+authorization evidence. An admin- or replication-originated connection that
+downgrades after connection establishment is outside the supported runtime
+deployment boundary. Installation, migration, and replication remain separate
+operator-authority paths. ADR 0031 records this runtime
+owner/session/policy/replication-separation boundary.
 
 Runtime relation privileges are part of the same application-authority boundary.
 Every effective/session-selectable/administerable role is rejected when it holds
@@ -56,13 +59,15 @@ relation behavior outside the package's tenant-qualified DML contract. Admission
 uses schema-qualified `pg_catalog.has_table_privilege` for
 `TRUNCATE`/`DELETE`/`TRIGGER` and `pg_catalog.has_any_column_privilege` for
 `UPDATE`/`REFERENCES`, so column-specific grants fail closed too. The supported
-application DML contract is `SELECT` plus `INSERT`. Replay compare/adjudication
-no longer depends on `SELECT ... FOR UPDATE`; serialized reads acquire
-`pg_catalog.pg_advisory_xact_lock(bigint)` on a deterministic signed 64-bit key
-derived from the validated tenant/event identity and then issue an ordinary
-qualified `SELECT`. The advisory key is coordination metadata only. Durable
-identity remains the complete `(tenant_scope, evidence_id)` key and exact row
-revalidation, so a 64-bit coordination-key collision can add contention but
+application DML contract is `SELECT` plus `INSERT`; PostgreSQL `REPLICATION` is
+also rejected because replication-mode connection and replication-slot authority
+are unrelated cluster-level capabilities, not application DML. Replay
+compare/adjudication no longer depends on `SELECT ... FOR UPDATE`; serialized
+reads acquire `pg_catalog.pg_advisory_xact_lock(bigint)` on a deterministic
+signed 64-bit key derived from the validated tenant/event identity and then issue
+an ordinary qualified `SELECT`. The advisory key is coordination metadata only.
+Durable identity remains the complete `(tenant_scope, evidence_id)` key and exact
+row revalidation, so a 64-bit coordination-key collision can add contention but
 cannot merge durable identities or authorize a different event. ADR 0031 and
 `docs/doctoring/lifecycle-outbox-runtime-role-authority.md` record the operator /
 runtime separation and audit surface.
@@ -304,54 +309,58 @@ reverification, runtime live `pg_policy` count/name/command/permissive/`PUBLIC`
 role/`USING`/`WITH CHECK`/dependency reverification, runtime admission over
 effective `CURRENT_USER`, `SESSION_USER`, and every
 session-selectable/administerable role; live enabled/forced RLS; exact owner
-inequality; absence of exercisable/administerable owner-role `USAGE`, `SET`, or
-membership-admin authority; and absence of outbox `TRUNCATE`, `DELETE`,
-table/column `UPDATE`, table/column `REFERENCES`, or `TRIGGER` authority anywhere
-in that role closure before tenant state or outbox-row access,
-transaction-advisory-lock serialization without `SELECT ... FOR UPDATE`,
-canonical payload/timestamp CHECK type/validation/inheritance, same-runtime
-parsed-expression identity in both convergence and final row-admission,
-review-stamp traceability, post-repair CHECK verification, canonical replay
-UNIQUE kind/validation/deferrability/column identity, ordinary logged-public
-relation identity at convergence and final admission, exact live-column
-cardinality, dropped-column tombstone rejection, complete final `pg_attribute`
+inequality; absence of `SUPERUSER`, `REPLICATION`, and `BYPASSRLS`; absence of
+exercisable/administerable owner-role `USAGE`, `SET`, or membership-admin
+authority; and absence of outbox `TRUNCATE`, `DELETE`, table/column `UPDATE`,
+table/column `REFERENCES`, or `TRIGGER` authority anywhere in that role closure
+before tenant state or outbox-row access, transaction-advisory-lock serialization
+without `SELECT ... FOR UPDATE`, canonical payload/timestamp CHECK
+type/validation/inheritance, same-runtime parsed-expression identity in both
+convergence and final row-admission, review-stamp traceability, post-repair CHECK
+verification, canonical replay UNIQUE kind/validation/deferrability/column
+identity, ordinary logged-public relation identity at convergence and final
+admission, exact live-column cardinality, dropped-column tombstone rejection,
+complete final `pg_attribute`
 type/collation/nullability/default-presence/generated/identity/cardinality
 re-verification, no outbox inheritance edge at convergence or final admission,
 built-in `heap` TABLE access-method identity at final admission, non-internal
-trigger and rewrite-rule rejection at both convergence and final admission, exact
-retained `tenant_scope` standalone plus omitted-column UUID/created-at default
-authority at final admission, expression/partial/custom-operator-class
+trigger and rewrite-rule rejection at both convergence and final admission,
+exact retained `tenant_scope` standalone plus omitted-column UUID/created-at
+default authority at final admission, expression/partial/custom-operator-class
 index-program rejection, default-core simple-index admission, runtime schema
 qualification without caller `search_path` mutation, installer/rollback
 search-path authority, schema mirroring, operator documentation, and 100%
 production statement and branch coverage.
 
-Live PostgreSQL isolation tests use `NOSUPERUSER NOBYPASSRLS` runtime roles and
-prove that identical provider identifiers in different tenants remain
-independently addressable and mutually invisible when access occurs through the
-trusted package boundary. Exact-head runtime evidence must additionally prove
-that a `BYPASSRLS` role can bypass the policy at PostgreSQL level but is rejected
-by the package before tenant binding/data SQL; that superuser effective authority
-is rejected; that a normal table owner can remove `FORCE ROW LEVEL SECURITY` and
-thereby expose both tenant rows but is itself rejected; that a normal non-owner
-`TRUNCATE` role can remove all tenant rows despite forced RLS; that a normal
-tenant `DELETE` role can erase its own committed durable intent while the other
-tenant remains hidden; that a normal tenant with only column-level
-`UPDATE (event_type)` can rewrite its own committed lifecycle event while the
-other tenant remains hidden; that column-level `REFERENCES` can create a
-dependency on the canonical replay key; and that `TRIGGER` can attach executable
-relation behavior. Production admission must reject each authority before
-tenant/data SQL. The positive control must execute real package access through a
-least-privilege login/runtime-role chain whose only outbox DML is `SELECT` and
-`INSERT`, proving advisory coordination does not require row mutation. A separate
-PostgreSQL specimen must prove that `SESSION_USER` can retain `SET ROLE` authority
-to the outbox owner while `CURRENT_USER` is the safe runtime role, and package
-admission must reject that session-level escape. Another specimen must preserve
-both RLS flags while replacing the sole canonical policy under the same name
-with `USING (true) WITH CHECK (true)`, prove that raw runtime SQL then sees both
+Live PostgreSQL isolation tests use `NOSUPERUSER NOREPLICATION NOBYPASSRLS`
+runtime roles and prove that identical provider identifiers in different tenants
+remain independently addressable and mutually invisible when access occurs
+through the trusted package boundary. Exact-head runtime evidence must
+additionally prove that a `BYPASSRLS` role can bypass the policy at PostgreSQL
+level but is rejected by the package before tenant binding/data SQL; that
+superuser effective authority is rejected; that a `REPLICATION` runtime identity
+with otherwise minimal outbox `SELECT, INSERT` is rejected as cluster-level
+operator authority rather than treated as application DML; that a normal table
+owner can remove `FORCE ROW LEVEL SECURITY` and thereby expose both tenant rows
+but is itself rejected; that a normal non-owner `TRUNCATE` role can remove all
+tenant rows despite forced RLS; that a normal tenant `DELETE` role can erase its
+own committed durable intent while the other tenant remains hidden; that a
+normal tenant with only column-level `UPDATE (event_type)` can rewrite its own
+committed lifecycle event while the other tenant remains hidden; that
+column-level `REFERENCES` can create a dependency on the canonical replay key;
+and that `TRIGGER` can attach executable relation behavior. Production admission
+must reject each authority before tenant/data SQL. The positive control must
+execute real package access through a least-privilege login/runtime-role chain
+whose only outbox DML is `SELECT` and `INSERT`, proving advisory coordination
+does not require row mutation. A separate PostgreSQL specimen must prove that
+`SESSION_USER` can retain `SET ROLE` authority to the outbox owner while
+`CURRENT_USER` is the safe runtime role, and package admission must reject that
+session-level escape. Another specimen must preserve both RLS flags while
+replacing the sole canonical policy under the same name with
+`USING (true) WITH CHECK (true)`, prove that raw runtime SQL then sees both
 tenants, and require package admission to fail before tenant binding or data SQL.
-Admin-originated connections hidden through `SET SESSION AUTHORIZATION` are not
-claimed safe.
+Admin- or replication-originated connections that deliberately downgrade after
+connection establishment are not claimed safe.
 
 The same evidence must exercise a non-default caller `search_path`, verify the
 canonical outbox relation is still selected, verify the caller path is unchanged
