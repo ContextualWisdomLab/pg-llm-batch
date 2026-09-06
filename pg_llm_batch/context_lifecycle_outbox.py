@@ -97,7 +97,8 @@ def _event_identity_lock_key(tenant_scope: str, evidence_id: str) -> int:
 def _require_rls_application_role(cursor: Any) -> None:
     """Reject unsafe runtime roles or drifted canonical RLS policy authority."""
     cursor.execute(
-        "SELECT NOT admitted_relation.relrowsecurity "
+        "SELECT admitted_role.rolsuper "
+        "OR NOT admitted_relation.relrowsecurity "
         "OR NOT admitted_relation.relforcerowsecurity "
         "OR ("
         "SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy AS outbox_policy "
@@ -170,6 +171,22 @@ def _require_rls_application_role(cursor: Any) -> None:
         "delegated_dml_role.oid, admitted_relation.oid, 'SELECT') OR "
         "pg_catalog.has_any_column_privilege("
         "delegated_dml_role.oid, admitted_relation.oid, 'INSERT')))) "
+        "OR EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_proc AS executable_definer "
+        "JOIN pg_catalog.pg_roles AS definer_role "
+        "ON definer_role.oid OPERATOR(pg_catalog.=) executable_definer.proowner "
+        "JOIN pg_catalog.pg_namespace AS definer_schema "
+        "ON definer_schema.oid OPERATOR(pg_catalog.=) executable_definer.pronamespace "
+        "WHERE executable_definer.prosecdef "
+        "AND definer_schema.nspname NOT LIKE 'pg\\_%' ESCAPE '\\' "
+        "AND definer_schema.nspname OPERATOR(pg_catalog.<>) 'information_schema' "
+        "AND pg_catalog.has_schema_privilege("
+        "selectable_role.oid, definer_schema.oid, 'USAGE') "
+        "AND pg_catalog.has_function_privilege("
+        "selectable_role.oid, executable_definer.oid, 'EXECUTE') "
+        "AND (definer_role.rolsuper "
+        "OR definer_role.rolbypassrls "
+        "OR definer_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner)) "
         "OR pg_catalog.has_any_column_privilege("
         "selectable_role.oid, admitted_relation.oid, 'SELECT WITH GRANT OPTION') "
         "OR pg_catalog.has_any_column_privilege("
@@ -203,6 +220,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         ")"
         ") "
         "FROM pg_catalog.pg_class AS admitted_relation "
+        "JOIN pg_catalog.pg_roles AS admitted_role "
+        "ON admitted_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER "
         "WHERE admitted_relation.oid OPERATOR(pg_catalog.=) "
         "pg_catalog.to_regclass('public.llm_context_lifecycle_outbox')"
     )
@@ -513,14 +532,15 @@ class PostgresContextLifecycleOutboxStore:
         can return to application code. Both the effective ``CURRENT_USER`` and the
         authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
         subjects without outbox-owner, destructive, replication, database/role
-        administration, delegable DML, or relation-programming authority, while the
-        canonical relation still has RLS enabled and forced with the sole reviewed
-        tenant policy semantics. The live admission is checked before tenant state is
-        bound or durable rows are touched. Security-critical function, relation, and
-        policy authority is explicitly schema-qualified, and ``ONLY`` prevents inherited
-        relations from widening the canonical durable row source if an inheritance edge
-        appears after migration admission. The outbox does not mutate or inherit the
-        caller transaction's ``search_path``.
+        administration, delegable DML, relation-programming, or executable privileged
+        user-schema ``SECURITY DEFINER`` authority, while the canonical relation still
+        has RLS enabled and forced with the sole reviewed tenant policy semantics. The
+        live admission is checked before tenant state is bound or durable rows are
+        touched. Security-critical function, relation, and policy authority is
+        explicitly schema-qualified, and ``ONLY`` prevents inherited relations from
+        widening the canonical durable row source if an inheritance edge appears after
+        migration admission. The outbox does not mutate or inherit the caller
+        transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
