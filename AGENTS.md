@@ -44,16 +44,17 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   through an all-`SET TRUE` membership path. Callable non-system-schema
   `SECURITY DEFINER` routines are likewise outside the runtime envelope when
   their owner can exercise forbidden authority through superuser, `CREATEROLE`,
-  or `BYPASSRLS` status, exact/inherited table ownership, `SELECT`/`INSERT` grant
-  options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
-  PostgreSQL permits a role administrator to grant the administered role to a new
-  principal, and the new principal can then inherit the DML or use the same
-  `SET ROLE` path even when the object privileges themselves are non-grantable;
-  `SECURITY DEFINER` similarly executes with its owner's privileges rather than
-  the caller's. `CREATEDB` and `CREATEROLE` are cluster/database administration
+  `REPLICATION`, or `BYPASSRLS` status, exact/inherited table ownership,
+  `SELECT`/`INSERT` grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`,
+  or `TRIGGER`. PostgreSQL permits a role administrator to grant the administered
+  role to a new principal, and the new principal can then inherit the DML or use
+  the same `SET ROLE` path even when the object privileges themselves are
+  non-grantable; `SECURITY DEFINER` similarly executes with its owner's
+  privileges. `CREATEDB` and `CREATEROLE` are cluster/database administration
   capabilities outside an application identity; `REPLICATION` is separate
-  cluster-level connection authority and must not be co-located with a tenant
-  application identity; `SELECT`/`INSERT` grant options, DML-bearing role
+  cluster-level connection and replication-slot authority and must not be
+  co-located with a tenant application identity either directly or through an
+  executable definer; `SELECT`/`INSERT` grant options, DML-bearing role
   administration, and executable privileged definer authority are authorization
   capabilities rather than application DML; `TRUNCATE` is outside RLS;
   tenant-local `DELETE` or `UPDATE` violates the append-only durable-intent
