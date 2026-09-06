@@ -36,27 +36,30 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   an unsafe role. No role in that closure may own the lifecycle outbox, have
   exercisable/administerable owner authority via inherited `USAGE`, `SET ROLE`,
   or membership administration, hold PostgreSQL `CREATEDB`, `CREATEROLE`, or
-  `REPLICATION`, or hold `TRUNCATE`, `DELETE`, `UPDATE`, `TRIGGER`, or
-  table/column `REFERENCES` authority on the outbox. `CREATEDB` and `CREATEROLE`
-  are cluster/database administration capabilities outside an application
-  identity; `REPLICATION` is separate cluster-level connection authority and
-  must not be co-located with a tenant application identity; `TRUNCATE` is
-  outside RLS; tenant-local `DELETE` or `UPDATE` violates the append-only
-  durable-intent invariant; and `REFERENCES`/`TRIGGER` can install relation
-  behavior outside the package DML contract. Inert membership alone is not a
-  bypass. Re-prove live enabled/forced RLS, the sole canonical tenant policy
-  identity/command/role scope, parser-normalized `USING`/`WITH CHECK`
-  predicates and allowed catalog dependencies, and the complete
-  effective/session-selectable authority envelope before tenant binding or
-  outbox data SQL. A migration success record is point-in-time evidence and does
-  not authorize later same-name policy drift. The normal runtime role needs only
-  `SELECT` and `INSERT` on the outbox. Replay serialization must use
-  transaction-scoped advisory locking on the validated tenant/event identity
-  rather than `SELECT ... FOR UPDATE`, so serialization never requires ambient
-  row-mutation authority. Do not authenticate runtime connections as a database
-  creator, role administrator, replication identity, or other administrator and
-  rely on `SET ROLE` or `SET SESSION AUTHORIZATION` as a downgrade;
-  administrative, replication, and owner-capable login sessions are outside the
+  `REPLICATION`, hold `SELECT WITH GRANT OPTION` or `INSERT WITH GRANT OPTION`
+  on the table or any column, or hold `TRUNCATE`, `DELETE`, `UPDATE`, `TRIGGER`,
+  or table/column `REFERENCES` authority on the outbox. `CREATEDB` and
+  `CREATEROLE` are cluster/database administration capabilities outside an
+  application identity; `REPLICATION` is separate cluster-level connection
+  authority and must not be co-located with a tenant application identity;
+  `SELECT`/`INSERT` grant options are authorization-delegation authority rather
+  than application DML; `TRUNCATE` is outside RLS; tenant-local `DELETE` or
+  `UPDATE` violates the append-only durable-intent invariant; and
+  `REFERENCES`/`TRIGGER` can install relation behavior outside the package DML
+  contract. Inert membership alone is not a bypass. Re-prove live enabled/forced
+  RLS, the sole canonical tenant policy identity/command/role scope,
+  parser-normalized `USING`/`WITH CHECK` predicates and allowed catalog
+  dependencies, and the complete effective/session-selectable authority envelope
+  before tenant binding or outbox data SQL. A migration success record is
+  point-in-time evidence and does not authorize later same-name policy drift.
+  The normal runtime role needs only non-grantable `SELECT` and `INSERT` on the
+  outbox. Replay serialization must use transaction-scoped advisory locking on
+  the validated tenant/event identity rather than `SELECT ... FOR UPDATE`, so
+  serialization never requires ambient row-mutation authority. Do not
+  authenticate runtime connections as a database creator, role administrator,
+  replication identity, DML delegator, or other administrator and rely on
+  `SET ROLE` or `SET SESSION AUTHORIZATION` as a downgrade; administrative,
+  replication, grant-capable, and owner-capable login sessions are outside the
   application isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
