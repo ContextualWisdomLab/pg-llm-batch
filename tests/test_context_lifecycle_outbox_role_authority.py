@@ -28,7 +28,7 @@ class RoleCursor:
 
 
 def test_effective_application_role_requires_separated_forced_rls_authority() -> None:
-    """An ordinary non-owner role without RLS-exempt table authority is admitted."""
+    """An ordinary non-owner role without destructive table authority is admitted."""
     cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
@@ -49,6 +49,8 @@ def test_effective_application_role_requires_separated_forced_rls_authority() ->
             "CURRENT_USER, admitted_relation.oid, 'TRUNCATE') "
             "OR pg_catalog.has_table_privilege("
             "CURRENT_USER, admitted_relation.oid, 'DELETE') "
+            "OR pg_catalog.has_any_column_privilege("
+            "CURRENT_USER, admitted_relation.oid, 'UPDATE') "
             "OR pg_catalog.has_any_column_privilege("
             "CURRENT_USER, admitted_relation.oid, 'REFERENCES') "
             "OR pg_catalog.has_table_privilege("
@@ -107,6 +109,7 @@ def test_role_authority_query_uses_effective_current_user_and_live_relation() ->
     assert "pg_catalog.has_any_column_privilege" in sql
     assert "'TRUNCATE'" in sql
     assert "'DELETE'" in sql
+    assert "'UPDATE'" in sql
     assert "'REFERENCES'" in sql
     assert "'TRIGGER'" in sql
     assert "pg_catalog.to_regclass" in sql
