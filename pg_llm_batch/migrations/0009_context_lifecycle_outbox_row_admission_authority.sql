@@ -86,65 +86,72 @@ BEGIN
         RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
     END IF;
 
-    -- CREATE UNIQUE INDEX does not create a pg_constraint row, but it still rejects
-    -- duplicate writes. Permit only the indexes backing the exact canonical PK and
-    -- tenant/evidence replay constraint verified above.
+    -- Every expression or partial index executes an operator-selected expression for
+    -- INSERT/non-HOT UPDATE maintenance. Such executable write-time authority is not
+    -- admissible even when the index is non-unique. Standalone UNIQUE indexes are
+    -- likewise forbidden unless they back the exact canonical PK or replay constraint.
     IF EXISTS (
         SELECT 1
         FROM pg_catalog.pg_index AS admission_index
         WHERE admission_index.indrelid =
               'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
-          AND admission_index.indisunique
-          AND NOT EXISTS (
-              SELECT 1
-              FROM pg_catalog.pg_constraint AS canonical_constraint
-              WHERE canonical_constraint.conrelid = admission_index.indrelid
-                AND canonical_constraint.conindid = admission_index.indexrelid
-                AND (
-                    (
-                        canonical_constraint.contype OPERATOR(pg_catalog.=) 'p'
-                        AND canonical_constraint.convalidated
-                        AND NOT canonical_constraint.condeferrable
-                        AND NOT canonical_constraint.condeferred
-                        AND canonical_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
+          AND (
+              admission_index.indexprs IS NOT NULL
+              OR admission_index.indpred IS NOT NULL
+              OR (
+                  admission_index.indisunique
+                  AND NOT EXISTS (
+                      SELECT 1
+                      FROM pg_catalog.pg_constraint AS canonical_constraint
+                      WHERE canonical_constraint.conrelid = admission_index.indrelid
+                        AND canonical_constraint.conindid = admission_index.indexrelid
+                        AND (
                             (
-                                SELECT actual.attnum::pg_catalog.int2
-                                FROM pg_catalog.pg_attribute AS actual
-                                WHERE actual.attrelid = admission_index.indrelid
-                                  AND actual.attname OPERATOR(pg_catalog.=)
-                                      'context_outbox_uuid'
-                                  AND actual.attnum OPERATOR(pg_catalog.>) 0
-                                  AND NOT actual.attisdropped
+                                canonical_constraint.contype OPERATOR(pg_catalog.=) 'p'
+                                AND canonical_constraint.convalidated
+                                AND NOT canonical_constraint.condeferrable
+                                AND NOT canonical_constraint.condeferred
+                                AND canonical_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
+                                    (
+                                        SELECT actual.attnum::pg_catalog.int2
+                                        FROM pg_catalog.pg_attribute AS actual
+                                        WHERE actual.attrelid = admission_index.indrelid
+                                          AND actual.attname OPERATOR(pg_catalog.=)
+                                              'context_outbox_uuid'
+                                          AND actual.attnum OPERATOR(pg_catalog.>) 0
+                                          AND NOT actual.attisdropped
+                                    )
+                                ]
                             )
-                        ]
-                    )
-                    OR (
-                        canonical_constraint.contype OPERATOR(pg_catalog.=) 'u'
-                        AND canonical_constraint.conname OPERATOR(pg_catalog.=)
-                            'uq_llm_context_lifecycle_outbox_tenant_evidence'
-                        AND canonical_constraint.convalidated
-                        AND NOT canonical_constraint.condeferrable
-                        AND NOT canonical_constraint.condeferred
-                        AND canonical_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
-                            (
-                                SELECT actual.attnum::pg_catalog.int2
-                                FROM pg_catalog.pg_attribute AS actual
-                                WHERE actual.attrelid = admission_index.indrelid
-                                  AND actual.attname OPERATOR(pg_catalog.=) 'tenant_scope'
-                                  AND actual.attnum OPERATOR(pg_catalog.>) 0
-                                  AND NOT actual.attisdropped
-                            ),
-                            (
-                                SELECT actual.attnum::pg_catalog.int2
-                                FROM pg_catalog.pg_attribute AS actual
-                                WHERE actual.attrelid = admission_index.indrelid
-                                  AND actual.attname OPERATOR(pg_catalog.=) 'evidence_id'
-                                  AND actual.attnum OPERATOR(pg_catalog.>) 0
-                                  AND NOT actual.attisdropped
+                            OR (
+                                canonical_constraint.contype OPERATOR(pg_catalog.=) 'u'
+                                AND canonical_constraint.conname OPERATOR(pg_catalog.=)
+                                    'uq_llm_context_lifecycle_outbox_tenant_evidence'
+                                AND canonical_constraint.convalidated
+                                AND NOT canonical_constraint.condeferrable
+                                AND NOT canonical_constraint.condeferred
+                                AND canonical_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
+                                    (
+                                        SELECT actual.attnum::pg_catalog.int2
+                                        FROM pg_catalog.pg_attribute AS actual
+                                        WHERE actual.attrelid = admission_index.indrelid
+                                          AND actual.attname OPERATOR(pg_catalog.=) 'tenant_scope'
+                                          AND actual.attnum OPERATOR(pg_catalog.>) 0
+                                          AND NOT actual.attisdropped
+                                    ),
+                                    (
+                                        SELECT actual.attnum::pg_catalog.int2
+                                        FROM pg_catalog.pg_attribute AS actual
+                                        WHERE actual.attrelid = admission_index.indrelid
+                                          AND actual.attname OPERATOR(pg_catalog.=) 'evidence_id'
+                                          AND actual.attnum OPERATOR(pg_catalog.>) 0
+                                          AND NOT actual.attisdropped
+                                    )
+                                ]
                             )
-                        ]
-                    )
-                )
+                        )
+                  )
+              )
           )
     ) THEN
         RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
