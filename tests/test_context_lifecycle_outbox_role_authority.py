@@ -12,7 +12,7 @@ from pg_llm_batch.exceptions import ConfigError
 
 
 class RoleCursor:
-    """Expose one deterministic current-role/catalog row to the admission helper."""
+    """Expose one deterministic effective-role admission row to the helper."""
 
     def __init__(self, row: Any) -> None:
         self.row = row
@@ -23,21 +23,24 @@ class RoleCursor:
         self.calls.append((" ".join(sql.split()), params or ()))
 
     def fetchone(self) -> Any:
-        """Return the configured effective-role and relation-authority row."""
+        """Return the configured combined role/relation authority verdict."""
         return self.row
 
 
 def test_effective_application_role_requires_separated_forced_rls_authority() -> None:
     """An ordinary non-owner role over enabled+forced RLS is admitted."""
-    cursor = RoleCursor((False, False, True, True, False))
+    cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
 
     assert cursor.calls == [
         (
-            "SELECT admitted_role.rolsuper, admitted_role.rolbypassrls, "
-            "admitted_relation.relrowsecurity, admitted_relation.relforcerowsecurity, "
-            "pg_catalog.pg_has_role(CURRENT_USER, admitted_relation.relowner, 'MEMBER') "
+            "SELECT admitted_role.rolsuper "
+            "OR NOT admitted_relation.relrowsecurity "
+            "OR NOT admitted_relation.relforcerowsecurity "
+            "OR pg_catalog.pg_has_role("
+            "CURRENT_USER, admitted_relation.relowner, 'MEMBER'), "
+            "admitted_role.rolbypassrls "
             "FROM pg_catalog.pg_roles AS admitted_role "
             "JOIN pg_catalog.pg_class AS admitted_relation "
             "ON admitted_relation.oid OPERATOR(pg_catalog.=) "
@@ -51,20 +54,18 @@ def test_effective_application_role_requires_separated_forced_rls_authority() ->
 @pytest.mark.parametrize(
     "authority_row",
     (
-        (True, False, True, True, False),
-        (False, True, True, True, False),
-        (False, False, False, True, False),
-        (False, False, True, False, False),
-        (False, False, True, True, True),
+        (True, False),
+        (False, True),
+        (True, True),
         None,
-        (False, False),
-        [False, False, True, True, False],
+        (False,),
+        [False, False],
     ),
 )
 def test_effective_application_role_rejects_rls_bypass_or_schema_authority(
     authority_row: Any,
 ) -> None:
-    """Role bypass, disabled RLS, owner membership, and ambiguity fail closed."""
+    """Any combined bypass/schema-authority verdict other than false/false fails."""
     cursor = RoleCursor(authority_row)
 
     with pytest.raises(ConfigError, match="separated forced RLS authority"):
@@ -73,7 +74,7 @@ def test_effective_application_role_rejects_rls_bypass_or_schema_authority(
 
 def test_role_authority_query_uses_effective_current_user_and_live_relation() -> None:
     """Admission must inspect effective role and current outbox RLS ownership."""
-    cursor = RoleCursor((False, False, True, True, False))
+    cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
 
@@ -82,10 +83,11 @@ def test_role_authority_query_uses_effective_current_user_and_live_relation() ->
     assert "pg_catalog.pg_class" in sql
     assert "rolsuper" in sql
     assert "rolbypassrls" in sql
-    assert "relrowsecurity" in sql
-    assert "relforcerowsecurity" in sql
-    assert "relowner" in sql
+    assert "NOT admitted_relation.relrowsecurity" in sql
+    assert "NOT admitted_relation.relforcerowsecurity" in sql
+    assert "admitted_relation.relowner" in sql
     assert "pg_catalog.pg_has_role" in sql
+    assert "'MEMBER'" in sql
     assert "pg_catalog.to_regclass" in sql
     assert "CURRENT_USER" in sql
     assert params == ()
