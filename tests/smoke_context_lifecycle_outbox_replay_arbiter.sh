@@ -285,12 +285,12 @@ CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_outbox_index
   WHEN TAG IN ('CREATE INDEX')
   EXECUTE FUNCTION public.pg_llm_batch_test_sabotage_outbox_index();
 SQL
-if apply_migration >/dev/null 2>&1; then
+if index_sabotage_output="$(apply_migration 2>&1)"; then
   echo "lifecycle outbox migration did not post-verify repaired operational index" >&2
   exit 1
 fi
-if ! docker logs "${container}" 2>&1 | \
-    grep -Fq 'pg-llm-batch test operational-index sabotage applied'; then
+if ! grep -Fq 'pg-llm-batch test operational-index sabotage applied' \
+    <<<"${index_sabotage_output}"; then
   echo "lifecycle outbox sabotage trigger did not complete index rename" >&2
   exit 1
 fi
@@ -332,12 +332,12 @@ CREATE EVENT TRIGGER pg_llm_batch_test_sabotage_replay_arbiter
   WHEN TAG IN ('ALTER TABLE')
   EXECUTE FUNCTION public.pg_llm_batch_test_sabotage_replay_arbiter();
 SQL
-if apply_migration >/dev/null 2>&1; then
+if arbiter_sabotage_output="$(apply_migration 2>&1)"; then
   echo "lifecycle outbox migration did not post-verify repaired replay arbiter" >&2
   exit 1
 fi
-if ! docker logs "${container}" 2>&1 | \
-    grep -Fq 'pg-llm-batch test replay-arbiter sabotage applied'; then
+if ! grep -Fq 'pg-llm-batch test replay-arbiter sabotage applied' \
+    <<<"${arbiter_sabotage_output}"; then
   echo "lifecycle outbox sabotage trigger did not complete arbiter rename" >&2
   exit 1
 fi
