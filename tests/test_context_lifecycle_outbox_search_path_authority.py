@@ -13,6 +13,8 @@ from pg_llm_batch.context_lifecycle_outbox import (
 )
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+AGENTS_PATH = REPOSITORY_ROOT / "AGENTS.md"
 TENANT_SCOPE_SHA256 = "a" * 64
 
 
@@ -76,3 +78,12 @@ def test_forward_and_rollback_migrations_pin_search_path_inside_do_block() -> No
     assert migration.index(binding) < migration.index(create_table)
     assert binding in rollback
     assert rollback.index(binding) < rollback.index("to_regclass")
+
+
+def test_agent_contract_names_callable_security_definer_search_path_boundary() -> None:
+    """Owner instructions must preserve the runtime definer name-resolution guard."""
+    agents = " ".join(AGENTS_PATH.read_text(encoding="utf-8").split())
+
+    assert "SECURITY DEFINER" in agents
+    assert "search_path = pg_catalog, pg_temp" in agents
+    assert "before tenant binding or outbox data SQL" in agents
