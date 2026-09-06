@@ -25,9 +25,9 @@
   over a role that directly/inheritedly carries outbox `SELECT`/`INSERT`, or
   that can reach a DML-bearing role through an all-`SET TRUE` membership path,
   is also rejected. Callable non-system-schema `SECURITY DEFINER` routines are
-  rejected when their owner can reintroduce forbidden outbox authority through
-  superuser/RLS-bypass status, exact or inherited table ownership, grant
-  options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
+  rejected when their owner can reintroduce forbidden authority through
+  superuser, `CREATEROLE`, RLS-bypass status, exact or inherited table ownership,
+  grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
   PostgreSQL lets the membership administrator grant a role onward, after which
   the recipient can inherit the DML or use the same `SET ROLE` path even though
   the table ACLs themselves are non-grantable; `SECURITY DEFINER` similarly
@@ -36,7 +36,7 @@
   scope, permissive mode, `USING`/`WITH CHECK` predicates, and reviewed catalog
   dependencies before tenant binding or outbox SQL. `CREATEDB` and `CREATEROLE`
   are database/role administration capabilities, `REPLICATION` is separate
-  cluster-level connection and slot authority, and both direct DML grant options,
+  cluster-level connection and slot authority, and direct DML grant options,
   DML-bearing role administration, and executable privileged definer authority
   are outside application DML. Runtime identities remain
   `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only
