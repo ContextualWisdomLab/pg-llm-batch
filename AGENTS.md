@@ -40,15 +40,18 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   `UPDATE` violates the append-only durable-intent invariant; and
   `REFERENCES`/`TRIGGER` can install relation behavior outside the package DML
   contract. Inert membership alone is not a bypass. Re-prove live enabled/forced
-  RLS and the complete effective/session-selectable authority envelope before
-  tenant binding or outbox data SQL. The normal runtime role needs only `SELECT`
-  and `INSERT` on the outbox. Replay serialization must use transaction-scoped
-  advisory locking on the validated tenant/event identity rather than
-  `SELECT ... FOR UPDATE`, so serialization never requires ambient row-mutation
-  authority. Do not authenticate runtime connections as an administrator and
-  rely on `SET ROLE` or `SET SESSION AUTHORIZATION` as a downgrade;
-  administrative and owner-capable login sessions are outside the application
-  isolation guarantee.
+  RLS, the sole canonical tenant policy identity/command/role scope,
+  parser-normalized `USING`/`WITH CHECK` predicates and allowed catalog
+  dependencies, and the complete effective/session-selectable authority
+  envelope before tenant binding or outbox data SQL. A migration success record
+  is point-in-time evidence and does not authorize later same-name policy drift.
+  The normal runtime role needs only `SELECT` and `INSERT` on the outbox. Replay
+  serialization must use transaction-scoped advisory locking on the validated
+  tenant/event identity rather than `SELECT ... FOR UPDATE`, so serialization
+  never requires ambient row-mutation authority. Do not authenticate runtime
+  connections as an administrator and rely on `SET ROLE` or
+  `SET SESSION AUTHORIZATION` as a downgrade; administrative and owner-capable
+  login sessions are outside the application isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
