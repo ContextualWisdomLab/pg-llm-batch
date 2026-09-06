@@ -104,8 +104,8 @@ def test_role_authority_query_covers_effective_and_authenticated_role_closure() 
     assert params == ()
 
 
-def test_role_authority_query_rejects_admin_option_over_dml_bearing_role() -> None:
-    """Membership administration must not become indirect outbox DML delegation."""
+def test_role_authority_query_rejects_admin_option_over_runtime_authority() -> None:
+    """Membership administration must not delegate outbox DML or MAINTAIN authority."""
     cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
@@ -117,7 +117,11 @@ def test_role_authority_query_rejects_admin_option_over_dml_bearing_role() -> No
         "(pg_catalog.has_any_column_privilege(selectable_role.oid, "
         "admitted_relation.oid, 'SELECT') OR "
         "pg_catalog.has_any_column_privilege(selectable_role.oid, "
-        "admitted_relation.oid, 'INSERT'))"
+        "admitted_relation.oid, 'INSERT') OR "
+        "CASE WHEN pg_catalog.current_setting('server_version_num')::pg_catalog.int4 "
+        "OPERATOR(pg_catalog.>=) 170000 THEN "
+        "pg_catalog.has_table_privilege(selectable_role.oid, admitted_relation.oid, "
+        "'MAINTAIN') ELSE false END))"
     ) in sql
     assert params == ()
 
