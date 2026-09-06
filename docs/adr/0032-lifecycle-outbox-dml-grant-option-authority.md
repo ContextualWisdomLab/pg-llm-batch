@@ -45,7 +45,8 @@ Rejected. Runtime code does not own database authorization policy. Silent ACL mu
 ## Verification lineage
 
 - static RED `c9dd5189488d6f5acfdfe1d5919e88dd593c3398` requires both grant-option predicates in the live role-authority query;
-- executable PostgreSQL RED specimen `4f890a3da639bea9ef7444265dcc670d9a914791` creates an otherwise-minimal runtime login with outbox `SELECT, INSERT WITH GRANT OPTION`, proves that it can delegate `SELECT` to another role, and requires package admission to fail closed;
+- PostgreSQL RED specimen `4f890a3da639bea9ef7444265dcc670d9a914791` creates an otherwise-minimal runtime login with outbox `SELECT, INSERT WITH GRANT OPTION` and requires package admission to fail closed;
+- executable refinement `e50674cc534ea402b99f38f4c3319bddb93e2d52` gives the delegated role explicit schema usage, grants `SELECT` from the runtime identity, and requires the recipient to execute a real outbox read, proving usable delegation rather than catalog metadata alone;
 - CI wiring `8a51ec8a96e1e47f659fc7235f5d118686d5a1c9` places that specimen in the PostgreSQL/container acceptance lane;
 - causal production repair `146e521a439c038e0b418a7c93c114140ad7fc1f` rejects table- or column-level `SELECT`/`INSERT` grant options anywhere in the existing role closure.
 
