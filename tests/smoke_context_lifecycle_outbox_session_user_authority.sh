@@ -38,14 +38,17 @@ CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_safe NOLOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_session_safe LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_session_escape LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_session_replication LOGIN NOSUPERUSER NOBYPASSRLS REPLICATION;
 GRANT USAGE ON SCHEMA public
     TO pg_llm_batch_outbox_owner,
        pg_llm_batch_outbox_safe,
        pg_llm_batch_outbox_session_safe,
-       pg_llm_batch_outbox_session_escape;
+       pg_llm_batch_outbox_session_escape,
+       pg_llm_batch_outbox_session_replication;
 ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO pg_llm_batch_outbox_owner;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_safe;
+    TO pg_llm_batch_outbox_safe,
+       pg_llm_batch_outbox_session_replication;
 GRANT pg_llm_batch_outbox_safe TO pg_llm_batch_outbox_session_safe
     WITH INHERIT FALSE, SET TRUE;
 GRANT pg_llm_batch_outbox_safe TO pg_llm_batch_outbox_session_escape
@@ -153,5 +156,23 @@ with psycopg.connect(
         else:
             raise AssertionError(
                 "safe CURRENT_USER was admitted even though SESSION_USER can SET ROLE to owner"
+            )
+
+replication_store = PostgresContextLifecycleOutboxStore(
+    "postgresql://pg_llm_batch_outbox_session_replication@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+with psycopg.connect(
+    "postgresql://pg_llm_batch_outbox_session_replication@127.0.0.1/postgres"
+) as connection:
+    with connection.cursor() as cursor:
+        try:
+            replication_store.load_in_transaction(cursor, "session-authority-a")
+        except ConfigError as exc:
+            assert "separated forced RLS authority" in str(exc)
+        else:
+            raise AssertionError(
+                "runtime login with PostgreSQL REPLICATION authority was admitted"
             )
 PY
