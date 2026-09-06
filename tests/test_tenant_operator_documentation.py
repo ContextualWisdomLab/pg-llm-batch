@@ -96,6 +96,20 @@ def test_runtime_role_doctoring_includes_replication_definer_boundary() -> None:
     assert "c5c9761583ef91a34d6f3ca5fb1c7d86c935037a" in doctoring
 
 
+def test_docs_include_definer_membership_admin_delegation_boundary() -> None:
+    """Architecture and operator evidence must retain the callable ADMIN escape proof."""
+    architecture = _normalized(ARCHITECTURE_PATH)
+    doctoring = _normalized(RUNTIME_ROLE_DOCTORING_PATH)
+
+    for document in (architecture, doctoring):
+        assert "MEMBER WITH ADMIN OPTION" in document
+        assert "INHERIT FALSE, SET FALSE" in document
+        assert "all-`SET TRUE`" in document
+        assert "SECURITY DEFINER" in document
+    assert "cba5f92a62f91c6aecee2c2c68f9f1cfcda25e6c" in doctoring
+    assert "988ed9b611bc442891e9769ae86a0caf63764ab3" in doctoring
+
+
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
     """The implementation plan must preserve the reviewed default-deny RLS order."""
     plan = _normalized(IMPLEMENTATION_PLAN_PATH)
