@@ -84,7 +84,7 @@ def _validated_postgres_dsn(value: Any) -> str:
 
 
 def _require_rls_application_role(cursor: Any) -> None:
-    """Reject effective roles that can bypass or rewrite the tenant RLS boundary."""
+    """Reject effective roles with RLS bypass or executable relation authority."""
     cursor.execute(
         "SELECT admitted_role.rolsuper "
         "OR NOT admitted_relation.relrowsecurity "
@@ -95,7 +95,13 @@ def _require_rls_application_role(cursor: Any) -> None:
         "OR pg_catalog.pg_has_role("
         "CURRENT_USER, admitted_relation.relowner, 'SET') "
         "OR pg_catalog.pg_has_role("
-        "CURRENT_USER, admitted_relation.relowner, 'MEMBER WITH ADMIN OPTION'), "
+        "CURRENT_USER, admitted_relation.relowner, 'MEMBER WITH ADMIN OPTION') "
+        "OR pg_catalog.has_table_privilege("
+        "CURRENT_USER, admitted_relation.oid, 'TRUNCATE') "
+        "OR pg_catalog.has_any_column_privilege("
+        "CURRENT_USER, admitted_relation.oid, 'REFERENCES') "
+        "OR pg_catalog.has_table_privilege("
+        "CURRENT_USER, admitted_relation.oid, 'TRIGGER'), "
         "admitted_role.rolbypassrls "
         "FROM pg_catalog.pg_roles AS admitted_role "
         "JOIN pg_catalog.pg_class AS admitted_relation "
