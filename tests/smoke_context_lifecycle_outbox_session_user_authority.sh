@@ -129,10 +129,13 @@ createdb_probe="cwl_llm_batch_outbox_createdb_probe_${GITHUB_RUN_ID:-local}_$$"
 docker exec -i "${container}" psql \
     -h 127.0.0.1 -U cwl_llm_batch_outbox_session_createdb -d postgres \
     -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${createdb_probe}\"" >/dev/null
-if ! docker exec "${container}" psql -U postgres -d postgres -Atq \
-    -v probe="${createdb_probe}" \
-    -c "SELECT pg_catalog.count(*) FROM pg_catalog.pg_database WHERE datname = :'probe'" \
-    | grep -qx '1'; then
+if ! docker exec -i "${container}" psql -U postgres -d postgres -Atq \
+    -v ON_ERROR_STOP=1 -v probe="${createdb_probe}" \
+    <<'SQL' | grep -qx '1'; then
+SELECT pg_catalog.count(*)
+FROM pg_catalog.pg_database
+WHERE datname = :'probe';
+SQL
   echo "CREATEDB specimen did not demonstrate database-administration authority" >&2
   exit 1
 fi
