@@ -4,6 +4,7 @@ set -euo pipefail
 image="pg-llm-batch-postgres:ci"
 container="pg-llm-batch-outbox-final-relation-authority-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/06_context_lifecycle_outbox_row_admission_authority.sql"
+base_migration="/docker-entrypoint-initdb.d/05_context_lifecycle_outbox.sql"
 
 cleanup() {
   docker rm --force "${container}" >/dev/null 2>&1 || true
@@ -131,6 +132,29 @@ fi
 
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'ALTER TABLE public.llm_context_lifecycle_outbox SET ACCESS METHOD heap;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP ACCESS METHOD pg_llm_batch_shadow_heap;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
+# Fresh creation must also ignore a drifted cluster/session default table AM. Without
+# an explicit USING clause, CREATE TABLE would inherit default_table_access_method and
+# migration 0008 could establish unreviewed storage authority on first install.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP TABLE public.llm_context_lifecycle_outbox;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE ACCESS METHOD pg_llm_batch_shadow_heap TYPE TABLE HANDLER heap_tableam_handler;'
+docker exec -e PGOPTIONS='-c default_table_access_method=pg_llm_batch_shadow_heap' \
+  "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${base_migration}" >/dev/null
+
+fresh_access_method="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT am.amname FROM pg_class AS c JOIN pg_am AS am ON am.oid = c.relam WHERE c.oid = 'public.llm_context_lifecycle_outbox'::regclass")"
+if [[ "${fresh_access_method}" != "heap" ]]; then
+  echo "fresh lifecycle outbox inherited unreviewed default table access method" >&2
+  exit 1
+fi
+
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'DROP ACCESS METHOD pg_llm_batch_shadow_heap;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
