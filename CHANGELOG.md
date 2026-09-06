@@ -19,23 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Lifecycle-outbox runtime role admission now rejects outbox `TRUNCATE`,
-  `DELETE`, any table-level or column-level `REFERENCES`, and `TRIGGER`
-  authority in addition to the existing forced-RLS, superuser/BYPASSRLS, and
+  `DELETE`, table/column `UPDATE`, table/column `REFERENCES`, and `TRIGGER`
+  authority in addition to the forced-RLS, superuser/BYPASSRLS, and
   owner-separation checks. `TRUNCATE` is whole-table authority outside
-  row-security filtering. `DELETE` remains tenant-filtered by RLS, but the
-  lifecycle outbox is append-only durable publication intent: a runtime role
-  that can erase its own committed intent can destroy replay/conflict evidence
-  and make a later event appear to be a first write. `REFERENCES` and `TRIGGER`
-  can establish relation behavior outside the package's tenant-qualified DML
-  boundary. The existing one-round-trip catalog query uses
-  `pg_catalog.has_table_privilege` for `TRUNCATE`/`DELETE`/`TRIGGER` and
-  `pg_catalog.has_any_column_privilege` for `REFERENCES` so column-specific
-  grants fail closed. A wired PostgreSQL smoke proves all four authorities on
-  ordinary `NOSUPERUSER NOBYPASSRLS` non-owner roles and requires production
-  admission to reject those effective roles before tenant binding or data SQL.
-  Ordinary RLS-subject DML remains allowed, including the minimum `UPDATE`
-  authority required by PostgreSQL for the package's `SELECT ... FOR UPDATE`
-  compare-and-swap path.
+  row-security filtering. `DELETE` and `UPDATE` remain tenant-filtered by RLS,
+  but a tenant role that can erase or rewrite committed lifecycle intent can
+  destroy append-only replay/conflict evidence without crossing the RLS tenant
+  boundary. `REFERENCES` and `TRIGGER` can establish relation behavior outside
+  the package DML contract. Runtime replay serialization no longer depends on
+  `SELECT ... FOR UPDATE` and therefore no longer requires ambient `UPDATE`:
+  serialized reads acquire a deterministic transaction-scoped advisory lock on
+  the validated tenant/event identity and then issue an ordinary tenant-qualified
+  `SELECT`. A wired PostgreSQL smoke proves tenant-local column UPDATE is real
+  mutation authority and requires production admission to reject it, while the
+  positive control performs a real enqueue with only `SELECT` and `INSERT`.
 - Lifecycle-outbox runtime now verifies both the effective PostgreSQL
   `CURRENT_USER` and the live relation-level RLS/owner boundary before binding
   tenant state or touching durable outbox rows. Application data access requires
