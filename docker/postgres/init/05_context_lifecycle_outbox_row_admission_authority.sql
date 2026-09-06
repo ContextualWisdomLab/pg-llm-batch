@@ -86,18 +86,49 @@ BEGIN
         RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
     END IF;
 
-    -- Every expression or partial index executes an operator-selected expression for
-    -- INSERT/non-HOT UPDATE maintenance. Such executable write-time authority is not
-    -- admissible even when the index is non-unique. Standalone UNIQUE indexes are
-    -- likewise forbidden unless they back the exact canonical PK or replay constraint.
+    -- Index maintenance can execute more than explicit expressions/predicates. A
+    -- user-defined operator class supplies access-method support functions that are
+    -- invoked while maintaining even a plain non-unique column index. Keep accepted
+    -- lifecycle indexes on PostgreSQL's built-in btree access method and the default
+    -- pg_catalog operator class for each exact column type. Unknown executable index
+    -- semantics require operator reconciliation instead of package-owned deletion.
     IF EXISTS (
         SELECT 1
         FROM pg_catalog.pg_index AS admission_index
+        JOIN pg_catalog.pg_class AS admission_index_relation
+          ON admission_index_relation.oid = admission_index.indexrelid
+        JOIN pg_catalog.pg_am AS admission_index_method
+          ON admission_index_method.oid = admission_index_relation.relam
         WHERE admission_index.indrelid =
               'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
           AND (
               admission_index.indexprs IS NOT NULL
               OR admission_index.indpred IS NOT NULL
+              OR admission_index_method.amname OPERATOR(pg_catalog.<>) 'btree'
+              OR EXISTS (
+                  SELECT 1
+                  FROM pg_catalog.generate_series(
+                      0,
+                      admission_index.indnkeyatts - 1
+                  ) AS key_position(position)
+                  WHERE NOT EXISTS (
+                      SELECT 1
+                      FROM pg_catalog.pg_opclass AS admission_opclass
+                      JOIN pg_catalog.pg_attribute AS actual_attribute
+                        ON actual_attribute.attrelid = admission_index.indrelid
+                       AND actual_attribute.attnum =
+                           admission_index.indkey[key_position.position]
+                       AND actual_attribute.attnum OPERATOR(pg_catalog.>) 0
+                       AND NOT actual_attribute.attisdropped
+                      WHERE admission_opclass.oid =
+                            admission_index.indclass[key_position.position]
+                        AND admission_opclass.opcmethod = admission_index_relation.relam
+                        AND admission_opclass.opcnamespace =
+                            'pg_catalog'::pg_catalog.regnamespace
+                        AND admission_opclass.opcdefault
+                        AND admission_opclass.opcintype = actual_attribute.atttypid
+                  )
+              )
               OR (
                   admission_index.indisunique
                   AND NOT EXISTS (
