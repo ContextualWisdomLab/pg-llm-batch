@@ -146,3 +146,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_replication_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER admin-delegation smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_admin_authority.sh
+      - name: Run lifecycle-outbox nested SECURITY DEFINER authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_chain_authority.sh
