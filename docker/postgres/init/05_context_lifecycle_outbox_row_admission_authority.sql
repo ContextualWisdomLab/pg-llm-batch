@@ -13,6 +13,35 @@ BEGIN
         RAISE EXCEPTION 'lifecycle outbox relation is unavailable';
     END IF;
 
+    -- Relation durability/topology is final authority, not only migration-0008
+    -- convergence evidence. A restore/operator can SET UNLOGGED or attach an
+    -- inheritance edge after 0008 was recorded as applied while leaving column,
+    -- constraint, RLS, trigger/rule, default, and index catalogs otherwise canonical.
+    -- Final admission therefore requires one ordinary logged table in public with no
+    -- parent or child inheritance edge. Drift is operator-owned and is never repaired
+    -- by this verifier because storage rewrites and hierarchy changes have data/WAL/
+    -- recovery consequences that migration 0009 cannot prove safe.
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_class AS admission_relation
+        JOIN pg_catalog.pg_namespace AS admission_namespace
+          ON admission_namespace.oid = admission_relation.relnamespace
+        WHERE admission_relation.oid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+          AND admission_relation.relkind OPERATOR(pg_catalog.=) 'r'
+          AND admission_relation.relpersistence OPERATOR(pg_catalog.=) 'p'
+          AND admission_namespace.nspname OPERATOR(pg_catalog.=) 'public'
+    ) OR EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_inherits AS inheritance_edge
+        WHERE inheritance_edge.inhrelid =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+           OR inheritance_edge.inhparent =
+              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
+    ) THEN
+        RAISE EXCEPTION 'unexpected lifecycle outbox row-admission authority';
+    END IF;
+
     -- RLS is final row-admission authority, not merely a migration-0008 side effect.
     -- A restore/operator can disable relation-level enforcement or replace the sole
     -- canonical policy under the same name after 0008 was recorded as applied. Final
