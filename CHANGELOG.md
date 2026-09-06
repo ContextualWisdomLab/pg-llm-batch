@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Lifecycle-outbox runtime admission now rejects callable non-system-schema
+  `SECURITY DEFINER` routines whose owner has PostgreSQL `REPLICATION`. Direct
+  runtime identities already exclude replication authority; this closes the
+  indirect executable path where an ordinary `NOREPLICATION` login can invoke
+  owner-privileged SQL that creates a physical replication slot. The wired
+  PostgreSQL smoke proves `pg_create_physical_replication_slot` executes through
+  the definer, verifies the caller itself remains `NOREPLICATION`, and then
+  requires package admission to fail closed before tenant binding or outbox data
+  SQL. This is cluster replication/operator separation, not a claim that
+  `REPLICATION` automatically bypasses RLS.
+- Lifecycle-outbox runtime admission now rejects callable non-system-schema
   `SECURITY DEFINER` routines whose owner has PostgreSQL `CREATEROLE`. Direct
   runtime identities already excluded role administration; this closes the
   indirect executable path where an otherwise ordinary `NOCREATEROLE` login can
