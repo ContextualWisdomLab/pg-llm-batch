@@ -54,7 +54,8 @@ def test_runtime_qualifies_authority_without_mutating_caller_search_path() -> No
     statements = [sql for sql, _ in cursor.calls]
     assert all(not sql.startswith("SET LOCAL search_path") for sql in statements)
     assert statements[0].startswith("SELECT pg_catalog.set_config")
-    assert "FROM public.llm_context_lifecycle_outbox" in statements[1]
+    # ONLY is intentional: inherited relations are outside the canonical owner table.
+    assert "FROM ONLY public.llm_context_lifecycle_outbox" in statements[1]
 
 
 def test_forward_and_rollback_migrations_pin_search_path_inside_do_block() -> None:
