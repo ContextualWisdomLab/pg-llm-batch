@@ -34,24 +34,24 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_grantable LOGIN
+CREATE ROLE cwl_llm_batch_outbox_grantable LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_delegate LOGIN
+CREATE ROLE cwl_llm_batch_outbox_delegate LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
-    TO pg_llm_batch_outbox_grantable, pg_llm_batch_outbox_delegate;
+    TO cwl_llm_batch_outbox_grantable, cwl_llm_batch_outbox_delegate;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_grantable WITH GRANT OPTION;
+    TO cwl_llm_batch_outbox_grantable WITH GRANT OPTION;
 SQL
 
 docker exec -i "${container}" psql -h 127.0.0.1 \
-  -U pg_llm_batch_outbox_grantable -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-GRANT SELECT ON public.llm_context_lifecycle_outbox TO pg_llm_batch_outbox_delegate;
+  -U cwl_llm_batch_outbox_grantable -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+GRANT SELECT ON public.llm_context_lifecycle_outbox TO cwl_llm_batch_outbox_delegate;
 SQL
 
 delegated="$(
   docker exec "${container}" psql -U postgres -d postgres -Atqc \
-    "SELECT pg_catalog.has_table_privilege('pg_llm_batch_outbox_delegate', 'public.llm_context_lifecycle_outbox', 'SELECT')"
+    "SELECT pg_catalog.has_table_privilege('cwl_llm_batch_outbox_delegate', 'public.llm_context_lifecycle_outbox', 'SELECT')"
 )"
 if [[ "${delegated}" != "t" ]]; then
   echo "SELECT WITH GRANT OPTION specimen did not delegate outbox read authority" >&2
@@ -60,7 +60,7 @@ fi
 
 delegate_visible="$(
   docker exec "${container}" psql -h 127.0.0.1 \
-    -U pg_llm_batch_outbox_delegate -d postgres -Atqc \
+    -U cwl_llm_batch_outbox_delegate -d postgres -Atqc \
     "SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
 )"
 if [[ "${delegate_visible}" != "0" ]]; then
@@ -73,7 +73,7 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_grantable@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_grantable@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
