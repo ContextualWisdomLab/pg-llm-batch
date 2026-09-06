@@ -18,15 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Lifecycle-outbox runtime role admission now rejects outbox `TRUNCATE`, any
-  table-level or column-level `REFERENCES`, and `TRIGGER` authority in addition
-  to the existing forced-RLS, superuser/BYPASSRLS, and owner-separation checks.
-  `TRUNCATE` is whole-table authority outside row-security filtering;
-  `REFERENCES` and `TRIGGER` can establish relation behavior outside the
-  package's tenant-qualified DML boundary. The existing one-round-trip catalog
-  query uses `pg_catalog.has_table_privilege` for `TRUNCATE`/`TRIGGER` and
+- Lifecycle-outbox runtime role admission now rejects outbox `TRUNCATE`,
+  `DELETE`, any table-level or column-level `REFERENCES`, and `TRIGGER`
+  authority in addition to the existing forced-RLS, superuser/BYPASSRLS, and
+  owner-separation checks. `TRUNCATE` is whole-table authority outside
+  row-security filtering. `DELETE` remains tenant-filtered by RLS, but the
+  lifecycle outbox is append-only durable publication intent: a runtime role
+  that can erase its own committed intent can destroy replay/conflict evidence
+  and make a later event appear to be a first write. `REFERENCES` and `TRIGGER`
+  can establish relation behavior outside the package's tenant-qualified DML
+  boundary. The existing one-round-trip catalog query uses
+  `pg_catalog.has_table_privilege` for `TRUNCATE`/`DELETE`/`TRIGGER` and
   `pg_catalog.has_any_column_privilege` for `REFERENCES` so column-specific
-  grants fail closed. A wired PostgreSQL smoke proves all three capabilities on
+  grants fail closed. A wired PostgreSQL smoke proves all four authorities on
   ordinary `NOSUPERUSER NOBYPASSRLS` non-owner roles and requires production
   admission to reject those effective roles before tenant binding or data SQL.
   Ordinary RLS-subject DML remains allowed, including the minimum `UPDATE`
