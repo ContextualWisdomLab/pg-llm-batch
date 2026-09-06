@@ -84,16 +84,24 @@ def _validated_postgres_dsn(value: Any) -> str:
 
 
 def _require_rls_application_role(cursor: Any) -> None:
-    """Reject effective database roles that can bypass the tenant RLS boundary."""
+    """Reject effective roles that can bypass or rewrite the tenant RLS boundary."""
     cursor.execute(
-        "SELECT admitted_role.rolsuper, admitted_role.rolbypassrls "
+        "SELECT admitted_role.rolsuper "
+        "OR NOT admitted_relation.relrowsecurity "
+        "OR NOT admitted_relation.relforcerowsecurity "
+        "OR pg_catalog.pg_has_role("
+        "CURRENT_USER, admitted_relation.relowner, 'MEMBER'), "
+        "admitted_role.rolbypassrls "
         "FROM pg_catalog.pg_roles AS admitted_role "
+        "JOIN pg_catalog.pg_class AS admitted_relation "
+        "ON admitted_relation.oid OPERATOR(pg_catalog.=) "
+        "pg_catalog.to_regclass('public.llm_context_lifecycle_outbox') "
         "WHERE admitted_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER"
     )
     role_row = cursor.fetchone()
     if type(role_row) is not tuple or role_row != (False, False):
         raise ConfigError(
-            "Lifecycle outbox application role must be NOSUPERUSER NOBYPASSRLS"
+            "Lifecycle outbox application role must have separated forced RLS authority"
         )
 
 
@@ -392,12 +400,13 @@ class PostgresContextLifecycleOutboxStore:
         row locking explicit. Durable evidence is revalidated and must retain the
         tenant identity explicitly bound to this store before it can return to
         application code. The effective PostgreSQL role must be a normal RLS subject
-        (`NOSUPERUSER NOBYPASSRLS`) before tenant state is bound or durable rows are
-        touched. Security-critical function and relation authority is explicitly
-        schema-qualified, and ``ONLY`` prevents inherited relations from widening the
-        canonical durable row source if an inheritance edge appears after migration
-        admission. The outbox does not mutate or inherit the caller transaction's
-        ``search_path``.
+        (`NOSUPERUSER NOBYPASSRLS`), outside the outbox-owning role's membership graph,
+        while the canonical relation still has RLS enabled and forced. That live
+        admission is checked before tenant state is bound or durable rows are touched.
+        Security-critical function and relation authority is explicitly schema-qualified,
+        and ``ONLY`` prevents inherited relations from widening the canonical durable
+        row source if an inheritance edge appears after migration admission. The outbox
+        does not mutate or inherit the caller transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
