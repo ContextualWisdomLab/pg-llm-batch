@@ -36,7 +36,7 @@ fi
 # A restore/operator can remove NOT NULL after migration 0008 was recorded as applied.
 # PostgreSQL CHECK constraints accept UNKNOWN, and UNIQUE permits multiple NULL keys, so
 # evidence_id=NULL can otherwise bypass the canonical payload/replay-identity contract.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
     ALTER COLUMN evidence_id DROP NOT NULL;
 
@@ -88,7 +88,7 @@ if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
   exit 1
 fi
 
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 DELETE FROM public.llm_context_lifecycle_outbox WHERE evidence_id IS NULL;
 ALTER TABLE public.llm_context_lifecycle_outbox
     ALTER COLUMN evidence_id SET NOT NULL;
