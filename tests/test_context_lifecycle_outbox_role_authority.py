@@ -143,3 +143,25 @@ def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> N
         "admitted_relation.oid, 'INSERT')"
     ) in sql
     assert params == ()
+
+
+def test_role_authority_query_recurses_through_set_or_admin_membership_edges() -> None:
+    """Nested ADMIN chains can manufacture SET authority and must stay in closure."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "WITH RECURSIVE session_reachable_role(role_oid) AS" in sql
+    assert "FROM pg_catalog.pg_auth_members AS reachable_membership" in sql
+    assert (
+        "reachable_membership.member OPERATOR(pg_catalog.=) "
+        "session_reachable_role.role_oid"
+    ) in sql
+    assert "reachable_membership.set_option" in sql
+    assert "reachable_membership.admin_option" in sql
+    assert (
+        "JOIN session_reachable_role AS reachable_role ON "
+        "reachable_role.role_oid OPERATOR(pg_catalog.=) selectable_role.oid"
+    ) in sql
+    assert params == ()
