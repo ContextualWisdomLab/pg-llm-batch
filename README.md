@@ -68,7 +68,12 @@ selection is not owned by this repository.
   for existing-volume cleanup and rollback compatibility.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
 - Tenant-scoped lifecycle deployments require an application database role with
-  `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
+  `NOSUPERUSER NOBYPASSRLS`, forced-RLS subject authority, and a trusted host
+  authorization boundary. The lifecycle-outbox runtime role is append-only: it
+  needs `SELECT` and `INSERT` but must not hold `UPDATE`, `DELETE`, `TRUNCATE`,
+  `REFERENCES`, `TRIGGER`, ownership, or exercisable owner-role authority. Replay
+  serialization uses a transaction advisory lock rather than granting UPDATE for
+  `SELECT ... FOR UPDATE`.
 
 ---
 
@@ -237,7 +242,11 @@ already exists. The canonical state is a validated, NOT DEFERRABLE UNIQUE
 constraint over exactly `tenant_scope` and `evidence_id`; a missing, deferrable,
 wrong-kind, or wrong-column same-name constraint is repaired once. Existing
 duplicate durable identities make migration fail for operator reconciliation
-rather than being silently deleted or merged.
+rather than being silently deleted or merged. Package replay preflight acquires
+`pg_advisory_xact_lock(bigint)` on a deterministic key derived from the validated
+tenant/event identity and then reads normally; it does not require UPDATE or a
+row-locking SELECT. Durable replay identity is still the full UNIQUE key and
+exact row contents, not the advisory key.
 
 Migration 0008 also requires the lifecycle outbox itself to remain an ordinary
 logged table in `public`. A structurally matching `UNLOGGED` relation is rejected
@@ -252,7 +261,10 @@ that can execute arbitrary SQL can set arbitrary session state, so production
 application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
 a generic SQL surface, and still require normal authentication, authorization,
 and SQL-injection controls. Direct SQL consumers that do not establish an
-authorized tenant scope see no lifecycle rows after RLS is enabled.
+authorized tenant scope see no lifecycle rows after RLS is enabled. The outbox
+application role must also remain append-only: `UPDATE`, `DELETE`, `TRUNCATE`,
+`REFERENCES`, and `TRIGGER` belong to separated operator identities, not the
+runtime role.
 
 See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
 migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
