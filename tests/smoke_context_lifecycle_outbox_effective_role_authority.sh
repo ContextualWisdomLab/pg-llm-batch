@@ -40,6 +40,7 @@ CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_inert LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_truncate LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_delete LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE pg_llm_batch_outbox_update LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_references LOGIN NOSUPERUSER NOBYPASSRLS;
 CREATE ROLE pg_llm_batch_outbox_trigger LOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
@@ -49,6 +50,7 @@ GRANT USAGE ON SCHEMA public
        pg_llm_batch_outbox_inert,
        pg_llm_batch_outbox_truncate,
        pg_llm_batch_outbox_delete,
+       pg_llm_batch_outbox_update,
        pg_llm_batch_outbox_references,
        pg_llm_batch_outbox_trigger;
 GRANT CREATE ON SCHEMA public TO pg_llm_batch_outbox_owner;
@@ -58,12 +60,15 @@ GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
        pg_llm_batch_outbox_inert,
        pg_llm_batch_outbox_truncate,
        pg_llm_batch_outbox_delete,
+       pg_llm_batch_outbox_update,
        pg_llm_batch_outbox_references,
        pg_llm_batch_outbox_trigger;
 GRANT TRUNCATE ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_truncate;
 GRANT DELETE ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_delete;
+GRANT UPDATE (event_type) ON public.llm_context_lifecycle_outbox
+    TO pg_llm_batch_outbox_update;
 GRANT REFERENCES (tenant_scope, evidence_id)
     ON public.llm_context_lifecycle_outbox
     TO pg_llm_batch_outbox_references;
@@ -161,9 +166,6 @@ if [[ "${bypass_visible}" != "2" ]]; then
   exit 1
 fi
 
-# FORCE RLS subjects the owner while enabled, but ownership itself is schema authority:
-# the owner can disable owner enforcement and immediately see both tenants. Roll back
-# the mutation so production admission below observes the canonical forced-RLS state.
 owner_bypass_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
@@ -179,10 +181,6 @@ if [[ "${owner_bypass_visible}" != "2" ]]; then
   exit 1
 fi
 
-# PostgreSQL row security does not apply to whole-table TRUNCATE. A normal application
-# identity with this table privilege can therefore destroy every tenant row while both
-# relrowsecurity and relforcerowsecurity remain true. The transaction is rolled back so
-# later production admission exercises the original durable rows.
 truncate_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
@@ -198,10 +196,6 @@ if [[ "${truncate_visible}" != "0" ]]; then
   exit 1
 fi
 
-# DELETE remains subject to RLS, but this outbox is append-only durability evidence.
-# A normal tenant role with DELETE can erase its own committed publication intent and
-# thereby turn an idempotent replay into a new first write. Prove that authority inside
-# a rollback transaction, then require production admission to reject it below.
 delete_remaining="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
@@ -219,9 +213,25 @@ if [[ "${delete_remaining}" != "1" ]]; then
   exit 1
 fi
 
-# Column-level REFERENCES is independently grantable. Prove the role can create a
-# foreign-key dependency on the canonical replay key; production admission below must
-# reject that authority even though it is not a table-level REFERENCES grant.
+update_event_type="$(
+  docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SET LOCAL ROLE pg_llm_batch_outbox_update;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+UPDATE public.llm_context_lifecycle_outbox
+SET event_type = 'batch.lifecycle.updated'
+WHERE tenant_scope = 'tenant-a' AND evidence_id = 'role-authority-a';
+RESET ROLE;
+SELECT event_type FROM public.llm_context_lifecycle_outbox
+WHERE tenant_scope = 'tenant-a' AND evidence_id = 'role-authority-a';
+ROLLBACK;
+SQL
+)"
+if [[ "${update_event_type}" != "batch.lifecycle.updated" ]]; then
+  echo "column-level UPDATE specimen did not mutate tenant-local durable intent" >&2
+  exit 1
+fi
+
 references_created="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
@@ -244,9 +254,6 @@ if [[ "${references_created}" != "1" ]]; then
   exit 1
 fi
 
-# TRIGGER is executable relation authority independent of RLS policy identity. Prove a
-# normal non-owner role holding only TRIGGER plus the ordinary data privileges can
-# attach a user trigger. Roll back the trigger before production admission checks run.
 trigger_created="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
@@ -277,12 +284,10 @@ if [[ "${trigger_created}" != "1" ]]; then
   exit 1
 fi
 
-# Share the PostgreSQL network namespace so the production package talks to this
-# exact database. SET ROLE proves admission follows effective CURRENT_USER rather
-# than connection/DSN text; the operator connection is deliberately superuser.
 docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
 import psycopg
 
+from pg_llm_batch.context_lifecycle_evidence import ContextLifecycleEvidenceSeed
 from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
 from pg_llm_batch.exceptions import ConfigError
 
@@ -298,6 +303,23 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
         row = store.load_in_transaction(cursor, "role-authority-a")
         assert row is not None
         assert row.evidence_id == "role-authority-a"
+        inserted = store.enqueue_in_transaction(
+            cursor,
+            ContextLifecycleEvidenceSeed(
+                evidence_id="role-authority-safe-insert",
+                event_type="batch.lifecycle.observed",
+                tenant_scope_sha256="a" * 64,
+                subject_ref_sha256="b" * 64,
+                authority_ref_sha256="c" * 64,
+                origin_ref_sha256="d" * 64,
+                truth_status="observed",
+                valid_time="1970-01-01T00:00:00Z",
+                system_time="1970-01-01T00:00:00Z",
+                provenance_ref_sha256="e" * 64,
+                evidence_ref_sha256="f" * 64,
+            ),
+        )
+        assert inserted.evidence_id == "role-authority-safe-insert"
         cursor.execute("RESET ROLE")
 
         cursor.execute("SET ROLE pg_llm_batch_outbox_inert")
@@ -309,6 +331,7 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
         for unsafe_role in (
             "pg_llm_batch_outbox_truncate",
             "pg_llm_batch_outbox_delete",
+            "pg_llm_batch_outbox_update",
             "pg_llm_batch_outbox_references",
             "pg_llm_batch_outbox_trigger",
         ):
