@@ -34,46 +34,46 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_safe LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_bypass LOGIN NOSUPERUSER BYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_inert LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_truncate LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_delete LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_update LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_references LOGIN NOSUPERUSER NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_trigger LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_safe LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_bypass LOGIN NOSUPERUSER BYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_owner LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_inert LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_truncate LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_delete LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_update LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_references LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_trigger LOGIN NOSUPERUSER NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
-    TO pg_llm_batch_outbox_safe,
-       pg_llm_batch_outbox_bypass,
-       pg_llm_batch_outbox_owner,
-       pg_llm_batch_outbox_inert,
-       pg_llm_batch_outbox_truncate,
-       pg_llm_batch_outbox_delete,
-       pg_llm_batch_outbox_update,
-       pg_llm_batch_outbox_references,
-       pg_llm_batch_outbox_trigger;
-GRANT CREATE ON SCHEMA public TO pg_llm_batch_outbox_owner;
+    TO cwl_llm_batch_outbox_safe,
+       cwl_llm_batch_outbox_bypass,
+       cwl_llm_batch_outbox_owner,
+       cwl_llm_batch_outbox_inert,
+       cwl_llm_batch_outbox_truncate,
+       cwl_llm_batch_outbox_delete,
+       cwl_llm_batch_outbox_update,
+       cwl_llm_batch_outbox_references,
+       cwl_llm_batch_outbox_trigger;
+GRANT CREATE ON SCHEMA public TO cwl_llm_batch_outbox_owner;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_safe,
-       pg_llm_batch_outbox_bypass,
-       pg_llm_batch_outbox_inert,
-       pg_llm_batch_outbox_truncate,
-       pg_llm_batch_outbox_delete,
-       pg_llm_batch_outbox_update,
-       pg_llm_batch_outbox_references,
-       pg_llm_batch_outbox_trigger;
+    TO cwl_llm_batch_outbox_safe,
+       cwl_llm_batch_outbox_bypass,
+       cwl_llm_batch_outbox_inert,
+       cwl_llm_batch_outbox_truncate,
+       cwl_llm_batch_outbox_delete,
+       cwl_llm_batch_outbox_update,
+       cwl_llm_batch_outbox_references,
+       cwl_llm_batch_outbox_trigger;
 GRANT TRUNCATE ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_truncate;
+    TO cwl_llm_batch_outbox_truncate;
 GRANT DELETE ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_delete;
+    TO cwl_llm_batch_outbox_delete;
 GRANT UPDATE (event_type) ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_update;
+    TO cwl_llm_batch_outbox_update;
 GRANT REFERENCES (tenant_scope, evidence_id)
     ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_references;
+    TO cwl_llm_batch_outbox_references;
 GRANT TRIGGER ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_trigger;
+    TO cwl_llm_batch_outbox_trigger;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
@@ -100,15 +100,15 @@ INSERT INTO public.llm_context_lifecycle_outbox (
     '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z', repeat('0', 64), repeat('1', 64)
 );
 
-ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO pg_llm_batch_outbox_owner;
-GRANT pg_llm_batch_outbox_owner TO pg_llm_batch_outbox_inert
+ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO cwl_llm_batch_outbox_owner;
+GRANT cwl_llm_batch_outbox_owner TO cwl_llm_batch_outbox_inert
     WITH INHERIT FALSE, SET FALSE;
 SQL
 
 safe_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_safe;
+SET LOCAL ROLE cwl_llm_batch_outbox_safe;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
 ROLLBACK;
@@ -122,7 +122,7 @@ fi
 inert_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_inert;
+SET LOCAL ROLE cwl_llm_batch_outbox_inert;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
 ROLLBACK;
@@ -136,13 +136,13 @@ fi
 inert_authority="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_inert;
+SET LOCAL ROLE cwl_llm_batch_outbox_inert;
 SELECT pg_catalog.concat_ws(
     ',',
-    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'MEMBER'),
-    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'USAGE'),
-    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'SET'),
-    pg_catalog.pg_has_role(CURRENT_USER, 'pg_llm_batch_outbox_owner', 'MEMBER WITH ADMIN OPTION')
+    pg_catalog.pg_has_role(CURRENT_USER, 'cwl_llm_batch_outbox_owner', 'MEMBER'),
+    pg_catalog.pg_has_role(CURRENT_USER, 'cwl_llm_batch_outbox_owner', 'USAGE'),
+    pg_catalog.pg_has_role(CURRENT_USER, 'cwl_llm_batch_outbox_owner', 'SET'),
+    pg_catalog.pg_has_role(CURRENT_USER, 'cwl_llm_batch_outbox_owner', 'MEMBER WITH ADMIN OPTION')
 );
 ROLLBACK;
 SQL
@@ -155,7 +155,7 @@ fi
 bypass_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_bypass;
+SET LOCAL ROLE cwl_llm_batch_outbox_bypass;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
 ROLLBACK;
@@ -169,7 +169,7 @@ fi
 owner_bypass_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_owner;
+SET LOCAL ROLE cwl_llm_batch_outbox_owner;
 ALTER TABLE public.llm_context_lifecycle_outbox NO FORCE ROW LEVEL SECURITY;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
@@ -184,7 +184,7 @@ fi
 truncate_visible="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_truncate;
+SET LOCAL ROLE cwl_llm_batch_outbox_truncate;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 TRUNCATE public.llm_context_lifecycle_outbox;
 SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
@@ -199,7 +199,7 @@ fi
 delete_remaining="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_delete;
+SET LOCAL ROLE cwl_llm_batch_outbox_delete;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 DELETE FROM public.llm_context_lifecycle_outbox
 WHERE tenant_scope = 'tenant-a' AND evidence_id = 'role-authority-a';
@@ -216,7 +216,7 @@ fi
 update_event_type="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_update;
+SET LOCAL ROLE cwl_llm_batch_outbox_update;
 SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
 UPDATE public.llm_context_lifecycle_outbox
 SET event_type = 'batch.lifecycle.updated'
@@ -235,8 +235,8 @@ fi
 references_created="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_references;
-CREATE TEMPORARY TABLE pg_llm_batch_outbox_reference_probe (
+SET LOCAL ROLE cwl_llm_batch_outbox_references;
+CREATE TEMPORARY TABLE cwl_llm_batch_outbox_reference_probe (
     tenant_scope text NOT NULL,
     evidence_id text NOT NULL,
     FOREIGN KEY (tenant_scope, evidence_id)
@@ -244,7 +244,7 @@ CREATE TEMPORARY TABLE pg_llm_batch_outbox_reference_probe (
 ) ON COMMIT DROP;
 SELECT pg_catalog.count(*)
 FROM pg_catalog.pg_constraint
-WHERE conrelid = 'pg_temp.pg_llm_batch_outbox_reference_probe'::pg_catalog.regclass
+WHERE conrelid = 'pg_temp.cwl_llm_batch_outbox_reference_probe'::pg_catalog.regclass
   AND contype OPERATOR(pg_catalog.=) 'f';
 ROLLBACK;
 SQL
@@ -257,9 +257,9 @@ fi
 trigger_created="$(
   docker exec -i "${container}" psql -U postgres -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_trigger;
-CREATE TEMPORARY TABLE pg_llm_batch_outbox_trigger_probe (probe integer) ON COMMIT DROP;
-CREATE FUNCTION pg_temp.pg_llm_batch_outbox_trigger_probe()
+SET LOCAL ROLE cwl_llm_batch_outbox_trigger;
+CREATE TEMPORARY TABLE cwl_llm_batch_outbox_trigger_probe (probe integer) ON COMMIT DROP;
+CREATE FUNCTION pg_temp.cwl_llm_batch_outbox_trigger_probe()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -267,14 +267,14 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-CREATE TRIGGER pg_llm_batch_outbox_runtime_authority_probe
+CREATE TRIGGER cwl_llm_batch_outbox_runtime_authority_probe
 BEFORE INSERT ON public.llm_context_lifecycle_outbox
 FOR EACH ROW
-EXECUTE FUNCTION pg_temp.pg_llm_batch_outbox_trigger_probe();
+EXECUTE FUNCTION pg_temp.cwl_llm_batch_outbox_trigger_probe();
 SELECT pg_catalog.count(*)
 FROM pg_catalog.pg_trigger
 WHERE tgrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
-  AND tgname OPERATOR(pg_catalog.=) 'pg_llm_batch_outbox_runtime_authority_probe'
+  AND tgname OPERATOR(pg_catalog.=) 'cwl_llm_batch_outbox_runtime_authority_probe'
   AND NOT tgisinternal;
 ROLLBACK;
 SQL
@@ -299,7 +299,7 @@ store = PostgresContextLifecycleOutboxStore(
 
 with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
     with connection.cursor() as cursor:
-        cursor.execute("SET ROLE pg_llm_batch_outbox_safe")
+        cursor.execute("SET ROLE cwl_llm_batch_outbox_safe")
         row = store.load_in_transaction(cursor, "role-authority-a")
         assert row is not None
         assert row.evidence_id == "role-authority-a"
@@ -322,18 +322,18 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
         assert inserted.evidence_id == "role-authority-safe-insert"
         cursor.execute("RESET ROLE")
 
-        cursor.execute("SET ROLE pg_llm_batch_outbox_inert")
+        cursor.execute("SET ROLE cwl_llm_batch_outbox_inert")
         row = store.load_in_transaction(cursor, "role-authority-a")
         assert row is not None
         assert row.evidence_id == "role-authority-a"
         cursor.execute("RESET ROLE")
 
         for unsafe_role in (
-            "pg_llm_batch_outbox_truncate",
-            "pg_llm_batch_outbox_delete",
-            "pg_llm_batch_outbox_update",
-            "pg_llm_batch_outbox_references",
-            "pg_llm_batch_outbox_trigger",
+            "cwl_llm_batch_outbox_truncate",
+            "cwl_llm_batch_outbox_delete",
+            "cwl_llm_batch_outbox_update",
+            "cwl_llm_batch_outbox_references",
+            "cwl_llm_batch_outbox_trigger",
         ):
             cursor.execute(f"SET ROLE {unsafe_role}")
             try:
@@ -346,7 +346,7 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
                 )
             cursor.execute("RESET ROLE")
 
-        cursor.execute("SET ROLE pg_llm_batch_outbox_bypass")
+        cursor.execute("SET ROLE cwl_llm_batch_outbox_bypass")
         try:
             store.load_in_transaction(cursor, "role-authority-a")
         except ConfigError as exc:
@@ -355,7 +355,7 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
             raise AssertionError("BYPASSRLS effective role reached lifecycle outbox data SQL")
         cursor.execute("RESET ROLE")
 
-        cursor.execute("SET ROLE pg_llm_batch_outbox_owner")
+        cursor.execute("SET ROLE cwl_llm_batch_outbox_owner")
         try:
             store.load_in_transaction(cursor, "role-authority-a")
         except ConfigError as exc:
