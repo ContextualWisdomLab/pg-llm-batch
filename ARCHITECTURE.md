@@ -93,6 +93,16 @@ unclean shutdown, and does not replicate its contents to standbys. The migration
 does not silently issue `SET LOGGED`, because that rewrite and its operational
 impact require an operator-controlled reconciliation window.
 
+Final row-admission independently re-proves that relation authority after
+convergence. Migration 0009 requires the canonical object to remain one ordinary
+logged table in `public` and rejects any `pg_inherits` edge where the outbox is a
+parent or child. This catches post-0008 `SET UNLOGGED` and inheritance drift even
+when columns, RLS, CHECKs, replay constraints, defaults, trigger/rule catalogs,
+and indexes are otherwise unchanged. The final verifier performs no storage
+rewrite or hierarchy repair; operators must reconcile possible unlogged-interval
+loss and any child/parent data before re-admission. ADR 0030 records this final
+relation-authority boundary.
+
 Exact durable row-shape admission is physical/catalog-aware rather than limited
 to SQL-visible columns. Migration 0008 requires exactly the 14 package-owned live
 positive-numbered user attributes and also rejects any positive-numbered
@@ -235,28 +245,30 @@ reverification, canonical payload/timestamp CHECK type/validation/inheritance,
 same-runtime parsed-expression identity in both convergence and final
 row-admission, review-stamp traceability, post-repair CHECK verification,
 canonical replay UNIQUE kind/validation/deferrability/column identity, ordinary
-logged-public relation identity, exact live-column cardinality, dropped-column
-tombstone rejection, complete final `pg_attribute` type/collation/nullability/
-default-presence/generated/identity/cardinality re-verification, non-internal
-trigger and rewrite-rule rejection at both convergence and final admission,
-exact omitted-column UUID/created-at default authority at final admission,
-expression/partial/custom-operator-class index-program rejection, default-core
-simple-index admission, runtime schema qualification without caller `search_path`
-mutation, installer/rollback search-path authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage. Live
-PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS` role and prove that
-identical provider identifiers in different tenants remain independently
-addressable and mutually invisible when access occurs through the trusted
-package boundary. Exact-head runtime evidence must also exercise a non-default
-caller `search_path`, verify the canonical outbox relation is still selected,
-verify the caller path is unchanged afterward, and execute migration 0008/0009
-against stale replay-key, spoofed canonical-CHECK, final-gate same-name
+logged-public relation identity at convergence and final admission, exact
+live-column cardinality, dropped-column tombstone rejection, complete final
+`pg_attribute` type/collation/nullability/default-presence/generated/identity/
+cardinality re-verification, no outbox inheritance edge at convergence or final
+admission, non-internal trigger and rewrite-rule rejection at both convergence
+and final admission, exact omitted-column UUID/created-at default authority at
+final admission, expression/partial/custom-operator-class index-program
+rejection, default-core simple-index admission, runtime schema qualification
+without caller `search_path` mutation, installer/rollback search-path authority,
+schema mirroring, operator documentation, and 100% production statement and
+branch coverage. Live PostgreSQL isolation tests use a `NOSUPERUSER NOBYPASSRLS`
+role and prove that identical provider identifiers in different tenants remain
+independently addressable and mutually invisible when access occurs through the
+trusted package boundary. Exact-head runtime evidence must also exercise a
+non-default caller `search_path`, verify the canonical outbox relation is still
+selected, verify the caller path is unchanged afterward, and execute migration
+0008/0009 against stale replay-key, spoofed canonical-CHECK, final-gate same-name
 CHECK-expression drift, disabled-RLS and same-name widened-policy drift,
-UNLOGGED-relation, undeclared-live-column, dropped-column-tombstone,
-post-convergence column-nullability drift, inheritance-edge, convergence-time and
+UNLOGGED-relation at convergence and after convergence, undeclared-live-column,
+dropped-column-tombstone, post-convergence column-nullability drift,
+inheritance-edge at convergence and after convergence, convergence-time and
 post-convergence user-trigger/rewrite-rule, omitted-column default-program,
 executable-index, and custom-operator-class variants so PostgreSQL evaluates
-canonical RLS policy, CHECK-predicate, UPSERT-arbiter, column-catalog,
+canonical RLS policy, CHECK-predicate, UPSERT-arbiter, relation/column catalog,
 omitted-column-default, executable-table/index-program, and durability/schema
-catalog conditions. These tests do not claim isolation after arbitrary SQL or
-untrusted schema-creation authority is granted.
+conditions. These tests do not claim isolation after arbitrary SQL or untrusted
+schema-creation authority is granted.
