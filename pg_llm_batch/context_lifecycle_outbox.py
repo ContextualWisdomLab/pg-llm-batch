@@ -221,7 +221,7 @@ def _require_rls_application_role(cursor: Any) -> None:
         "executable_definer_owner.routine_oid "
         "JOIN pg_catalog.pg_roles AS definer_role "
         "ON definer_role.oid OPERATOR(pg_catalog.=) executable_definer_owner.role_oid "
-        "WHERE (NOT pg_catalog.coalesce("
+        "WHERE (NOT COALESCE("
         "admitted_definer.proconfig OPERATOR(pg_catalog.@>) "
         "ARRAY['search_path=pg_catalog, pg_temp']::pg_catalog.text[], false) "
         "OR definer_role.rolsuper "
