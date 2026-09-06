@@ -80,20 +80,23 @@ PostgreSQL executes a `SECURITY DEFINER` routine with its owner's privileges, so
 runtime admission inspects callable non-system-schema routines in the same
 catalog round trip. A selectable/administerable runtime role is rejected when it
 has schema `USAGE` and function `EXECUTE` on a `SECURITY DEFINER` whose owner is
-a superuser, has `CREATEROLE` or `BYPASSRLS`, owns the outbox exactly or through
-exercisable owner-role membership, carries outbox `SELECT`/`INSERT` grant option,
-or holds `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`. The guard is
-based on executable authority rather than parsing mutable function bodies.
-`CREATEROLE` is an operator/cluster role-administration capability rather than an
-automatic RLS bypass; a callable definer carrying it can nevertheless create
-roles even when the runtime caller itself is `NOCREATEROLE`. This matters
-independently of the relation-ACL cases: PostgreSQL also does not subject
-whole-table `TRUNCATE` or `REFERENCES` operations to row security, and a
-non-owner ordinary definer can hold those privileges without satisfying a simple
-owner/superuser check. System schemas remain excluded from this
-application-schema guard; ACL, role-attribute, routine, and owner-role
-reconciliation remain operator authority. ADR 0032 records the delegation and
-executable-definer boundary.
+a superuser, has `CREATEROLE`, `REPLICATION`, or `BYPASSRLS`, owns the outbox
+exactly or through exercisable owner-role membership, carries outbox
+`SELECT`/`INSERT` grant option, or holds `TRUNCATE`, `DELETE`, `UPDATE`,
+`REFERENCES`, or `TRIGGER`. The guard is based on executable authority rather
+than parsing mutable function bodies. `CREATEROLE` is an operator/cluster
+role-administration capability and `REPLICATION` is cluster connection/slot
+administration authority; neither is an automatic RLS bypass. A callable definer
+carrying either attribute can nevertheless exercise the owner's administrative
+authority even when the runtime caller itself is `NOCREATEROLE NOREPLICATION`.
+The replication acceptance specimen demonstrates this with
+`pg_create_physical_replication_slot`, rather than inferring authority from a
+role flag alone. PostgreSQL also does not subject whole-table `TRUNCATE` or
+`REFERENCES` operations to row security, and a non-owner ordinary definer can
+hold those privileges without satisfying a simple owner/superuser check. System
+schemas remain excluded from this application-schema guard; ACL, role-attribute,
+routine, replication, and owner-role reconciliation remain operator authority.
+ADR 0032 records the delegation and executable-definer boundary.
 
 Lifecycle-outbox RLS policy authority is catalog-verified, not name-inferred.
 Canonical v2 uses `OPERATOR(pg_catalog.=)` and `pg_catalog.current_setting` for
@@ -337,25 +340,26 @@ inequality; absence of `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, and
 membership-admin authority; absence of outbox `TRUNCATE`, `DELETE`, table/column
 `UPDATE`, table/column `REFERENCES`, or `TRIGGER` authority anywhere in that role
 closure; and absence of callable non-system-schema `SECURITY DEFINER` authority
-whose owner reintroduces `CREATEROLE`, exact/inherited ownership, grant options,
-`TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, `TRIGGER`, superuser, or `BYPASSRLS`
-authority before tenant state or outbox-row access, transaction-advisory-lock
-serialization without `SELECT ... FOR UPDATE`, canonical payload/timestamp CHECK
-type/validation/inheritance, same-runtime parsed-expression identity in both
-convergence and final row-admission, review-stamp traceability, post-repair CHECK
-verification, canonical replay UNIQUE kind/validation/deferrability/column
-identity, ordinary logged-public relation identity at convergence and final
-admission, exact live-column cardinality, dropped-column tombstone rejection,
-complete final `pg_attribute` type/collation/nullability/default-presence/
-generated/identity/cardinality re-verification, no outbox inheritance edge at
-convergence or final admission, built-in `heap` TABLE access-method identity at
-final admission, non-internal trigger and rewrite-rule rejection at both
-convergence and final admission, exact retained `tenant_scope` standalone plus
-omitted-column UUID/created-at default authority at final admission,
-expression/partial/custom-operator-class index-program rejection, default-core
-simple-index admission, runtime schema qualification without caller `search_path`
-mutation, installer/rollback search-path authority, schema mirroring, operator
-documentation, and 100% production statement and branch coverage.
+whose owner reintroduces `CREATEROLE`, `REPLICATION`, exact/inherited ownership,
+grant options, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, `TRIGGER`, superuser,
+or `BYPASSRLS` authority before tenant state or outbox-row access,
+transaction-advisory-lock serialization without `SELECT ... FOR UPDATE`,
+canonical payload/timestamp CHECK type/validation/inheritance, same-runtime
+parsed-expression identity in both convergence and final row-admission,
+review-stamp traceability, post-repair CHECK verification, canonical replay
+UNIQUE kind/validation/deferrability/column identity, ordinary logged-public
+relation identity at convergence and final admission, exact live-column
+cardinality, dropped-column tombstone rejection, complete final `pg_attribute`
+type/collation/nullability/default-presence/generated/identity/cardinality
+re-verification, no outbox inheritance edge at convergence or final admission,
+built-in `heap` TABLE access-method identity at final admission, non-internal
+trigger and rewrite-rule rejection at both convergence and final admission,
+exact retained `tenant_scope` standalone plus omitted-column UUID/created-at
+default authority at final admission, expression/partial/custom-operator-class
+index-program rejection, default-core simple-index admission, runtime schema
+qualification without caller `search_path` mutation, installer/rollback
+search-path authority, schema mirroring, operator documentation, and 100%
+production statement and branch coverage.
 
 Live PostgreSQL isolation tests use
 `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` runtime roles and
@@ -387,14 +391,16 @@ must reject that session-level escape. Another specimen must preserve both RLS
 flags while replacing the sole canonical policy under the same name with
 `USING (true) WITH CHECK (true)`, prove that raw runtime SQL then sees both
 tenants, and require package admission to fail before tenant binding or data SQL.
-Executable-definer specimens must prove both that an ordinary non-owner,
+Executable-definer specimens must prove that an ordinary non-owner,
 non-superuser, non-`BYPASSRLS` function owner carrying outbox `TRUNCATE` can make
-that whole-table operation executable by an otherwise ordinary runtime login and
+that whole-table operation executable by an otherwise ordinary runtime login;
 that a non-superuser `CREATEROLE` function owner can let a `NOCREATEROLE` runtime
-login create a cluster role through its callable `SECURITY DEFINER` routine.
-Package admission must reject each callable authority before tenant binding or
-outbox data SQL. Admin- or replication-originated connections that deliberately
-downgrade after connection establishment are not claimed safe.
+login create a cluster role; and that a `REPLICATION` function owner can let a
+`NOREPLICATION` runtime login create a physical replication slot through its
+callable `SECURITY DEFINER` routine. Package admission must reject each callable
+authority before tenant binding or outbox data SQL. Admin- or
+replication-originated connections that deliberately downgrade after connection
+establishment are not claimed safe.
 
 The same evidence must exercise a non-default caller `search_path`, verify the
 canonical outbox relation is still selected, verify the caller path is unchanged
