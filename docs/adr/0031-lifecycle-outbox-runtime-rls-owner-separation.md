@@ -59,11 +59,14 @@ true:
 - `CURRENT_USER` lacks owner-role admin authority that could grant such access
   (`pg_has_role(..., 'MEMBER WITH ADMIN OPTION') = false`).
 
-PostgreSQL 18 defines `MEMBER` as direct or indirect membership without regard
-to the privileges that membership actually confers, while `USAGE` and `SET`
-distinguish immediately usable privileges from the ability to select a role.
-The causal repair therefore does not reject membership that has no owner
-privilege path. Exact owner identity remains an explicit OID comparison.
+PostgreSQL 16 and 18 define `MEMBER` as direct or indirect membership without
+regard to the privileges that membership actually confers, while `USAGE` and
+`SET` distinguish immediately usable privileges from the ability to select a
+role. PostgreSQL 16 also documents that a membership granted with
+`INHERIT FALSE, SET FALSE` cannot exercise the target role's privileges either
+implicitly or through `SET ROLE`. The causal repair therefore does not reject
+membership that has no owner privilege path. Exact owner identity remains an
+explicit OID comparison.
 
 The relation is resolved through schema-qualified `pg_catalog.to_regclass`, so a
 missing canonical relation produces no admissible row rather than falling back
@@ -131,7 +134,12 @@ TDD lineage for this decision:
 - review repair `0ad858a9b9cbc3329f1ff0f1de2f65c7385d85e0` narrows the initial
   all-membership rejection to exact ownership plus exercisable `USAGE`, `SET`,
   and role-admin authority; `943bae891436d409c1eaa5987f68426954e1e9a2`
-  pins those exact PostgreSQL privilege semantics in the unit contract.
+  pins those exact PostgreSQL privilege semantics in the unit contract;
+- positive real-PostgreSQL control `ec51cc12f986a295dde2936971f5f47057eebcc5`
+  grants the owner role with `INHERIT FALSE, SET FALSE` and default `ADMIN FALSE`,
+  proves `MEMBER=true` while `USAGE=false`, `SET=false`, and admin-option=false,
+  proves tenant visibility remains one row, and requires the production store to
+  continue admitting that inert membership.
 
 Keep this ADR Proposed until the exact repaired head executes the PostgreSQL
 container specimen and repository quality gates successfully. Promotion to
@@ -165,3 +173,10 @@ documentation*. https://www.postgresql.org/docs/18/catalog-pg-class.html
 
 PostgreSQL Global Development Group. (2026d). *Role membership*. In *PostgreSQL
 18 documentation*. https://www.postgresql.org/docs/18/role-membership.html
+
+PostgreSQL Global Development Group. (2026e). *Role membership*. In *PostgreSQL
+16 documentation*. https://www.postgresql.org/docs/16/role-membership.html
+
+PostgreSQL Global Development Group. (2026f). *System information functions and
+operators*. In *PostgreSQL 16 documentation*.
+https://www.postgresql.org/docs/16/functions-info.html
