@@ -66,3 +66,35 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'ALTER TABLE public.llm_context_lifecycle_outbox SET LOGGED;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# Inheritance is a second post-convergence relation-topology authority. PostgreSQL
+# parent scans can recurse into children while PK/UNIQUE constraints do not become a
+# cross-hierarchy replay arbiter. A child attached after 0008 must therefore make the
+# final verifier fail closed as well.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE TABLE public.llm_context_lifecycle_outbox_post_convergence_shadow () INHERITS (public.llm_context_lifecycle_outbox);'
+
+inheritance_edges="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_inherits WHERE inhparent = 'public.llm_context_lifecycle_outbox'::regclass OR inhrelid = 'public.llm_context_lifecycle_outbox'::regclass")"
+if [[ "${inheritance_edges}" == "0" ]]; then
+  echo "inheritance specimen did not create relation-topology drift" >&2
+  exit 1
+fi
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-final-inheritance.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-final-inheritance.out >&2
+  echo "row-admission migration admitted post-0008 inheritance drift" >&2
+  exit 1
+fi
+if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-final-inheritance.out; then
+  cat /tmp/pg-llm-batch-outbox-final-inheritance.out >&2
+  echo "final inheritance-authority drift failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP TABLE public.llm_context_lifecycle_outbox_post_convergence_shadow;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
