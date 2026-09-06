@@ -25,22 +25,24 @@ default-deny for ordinary application roles. PostgreSQL superusers and roles
 with `BYPASSRLS` remain administrative escape hatches and must not be used as
 application identities. Lifecycle-outbox runtime data access enforces that
 boundary at each caller-owned transaction seam by joining the live canonical
-relation with PostgreSQL role authority and requiring enabled/forced RLS plus a
-safe role-selection closure before tenant state is bound or durable rows are
-touched. Admission covers effective `CURRENT_USER`, authenticated/current
-`SESSION_USER`, every role that `SESSION_USER` can select with `SET ROLE`, and
-every role it can make selectable through `MEMBER WITH ADMIN OPTION`.
-PostgreSQL evaluates later `SET ROLE` permission against the session user, so a
-safe-looking effective role is insufficient when the same login can still
-become the outbox owner or another unsafe role. Exact owner identity,
-exercisable owner `USAGE`/`SET`, and owner membership administration are rejected
-throughout that closure; inert membership with no inherited, selectable, or
-self-enablable authority remains admissible. DSN text is not authorization
-evidence. An admin-originated connection that deliberately hides initial
-superuser authority with `SET SESSION AUTHORIZATION` is outside the supported
-runtime deployment boundary. Installation and migration remain separate
-operator-authority paths. ADR 0031 records this runtime owner/session-separation
-boundary.
+relation with PostgreSQL role and policy authority. Before tenant state is bound
+or durable rows are touched, one fail-closed catalog round trip requires
+enabled/forced RLS, exactly one canonical all-command permissive `PUBLIC` tenant
+policy with the reviewed parser-normalized `USING`/`WITH CHECK` predicates and
+function/operator dependency boundary, plus a safe role-selection closure.
+Admission covers effective `CURRENT_USER`, authenticated/current `SESSION_USER`,
+every role that `SESSION_USER` can select with `SET ROLE`, and every role it can
+make selectable through `MEMBER WITH ADMIN OPTION`. PostgreSQL evaluates later
+`SET ROLE` permission against the session user, so a safe-looking effective role
+is insufficient when the same login can still become the outbox owner or another
+unsafe role. Exact owner identity, exercisable owner `USAGE`/`SET`, and owner
+membership administration are rejected throughout that closure; inert
+membership with no inherited, selectable, or self-enablable authority remains
+admissible. DSN text is not authorization evidence. An admin-originated
+connection that deliberately hides initial superuser authority with
+`SET SESSION AUTHORIZATION` is outside the supported runtime deployment
+boundary. Installation and migration remain separate operator-authority paths.
+ADR 0031 records this runtime owner/session/policy-separation boundary.
 
 Runtime relation privileges are part of the same application-authority boundary.
 Every effective/session-selectable/administerable role is rejected when it holds
@@ -84,6 +86,15 @@ drift that disables RLS while retaining policy rows or recreates the canonical
 policy name with widened predicates after migration 0008 was previously
 recorded as applied. Migration 0009 does not repair RLS drift; migration 0008
 remains the sole convergence owner. ADR 0027 records the final-verifier boundary.
+
+Migration success is not continuing runtime authorization. An owner can change a
+policy after 0009 has succeeded while keeping both RLS flags enabled, including
+recreating the canonical name with `USING (true) WITH CHECK (true)`. Runtime
+therefore repeats the bounded canonical `pg_policy` identity/semantic/dependency
+proof inside `_require_rls_application_role()` before every lifecycle-outbox
+transaction seam. Drift is rejected, never auto-repaired, and does not receive a
+new tenant GUC or data SQL from the package. ADR 0031 owns this live admission
+boundary.
 
 Lifecycle-outbox payload and timestamp CHECK authority is executable catalog
 identity, not a constraint name or comment alone. Migration 0008 requires each
@@ -289,10 +300,12 @@ idempotency, malformed database rows, default-deny policy text, explicit
 `pg_catalog` policy predicate authority, `pg_policy` command/role/expression
 identity, unknown-policy fail-closed behavior, post-repair canonical policy
 verification, final relation-level RLS enable/force and policy-semantic
-reverification, runtime admission over effective `CURRENT_USER`, `SESSION_USER`,
-and every session-selectable/administerable role; live enabled/forced RLS; exact
-owner inequality; absence of exercisable/administerable owner-role `USAGE`,
-`SET`, or membership-admin authority; and absence of outbox `TRUNCATE`, `DELETE`,
+reverification, runtime live `pg_policy` count/name/command/permissive/`PUBLIC`
+role/`USING`/`WITH CHECK`/dependency reverification, runtime admission over
+effective `CURRENT_USER`, `SESSION_USER`, and every
+session-selectable/administerable role; live enabled/forced RLS; exact owner
+inequality; absence of exercisable/administerable owner-role `USAGE`, `SET`, or
+membership-admin authority; and absence of outbox `TRUNCATE`, `DELETE`,
 table/column `UPDATE`, table/column `REFERENCES`, or `TRIGGER` authority anywhere
 in that role closure before tenant state or outbox-row access,
 transaction-advisory-lock serialization without `SELECT ... FOR UPDATE`,
@@ -333,8 +346,12 @@ least-privilege login/runtime-role chain whose only outbox DML is `SELECT` and
 `INSERT`, proving advisory coordination does not require row mutation. A separate
 PostgreSQL specimen must prove that `SESSION_USER` can retain `SET ROLE` authority
 to the outbox owner while `CURRENT_USER` is the safe runtime role, and package
-admission must reject that session-level escape. Admin-originated connections
-hidden through `SET SESSION AUTHORIZATION` are not claimed safe.
+admission must reject that session-level escape. Another specimen must preserve
+both RLS flags while replacing the sole canonical policy under the same name
+with `USING (true) WITH CHECK (true)`, prove that raw runtime SQL then sees both
+tenants, and require package admission to fail before tenant binding or data SQL.
+Admin-originated connections hidden through `SET SESSION AUTHORIZATION` are not
+claimed safe.
 
 The same evidence must exercise a non-default caller `search_path`, verify the
 canonical outbox relation is still selected, verify the caller path is unchanged
