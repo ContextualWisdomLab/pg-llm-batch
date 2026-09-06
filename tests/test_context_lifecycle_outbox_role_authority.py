@@ -143,3 +143,28 @@ def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> N
         "admitted_relation.oid, 'INSERT')"
     ) in sql
     assert params == ()
+
+
+def test_role_authority_query_rejects_executable_security_definer_escape() -> None:
+    """Callable definer code must not reintroduce owner or RLS-bypass authority."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "FROM pg_catalog.pg_proc AS executable_definer" in sql
+    assert "JOIN pg_catalog.pg_roles AS definer_role" in sql
+    assert "JOIN pg_catalog.pg_namespace AS definer_schema" in sql
+    assert "executable_definer.prosecdef" in sql
+    assert (
+        "pg_catalog.has_schema_privilege(selectable_role.oid, definer_schema.oid, "
+        "'USAGE')"
+    ) in sql
+    assert (
+        "pg_catalog.has_function_privilege(selectable_role.oid, "
+        "executable_definer.oid, 'EXECUTE')"
+    ) in sql
+    assert "definer_role.rolsuper" in sql
+    assert "definer_role.rolbypassrls" in sql
+    assert "definer_role.oid OPERATOR(pg_catalog.=) admitted_relation.relowner" in sql
+    assert params == ()
