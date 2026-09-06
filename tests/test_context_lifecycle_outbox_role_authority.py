@@ -102,3 +102,21 @@ def test_role_authority_query_covers_effective_and_authenticated_role_closure() 
     assert "CURRENT_USER" in sql
     assert "SESSION_USER" in sql
     assert params == ()
+
+
+def test_role_authority_query_rejects_admin_option_over_dml_bearing_role() -> None:
+    """Membership administration must not become indirect outbox DML delegation."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert (
+        "pg_catalog.pg_has_role(SESSION_USER, selectable_role.oid, "
+        "'MEMBER WITH ADMIN OPTION') AND "
+        "(pg_catalog.has_any_column_privilege(selectable_role.oid, "
+        "admitted_relation.oid, 'SELECT') OR "
+        "pg_catalog.has_any_column_privilege(selectable_role.oid, "
+        "admitted_relation.oid, 'INSERT'))"
+    ) in sql
+    assert params == ()

@@ -138,5 +138,7 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_session_user_authority.sh
       - name: Run lifecycle-outbox DML grant-option authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_grant_option_authority.sh
+      - name: Run lifecycle-outbox role-admin DML-delegation smoke
+        run: bash tests/smoke_context_lifecycle_outbox_role_admin_delegation_authority.sh
       - name: Run lifecycle-outbox live RLS policy-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_runtime_rls_policy_authority.sh
