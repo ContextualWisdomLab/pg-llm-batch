@@ -296,19 +296,24 @@ from pg_llm_batch.context_lifecycle_evidence import ContextLifecycleEvidenceSeed
 from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
 from pg_llm_batch.exceptions import ConfigError
 
-store = PostgresContextLifecycleOutboxStore(
-    "postgresql://postgres@127.0.0.1/postgres",
-    tenant_scope="tenant-a",
-    tenant_scope_sha256="a" * 64,
-)
 
-with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
+def store_for(role: str) -> PostgresContextLifecycleOutboxStore:
+    return PostgresContextLifecycleOutboxStore(
+        f"postgresql://{role}@127.0.0.1/postgres",
+        tenant_scope="tenant-a",
+        tenant_scope_sha256="a" * 64,
+    )
+
+
+with psycopg.connect(
+    "postgresql://cwl_llm_batch_outbox_safe@127.0.0.1/postgres"
+) as connection:
     with connection.cursor() as cursor:
-        cursor.execute("SET ROLE cwl_llm_batch_outbox_safe")
-        row = store.load_in_transaction(cursor, "role-authority-a")
+        safe_store = store_for("cwl_llm_batch_outbox_safe")
+        row = safe_store.load_in_transaction(cursor, "role-authority-a")
         assert row is not None
         assert row.evidence_id == "role-authority-a"
-        inserted = store.enqueue_in_transaction(
+        inserted = safe_store.enqueue_in_transaction(
             cursor,
             ContextLifecycleEvidenceSeed(
                 evidence_id="role-authority-safe-insert",
@@ -325,54 +330,36 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
             ),
         )
         assert inserted.evidence_id == "role-authority-safe-insert"
-        cursor.execute("RESET ROLE")
 
-        cursor.execute("SET ROLE cwl_llm_batch_outbox_inert")
-        row = store.load_in_transaction(cursor, "role-authority-a")
+with psycopg.connect(
+    "postgresql://cwl_llm_batch_outbox_inert@127.0.0.1/postgres"
+) as connection:
+    with connection.cursor() as cursor:
+        inert_store = store_for("cwl_llm_batch_outbox_inert")
+        row = inert_store.load_in_transaction(cursor, "role-authority-a")
         assert row is not None
         assert row.evidence_id == "role-authority-a"
-        cursor.execute("RESET ROLE")
 
-        for unsafe_role in (
-            "cwl_llm_batch_outbox_truncate",
-            "cwl_llm_batch_outbox_delete",
-            "cwl_llm_batch_outbox_update",
-            "cwl_llm_batch_outbox_references",
-            "cwl_llm_batch_outbox_trigger",
-        ):
-            cursor.execute(f"SET ROLE {unsafe_role}")
+for unsafe_role in (
+    "cwl_llm_batch_outbox_truncate",
+    "cwl_llm_batch_outbox_delete",
+    "cwl_llm_batch_outbox_update",
+    "cwl_llm_batch_outbox_references",
+    "cwl_llm_batch_outbox_trigger",
+    "cwl_llm_batch_outbox_bypass",
+    "cwl_llm_batch_outbox_owner",
+    "postgres",
+):
+    with psycopg.connect(
+        f"postgresql://{unsafe_role}@127.0.0.1/postgres"
+    ) as connection:
+        with connection.cursor() as cursor:
             try:
-                store.load_in_transaction(cursor, "role-authority-a")
+                store_for(unsafe_role).load_in_transaction(cursor, "role-authority-a")
             except ConfigError as exc:
                 assert "separated forced RLS authority" in str(exc)
             else:
                 raise AssertionError(
-                    f"{unsafe_role} reached lifecycle outbox data SQL with unsafe relation authority"
+                    f"{unsafe_role} reached lifecycle outbox data SQL with unsafe authority"
                 )
-            cursor.execute("RESET ROLE")
-
-        cursor.execute("SET ROLE cwl_llm_batch_outbox_bypass")
-        try:
-            store.load_in_transaction(cursor, "role-authority-a")
-        except ConfigError as exc:
-            assert "separated forced RLS authority" in str(exc)
-        else:
-            raise AssertionError("BYPASSRLS effective role reached lifecycle outbox data SQL")
-        cursor.execute("RESET ROLE")
-
-        cursor.execute("SET ROLE cwl_llm_batch_outbox_owner")
-        try:
-            store.load_in_transaction(cursor, "role-authority-a")
-        except ConfigError as exc:
-            assert "separated forced RLS authority" in str(exc)
-        else:
-            raise AssertionError("table-owner effective role reached lifecycle outbox data SQL")
-        cursor.execute("RESET ROLE")
-
-        try:
-            store.load_in_transaction(cursor, "role-authority-a")
-        except ConfigError as exc:
-            assert "separated forced RLS authority" in str(exc)
-        else:
-            raise AssertionError("superuser effective role reached lifecycle outbox data SQL")
 PY
