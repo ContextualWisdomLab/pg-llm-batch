@@ -19,14 +19,20 @@ class RecordingCursor:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[Any, ...] | None]] = []
+        self.result: Any = None
 
     def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
         """Record one SQL call so validation ordering remains observable."""
         self.calls.append((sql, params))
+        normalized = " ".join(sql.split())
+        if normalized.startswith("SELECT admitted_role.rolsuper"):
+            self.result = (False, False)
+        else:
+            self.result = None
 
-    def fetchone(self) -> None:
-        """Return no row for the valid unlocked control case."""
-        return None
+    def fetchone(self) -> Any:
+        """Return the current deterministic catalog/query result."""
+        return self.result
 
 
 class BehaviorBearingLockAuthority:
@@ -76,6 +82,7 @@ def test_load_in_transaction_accepts_exact_false_lock_authority() -> None:
 
     assert _store().load_in_transaction(cursor, "event-1", for_update=False) is None
 
-    assert len(cursor.calls) == 2
-    assert cursor.calls[0][0].startswith("SELECT pg_catalog.set_config")
-    assert "FOR UPDATE" not in cursor.calls[1][0]
+    assert len(cursor.calls) == 3
+    assert cursor.calls[0][0].startswith("SELECT admitted_role.rolsuper")
+    assert cursor.calls[1][0].startswith("SELECT pg_catalog.set_config")
+    assert "FOR UPDATE" not in cursor.calls[2][0]
