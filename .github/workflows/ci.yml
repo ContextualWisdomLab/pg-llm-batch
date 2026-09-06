@@ -144,3 +144,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_runtime_rls_policy_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER replication-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_replication_authority.sh
+      - name: Run lifecycle-outbox SECURITY DEFINER admin-delegation smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_admin_authority.sh
