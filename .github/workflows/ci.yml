@@ -114,3 +114,41 @@ jobs:
         run: bash tests/smoke_postgres_container_logging.sh
       - name: Run legacy SQL cleanup integration smoke
         run: bash tests/smoke_legacy_sql_cleanup.sh
+      - name: Run lifecycle-outbox replay-arbiter smoke
+        run: bash tests/smoke_context_lifecycle_outbox_replay_arbiter.sh
+      - name: Run lifecycle-outbox exact-column smoke
+        run: bash tests/smoke_context_lifecycle_outbox_exact_columns.sh
+      - name: Run lifecycle-outbox UUID default-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_uuid_default_authority.sh
+      - name: Run lifecycle-outbox row-admission authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_row_admission_authority.sh
+      - name: Run lifecycle-outbox final default-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_final_default_authority.sh
+      - name: Run lifecycle-outbox final column-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_final_column_authority.sh
+      - name: Run lifecycle-outbox final relation-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_final_relation_authority.sh
+      - name: Run lifecycle-outbox CHECK-expression authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_check_expression_authority.sh
+      - name: Run lifecycle-outbox final RLS authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_final_rls_authority.sh
+      - name: Run lifecycle-outbox effective-role RLS authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_effective_role_authority.sh
+      - name: Run lifecycle-outbox authenticated-session role-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_session_user_authority.sh
+      - name: Run lifecycle-outbox DML grant-option authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_grant_option_authority.sh
+      - name: Run lifecycle-outbox MAINTAIN authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_maintain_authority.sh
+      - name: Run lifecycle-outbox role-admin DML-delegation smoke
+        run: bash tests/smoke_context_lifecycle_outbox_role_admin_delegation_authority.sh
+      - name: Run lifecycle-outbox live RLS policy-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_runtime_rls_policy_authority.sh
+      - name: Run lifecycle-outbox SECURITY DEFINER replication-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_replication_authority.sh
+      - name: Run lifecycle-outbox SECURITY DEFINER admin-delegation smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_admin_authority.sh
+      - name: Run lifecycle-outbox nested SECURITY DEFINER authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_chain_authority.sh
+      - name: Run lifecycle-outbox SECURITY DEFINER search-path authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_search_path_authority.sh

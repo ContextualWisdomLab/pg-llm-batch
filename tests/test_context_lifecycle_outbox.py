@@ -1,0 +1,404 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Tests for the tenant-isolated durable Context lifecycle outbox."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+import pg_llm_batch.context_lifecycle_outbox as lifecycle_outbox
+from pg_llm_batch.context_lifecycle_evidence import ContextLifecycleEvidenceSeed
+from pg_llm_batch.context_lifecycle_outbox import (
+    ContextLifecycleOutboxConflictError,
+    PostgresContextLifecycleOutboxStore,
+    apply_context_lifecycle_outbox_schema,
+)
+from pg_llm_batch.exceptions import ConfigError, ValidationError
+
+
+TENANT_SCOPE_SHA256 = "a" * 64
+
+
+def evidence(
+    *,
+    evidence_id: str = "event-1",
+    evidence_digest: str = "f" * 64,
+) -> ContextLifecycleEvidenceSeed:
+    """Build one content-free lifecycle evidence value for outbox tests."""
+    return ContextLifecycleEvidenceSeed(
+        evidence_id=evidence_id,
+        event_type="batch.lifecycle.observed",
+        tenant_scope_sha256=TENANT_SCOPE_SHA256,
+        subject_ref_sha256="b" * 64,
+        authority_ref_sha256="c" * 64,
+        origin_ref_sha256="d" * 64,
+        truth_status="observed",
+        valid_time="2026-09-03T05:00:00Z",
+        system_time="2026-09-03T05:00:01Z",
+        provenance_ref_sha256="e" * 64,
+        evidence_ref_sha256=evidence_digest,
+    )
+
+
+def evidence_row(seed: ContextLifecycleEvidenceSeed) -> tuple[Any, ...]:
+    """Return the durable column order for one test evidence value."""
+    return (
+        seed.evidence_id,
+        seed.event_type,
+        seed.tenant_scope_sha256,
+        seed.subject_ref_sha256,
+        seed.authority_ref_sha256,
+        seed.origin_ref_sha256,
+        seed.truth_status,
+        seed.valid_time,
+        seed.system_time,
+        seed.provenance_ref_sha256,
+        seed.evidence_ref_sha256,
+    )
+
+
+class FakeCursor:
+    """Execute the bounded outbox persistence statements in memory."""
+
+    def __init__(self, database: "FakeDatabase") -> None:
+        self.database = database
+        self.result: Any = None
+
+    def __enter__(self) -> "FakeCursor":
+        """Enter the fake cursor context."""
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Exit the fake cursor context without swallowing exceptions."""
+        return None
+
+    def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
+        """Execute one expected tenant-qualified outbox statement."""
+        normalized = " ".join(sql.split())
+        parameters = params or ()
+        self.database.calls.append((normalized, parameters))
+        if normalized.startswith("SELECT admitted_role.rolsuper"):
+            self.result = (False, False)
+            return
+        if normalized.startswith("SELECT pg_catalog.set_config"):
+            self.result = (parameters[0],)
+            return
+        if normalized.startswith("SELECT pg_catalog.pg_advisory_xact_lock"):
+            self.result = (None,)
+            return
+        if normalized.startswith("SELECT evidence_id"):
+            self.result = self.database.rows.get(parameters)
+            return
+        if normalized.startswith("INSERT INTO public.llm_context_lifecycle_outbox"):
+            tenant = parameters[0]
+            seed_values = parameters[1:]
+            key = (tenant, seed_values[0])
+            if self.database.insert_conflict_without_row:
+                self.database.insert_conflict_without_row = False
+                self.result = None
+                return
+            if self.database.insert_race_row is not None:
+                self.database.rows[key] = self.database.insert_race_row
+                self.database.insert_race_row = None
+                self.result = None
+                return
+            if key in self.database.rows:
+                self.result = None
+                return
+            self.database.rows[key] = seed_values
+            self.result = (seed_values[0],)
+            return
+        if not parameters:
+            self.result = None
+            return
+        raise AssertionError(normalized)
+
+    def fetchone(self) -> Any:
+        """Return the result produced by the preceding fake statement."""
+        return self.result
+
+
+class FakeConnection:
+    """Expose cursor and commit accounting for one fake PostgreSQL database."""
+
+    def __init__(self, database: "FakeDatabase") -> None:
+        self.database = database
+
+    def __enter__(self) -> "FakeConnection":
+        """Enter the fake connection context."""
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        """Exit the fake connection context without swallowing exceptions."""
+        return None
+
+    def cursor(self) -> FakeCursor:
+        """Create one cursor bound to the same fake database."""
+        return FakeCursor(self.database)
+
+    def commit(self) -> None:
+        """Record one package-owned transaction commit."""
+        self.database.commits += 1
+
+
+class FakePsycopg:
+    """Route package connection requests into one fake database."""
+
+    def __init__(self, database: "FakeDatabase") -> None:
+        self.database = database
+
+    def connect(self, dsn: str) -> FakeConnection:
+        """Record the explicit DSN and return a fake connection."""
+        self.database.dsns.append(dsn)
+        return FakeConnection(self.database)
+
+
+class FakeDatabase:
+    """Hold deterministic durable rows and SQL evidence for outbox tests."""
+
+    def __init__(self) -> None:
+        self.rows: dict[tuple[str, str], Any] = {}
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+        self.dsns: list[str] = []
+        self.commits = 0
+        self.insert_race_row: tuple[Any, ...] | None = None
+        self.insert_conflict_without_row = False
+
+
+@pytest.fixture
+def database(monkeypatch: pytest.MonkeyPatch) -> FakeDatabase:
+    """Install deterministic psycopg behavior for each store test."""
+    fake_database = FakeDatabase()
+    monkeypatch.setattr(lifecycle_outbox, "psycopg", FakePsycopg(fake_database))
+    monkeypatch.setattr(lifecycle_outbox, "_require_psycopg", lambda: None)
+    return fake_database
+
+
+def store(*, tenant_scope: str = "standalone") -> PostgresContextLifecycleOutboxStore:
+    """Create a store with an explicit trusted tenant/evidence identity binding."""
+    return PostgresContextLifecycleOutboxStore(
+        "postgresql://unit",
+        tenant_scope=tenant_scope,
+        tenant_scope_sha256=TENANT_SCOPE_SHA256,
+    )
+
+
+def test_schema_contract_is_rls_scoped_and_has_rollback() -> None:
+    """The durable outbox migration must be tenant-scoped and reversible."""
+    migration = Path(lifecycle_outbox.MIGRATION_PATH).read_text(encoding="utf-8")
+    rollback = Path(lifecycle_outbox.ROLLBACK_PATH).read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS public.llm_context_lifecycle_outbox" in migration
+    assert "UNIQUE (tenant_scope, evidence_id)" in migration
+    assert "ENABLE ROW LEVEL SECURITY" in migration
+    assert "FORCE ROW LEVEL SECURITY" in migration
+    assert "current_setting('pg_llm_batch.tenant_scope', true)" in migration
+    assert "valid_time TEXT NOT NULL" in migration
+    assert "valid_time::timestamptz IS NOT NULL" in migration
+    assert "DROP TABLE IF EXISTS llm_context_lifecycle_outbox" in rollback
+
+
+@pytest.mark.parametrize("postgres_dsn", (None, "", "  \n"))
+def test_store_requires_explicit_postgres_target(postgres_dsn: Any) -> None:
+    """The durable store must never fall through to ambient libpq defaults."""
+    with pytest.raises(ConfigError, match="Postgres DSN"):
+        PostgresContextLifecycleOutboxStore(
+            postgres_dsn,
+            tenant_scope_sha256=TENANT_SCOPE_SHA256,
+        )
+
+
+def test_store_validates_trusted_tenant_before_sql() -> None:
+    """Malformed local tenant scope fails before any database interaction."""
+    with pytest.raises(ValidationError):
+        PostgresContextLifecycleOutboxStore(
+            "postgresql://unit",
+            tenant_scope=" bad",
+            tenant_scope_sha256=TENANT_SCOPE_SHA256,
+        )
+
+
+@pytest.mark.parametrize("tenant_scope_sha256", (None, "", "A" * 64, "a" * 63))
+def test_store_requires_exact_tenant_scope_evidence_identity(
+    tenant_scope_sha256: Any,
+) -> None:
+    """The RLS tenant must be bound to one explicit content-free tenant identity."""
+    with pytest.raises(ValidationError):
+        PostgresContextLifecycleOutboxStore(
+            "postgresql://unit",
+            tenant_scope_sha256=tenant_scope_sha256,
+        )
+
+
+def test_enqueue_rejects_invalid_evidence_before_sql(database: FakeDatabase) -> None:
+    """Shaped or malformed evidence cannot reach the durable outbox."""
+    bound_store = store()
+    with pytest.raises(ValidationError):
+        bound_store.enqueue("not-evidence")  # type: ignore[arg-type]
+    assert database.calls == []
+
+
+def test_enqueue_rejects_mismatched_tenant_evidence_before_sql(
+    database: FakeDatabase,
+) -> None:
+    """A tenant row cannot enqueue evidence claiming another tenant identity."""
+    bound_store = store(tenant_scope="tenant-a")
+    mismatched = replace(evidence(), tenant_scope_sha256="9" * 64)
+
+    with pytest.raises(ValidationError, match="tenant scope"):
+        bound_store.enqueue(mismatched)
+
+    assert database.calls == []
+
+
+def test_load_rejects_invalid_event_id_before_sql(database: FakeDatabase) -> None:
+    """Malformed event identifiers fail before tenant state or SQL is touched."""
+    bound_store = store()
+    with pytest.raises(ValidationError):
+        bound_store.load("bad/event")
+    assert database.calls == []
+
+
+def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
+    """An identical event replay reuses the durable row without rewriting it."""
+    bound_store = store(tenant_scope="tenant-a")
+    seed = evidence()
+    assert bound_store.enqueue(seed) == seed
+    assert bound_store.enqueue(seed) == seed
+    assert database.commits == 2
+    statements = [sql for sql, _ in database.calls]
+    assert (
+        sum(
+            sql.startswith("INSERT INTO public.llm_context_lifecycle_outbox")
+            for sql in statements
+        )
+        == 1
+    )
+
+
+def test_enqueue_rejects_conflicting_replay(database: FakeDatabase) -> None:
+    """Reusing an event id with changed evidence fails closed instead of overwriting."""
+    bound_store = store()
+    first = evidence()
+    bound_store.enqueue(first)
+    with pytest.raises(ContextLifecycleOutboxConflictError) as raised:
+        bound_store.enqueue(replace(first, evidence_ref_sha256="0" * 64))
+    assert raised.value.reason == "conflicting_replay"
+    assert bound_store.load(first.evidence_id) == first
+
+
+def test_enqueue_in_transaction_does_not_commit_caller_work(database: FakeDatabase) -> None:
+    """A caller can atomically persist domain work and outbox evidence together."""
+    bound_store = store()
+    cursor = FakeCursor(database)
+    seed = evidence()
+    assert bound_store.enqueue_in_transaction(cursor, seed) == seed
+    assert database.dsns == []
+    assert database.commits == 0
+
+
+def test_enqueue_accepts_identical_initial_insert_race(database: FakeDatabase) -> None:
+    """A concurrent identical first writer remains an idempotent success."""
+    seed = evidence()
+    database.insert_race_row = evidence_row(seed)
+    bound_store = store()
+    assert bound_store.enqueue(seed) == seed
+
+
+def test_enqueue_rejects_different_initial_insert_race(database: FakeDatabase) -> None:
+    """A concurrent conflicting first writer fails without overwriting its row."""
+    seed = evidence()
+    database.insert_race_row = evidence_row(
+        replace(seed, evidence_ref_sha256="0" * 64)
+    )
+    bound_store = store()
+    with pytest.raises(ContextLifecycleOutboxConflictError) as raised:
+        bound_store.enqueue(seed)
+    assert raised.value.reason == "initial_event_race"
+
+
+def test_enqueue_rejects_disappearing_insert_conflict(database: FakeDatabase) -> None:
+    """A conflict with no visible durable row fails closed for reconciliation."""
+    database.insert_conflict_without_row = True
+    bound_store = store()
+    with pytest.raises(RuntimeError, match="conflict row disappeared"):
+        bound_store.enqueue(evidence())
+
+
+def test_load_is_tenant_qualified_and_revalidates_rows(database: FakeDatabase) -> None:
+    """Durable rows are isolated by local tenant scope and validated on read."""
+    bound_store = store(tenant_scope="tenant-a")
+    seed = evidence()
+    bound_store.enqueue(seed)
+    assert bound_store.load(seed.evidence_id) == seed
+    select_params = [
+        params
+        for sql, params in database.calls
+        if sql.startswith("SELECT evidence_id")
+    ]
+    assert ("tenant-a", seed.evidence_id) in select_params
+
+
+def test_load_rejects_durable_tenant_binding_mismatch(database: FakeDatabase) -> None:
+    """Direct database drift cannot relabel another tenant as local evidence."""
+    corrupt = replace(evidence(), tenant_scope_sha256="9" * 64)
+    database.rows[("tenant-a", corrupt.evidence_id)] = evidence_row(corrupt)
+    bound_store = store(tenant_scope="tenant-a")
+
+    with pytest.raises(RuntimeError, match="tenant scope binding"):
+        bound_store.load(corrupt.evidence_id)
+
+
+@pytest.mark.parametrize("malformed_row", (object(), ("bad",)))
+def test_load_rejects_malformed_durable_row(
+    database: FakeDatabase,
+    malformed_row: Any,
+) -> None:
+    """Malformed direct-database state cannot become application evidence."""
+    database.rows[("standalone", "event-1")] = malformed_row
+    bound_store = store()
+    with pytest.raises(RuntimeError, match="invalid shape"):
+        bound_store.load("event-1")
+
+
+def test_load_rejects_behavior_bearing_row_before_member_access(
+    database: FakeDatabase,
+) -> None:
+    """A row subclass must not execute caller behavior before trust is established."""
+
+    class BehaviorBearingRow(tuple):
+        def __len__(self) -> int:
+            raise AssertionError("behavior-bearing row length executed")
+
+        def __iter__(self):
+            raise AssertionError("behavior-bearing row iteration executed")
+
+    database.rows[("standalone", "event-1")] = BehaviorBearingRow(
+        evidence_row(evidence())
+    )
+    bound_store = store()
+    with pytest.raises(RuntimeError, match="invalid shape"):
+        bound_store.load("event-1")
+
+
+def test_apply_schema_uses_explicit_migration_and_commit(
+    database: FakeDatabase,
+    tmp_path: Path,
+) -> None:
+    """Schema installation executes the selected migration in one explicit commit."""
+    sql_path = tmp_path / "outbox.sql"
+    sql_path.write_text("SELECT 1;", encoding="utf-8")
+    apply_context_lifecycle_outbox_schema("postgresql://unit", str(sql_path))
+    assert database.dsns == ["postgresql://unit"]
+    assert database.calls == [("SELECT 1;", ())]
+    assert database.commits == 1
+
+
+def test_apply_schema_uses_packaged_migration_by_default(database: FakeDatabase) -> None:
+    """Default installation executes the package-owned reviewed migration."""
+    apply_context_lifecycle_outbox_schema("postgresql://unit")
+    assert database.dsns == ["postgresql://unit"]
+    assert database.calls[0][0].startswith("-- SPDX-License-Identifier: Apache-2.0")
+    assert database.commits == 1
