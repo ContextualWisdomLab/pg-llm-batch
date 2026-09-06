@@ -15,6 +15,8 @@ Fresh review found a separate role-identity gap. `_require_rls_application_role(
 
 The relevant authority is not the DSN username string. It is the live PostgreSQL role closure: the effective role, the session role, and every role that `SESSION_USER` can currently select through `SET ROLE` or can make selectable through `ADMIN OPTION`. If any such role is superuser, `BYPASSRLS`, the outbox owner, can exercise/administer the owner, or carries destructive/mutating/programming authority on the outbox, the connection is outside the supported runtime boundary.
 
+A second fresh review found that role authority and the two `pg_class` RLS flags are still insufficient as a live admission proof. Migration 0009 verifies the sole canonical policy, its command/role scope, parser-normalized `USING` and `WITH CHECK` expressions, and allowed expression dependencies, but that is point-in-time installer evidence. A table owner can later drop and recreate a policy under the same canonical name with `USING (true) WITH CHECK (true)` while leaving `relrowsecurity` and `relforcerowsecurity` enabled. PostgreSQL stores the command, permissive/restrictive mode, role set, visibility expression and write-check expression in `pg_policy`; enabling RLS does not freeze those policy semantics. The package must therefore fail before binding tenant state when the live canonical policy catalog no longer matches the reviewed tenant predicate.
+
 PostgreSQL also permits an initially authenticated superuser to change `SESSION_USER` with `SET SESSION AUTHORIZATION` and later reset it to the original identity. PostgreSQL does not expose that original database-role identity through `SESSION_USER` after such a change. This package therefore does not treat an admin-originated connection that hides its initial authority through `SET SESSION AUTHORIZATION` as a supported runtime deployment. Runtime connections must originate from a non-administrative login identity whose live session/set-role closure satisfies this ADR.
 
 ## Constraints
@@ -23,6 +25,7 @@ PostgreSQL also permits an initially authenticated superuser to change `SESSION_
 - Preserve same-tenant/same-event serialization across package writers.
 - Do not parse DSN usernames as authorization evidence; inspect live PostgreSQL role/catalog authority.
 - Re-prove both effective `CURRENT_USER` and the authority reachable/administerable from `SESSION_USER` before tenant binding or outbox data SQL.
+- Re-prove the sole canonical RLS policy's live identity, command, role scope, permissive mode, `USING`, `WITH CHECK`, and reviewed catalog dependencies in the same runtime admission round trip.
 - Do not claim to detect an original superuser after that superuser deliberately changes session authorization; such admin-originated sessions are outside the supported runtime deployment boundary.
 - Do not rerun migration 0009 on every read/write.
 - Do not grant mutation authority merely to obtain a coordination lock.
@@ -33,7 +36,9 @@ PostgreSQL also permits an initially authenticated superuser to change `SESSION_
 
 ## Decision
 
-`_require_rls_application_role()` keeps one fail-closed catalog round trip. It first resolves the canonical outbox relation and requires RLS to remain enabled and forced. It then evaluates the role closure that can still affect the connection:
+`_require_rls_application_role()` keeps one fail-closed catalog round trip. It resolves the canonical outbox relation and requires RLS to remain enabled and forced. In that same query it requires exactly one policy on the relation and requires that policy to remain the canonical `plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2` definition: `ALL` commands, permissive mode, `PUBLIC`, and parser-normalized `USING` and `WITH CHECK` predicates equal to `tenant_scope = current_setting('pg_llm_batch.tenant_scope', true)`. Normal expression dependencies are restricted to the reviewed PostgreSQL `current_setting(text,bool)` function and text equality operator, matching migration 0009's final-admission contract. Policy drift is rejected; runtime never repairs owner DDL silently.
+
+The same round trip then evaluates the role closure that can still affect the connection:
 
 - effective `CURRENT_USER`;
 - authenticated/current session identity `SESSION_USER`;
@@ -54,7 +59,7 @@ This permits a least-privilege login wrapper to `SET ROLE` to a separate runtime
 
 The package continues to use transaction-level `pg_catalog.pg_advisory_xact_lock(bigint)` for serialized replay reads. The bigint key is a deterministic signed 64-bit projection of SHA-256 over the already-validated local tenant scope, a NUL separator, and evidence ID. The digest is coordination metadata only, not durable identity or authorization evidence. A collision can create excess serialization; durable identity remains `(tenant_scope, evidence_id)` plus exact row revalidation.
 
-All security-critical system functions and relations remain schema-qualified. Any absent or malformed authority verdict fails before tenant GUC binding or durable-row SQL.
+All security-critical system functions and relations remain schema-qualified. Any absent or malformed authority or policy verdict fails before tenant GUC binding or durable-row SQL.
 
 ## Alternatives considered
 
@@ -65,6 +70,14 @@ Rejected. PostgreSQL explicitly evaluates `SET ROLE` permission against the sess
 ### Inspect only `CURRENT_USER` and `SESSION_USER`
 
 Rejected. A safe login role can hold `SET TRUE` membership in another role without inheriting that role's privileges. Direct privilege checks on `SESSION_USER` alone can therefore remain false even though the login can select an unsafe role later. Admission must inspect selectable/administerable role closure, not just two role records.
+
+### Trust migration 0009 as continuing RLS policy authority
+
+Rejected. Migration 0009 proves the catalog at its own transaction boundary. Policy owner DDL after migration can preserve the policy name and both relation RLS flags while replacing the actual `USING`/`WITH CHECK` semantics. Runtime claims live tenant isolation and therefore needs a bounded live policy proof before it binds the tenant GUC or touches durable rows.
+
+### Check only policy name and RLS flags
+
+Rejected. PostgreSQL policy names identify catalog objects per table, not semantic content. The command scope, target roles, permissive/restrictive mode and both policy expression trees determine which rows are visible or writable. Same-name replacement is the concrete RED specimen.
 
 ### Reject every role-membership edge
 
@@ -92,7 +105,7 @@ Rejected. Session locks outlive the caller transaction unless explicitly release
 
 ### Rerun migration 0009 on every runtime operation
 
-Rejected. Installer/final-admission verification is substantially broader than the hot role check and does not prove the connection's current role-selection authority.
+Rejected. Installer/final-admission verification is substantially broader than the hot runtime check. The runtime check deliberately reuses only the live relation/policy and connection-authority evidence needed to prove the application boundary.
 
 ## Verification and promotion
 
@@ -104,19 +117,26 @@ Retained lineage for owner/RLS and destructive/programming authority includes:
 - append-only `DELETE` RED `513686c89e9922f7b536494ec3f126cfd14a06c1`, executable specimen `68079570fced0010ff3771706bb632e5f761728b`, and repair `6bef0692451cb0a512bb587a2f392c27ead65c4b`;
 - UPDATE/coordination static RED `f5208b7b124248eae1e9855ec771734abe0e3ffb`, realistic PostgreSQL specimen `638dac99442cd4fcb00c9e63cb97b1c695bfea3e`, and causal repair `b354a569c1bb3857be33cf65612c9260c2a77f8e`.
 
-Fresh authenticated-session lineage is:
+Authenticated-session lineage is:
 
 - RED `d3d19da69af08d05eb6c4f7589003161c51a6988` adds a static contract requiring `SESSION_USER` role-closure inspection and a PostgreSQL/container specimen with a non-superuser login that can `SET ROLE` to both a safe runtime role and the outbox owner;
 - causal production repair `89114ce0c6fb7cc27b03f492e8f4fe37693f2195` evaluates both effective/session identities plus every session-selectable/administerable role before tenant/data SQL;
 - unit contract repair `41c74ca599e744aff67407dc883975708cba76df` aligns the existing role-authority assertions with the new closure semantics.
 
-The realistic PostgreSQL specimen is wired into the container acceptance lane. It has not earned hosted GREEN until the exact final repaired head executes successfully. Keep this ADR Proposed until exact-head repository quality gates and the PostgreSQL acceptance specimen are terminal successful.
+Live policy-authority lineage is:
+
+- static RED `645d655e2cca11c89e0fa7bcd50fac9f52f1898e` requires the runtime admission query itself to prove the exact canonical `pg_policy` semantics rather than only the relation flags;
+- real PostgreSQL RED specimen `5309b8f5631ae1d4570bfb0fed9b21839b88d923` first proves the canonical policy exposes only tenant A, then replaces it under the same name with `USING (true) WITH CHECK (true)` and proves the least-privilege runtime role can see both tenant A and tenant B;
+- CI wiring `c99f9a17624df8610d259ffec0276a6add9bdaba` puts that specimen in the PostgreSQL/container lane;
+- causal production repair `434e7a5c269dc9780b9160580683d7467ece3565` adds the exact live policy proof to the existing single catalog round trip before tenant binding or outbox DML.
+
+The realistic PostgreSQL specimens are wired into the container acceptance lane. They have not earned hosted GREEN until the exact final repaired head executes successfully. Keep this ADR Proposed until exact-head repository quality gates and PostgreSQL acceptance are terminal successful.
 
 ## Consequences
 
-The supported lifecycle-outbox connection is now an append-only RLS subject at both effective and session authority levels. A deployment may use a separate least-privilege login wrapper plus runtime role, but the login must not retain or be able to manufacture access to an unsafe role. Maintenance, retention/erasure, relation programming, schema ownership, and administrative login authority stay on separate connections/identities.
+The supported lifecycle-outbox connection is now an append-only RLS subject at both effective and session authority levels, and the tenant filter itself is a live runtime invariant rather than a migration-history assumption. A deployment may use a separate least-privilege login wrapper plus runtime role, but the login must not retain or be able to manufacture access to an unsafe role. Maintenance, retention/erasure, relation programming, policy ownership, schema ownership, and administrative login authority stay on separate connections/identities.
 
-This closes a connection-local authority escape without broadening the domain model or changing durable schema. It adds catalog work proportional to the PostgreSQL role set because admission evaluates the session's selectable/administerable role closure. No p95 latency claim is made until an exact-head performance lane measures the resulting hot-path query under realistic role cardinality.
+This closes connection-local role escape and same-name policy-drift admission gaps without broadening the domain model or changing durable schema. It adds catalog work proportional to the PostgreSQL role set plus one bounded policy/dependency lookup inside the same round trip. No p95 latency claim is made until an exact-head performance lane measures the resulting hot-path query under realistic role cardinality.
 
 ## References
 
@@ -133,3 +153,5 @@ PostgreSQL Global Development Group. (2026e). *SET SESSION AUTHORIZATION*. In *P
 PostgreSQL Global Development Group. (2026f). *System administration functions: Advisory lock functions*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/functions-admin.html
 
 PostgreSQL Global Development Group. (2026g). *Row security policies*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/ddl-rowsecurity.html
+
+PostgreSQL Global Development Group. (2026h). *pg_policy*. In *PostgreSQL 18 documentation*. https://www.postgresql.org/docs/18/catalog-pg-policy.html
