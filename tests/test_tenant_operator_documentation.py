@@ -40,7 +40,7 @@ def test_remote_lifecycle_guide_exposes_tenant_qualified_operations() -> None:
     assert "(tenant_scope, endpoint_alias, remote_batch_id)" in guide
     assert "get_tenant_remote_batch_state" in guide
     assert "persist_tenant_remote_batch_state" in guide
-    assert "NOSUPERUSER NOBYPASSRLS" in guide
+    assert "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" in guide
     assert "direct SQL" in guide
     assert "arbitrary tenant scope" in guide
 
@@ -53,7 +53,7 @@ def test_readme_exposes_standalone_and_tenant_scoped_entry_points() -> None:
     assert "TenantDurableBatchAPIClient" in readme
     assert "tenant_scope=" in readme
     assert "docs/remote-batch-lifecycle.md" in readme
-    assert "NOSUPERUSER NOBYPASSRLS" in readme
+    assert "NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS" in readme
 
 
 def test_architecture_and_doctoring_bound_the_custom_guc_claim() -> None:
