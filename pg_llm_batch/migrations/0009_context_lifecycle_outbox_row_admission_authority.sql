@@ -33,7 +33,7 @@ BEGIN
                   AND NOT outbox_constraint.condeferred
                   AND outbox_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
                       (
-                          SELECT actual.attnum::pg_catalog.smallint
+                          SELECT actual.attnum::pg_catalog.int2
                           FROM pg_catalog.pg_attribute AS actual
                           WHERE actual.attrelid =
                                 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
@@ -52,7 +52,7 @@ BEGIN
                   AND NOT outbox_constraint.condeferred
                   AND outbox_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
                       (
-                          SELECT actual.attnum::pg_catalog.smallint
+                          SELECT actual.attnum::pg_catalog.int2
                           FROM pg_catalog.pg_attribute AS actual
                           WHERE actual.attrelid =
                                 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
@@ -61,7 +61,7 @@ BEGIN
                             AND NOT actual.attisdropped
                       ),
                       (
-                          SELECT actual.attnum::pg_catalog.smallint
+                          SELECT actual.attnum::pg_catalog.int2
                           FROM pg_catalog.pg_attribute AS actual
                           WHERE actual.attrelid =
                                 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
@@ -108,7 +108,7 @@ BEGIN
                         AND NOT canonical_constraint.condeferred
                         AND canonical_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
                             (
-                                SELECT actual.attnum::pg_catalog.smallint
+                                SELECT actual.attnum::pg_catalog.int2
                                 FROM pg_catalog.pg_attribute AS actual
                                 WHERE actual.attrelid = admission_index.indrelid
                                   AND actual.attname OPERATOR(pg_catalog.=)
@@ -127,7 +127,7 @@ BEGIN
                         AND NOT canonical_constraint.condeferred
                         AND canonical_constraint.conkey OPERATOR(pg_catalog.=) ARRAY[
                             (
-                                SELECT actual.attnum::pg_catalog.smallint
+                                SELECT actual.attnum::pg_catalog.int2
                                 FROM pg_catalog.pg_attribute AS actual
                                 WHERE actual.attrelid = admission_index.indrelid
                                   AND actual.attname OPERATOR(pg_catalog.=) 'tenant_scope'
@@ -135,7 +135,7 @@ BEGIN
                                   AND NOT actual.attisdropped
                             ),
                             (
-                                SELECT actual.attnum::pg_catalog.smallint
+                                SELECT actual.attnum::pg_catalog.int2
                                 FROM pg_catalog.pg_attribute AS actual
                                 WHERE actual.attrelid = admission_index.indrelid
                                   AND actual.attname OPERATOR(pg_catalog.=) 'evidence_id'
