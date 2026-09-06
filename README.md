@@ -73,7 +73,10 @@ selection is not owned by this repository.
   needs `SELECT` and `INSERT` but must not hold `UPDATE`, `DELETE`, `TRUNCATE`,
   `REFERENCES`, `TRIGGER`, ownership, or exercisable owner-role authority. Replay
   serialization uses a transaction advisory lock rather than granting UPDATE for
-  `SELECT ... FOR UPDATE`.
+  `SELECT ... FOR UPDATE`. Runtime admission also re-proves the sole canonical
+  tenant policy's command, role scope, permissive mode, `USING`/`WITH CHECK`
+  predicates, and reviewed catalog dependencies before tenant binding or outbox
+  SQL; migration success alone is not continuing RLS authority.
 
 ---
 
@@ -224,6 +227,15 @@ policy row in place, or recreates the same canonical policy name with widened
 predicates, therefore fails closed instead of being admitted as ready. Migration
 0009 does not repair that state; operators reconcile it by reapplying migration
 0008 and investigating why the tenant isolation boundary changed.
+
+That final migration proof is point-in-time. Before each lifecycle-outbox
+transaction seam, runtime admission repeats the bounded live policy proof in the
+same catalog round trip used for role authority. Both RLS flags must still be
+set, exactly one canonical all-command permissive `PUBLIC` policy must remain,
+and its parser-normalized tenant predicates and reviewed function/operator
+dependencies must still match. Same-name `USING (true) WITH CHECK (true)` drift
+is rejected before the package sets `pg_llm_batch.tenant_scope` or reads/writes
+outbox rows; runtime never repairs policy DDL silently.
 
 Migration 0008 verifies package-owned payload and lifecycle timestamp CHECKs by
 executable catalog identity rather than name or comment alone. It creates
