@@ -51,3 +51,19 @@ def test_role_admission_rejects_maintain_across_executable_authority_closure() -
         "pg_catalog.has_table_privilege(definer_admin_set_role.oid, "
         "admitted_relation.oid, 'MAINTAIN')"
     ) in sql
+
+
+def test_maintain_probe_is_guarded_for_supported_postgresql_16() -> None:
+    """PostgreSQL 16 must never execute a privilege name introduced in PostgreSQL 17."""
+    cursor = MaintainAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    sql = cursor.sql
+    version_gate = (
+        "CASE WHEN pg_catalog.current_setting('server_version_num')::pg_catalog.int4 "
+        "OPERATOR(pg_catalog.>=) 170000 THEN pg_catalog.has_table_privilege("
+    )
+    assert sql.count("'MAINTAIN'") == 6
+    assert sql.count(version_gate) == 6
+    assert sql.count("ELSE false END") >= 6
