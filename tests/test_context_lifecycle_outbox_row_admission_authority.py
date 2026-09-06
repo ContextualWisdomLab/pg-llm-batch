@@ -81,6 +81,12 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     assert "admission_index.indisunique" in package_sql
     assert "admission_index.indexprs IS NOT NULL" in package_sql
     assert "admission_index.indpred IS NOT NULL" in package_sql
+    assert "JOIN pg_catalog.pg_class AS admission_index_relation" in package_sql
+    assert "JOIN pg_catalog.pg_am AS admission_index_method" in package_sql
+    assert "JOIN pg_catalog.pg_opclass AS admission_opclass" in package_sql
+    assert "admission_index_method.amname OPERATOR(pg_catalog.<>) 'btree'" in package_sql
+    assert "NOT admission_opclass.opcdefault" in package_sql
+    assert "admission_opclass.opcintype OPERATOR(pg_catalog.<>) actual_attribute.atttypid" in package_sql
     assert "unexpected lifecycle outbox row-admission authority" in package_sql
 
 
