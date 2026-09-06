@@ -85,6 +85,17 @@ def test_runtime_role_doctoring_includes_createrole_definer_boundary() -> None:
     assert "554189734a8ef257ba9a496f984866f2fea03709" in doctoring
 
 
+def test_runtime_role_doctoring_includes_replication_definer_boundary() -> None:
+    """Operator evidence must cover indirect replication-slot authority through definers."""
+    doctoring = _normalized(RUNTIME_ROLE_DOCTORING_PATH)
+
+    assert "SECURITY DEFINER" in doctoring
+    assert "REPLICATION" in doctoring
+    assert "NOREPLICATION" in doctoring
+    assert "pg_create_physical_replication_slot" in doctoring
+    assert "c5c9761583ef91a34d6f3ca5fb1c7d86c935037a" in doctoring
+
+
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
     """The implementation plan must preserve the reviewed default-deny RLS order."""
     plan = _normalized(IMPLEMENTATION_PLAN_PATH)
