@@ -296,3 +296,140 @@ SQL
 
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# Migration 0008 rejects user triggers at convergence time, but migration 0009 is the
+# final admission gate and must re-prove that no operator trigger was attached after
+# 0008 had already been recorded as applied. The trigger below demonstrates concrete
+# write-time authority by rejecting one otherwise-canonical lifecycle event.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE FUNCTION public.pg_llm_batch_outbox_trigger_probe()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    IF NEW.event_type = 'batch.lifecycle.blocked' THEN
+        RAISE EXCEPTION 'operator trigger rejected canonical event';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER trg_outbox_operator_probe
+BEFORE INSERT ON public.llm_context_lifecycle_outbox
+FOR EACH ROW EXECUTE FUNCTION public.pg_llm_batch_outbox_trigger_probe();
+SQL
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
+    >/tmp/pg-llm-batch-outbox-trigger-write.out 2>&1; then
+INSERT INTO public.llm_context_lifecycle_outbox (
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256
+) VALUES (
+    'trigger-program-red',
+    'batch.lifecycle.blocked',
+    repeat('0', 64),
+    repeat('1', 64),
+    repeat('2', 64),
+    repeat('3', 64),
+    'observed',
+    '1970-01-01T00:00:00Z',
+    '1970-01-01T00:00:00Z',
+    repeat('4', 64),
+    repeat('5', 64)
+);
+SQL
+  cat /tmp/pg-llm-batch-outbox-trigger-write.out >&2
+  echo "operator trigger did not demonstrate hidden write-time authority" >&2
+  exit 1
+fi
+if ! grep -Fq "operator trigger rejected canonical event" \
+  /tmp/pg-llm-batch-outbox-trigger-write.out; then
+  cat /tmp/pg-llm-batch-outbox-trigger-write.out >&2
+  echo "trigger-program RED failed for the wrong reason" >&2
+  exit 1
+fi
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-admission-trigger.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-admission-trigger.out >&2
+  echo "row-admission migration admitted an operator trigger" >&2
+  exit 1
+fi
+if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-admission-trigger.out; then
+  cat /tmp/pg-llm-batch-outbox-admission-trigger.out >&2
+  echo "operator trigger failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP TRIGGER trg_outbox_operator_probe ON public.llm_context_lifecycle_outbox;
+DROP FUNCTION public.pg_llm_batch_outbox_trigger_probe();
+SQL
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
+
+# Rewrite rules are a second table-attached executable program surface. An INSTEAD
+# INSERT rule can suppress an otherwise-canonical row while leaving columns,
+# constraints, indexes, and RLS unchanged. Final admission must therefore reject the
+# rule rather than relying on migration 0008's earlier topology check.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'CREATE RULE rl_outbox_operator_probe AS ON INSERT TO public.llm_context_lifecycle_outbox DO INSTEAD NOTHING;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO public.llm_context_lifecycle_outbox (
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256
+) VALUES (
+    'rewrite-program-red',
+    'batch.lifecycle.allowed',
+    repeat('0', 64),
+    repeat('1', 64),
+    repeat('2', 64),
+    repeat('3', 64),
+    'observed',
+    '1970-01-01T00:00:00Z',
+    '1970-01-01T00:00:00Z',
+    repeat('4', 64),
+    repeat('5', 64)
+);
+SQL
+if [[ "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM public.llm_context_lifecycle_outbox WHERE evidence_id = 'rewrite-program-red';")" != "0" ]]; then
+  echo "operator rewrite rule did not demonstrate hidden insert authority" >&2
+  exit 1
+fi
+
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-admission-rule.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-admission-rule.out >&2
+  echo "row-admission migration admitted an operator rewrite rule" >&2
+  exit 1
+fi
+if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-admission-rule.out; then
+  cat /tmp/pg-llm-batch-outbox-admission-rule.out >&2
+  echo "operator rewrite rule failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
+  'DROP RULE rl_outbox_operator_probe ON public.llm_context_lifecycle_outbox;'
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
