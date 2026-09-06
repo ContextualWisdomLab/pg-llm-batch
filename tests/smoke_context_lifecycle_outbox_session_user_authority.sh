@@ -34,32 +34,32 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-CREATE ROLE pg_llm_batch_outbox_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_safe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_safe LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_escape LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_replication LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS REPLICATION;
-CREATE ROLE pg_llm_batch_outbox_session_createdb LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOBYPASSRLS;
-CREATE ROLE pg_llm_batch_outbox_session_createrole LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_owner LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_safe NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_session_safe LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_session_escape LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_session_replication LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS REPLICATION;
+CREATE ROLE cwl_llm_batch_outbox_session_createdb LOGIN NOSUPERUSER CREATEDB NOCREATEROLE NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_session_createrole LOGIN NOSUPERUSER NOCREATEDB CREATEROLE NOBYPASSRLS;
 GRANT USAGE ON SCHEMA public
-    TO pg_llm_batch_outbox_owner,
-       pg_llm_batch_outbox_safe,
-       pg_llm_batch_outbox_session_safe,
-       pg_llm_batch_outbox_session_escape,
-       pg_llm_batch_outbox_session_replication,
-       pg_llm_batch_outbox_session_createdb,
-       pg_llm_batch_outbox_session_createrole;
-ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO pg_llm_batch_outbox_owner;
+    TO cwl_llm_batch_outbox_owner,
+       cwl_llm_batch_outbox_safe,
+       cwl_llm_batch_outbox_session_safe,
+       cwl_llm_batch_outbox_session_escape,
+       cwl_llm_batch_outbox_session_replication,
+       cwl_llm_batch_outbox_session_createdb,
+       cwl_llm_batch_outbox_session_createrole;
+ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO cwl_llm_batch_outbox_owner;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
-    TO pg_llm_batch_outbox_safe,
-       pg_llm_batch_outbox_session_replication,
-       pg_llm_batch_outbox_session_createdb,
-       pg_llm_batch_outbox_session_createrole;
-GRANT pg_llm_batch_outbox_safe TO pg_llm_batch_outbox_session_safe
+    TO cwl_llm_batch_outbox_safe,
+       cwl_llm_batch_outbox_session_replication,
+       cwl_llm_batch_outbox_session_createdb,
+       cwl_llm_batch_outbox_session_createrole;
+GRANT cwl_llm_batch_outbox_safe TO cwl_llm_batch_outbox_session_safe
     WITH INHERIT FALSE, SET TRUE;
-GRANT pg_llm_batch_outbox_safe TO pg_llm_batch_outbox_session_escape
+GRANT cwl_llm_batch_outbox_safe TO cwl_llm_batch_outbox_session_escape
     WITH INHERIT FALSE, SET TRUE;
-GRANT pg_llm_batch_outbox_owner TO pg_llm_batch_outbox_session_escape
+GRANT cwl_llm_batch_outbox_owner TO cwl_llm_batch_outbox_session_escape
     WITH INHERIT FALSE, SET TRUE;
 
 INSERT INTO public.llm_context_lifecycle_outbox (
@@ -93,26 +93,26 @@ SQL
 
 escape_identity="$(
   docker exec -i "${container}" psql \
-      -h 127.0.0.1 -U pg_llm_batch_outbox_session_escape -d postgres \
+      -h 127.0.0.1 -U cwl_llm_batch_outbox_session_escape -d postgres \
       -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_safe;
+SET LOCAL ROLE cwl_llm_batch_outbox_safe;
 SELECT session_user || ',' || current_user;
 ROLLBACK;
 SQL
 )"
-if [[ "${escape_identity}" != "pg_llm_batch_outbox_session_escape,pg_llm_batch_outbox_safe" ]]; then
+if [[ "${escape_identity}" != "cwl_llm_batch_outbox_session_escape,cwl_llm_batch_outbox_safe" ]]; then
   echo "SET ROLE specimen did not preserve distinct authenticated/effective identities" >&2
   exit 1
 fi
 
 owner_escape="$(
   docker exec -i "${container}" psql \
-      -h 127.0.0.1 -U pg_llm_batch_outbox_session_escape -d postgres \
+      -h 127.0.0.1 -U cwl_llm_batch_outbox_session_escape -d postgres \
       -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
 BEGIN;
-SET LOCAL ROLE pg_llm_batch_outbox_safe;
-SET LOCAL ROLE pg_llm_batch_outbox_owner;
+SET LOCAL ROLE cwl_llm_batch_outbox_safe;
+SET LOCAL ROLE cwl_llm_batch_outbox_owner;
 ALTER TABLE public.llm_context_lifecycle_outbox NO FORCE ROW LEVEL SECURITY;
 SELECT (NOT relforcerowsecurity)::int
 FROM pg_catalog.pg_class
@@ -125,9 +125,9 @@ if [[ "${owner_escape}" != "1" ]]; then
   exit 1
 fi
 
-createdb_probe="pg_llm_batch_outbox_createdb_probe_${GITHUB_RUN_ID:-local}_$$"
+createdb_probe="cwl_llm_batch_outbox_createdb_probe_${GITHUB_RUN_ID:-local}_$$"
 docker exec -i "${container}" psql \
-    -h 127.0.0.1 -U pg_llm_batch_outbox_session_createdb -d postgres \
+    -h 127.0.0.1 -U cwl_llm_batch_outbox_session_createdb -d postgres \
     -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"${createdb_probe}\"" >/dev/null
 if ! docker exec "${container}" psql -U postgres -d postgres -Atq \
     -v probe="${createdb_probe}" \
@@ -140,18 +140,18 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
     -c "DROP DATABASE \"${createdb_probe}\"" >/dev/null
 
 docker exec -i "${container}" psql \
-    -h 127.0.0.1 -U pg_llm_batch_outbox_session_createrole -d postgres \
+    -h 127.0.0.1 -U cwl_llm_batch_outbox_session_createrole -d postgres \
     -v ON_ERROR_STOP=1 <<'SQL' >/dev/null
-CREATE ROLE pg_llm_batch_outbox_created_by_runtime NOLOGIN;
+CREATE ROLE cwl_llm_batch_outbox_created_by_runtime NOLOGIN;
 SQL
 if ! docker exec "${container}" psql -U postgres -d postgres -Atq \
-    -c "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles WHERE rolname = 'pg_llm_batch_outbox_created_by_runtime'" \
+    -c "SELECT pg_catalog.count(*) FROM pg_catalog.pg_roles WHERE rolname = 'cwl_llm_batch_outbox_created_by_runtime'" \
     | grep -qx '1'; then
   echo "CREATEROLE specimen did not demonstrate role-administration authority" >&2
   exit 1
 fi
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
-    -c "DROP ROLE pg_llm_batch_outbox_created_by_runtime" >/dev/null
+    -c "DROP ROLE cwl_llm_batch_outbox_created_by_runtime" >/dev/null
 
 docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
 import psycopg
@@ -160,29 +160,29 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 safe_store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_session_safe@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_session_safe@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
 with psycopg.connect(
-    "postgresql://pg_llm_batch_outbox_session_safe@127.0.0.1/postgres"
+    "postgresql://cwl_llm_batch_outbox_session_safe@127.0.0.1/postgres"
 ) as connection:
     with connection.cursor() as cursor:
-        cursor.execute("SET ROLE pg_llm_batch_outbox_safe")
+        cursor.execute("SET ROLE cwl_llm_batch_outbox_safe")
         row = safe_store.load_in_transaction(cursor, "session-authority-a")
         assert row is not None
         assert row.evidence_id == "session-authority-a"
 
 escape_store = PostgresContextLifecycleOutboxStore(
-    "postgresql://pg_llm_batch_outbox_session_escape@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_session_escape@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
 with psycopg.connect(
-    "postgresql://pg_llm_batch_outbox_session_escape@127.0.0.1/postgres"
+    "postgresql://cwl_llm_batch_outbox_session_escape@127.0.0.1/postgres"
 ) as connection:
     with connection.cursor() as cursor:
-        cursor.execute("SET ROLE pg_llm_batch_outbox_safe")
+        cursor.execute("SET ROLE cwl_llm_batch_outbox_safe")
         try:
             escape_store.load_in_transaction(cursor, "session-authority-a")
         except ConfigError as exc:
@@ -193,9 +193,9 @@ with psycopg.connect(
             )
 
 for administrative_role in (
-    "pg_llm_batch_outbox_session_replication",
-    "pg_llm_batch_outbox_session_createdb",
-    "pg_llm_batch_outbox_session_createrole",
+    "cwl_llm_batch_outbox_session_replication",
+    "cwl_llm_batch_outbox_session_createdb",
+    "cwl_llm_batch_outbox_session_createrole",
 ):
     store = PostgresContextLifecycleOutboxStore(
         f"postgresql://{administrative_role}@127.0.0.1/postgres",
