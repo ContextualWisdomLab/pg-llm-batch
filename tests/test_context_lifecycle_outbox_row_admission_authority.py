@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -106,8 +107,14 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     assert "outbox_policy.polcmd OPERATOR(pg_catalog.=) '*'" in package_sql
     assert "outbox_policy.polpermissive" in package_sql
     assert "outbox_policy.polroles OPERATOR(pg_catalog.=) ARRAY[0::pg_catalog.oid]" in package_sql
-    assert "pg_catalog.pg_get_expr(outbox_policy.polqual" in package_sql
-    assert "pg_catalog.pg_get_expr(outbox_policy.polwithcheck" in package_sql
+    assert re.search(
+        r"pg_catalog\.pg_get_expr\(\s*outbox_policy\.polqual,",
+        package_sql,
+    )
+    assert re.search(
+        r"pg_catalog\.pg_get_expr\(\s*outbox_policy\.polwithcheck,",
+        package_sql,
+    )
     assert "FROM pg_catalog.pg_index AS admission_index" in package_sql
     assert "admission_index.indisunique" in package_sql
     assert "admission_index.indexprs IS NOT NULL" in package_sql
