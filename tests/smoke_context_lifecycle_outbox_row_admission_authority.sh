@@ -76,3 +76,84 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'DROP INDEX public.ux_outbox_operator_probe;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# A non-unique expression index can still execute operator-owned code for every
+# inserted row. PostgreSQL requires expression-index functions to be IMMUTABLE, but
+# that declaration does not prove the function cannot raise and reject an otherwise
+# canonical event. The authority migration must therefore reject the executable index.
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE FUNCTION public.pg_llm_batch_outbox_expression_probe(value text)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+STRICT
+AS $$
+BEGIN
+    IF value = 'batch.lifecycle.blocked' THEN
+        RAISE EXCEPTION 'operator expression index rejected canonical event';
+    END IF;
+    RETURN value;
+END;
+$$;
+CREATE INDEX ix_outbox_operator_expression_probe
+    ON public.llm_context_lifecycle_outbox (
+        public.pg_llm_batch_outbox_expression_probe(event_type)
+    );
+SQL
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
+    >/tmp/pg-llm-batch-outbox-expression-write.out 2>&1; then
+INSERT INTO public.llm_context_lifecycle_outbox (
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256
+) VALUES (
+    'expression-index-red',
+    'batch.lifecycle.blocked',
+    repeat('0', 64),
+    repeat('1', 64),
+    repeat('2', 64),
+    repeat('3', 64),
+    'observed',
+    '1970-01-01T00:00:00Z',
+    '1970-01-01T00:00:00Z',
+    repeat('4', 64),
+    repeat('5', 64)
+);
+SQL
+  cat /tmp/pg-llm-batch-outbox-expression-write.out >&2
+  echo "operator expression index did not demonstrate hidden write-time authority" >&2
+  exit 1
+fi
+if ! grep -Fq "operator expression index rejected canonical event" \
+  /tmp/pg-llm-batch-outbox-expression-write.out; then
+  cat /tmp/pg-llm-batch-outbox-expression-write.out >&2
+  echo "expression-index RED failed for the wrong reason" >&2
+  exit 1
+fi
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-admission-expression.out 2>&1; then
+  cat /tmp/pg-llm-batch-outbox-admission-expression.out >&2
+  echo "row-admission migration admitted an executable non-unique index" >&2
+  exit 1
+fi
+if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-admission-expression.out; then
+  cat /tmp/pg-llm-batch-outbox-admission-expression.out >&2
+  echo "executable non-unique index failed for the wrong reason" >&2
+  exit 1
+fi
+
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP INDEX public.ix_outbox_operator_expression_probe;
+DROP FUNCTION public.pg_llm_batch_outbox_expression_probe(text);
+SQL
+docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/dev/null
