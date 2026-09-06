@@ -36,7 +36,7 @@ fi
 # The runtime INSERT omits created_at and context_outbox_uuid, so their defaults execute
 # on every new durable intent. A restore/operator can replace one after migration 0008
 # was recorded as applied without changing CHECK/RLS/trigger/rule/index authority.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE FUNCTION public.pg_llm_batch_outbox_created_at_probe()
 RETURNS timestamptz
 LANGUAGE plpgsql
@@ -51,7 +51,7 @@ ALTER TABLE public.llm_context_lifecycle_outbox
     SET DEFAULT public.pg_llm_batch_outbox_created_at_probe();
 SQL
 
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
     >/tmp/pg-llm-batch-outbox-default-write.out 2>&1; then
 INSERT INTO public.llm_context_lifecycle_outbox (
     tenant_scope,
@@ -105,7 +105,7 @@ if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
   exit 1
 fi
 
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
     ALTER COLUMN created_at SET DEFAULT pg_catalog.now();
 DROP FUNCTION public.pg_llm_batch_outbox_created_at_probe();
@@ -118,7 +118,7 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
 # PostgreSQL evaluates any omitted-column default at INSERT time, post-convergence drift
 # can still execute operator-owned code through that declared schema surface. Migration
 # 0009 must verify the exact retained default instead of proving only that one exists.
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE FUNCTION public.pg_llm_batch_outbox_tenant_scope_probe()
 RETURNS text
 LANGUAGE plpgsql
@@ -133,7 +133,7 @@ ALTER TABLE public.llm_context_lifecycle_outbox
     SET DEFAULT public.pg_llm_batch_outbox_tenant_scope_probe();
 SQL
 
-if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL' \
     >/tmp/pg-llm-batch-outbox-tenant-default-write.out 2>&1; then
 INSERT INTO public.llm_context_lifecycle_outbox (
     evidence_id,
@@ -185,7 +185,7 @@ if ! grep -Fq "unexpected lifecycle outbox row-admission authority" \
   exit 1
 fi
 
-docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
     ALTER COLUMN tenant_scope SET DEFAULT 'standalone'::pg_catalog.text;
 DROP FUNCTION public.pg_llm_batch_outbox_tenant_scope_probe();
