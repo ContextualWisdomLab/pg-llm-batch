@@ -95,10 +95,48 @@ def _event_identity_lock_key(tenant_scope: str, evidence_id: str) -> int:
 
 
 def _require_rls_application_role(cursor: Any) -> None:
-    """Reject effective or login-selectable roles with unsafe outbox authority."""
+    """Reject unsafe runtime roles or drifted canonical RLS policy authority."""
     cursor.execute(
         "SELECT NOT admitted_relation.relrowsecurity "
         "OR NOT admitted_relation.relforcerowsecurity "
+        "OR ("
+        "SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy AS outbox_policy "
+        "WHERE outbox_policy.polrelid OPERATOR(pg_catalog.=) admitted_relation.oid"
+        ") OPERATOR(pg_catalog.<>) 1 "
+        "OR NOT EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_policy AS outbox_policy "
+        "WHERE outbox_policy.polrelid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "AND outbox_policy.polname OPERATOR(pg_catalog.=) "
+        "'plc_llm_context_lifecycle_outbox_tenant_scope_canonical_v2' "
+        "AND outbox_policy.polcmd OPERATOR(pg_catalog.=) '*' "
+        "AND outbox_policy.polpermissive "
+        "AND outbox_policy.polroles OPERATOR(pg_catalog.=) "
+        "ARRAY[0::pg_catalog.oid] "
+        "AND pg_catalog.pg_get_expr(outbox_policy.polqual, "
+        "outbox_policy.polrelid, false) OPERATOR(pg_catalog.=) "
+        "'(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))' "
+        "AND pg_catalog.pg_get_expr(outbox_policy.polwithcheck, "
+        "outbox_policy.polrelid, false) OPERATOR(pg_catalog.=) "
+        "'(tenant_scope = current_setting(''pg_llm_batch.tenant_scope''::text, true))' "
+        "AND NOT EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_depend AS unexpected_policy_dependency "
+        "WHERE unexpected_policy_dependency.classid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_policy'::pg_catalog.regclass "
+        "AND unexpected_policy_dependency.objid OPERATOR(pg_catalog.=) "
+        "outbox_policy.oid "
+        "AND unexpected_policy_dependency.objsubid OPERATOR(pg_catalog.=) 0 "
+        "AND unexpected_policy_dependency.refobjsubid OPERATOR(pg_catalog.=) 0 "
+        "AND unexpected_policy_dependency.deptype::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'n' "
+        "AND ((unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_proc'::pg_catalog.regclass "
+        "AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>) "
+        "'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure) "
+        "OR (unexpected_policy_dependency.refclassid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_operator'::pg_catalog.regclass "
+        "AND unexpected_policy_dependency.refobjid OPERATOR(pg_catalog.<>) "
+        "'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator))"
+        ")) "
         "OR EXISTS ("
         "SELECT 1 FROM pg_catalog.pg_roles AS selectable_role "
         "WHERE ("
@@ -450,12 +488,13 @@ class PostgresContextLifecycleOutboxStore:
         can return to application code. Both the effective ``CURRENT_USER`` and the
         authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
         subjects without outbox-owner, destructive, or relation-programming authority,
-        while the canonical relation still has RLS enabled and forced. The live
-        admission is checked before tenant state is bound or durable rows are touched.
-        Security-critical function and relation authority is explicitly schema-qualified,
-        and ``ONLY`` prevents inherited relations from widening the canonical durable
-        row source if an inheritance edge appears after migration admission. The outbox
-        does not mutate or inherit the caller transaction's ``search_path``.
+        while the canonical relation still has RLS enabled and forced with the sole
+        reviewed tenant policy semantics. The live admission is checked before tenant
+        state is bound or durable rows are touched. Security-critical function,
+        relation, and policy authority is explicitly schema-qualified, and ``ONLY``
+        prevents inherited relations from widening the canonical durable row source if
+        an inheritance edge appears after migration admission. The outbox does not
+        mutate or inherit the caller transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
