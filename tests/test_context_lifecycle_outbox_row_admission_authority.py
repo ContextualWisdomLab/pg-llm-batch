@@ -88,6 +88,15 @@ def test_row_admission_authority_migration_is_mirrored_and_fail_closed() -> None
     assert ") OPERATOR(pg_catalog.=) canonical_system_time_check_expression" in package_sql
     assert "FROM pg_catalog.pg_constraint AS outbox_constraint" in package_sql
     assert "outbox_constraint.contype IN ('c', 'f', 'p', 'u', 'x')" in package_sql
+    assert "FROM pg_catalog.pg_class AS outbox_relation" in package_sql
+    assert "outbox_relation.relrowsecurity" in package_sql
+    assert "outbox_relation.relforcerowsecurity" in package_sql
+    assert "FROM pg_catalog.pg_policy AS outbox_policy" in package_sql
+    assert "outbox_policy.polcmd OPERATOR(pg_catalog.=) '*'" in package_sql
+    assert "outbox_policy.polpermissive" in package_sql
+    assert "outbox_policy.polroles OPERATOR(pg_catalog.=) ARRAY[0::pg_catalog.oid]" in package_sql
+    assert "pg_catalog.pg_get_expr(outbox_policy.polqual" in package_sql
+    assert "pg_catalog.pg_get_expr(outbox_policy.polwithcheck" in package_sql
     assert "FROM pg_catalog.pg_index AS admission_index" in package_sql
     assert "admission_index.indisunique" in package_sql
     assert "admission_index.indexprs IS NOT NULL" in package_sql
