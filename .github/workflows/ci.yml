@@ -134,3 +134,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_final_rls_authority.sh
       - name: Run lifecycle-outbox effective-role RLS authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_effective_role_authority.sh
+      - name: Run lifecycle-outbox authenticated-session role-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_session_user_authority.sh
