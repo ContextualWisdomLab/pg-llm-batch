@@ -221,3 +221,60 @@ else:
         "runtime role with executable superuser SECURITY DEFINER function reached tenant data SQL"
     )
 PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DROP FUNCTION public.cwl_llm_batch_outbox_security_definer_probe();
+CREATE ROLE cwl_llm_batch_outbox_truncate_definer NOLOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_truncate_definer;
+GRANT TRUNCATE ON public.llm_context_lifecycle_outbox
+    TO cwl_llm_batch_outbox_truncate_definer;
+
+CREATE FUNCTION public.cwl_llm_batch_outbox_truncate_definer_probe()
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+    TRUNCATE TABLE public.llm_context_lifecycle_outbox;
+    RETURN 1;
+END;
+$$;
+ALTER FUNCTION public.cwl_llm_batch_outbox_truncate_definer_probe()
+    OWNER TO cwl_llm_batch_outbox_truncate_definer;
+SQL
+
+truncate_definer_effect="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+      -U cwl_llm_batch_outbox_role_delegate -d postgres -Atq -v ON_ERROR_STOP=1 <<'SQL' | tail -n 1
+BEGIN;
+SELECT public.cwl_llm_batch_outbox_truncate_definer_probe();
+COMMIT;
+SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox;
+SQL
+)"
+if [[ "${truncate_definer_effect}" != "0" ]]; then
+  echo "SECURITY DEFINER specimen did not exercise delegated TRUNCATE authority" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_role_delegate@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+
+try:
+    store.load("security-definer-truncate-authority-probe")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime role with executable TRUNCATE-bearing SECURITY DEFINER function reached tenant data SQL"
+    )
+PY
