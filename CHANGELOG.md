@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox final row-admission no longer treats canonical CHECK names
+  as semantic identity. Migration 0009 independently derives same-runtime
+  parser-normalized payload, valid-time, and system-time CHECK expressions and
+  requires exact `pg_get_expr` equality, so restore/operator drift cannot keep
+  a stricter or otherwise different predicate authoritative under a canonical
+  name after migration 0008 was previously applied. A wired PostgreSQL smoke
+  proves same-name predicate drift can reject an otherwise canonical event and
+  requires the final gate to fail closed. Package and Docker migration SQL
+  remain byte-identical.
 - Lifecycle-outbox row-admission now treats index operator-class support
   functions as executable write authority even for a plain nonunique column
   index. Migration 0009 requires every direct index key to use the default
