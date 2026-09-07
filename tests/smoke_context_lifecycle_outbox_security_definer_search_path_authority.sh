@@ -268,3 +268,105 @@ loaded = store.load("definer-search-path-a")
 assert loaded is not None
 assert loaded.evidence_id == "definer-search-path-a"
 PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE cwl_llm_batch_outbox_nested_view_owner NOLOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT USAGE, CREATE ON SCHEMA public TO cwl_llm_batch_outbox_nested_view_owner;
+SET ROLE cwl_llm_batch_outbox_view_owner;
+CREATE VIEW public.cwl_llm_batch_outbox_nested_inner AS
+    SELECT tenant_scope, evidence_id
+    FROM public.llm_context_lifecycle_outbox;
+RESET ROLE;
+REVOKE ALL ON public.cwl_llm_batch_outbox_nested_inner FROM PUBLIC;
+GRANT SELECT ON public.cwl_llm_batch_outbox_nested_inner
+    TO cwl_llm_batch_outbox_nested_view_owner;
+SET ROLE cwl_llm_batch_outbox_nested_view_owner;
+CREATE VIEW public.cwl_llm_batch_outbox_nested_outer AS
+    SELECT tenant_scope, evidence_id
+    FROM public.cwl_llm_batch_outbox_nested_inner;
+RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM cwl_llm_batch_outbox_nested_view_owner;
+REVOKE ALL ON public.cwl_llm_batch_outbox_nested_outer FROM PUBLIC;
+GRANT SELECT ON public.cwl_llm_batch_outbox_nested_outer
+    TO cwl_llm_batch_outbox_definer_path_caller;
+SQL
+
+nested_direct_select="$(
+  docker exec "${container}" psql -U postgres -d postgres -Atqc \
+    "SELECT pg_catalog.has_table_privilege('cwl_llm_batch_outbox_definer_path_caller', 'public.cwl_llm_batch_outbox_nested_inner', 'SELECT')"
+)"
+if [[ "${nested_direct_select}" != "f" ]]; then
+  echo "nested view specimen unexpectedly grants the runtime caller direct inner-view SELECT" >&2
+  exit 1
+fi
+
+nested_view_count="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+    -U cwl_llm_batch_outbox_definer_path_caller -d postgres -Atq \
+    -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT pg_catalog.count(*) FROM public.cwl_llm_batch_outbox_nested_outer;
+ROLLBACK;
+SQL
+)"
+if [[ "${nested_view_count}" != $'tenant-a\n2' ]]; then
+  echo "nested privileged view specimen did not reproduce the indirect forced-RLS bypass" >&2
+  printf '%s\n' "${nested_view_count}" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_definer_path_caller@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+try:
+    store.load("definer-search-path-a")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime admitted an outer view that reaches a hidden BYPASSRLS-owned outbox "
+        "view through the outer owner's SELECT authority"
+    )
+PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+ALTER VIEW public.cwl_llm_batch_outbox_nested_inner
+    SET (security_invoker = true);
+SQL
+
+nested_safe_count="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+    -U cwl_llm_batch_outbox_definer_path_caller -d postgres -Atq \
+    -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT pg_catalog.count(*) FROM public.cwl_llm_batch_outbox_nested_outer;
+ROLLBACK;
+SQL
+)"
+if [[ "${nested_safe_count}" != $'tenant-a\n1' ]]; then
+  echo "nested security-invoker positive control did not restore caller tenant RLS" >&2
+  printf '%s\n' "${nested_safe_count}" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_definer_path_caller@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+loaded = store.load("definer-search-path-a")
+assert loaded is not None
+assert loaded.evidence_id == "definer-search-path-a"
+PY
