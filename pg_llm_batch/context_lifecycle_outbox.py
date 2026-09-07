@@ -466,7 +466,19 @@ def _unsafe_outbox_default_sql() -> str:
         "OR (live_outbox_default_attribute.attname OPERATOR(pg_catalog.=) 'created_at' "
         "AND pg_catalog.pg_get_expr(live_outbox_default.adbin, "
         "live_outbox_default.adrelid, false) OPERATOR(pg_catalog.=) 'now()')"
-        ")))"
+        ")) "
+        "OR EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_attrdef AS live_outbox_default "
+        "JOIN pg_catalog.pg_depend AS live_outbox_default_dependency "
+        "ON live_outbox_default_dependency.classid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_attrdef'::pg_catalog.regclass "
+        "AND live_outbox_default_dependency.objid OPERATOR(pg_catalog.=) "
+        "live_outbox_default.oid "
+        "AND live_outbox_default_dependency.objsubid OPERATOR(pg_catalog.=) 0 "
+        "WHERE live_outbox_default.adrelid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "AND live_outbox_default_dependency.deptype::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'n'"
+        "))"
     )
 
 
