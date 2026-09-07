@@ -137,6 +137,17 @@
   evidence, not continuing authority after policy, ACL, membership, routine, view,
   materialized view, foreign relation/mapping, role-attribute, trigger, rewrite-rule,
   constraint-set, default-expression, or index-program/uniqueness DDL.
+- The outbox write path must close the admission-to-write DDL race. Before live
+  authority admission, `enqueue_in_transaction()` acquires `LOCK TABLE ONLY
+  public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` and retains that table
+  lock through the durable `INSERT` and caller-owned transaction. This is the normal
+  table lock class used by PostgreSQL modifying DML, pulled forward so a concurrent
+  `CREATE TRIGGER` or other conflicting schema DDL cannot change executable write
+  authority between the catalog proof and the statement that consumes it. Do not
+  replace this with an advisory lock, a post-hoc recheck, or `ACCESS EXCLUSIVE`.
+  Ordinary application roles remain limited to non-grantable `SELECT`/`INSERT`; the
+  existing `INSERT` privilege is sufficient to acquire `ROW EXCLUSIVE`. Treat lock
+  acquisition and contention as part of complete buyer-path latency evidence.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
