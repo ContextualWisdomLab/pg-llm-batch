@@ -38,3 +38,21 @@ def test_role_authority_query_fail_closes_reachable_foreign_tables() -> None:
         "nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'f'"
         in cursor.sql
     )
+
+
+def test_materialized_provenance_fail_closes_foreign_sources() -> None:
+    """Copied remote rows remain opaque authority after the foreign read has finished."""
+    cursor = ForeignTableAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert "JOIN pg_catalog.pg_class AS materialized_source_relation_guard" in cursor.sql
+    assert (
+        "materialized_source_relation_guard.oid OPERATOR(pg_catalog.=) "
+        "materialized_source.source_oid"
+    ) in cursor.sql
+    assert (
+        "materialized_source_relation_guard.relkind::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'f'"
+        in cursor.sql
+    )
