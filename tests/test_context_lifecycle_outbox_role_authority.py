@@ -233,12 +233,21 @@ def test_role_authority_query_rejects_unsafe_security_definer_search_path() -> N
 
 
 def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
-    """Caller-selectable owner-rights views must not bypass the forced tenant policy."""
+    """Nested owner-rights views must not hide a forced-RLS bypass from the caller."""
     cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
 
     sql, params = cursor.calls[0]
+    assert "WITH RECURSIVE reachable_view(view_oid, caller_oid) AS" in sql
+    assert "SELECT nested_view.oid, reachable_view.caller_oid" in sql
+    assert "JOIN pg_catalog.pg_rewrite AS current_view_rule" in sql
+    assert "JOIN pg_catalog.pg_depend AS current_view_dependency" in sql
+    assert (
+        "CASE WHEN COALESCE(current_view.reloptions OPERATOR(pg_catalog.@>) "
+        "ARRAY['security_invoker=true']::pg_catalog.text[], false) THEN "
+        "reachable_view.caller_oid ELSE current_view.relowner END"
+    ) in sql
     assert "JOIN pg_catalog.pg_rewrite AS exposed_view_rule" in sql
     assert "JOIN pg_catalog.pg_depend AS exposed_view_dependency" in sql
     assert (
