@@ -508,7 +508,7 @@ def _require_rls_application_role(cursor: Any) -> None:
         "definer_delegated_role_details.oid, admitted_relation.oid, 'TRIGGER') "
         "OR "
         f"{privileged_definer_delegated_relation})"
-        ")) "
+        "))) "
         "OR "
         f"{privileged_outbox_view} "
         "OR pg_catalog.has_any_column_privilege("
