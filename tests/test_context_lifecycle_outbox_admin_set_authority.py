@@ -30,7 +30,7 @@ def test_admin_delegated_set_role_uses_full_forbidden_authority_envelope() -> No
 
     _require_rls_application_role(cursor)
 
-    start = cursor.sql.index("FROM pg_catalog.pg_roles AS delegated_dml_role")
+    start = cursor.sql.index("JOIN pg_catalog.pg_roles AS delegated_dml_role")
     end = cursor.sql.index(
         "OR EXISTS (WITH RECURSIVE executable_definer_owner",
         start,
