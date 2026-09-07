@@ -220,9 +220,15 @@ def _privileged_outbox_view_sql(role_expression: str) -> str:
         "OR (exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'm' "
         "AND EXISTS ("
         "SELECT 1 FROM materialized_source "
+        "JOIN pg_catalog.pg_class AS materialized_source_relation_guard "
+        "ON materialized_source_relation_guard.oid OPERATOR(pg_catalog.=) "
+        "materialized_source.source_oid "
         "WHERE materialized_source.materialized_oid OPERATOR(pg_catalog.=) "
         "exposed_relation.oid "
-        "AND materialized_source.source_oid OPERATOR(pg_catalog.=) admitted_relation.oid"
+        "AND (materialized_source.source_oid OPERATOR(pg_catalog.=) "
+        "admitted_relation.oid "
+        "OR materialized_source_relation_guard.relkind::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'f')"
         ")) "
         "OR exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'f')"
         ")"
@@ -787,15 +793,15 @@ class PostgresContextLifecycleOutboxStore:
         authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
         subjects without outbox-owner, destructive, replication, database/role
         administration, delegable DML, relation-programming, caller-selectable
-        privileged-view/materialized-copy, or executable privileged user-schema
-        ``SECURITY DEFINER`` authority, while the canonical relation still has RLS
-        enabled and forced with the sole reviewed tenant policy semantics. The live
-        admission is checked before tenant state is bound or durable rows are touched.
-        Security-critical function, relation, and policy authority is explicitly
-        schema-qualified, and ``ONLY`` prevents inherited relations from widening the
-        canonical durable row source if an inheritance edge appears after migration
-        admission. The outbox does not mutate or inherit the caller transaction's
-        ``search_path``.
+        privileged-view/materialized-copy/foreign-data, or executable privileged
+        user-schema ``SECURITY DEFINER`` authority, while the canonical relation still
+        has RLS enabled and forced with the sole reviewed tenant policy semantics. The
+        live admission is checked before tenant state is bound or durable rows are
+        touched. Security-critical function, relation, and policy authority is
+        explicitly schema-qualified, and ``ONLY`` prevents inherited relations from
+        widening the canonical durable row source if an inheritance edge appears after
+        migration admission. The outbox does not mutate or inherit the caller
+        transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
