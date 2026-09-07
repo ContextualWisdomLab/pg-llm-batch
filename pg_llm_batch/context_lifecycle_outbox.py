@@ -1177,12 +1177,19 @@ class PostgresContextLifecycleOutboxStore:
         already bound to different content-free lifecycle evidence, the write fails
         with ``ContextLifecycleOutboxConflictError`` and does not replace durable
         state. The evidence tenant identity must match the explicit tenant binding of
-        this store before any transaction-local SQL is executed. The caller owns
-        commit and rollback.
+        this store before any transaction-local SQL is executed. The write path pulls
+        forward the table's normal ``ROW EXCLUSIVE`` DML lock before live authority
+        admission and retains it through the caller transaction, preventing concurrent
+        table-program or schema DDL from changing executable write authority between
+        admission and the durable INSERT. The caller owns commit and rollback.
         """
         candidate = self._require_tenant_binding(
             _validated_evidence(evidence),
             durable_row=False,
+        )
+        cursor.execute(
+            "LOCK TABLE ONLY public.llm_context_lifecycle_outbox "
+            "IN ROW EXCLUSIVE MODE"
         )
         existing = self.load_in_transaction(
             cursor,
