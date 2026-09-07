@@ -177,16 +177,17 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
 - The write path must close the admission-to-write DDL race rather than treating live
   catalog admission as transferable to a later statement. `enqueue_in_transaction()`
   must acquire `LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE
-  MODE` before live authority admission and retain that transaction-level lock through
-  the durable `INSERT`. This deliberately pulls forward the table lock that PostgreSQL
-  ordinary DML already uses: concurrent `CREATE TRIGGER` and other conflicting schema
-  DDL must wait instead of changing executable row authority after admission. Do not
-  substitute a package advisory lock, a second post-hoc catalog check, or `ACCESS
-  EXCLUSIVE`; the former does not participate in PostgreSQL table-DDL locking and the
-  latter needlessly serializes compatible application DML. The normal application role
-  still needs only the existing non-grantable `SELECT` and `INSERT` privileges, which
-  are sufficient for `ROW EXCLUSIVE`. Lock acquisition and contention are part of the
-  complete buyer-path latency measurement, not removable security overhead.
+  MODE` before live authority admission and retain it through the caller transaction,
+  including the durable `INSERT`. This deliberately pulls forward the table lock that
+  PostgreSQL ordinary DML already uses: concurrent `CREATE TRIGGER` and other
+  conflicting schema DDL must wait instead of changing executable row authority after
+  admission. Do not substitute a package advisory lock, a second post-hoc catalog
+  check, or `ACCESS EXCLUSIVE`; the former does not participate in PostgreSQL table-DDL
+  locking and the latter needlessly serializes compatible application DML. The normal
+  application role still needs only the existing non-grantable `SELECT` and `INSERT`
+  privileges, which are sufficient for `ROW EXCLUSIVE`. Lock acquisition and
+  contention are part of the complete buyer-path latency measurement, not removable
+  security overhead.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
