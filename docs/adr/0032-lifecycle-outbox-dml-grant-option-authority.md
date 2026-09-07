@@ -21,6 +21,8 @@ Fresh review exposed a further delegation case. The callable definer owner can i
 
 A subsequent review exposed an independent executable chain. A caller-visible `SECURITY DEFINER` may be owned by an otherwise safe role that has no direct forbidden outbox or cluster authority, while that owner has schema `USAGE` plus `EXECUTE` on a second non-system-schema `SECURITY DEFINER` owned by a role with forbidden authority. The outer routine executes as its owner; that owner can invoke the inner routine; the inner routine then executes as its own owner. A two-hop PostgreSQL specimen proves that an ordinary caller can enter a safe outer definer and reach an inner definer whose owner has outbox `TRUNCATE`, even though the caller cannot execute the inner routine directly. Direct-caller inspection therefore does not describe the full executable principal graph.
 
+A further review exposed copied relation authority. PostgreSQL materialized views persist the result of their defining query. Later `SELECT` reads the stored materialized rows directly rather than re-running the source query and reapplying the source table's RLS. A `BYPASSRLS` principal can therefore populate a materialized view from the lifecycle outbox with rows from multiple tenants, after which an ordinary `NOBYPASSRLS` runtime principal can read those copied rows if it has `SELECT` on the materialized relation. The capability can also be hidden behind an owner-rights ordinary view: the runtime may lack direct `SELECT` on the materialized relation while the outer view owner has it. Runtime admission that covers only live view-to-outbox execution paths does not close this stored-data escape.
+
 `CREATEDB` needs one explicit distinction. Direct runtime identities remain `NOCREATEDB` under ADR 0031. A callable definer owner is not rejected merely for `CREATEDB`, because the product has not established an executable in-function `CREATE DATABASE` path and PostgreSQL prohibits `CREATE DATABASE` inside a transaction block. `CREATEDB` is nevertheless forbidden when it is authority that a callable definer owner can grant onward through membership administration, because the caller may exercise that newly granted role later outside the security-definer call. The implemented guard follows this distinction rather than over-claiming direct executable `CREATEDB` semantics.
 
 ## Decision
@@ -74,7 +76,15 @@ The recursive closure is intentionally authority-based rather than function-body
 
 The guard uses PostgreSQL's own role/privilege inquiry functions and catalogs, including `pg_proc.prosecdef`, function owner OIDs, `pg_roles` attributes, `has_schema_privilege`, `has_function_privilege`, `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')`, `pg_has_role(..., 'SET')`, `has_table_privilege`, and `has_any_column_privilege`. PostgreSQL-owned `pg_*` schemas and `information_schema` remain outside this user-schema definer guard; operator policy may impose a stricter database-wide prohibition.
 
-The package never auto-revokes ACLs, membership, role attributes, routine execution, schema usage, function ownership, maintenance authority, or replication authority. Repair remains operator-owned.
+### Reachable ordinary views and materialized outbox copies
+
+Admission treats every caller-readable non-system ordinary view or materialized view as part of the credential's effective read authority. A cycle-safe `reachable_relation(relation_oid, caller_oid)` graph begins at relations the selectable runtime principal can read. Ordinary views are traversed through `pg_rewrite`/`pg_depend`; each edge uses the original invoker for `security_invoker=true` and otherwise the current view owner, matching PostgreSQL's live permission semantics. A reachable materialized view terminates that read-time graph because selecting it returns persisted rows rather than re-executing its defining query.
+
+For each reachable materialized relation, a separate cycle-safe `materialized_source(materialized_oid, source_oid)` provenance closure follows the stored definition through ordinary and materialized relation dependencies. Admission rejects the runtime credential when that definition provenance reaches `public.llm_context_lifecycle_outbox`, whether the materialized relation is directly selectable or reachable only through an outer ordinary view. This rejection is intentionally independent of the materialized-view owner's present role attributes, current copied contents, tenant literals in mutable SQL text, or the authority used by the most recent refresh. None is a durable proof that already-copied rows remain constrained by current forced RLS.
+
+The ordinary-view rule remains narrower and execution-semantic: a reachable non-`security_invoker` ordinary view that directly reads the outbox is rejected when its owner is `SUPERUSER` or `BYPASSRLS` and has outbox read authority. Materialized copies are rejected based on provenance because live RLS is no longer applied when those copied rows are selected.
+
+The package never auto-revokes ACLs, membership, role attributes, routine execution, schema usage, function ownership, view/materialized-view access, maintenance authority, or replication authority. Repair remains operator-owned.
 
 ## Alternatives considered
 
@@ -138,6 +148,18 @@ Rejected pending causal executable evidence. Direct runtime `CREATEDB` remains f
 
 Rejected. SQL text is not durable behavioral authority across procedural languages, dynamic SQL, dependencies, routine replacement, and extensions. Authority is checked from the live executable privilege graph instead.
 
+### Treat a materialized outbox projection as safe because the runtime caller is `NOBYPASSRLS`
+
+Rejected. `NOBYPASSRLS` constrains live access to the source relation; it does not retroactively filter rows already persisted into a separate materialized relation. The runtime caller can read copied cross-tenant rows without touching the base outbox.
+
+### Inspect only direct caller `SELECT` on materialized views
+
+Rejected. An ordinary owner-rights outer view can expose a hidden materialized relation that the runtime caller cannot select directly. The read graph must carry PostgreSQL's effective principal through ordinary-view edges before deciding which materialized copies are reachable.
+
+### Parse the materialized-view SQL and accept apparently tenant-filtered definitions
+
+Rejected. Definition text is mutable and does not establish the authority, source state, or tenant context used to populate existing rows. The runtime boundary uses catalog dependency provenance and fails closed when a reachable materialized copy derives from the outbox.
+
 ### Revoke unsafe authority automatically
 
 Rejected. Runtime code does not own database authorization policy. Silent ACL or membership mutation would cross the application/operator boundary and invalidate independent access-control evidence.
@@ -175,6 +197,14 @@ Rejected. Runtime code does not own database authorization policy. Silent ACL or
 - real nested-definer PostgreSQL specimen `6c7a4e32e6ccfbb751732af7d3a40e299fb1d8d7`;
 - PostgreSQL/container CI wiring `2f8a2fc0f80c83fa2219980ea522f5077380085f`.
 
+### Materialized-copy authority
+
+- executable copied-data RED `f78bbcec2f18538b0df988bfdc9f678727d3a922` creates a `BYPASSRLS`-populated materialized outbox projection and proves an ordinary runtime caller can read two tenants while the forced-RLS base relation exposes one;
+- CI wiring `133cbd226eddb31a73e3b8ff51f86bac18e0a595` makes the real PostgreSQL specimen part of the container gate;
+- static authority RED `cfe3d13e6ca929e8c40e501f6ccd35541e27c064` requires caller-reachable materialized provenance rejection;
+- causal production repair `9c3a4ab99c0c8a02db4600a097647eb8b47fac4d` generalizes the read graph and adds cycle-safe materialized-definition provenance;
+- static contract alignment `960cb78d6925829f14dec3c70590fc74468c81b1` preserves ordinary-view semantics after the graph generalization.
+
 ### Relation-maintenance authority
 
 - initial specimen `7dcc55fd80eb6f148de1da897d079048e06483bd` established the intended PostgreSQL-17+ `MAINTAIN`/lock threat model but incorrectly targeted the repository's PostgreSQL-16 image; it is RED lineage, not accepted executable evidence;
@@ -190,13 +220,13 @@ The nested-definer specimen gives the outer owner no forbidden outbox or cluster
 
 The admin-delegation specimen deliberately gives the definer owner no `CREATEROLE` and no direct destructive relation privilege. It grants an `INHERIT FALSE, SET FALSE` bridge that has `SET TRUE` to an outbox `TRUNCATE` role, proves the ordinary caller can traverse the newly granted role chain and empty the outbox, revokes the caller's materialized bridge membership, and then requires package admission to reject the still-callable latent authority. That separates the causal defect from both direct definer privileges and already-materialized caller authority.
 
-Earlier heads, partial jobs, and superseded workflow runs are lineage only. ADR 0032 remains Proposed until one unchanged exact repaired head executes the static contracts, full unit/coverage gates, the normal PostgreSQL-16 container suite, and the digest-pinned PostgreSQL-18 `MAINTAIN` specimen successfully.
+Earlier heads, partial jobs, and superseded workflow runs are lineage only. ADR 0032 remains Proposed until one unchanged exact repaired head executes the static contracts, full unit/coverage gates, the normal PostgreSQL-16 container suite, the materialized-copy specimen, and the digest-pinned PostgreSQL-18 `MAINTAIN` specimen successfully.
 
 ## Consequences
 
-The application connection remains able to perform only its product DML and cannot deliberately act as a privilege-delegation, relation-maintenance, or privileged-function gateway. Security/SOC 2/CSAP evidence can treat ACL changes, role membership administration, role creation, replication administration, relation maintenance/destructive authority, and privileged user-schema routines as operator-owned changes rather than hidden application behavior.
+The application connection remains able to perform only its product DML and cannot deliberately act as a privilege-delegation, relation-maintenance, privileged-function, privileged-view, or copied-outbox gateway. Security/SOC 2/CSAP evidence can treat ACL changes, role membership administration, role creation, replication administration, relation maintenance/destructive authority, privileged user-schema routines, ordinary owner-rights view paths, and materialized outbox copies as operator-owned changes rather than hidden application behavior.
 
-PostgreSQL 16 remains a supported runtime without pretending that a PostgreSQL-17 privilege exists there. PostgreSQL 17+ deployments gain the stricter relation-maintenance check from the same source path. The check is intentionally authority-based rather than body-based. This is stricter for deployments that intentionally expose privileged user-schema functions or relation-maintenance privileges to the same runtime identity or to an owner principal reachable through such a function: those deployments must separate the authority behind another role/connection or remove the executable edge. That operational cost is preferred to claiming tenant/application least authority while the same login can enter an executable principal graph that reaches operator authority.
+PostgreSQL 16 remains a supported runtime without pretending that a PostgreSQL-17 privilege exists there. PostgreSQL 17+ deployments gain the stricter relation-maintenance check from the same source path. The check is intentionally authority-based rather than body-based. This is stricter for deployments that intentionally expose privileged user-schema functions, privileged view paths, materialized copies of the outbox, or relation-maintenance privileges to the same runtime identity or to an owner principal reachable through such a function/view: those deployments must separate the authority behind another role/connection or remove the executable/read edge. That operational cost is preferred to claiming tenant/application least authority while the same login can enter a graph that reaches operator authority or copied cross-tenant evidence.
 
 ## References
 
@@ -229,5 +259,9 @@ PostgreSQL Global Development Group. (2026m). *PostgreSQL 18 documentation: Syst
 PostgreSQL Global Development Group. (2026n). *PostgreSQL 18 documentation: pg_roles*. https://www.postgresql.org/docs/18/view-pg-roles.html
 
 PostgreSQL Global Development Group. (2026o). *PostgreSQL 18 documentation: LOCK*. https://www.postgresql.org/docs/18/sql-lock.html
+
+PostgreSQL Global Development Group. (2026p). *PostgreSQL 18 documentation: 39.3. Materialized views*. https://www.postgresql.org/docs/18/rules-materializedviews.html
+
+PostgreSQL Global Development Group. (2026q). *PostgreSQL 18 documentation: REFRESH MATERIALIZED VIEW*. https://www.postgresql.org/docs/18/sql-refreshmaterializedview.html
 
 Docker. (2026). *postgres:18-bookworm image manifest, sha256:33c86c9cfb790e257e470b29e8c97bd1bd6fee0a70ab2d7a2e377ab639c09935*. Docker Hub.
