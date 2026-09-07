@@ -15,11 +15,13 @@ Review of that repair exposed a separate copied-data path. A materialized view m
 
 A third path exists through PostgreSQL inheritance. PostgreSQL 18 documents that inherited queries check access permission on the named parent table, and that the parent's row-security policies govern rows returned from children. It also permits foreign tables in inheritance hierarchies, and declarative partitions may themselves be foreign tables. Consequently, a local runtime role can hold `SELECT` only on an ordinary or partitioned parent while a foreign descendant executes through a remote user mapping that the local RLS catalogs cannot prove. Exact RED `be5e0abe55586b6e23a867e9c05a9845133310bc`, CI `34081839661`, PostgreSQL/container job `101618458532` reproduced this with a parent-only `SELECT`: the local forced-RLS outbox returned one tenant row while a partitioned parent with a foreign default partition returned both remote rows, and production admission accepted it.
 
-The package cannot establish durable remote authorization by parsing local FDW options. The foreign server may point elsewhere; the foreign-data wrapper may not be `postgres_fdw`; user mappings and remote ACL/RLS state are mutable independently of this package. An allowlist of server names, remote role strings, table-option text, partition bounds, or parent names would therefore turn mutable configuration into unverified security evidence. The same limitation applies after copying: current materialized contents and the authority used by the last refresh are not durable proof of tenant isolation.
+A fourth execution route crosses the callable `SECURITY DEFINER` boundary. PostgreSQL executes a `SECURITY DEFINER` function with the privileges of its owner, while `postgres_fdw` resolves remote access through the local user mapping that applies to the executing database principal. A runtime caller can therefore have no direct `SELECT` on a foreign relation yet still execute a user-schema definer owned by an otherwise ordinary `NOSUPERUSER NOBYPASSRLS` role that can select the foreign relation through its own mapping. A canonical routine `search_path = pg_catalog, pg_temp` prevents name-resolution substitution but does not remove the owner's authorized foreign-data capability. Test-first commits `8b6cbc130faee66f22d975f2fcc19330d97d4eab`, `076a7d788e385bcefc9f3de2882293b44bd8eab1`, and `01a93f666cd25c9cb25ed152d17b344ae49b3025` preserve an executable loopback specimen and a static query-shape contract before the production repair.
+
+The package cannot establish durable remote authorization by parsing local FDW options. The foreign server may point elsewhere; the foreign-data wrapper may not be `postgres_fdw`; user mappings and remote ACL/RLS state are mutable independently of this package. An allowlist of server names, remote role strings, table-option text, partition bounds, parent names, or callable routine body text would therefore turn mutable configuration into unverified security evidence. The same limitation applies after copying: current materialized contents and the authority used by the last refresh are not durable proof of tenant isolation.
 
 ## Decision
 
-Treat foreign data (`pg_class.relkind = 'f'`) as an opaque authority boundary for the lifecycle-outbox runtime credential, whether the foreign relation is reached directly, through an ordinary view, through an inheritance/partition parent, or as materialized-copy provenance.
+Treat foreign data (`pg_class.relkind = 'f'`) as an opaque authority boundary for the lifecycle-outbox runtime credential, whether the foreign relation is reached directly, through an ordinary view, through an inheritance/partition parent, through a callable `SECURITY DEFINER` owner's executable relation authority, or as materialized-copy provenance.
 
 The admission query builds a cycle-safe `foreign_inheritance_ancestor(relation_oid)` closure upward from every foreign relation through `pg_inherits`. The existing `reachable_relation(relation_oid, caller_oid)` and materialized provenance closures then enforce the boundary:
 
@@ -27,13 +29,16 @@ The admission query builds a cycle-safe `foreign_inheritance_ancestor(relation_o
 2. an ordinary view may reach a foreign table or a foreign-bearing inheritance parent only when the principal PostgreSQL applies at that edge can select it — the original invoker for `security_invoker=true`, otherwise the current view owner;
 3. an ordinary or partitioned parent is rejected when the `pg_inherits` ancestor closure proves any descendant is a foreign relation, even if the caller has no direct privilege on that child;
 4. a reachable materialized view is rejected when any relation in its cycle-safe stored-definition provenance is the lifecycle outbox or belongs to the foreign inheritance-ancestor closure, even when the caller cannot currently select the source foreign relation or descendant;
-5. any of those paths causes fail-closed runtime admission before tenant binding or lifecycle outbox data SQL.
+5. every callable user-schema `SECURITY DEFINER` owner in the existing cycle-safe routine-owner closure is evaluated through the same reachable relation/materialized/foreign-data probe, so owner-only foreign authority is rejected even when the runtime caller lacks direct relation `SELECT`;
+6. any of those paths causes fail-closed runtime admission before tenant binding or lifecycle outbox data SQL.
+
+The definer rule is authority-based, not function-body-based. Admission does not attempt to prove that one current routine body does or does not reference a foreign relation. SQL, PL/pgSQL, dynamic SQL, nested routines, future routine replacement, view indirection, inheritance, and mutable mappings make body inspection an incomplete continuing authorization proof. If a callable definer owner can reach opaque foreign data, that owner is outside the lifecycle-outbox credential envelope; the workload must separate the capability into another role/connection.
 
 The materialized rule is source-based rather than content-based. The package does not inspect copied rows, infer a tenant from definition text, trust partition constraints as remote authorization, or trust last-refresh authority. Once a reachable materialized copy depends on opaque foreign data, directly or through an inheritance parent, local catalog evidence is insufficient to establish that the copy is tenant-safe.
 
-The guard does not inspect or trust FDW type, foreign-server options, user-mapping options, remote user names, remote table names, remote ownership, remote RLS policy, partition bounds, or child ACLs. PostgreSQL's parent-query privilege semantics are the reason child ACL absence is not accepted as evidence. The package also does not revoke ACLs or alter mappings. Workloads that need foreign-data access must separate that authority into another role/connection rather than combine it with the lifecycle-outbox credential.
+The guard does not inspect or trust FDW type, foreign-server options, user-mapping options, remote user names, remote table names, remote ownership, remote RLS policy, partition bounds, child ACLs, or current function body text. PostgreSQL's parent-query privilege semantics are the reason child ACL absence is not accepted as evidence; PostgreSQL's definer execution semantics are the reason caller ACL absence is not accepted as evidence once execution crosses to the owner. The package also does not revoke ACLs or alter mappings. Workloads that need foreign-data access must separate that authority into another role/connection rather than combine it with the lifecycle-outbox credential.
 
-This is intentionally conservative. A reachable foreign table, foreign-bearing inheritance parent, or reachable materialized copy sourced from foreign data is rejected even when it is currently unrelated to the lifecycle outbox because the package cannot prove that its remote target, authorization, or copied-data semantics remain unrelated for the lifetime of the credential. The isolation claim is narrower and auditable: the outbox runtime credential has neither selectable foreign-data authority nor parent-mediated/copy-mediated foreign-data authority.
+This is intentionally conservative. A reachable foreign table, foreign-bearing inheritance parent, callable definer owner with such relation authority, or reachable materialized copy sourced from foreign data is rejected even when it is currently unrelated to the lifecycle outbox because the package cannot prove that its remote target, authorization, routine behavior, or copied-data semantics remain unrelated for the lifetime of the credential. The isolation claim is narrower and auditable: the outbox runtime credential has neither selectable foreign-data authority nor parent-mediated, definer-mediated, or copy-mediated foreign-data authority.
 
 ## Alternatives considered
 
@@ -47,7 +52,11 @@ Rejected. Foreign-table and server options are wrapper-specific and mutable, and
 
 ### Reject only foreign tables directly selectable by the runtime caller
 
-Rejected. PostgreSQL ordinary views can execute underlying relation access with the view owner's permissions unless `security_invoker=true`, and inherited queries check privileges on the named parent rather than requiring a separate child grant. Hosted specimens prove both paths.
+Rejected. PostgreSQL ordinary views can execute underlying relation access with the view owner's permissions unless `security_invoker=true`, inherited queries check privileges on the named parent rather than requiring a separate child grant, and `SECURITY DEFINER` routines execute with their owner's privileges. The caller's direct relation ACL therefore does not bound all executable remote authority.
+
+### Inspect only the current callable function body or dependency graph
+
+Rejected. The security boundary is the executable owner principal, not one textual routine snapshot. Dynamic SQL, procedural languages, nested routines, view/materialized/inheritance indirection, owner privilege changes, and routine replacement can alter which foreign relation is reached without making body-text parsing a durable authorization proof. The conservative owner-authority probe is explicit and testable.
 
 ### Trust missing child `SELECT` on a foreign partition or inheritance child
 
@@ -63,21 +72,22 @@ Rejected. SQL text, partition metadata, and copied rows are mutable state; none 
 
 ### Disable or drop foreign tables automatically
 
-Rejected. Runtime package code does not own database authorization or integration policy. The package reports an unsafe admission boundary; operators repair roles, ACLs, views, materialized views, inheritance/partition topology, servers, and mappings.
+Rejected. Runtime package code does not own database authorization or integration policy. The package reports an unsafe admission boundary; operators repair roles, ACLs, routines, views, materialized views, inheritance/partition topology, servers, and mappings.
 
 ## Verification
 
 - First hosted reality RED: exact head `6ccc5da4840a9501ca11d9d38150c7a04ec3408c`, CI run `34077132444`, PostgreSQL/container job `101605370280`.
 - Copied-foreign executable RED: `tests/smoke_context_lifecycle_outbox_foreign_table_authority.sh` at `9479d11d8141cc799d4ae671e1d852efb97442d1` creates a materialized copy under the mapped foreign authority, removes caller direct foreign `SELECT`, proves the copy still contains both tenants, and requires package admission to reject it.
-- Parent-mediated executable RED: exact head `be5e0abe55586b6e23a867e9c05a9845133310bc`, CI `34081839661`, PostgreSQL/container job `101618458532`; `tests/smoke_context_lifecycle_outbox_partitioned_foreign_authority.sh` grants the runtime `SELECT` only on a partitioned parent, proves no direct child `SELECT`, then proves the parent returns both remote tenants and requires package admission to reject the path.
-- Static contract: `tests/test_context_lifecycle_outbox_foreign_table_authority.py` pins direct/view foreign discovery, the `pg_inherits` foreign-ancestor closure, ordinary/partitioned parent reachability, and inherited foreign-source detection in materialized provenance.
-- Causal inheritance repair `0c2bf9bb991d3556a2d27de8ae8614b138b06c4b` extends admission with the cycle-safe upward foreign-ancestor closure while preserving the existing view-effective-principal and materialized-provenance semantics.
+- Parent-mediated executable RED: exact head `be5e0abe55586b6e23a867e9c05a9845133310bc`, CI `34081839661`, PostgreSQL/container job `101618458532`; `tests/smoke_context_lifecycle_outbox_partitioned_foreign_authority.sh` grants the runtime `SELECT` only on a partitioned parent, proves child `SELECT` is absent, proves the parent still returns both remote tenants, and requires package admission to reject the path.
+- Definer-mediated test-first RED: `tests/smoke_context_lifecycle_outbox_security_definer_foreign_authority.sh` at `8b6cbc130faee66f22d975f2fcc19330d97d4eab` creates an ordinary local definer owner mapped to a remote `BYPASSRLS` role, proves the runtime caller has no direct foreign-table `SELECT`, and proves the safe-search-path `SECURITY DEFINER` can nevertheless return both tenants. Static RED `076a7d788e385bcefc9f3de2882293b44bd8eab1` requires the admission query to evaluate foreign relation authority under `definer_role.oid`; CI wiring head `01a93f666cd25c9cb25ed152d17b344ae49b3025` makes the PostgreSQL specimen part of the required container lane.
+- Causal definer repair `7367d4864488b21abfd74b389dba38f208e6c6ca` reuses the existing reachable relation/materialized/foreign authority probe for each callable definer owner without changing tenant data SQL, RLS policy, FDW mappings, caller ACLs, or routine bodies.
+- Static contract: `tests/test_context_lifecycle_outbox_foreign_table_authority.py` pins direct/view foreign discovery, the `pg_inherits` foreign-ancestor closure, ordinary/partitioned parent reachability, inherited foreign-source detection in materialized provenance, and definer-owner foreign relation evaluation.
 - Existing role, RLS-policy, `SECURITY DEFINER`, ordinary-view, local materialized-view, replay, migration, and package gates remain mandatory.
-- This ADR remains Proposed until one unchanged exact PR head passes hosted CI and Release Acceptance and is integrated through the protected-branch workflow.
+- This ADR remains Proposed until one unchanged exact PR head containing the causal repair passes hosted CI and Release Acceptance and is integrated through the protected-branch workflow.
 
 ## Operational effect
 
-Issue #307 owns the buyer performance envelope. The foreign-relation catalog scan, recursive `pg_inherits` ancestor closure, view graph, and materialized-source membership checks are part of the security admission cost and must remain inside connection-to-cleanup p50/p95/p99 measurements. Performance work may optimize catalog access but may not exclude the authority check, prune realistic inheritance depth/fanout, assume a warm cache solely to meet the target, or weaken fail-closed semantics.
+Issue #307 owns the buyer performance envelope. The foreign-relation catalog scan, recursive `pg_inherits` ancestor closure, view graph, materialized-source membership checks, and the same authority scan under callable definer owners are part of the security admission cost and must remain inside connection-to-cleanup p50/p95/p99 measurements. Performance work may optimize catalog access but may not exclude the authority check, prune realistic inheritance/definer cardinality, assume a warm cache solely to meet the target, or weaken fail-closed semantics.
 
 ## References
 
@@ -90,5 +100,9 @@ PostgreSQL Global Development Group. (n.d.). *CREATE FOREIGN TABLE*. PostgreSQL 
 PostgreSQL Global Development Group. (n.d.). *postgres_fdw — access data stored in external PostgreSQL servers*. PostgreSQL 18 documentation. Retrieved September 7, 2026, from https://www.postgresql.org/docs/18/postgres-fdw.html
 
 PostgreSQL Global Development Group. (n.d.). *CREATE USER MAPPING*. PostgreSQL 18 documentation. Retrieved September 7, 2026, from https://www.postgresql.org/docs/18/sql-createusermapping.html
+
+PostgreSQL Global Development Group. (n.d.). *CREATE FUNCTION*. PostgreSQL 18 documentation. Retrieved September 7, 2026, from https://www.postgresql.org/docs/18/sql-createfunction.html
+
+PostgreSQL Global Development Group. (n.d.). *Function security*. PostgreSQL 18 documentation. Retrieved September 7, 2026, from https://www.postgresql.org/docs/18/perm-functions.html
 
 PostgreSQL Global Development Group. (n.d.). *pg_class*. PostgreSQL 18 documentation. Retrieved September 7, 2026, from https://www.postgresql.org/docs/18/catalog-pg-class.html
