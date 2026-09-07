@@ -50,25 +50,36 @@
   reads the outbox is rejected when its owner is a superuser or `BYPASSRLS`
   principal with outbox read authority. This prevents a safe-looking outer view from
   hiding a privileged inner view that exposes cross-tenant rows to a
-  `NOBYPASSRLS` runtime credential. PostgreSQL lets the membership administrator
-  grant a role onward even when that administrator's own membership is `INHERIT
-  FALSE, SET FALSE`; the recipient can then use the granted selectable path after a
-  security-definer call returns. `SECURITY DEFINER` executes with its owner's
-  privileges rather than the caller's privileges. Admission must re-prove the sole
-  canonical tenant policy's command, role scope, permissive mode, `USING`/`WITH
-  CHECK` predicates, reviewed catalog dependencies, and the full reachable privileged-
-  view boundary before tenant binding or outbox SQL. Direct runtime `CREATEDB` and
-  `CREATEROLE` are database/role administration capabilities; callable `CREATEROLE`
-  is executable within the definer boundary, while `CREATEDB` remains covered when
-  membership administration grants that authority onward for later invoker-context
-  use. `REPLICATION` is separate cluster-level connection and slot authority whether
-  held directly or anywhere in the callable-definer owner closure, and direct DML
-  grant options, relation maintenance, authority-bearing role administration,
-  executable privileged definer authority, and view-mediated RLS bypass authority
-  are outside application DML. Runtime identities remain `NOSUPERUSER NOCREATEDB
-  NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only non-grantable outbox
-  `SELECT` and `INSERT`. Migration success is point-in-time evidence, not continuing
-  authority after policy, ACL, membership, routine, view, or role-attribute DDL.
+  `NOBYPASSRLS` runtime credential. Materialized views are a separate copied-data
+  boundary. PostgreSQL returns their persisted rows directly at read time and uses
+  the stored defining query only when the relation is populated or refreshed, so a
+  runtime base-table RLS check does not protect an older materialized copy. Admission
+  must include materialized relations that are directly caller-selectable or reached
+  through an ordinary view, then follow each materialized relation's definition
+  provenance through nested ordinary/materialized views. If that provenance reaches
+  the lifecycle outbox, reject the credential before tenant binding or outbox SQL;
+  do not infer safety from the materialized-view owner, mutable copied contents, a
+  tenant literal in definition text, or the authority used by the last refresh.
+  PostgreSQL lets the membership administrator grant a role onward even when that
+  administrator's own membership is `INHERIT FALSE, SET FALSE`; the recipient can
+  then use the granted selectable path after a security-definer call returns.
+  `SECURITY DEFINER` executes with its owner's privileges rather than the caller's
+  privileges. Admission must re-prove the sole canonical tenant policy's command,
+  role scope, permissive mode, `USING`/`WITH CHECK` predicates, reviewed catalog
+  dependencies, and the full reachable privileged-view/materialized-copy boundary
+  before tenant binding or outbox SQL. Direct runtime `CREATEDB` and `CREATEROLE`
+  are database/role administration capabilities; callable `CREATEROLE` is executable
+  within the definer boundary, while `CREATEDB` remains covered when membership
+  administration grants that authority onward for later invoker-context use.
+  `REPLICATION` is separate cluster-level connection and slot authority whether held
+  directly or anywhere in the callable-definer owner closure, and direct DML grant
+  options, relation maintenance, authority-bearing role administration, executable
+  privileged definer authority, view-mediated RLS bypass authority, and materialized
+  outbox copies are outside application DML. Runtime identities remain `NOSUPERUSER
+  NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only non-grantable
+  outbox `SELECT` and `INSERT`. Migration success is point-in-time evidence, not
+  continuing authority after policy, ACL, membership, routine, view, materialized
+  view, or role-attribute DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
