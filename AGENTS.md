@@ -57,45 +57,50 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   `search_path = pg_catalog, pg_temp`; absent or different name-resolution authority
   is rejected before tenant binding or outbox data SQL, rather than trusting caller
   temporary-schema state or unqualified user-schema objects. Caller-selectable
-  ordinary views that directly depend on the lifecycle outbox are also outside the
-  runtime envelope when they are not `security_invoker=true` and their owner is a
-  superuser or `BYPASSRLS` principal with outbox read authority. PostgreSQL otherwise
-  applies the view owner's permissions and RLS policies to the underlying relation,
-  so such a view can expose cross-tenant rows even when the runtime caller itself is
-  `NOBYPASSRLS`; reject that authority before tenant binding or outbox data SQL.
-  PostgreSQL permits a role administrator to grant the administered role to a new
-  principal even when the administrator's own membership is `INHERIT FALSE, SET
-  FALSE`; the new principal can then use the granted role's selectable path after the
-  definer returns. `SECURITY DEFINER` similarly executes with its owner's privileges,
-  so a safe outer owner does not make a privileged nested definer safe. Direct runtime
-  `CREATEDB` and `CREATEROLE` are database/role administration capabilities outside
-  an application identity; callable `CREATEROLE` is rejected because it is
-  executable within the definer boundary, while `CREATEDB` remains covered when
-  membership administration can grant that authority onward for later
-  invoker-context use. `REPLICATION` is separate cluster-level connection and
-  replication-slot authority and must not be co-located with a tenant application
-  identity either directly or through an executable definer; `MAINTAIN` is
-  relation-wide operational authority permitting PostgreSQL maintenance and `LOCK
-  TABLE`, not tenant application DML; `SELECT`/`INSERT` grant options, DML-bearing
-  role administration, and executable privileged definer authority are
-  authorization capabilities rather than application DML; `TRUNCATE` is outside
-  RLS; tenant-local `DELETE` or `UPDATE` violates the append-only durable-intent
-  invariant; and `REFERENCES`/`TRIGGER` can install relation behavior outside the
-  package DML contract. Inert membership alone is not a bypass. Re-prove live
-  enabled/forced RLS, the sole canonical tenant policy identity/command/role scope,
-  parser-normalized `USING`/`WITH CHECK` predicates and allowed catalog dependencies,
-  and the complete effective/session-selectable authority envelope before tenant
-  binding or outbox data SQL. A migration success record is point-in-time evidence
-  and does not authorize later same-name policy, ACL, membership, routine, view, or
-  role-authority drift. The normal runtime role needs only non-grantable `SELECT`
-  and `INSERT` on the outbox. Replay serialization must use transaction-scoped
-  advisory locking on the validated tenant/event identity rather than `SELECT ...
-  FOR UPDATE`, so serialization never requires ambient row-mutation authority. Do
-  not authenticate runtime connections as a database creator, role administrator,
-  replication identity, relation maintainer, DML delegator, privileged definer
-  gateway, privileged-view gateway, or other administrator and rely on `SET ROLE` or
-  `SET SESSION AUTHORIZATION` as a downgrade; administrative, replication,
-  maintenance, grant-capable, membership-delegating, executable-privileged,
+  ordinary views are a second executable authority graph: admission must follow the
+  cycle-safe view dependency closure from every view the runtime can select, applying
+  PostgreSQL's effective principal at each edge—the invoking runtime principal for a
+  `security_invoker=true` view and otherwise the current view owner. Any reachable
+  non-security-invoker view that directly reads the lifecycle outbox is outside the
+  runtime envelope when its owner is a superuser or `BYPASSRLS` principal with
+  outbox read authority. PostgreSQL otherwise applies that view owner's permissions
+  and RLS policies to the underlying relation, so a safe outer view can hide a
+  privileged inner view and expose cross-tenant rows even when the runtime caller
+  itself is `NOBYPASSRLS`; reject the complete reachable path before tenant binding
+  or outbox data SQL. PostgreSQL permits a role administrator to grant the
+  administered role to a new principal even when the administrator's own membership
+  is `INHERIT FALSE, SET FALSE`; the new principal can then use the granted role's
+  selectable path after the definer returns. `SECURITY DEFINER` similarly executes
+  with its owner's privileges, so a safe outer owner does not make a privileged
+  nested definer safe. Direct runtime `CREATEDB` and `CREATEROLE` are database/role
+  administration capabilities outside an application identity; callable
+  `CREATEROLE` is rejected because it is executable within the definer boundary,
+  while `CREATEDB` remains covered when membership administration can grant that
+  authority onward for later invoker-context use. `REPLICATION` is separate
+  cluster-level connection and replication-slot authority and must not be co-located
+  with a tenant application identity either directly or through an executable
+  definer; `MAINTAIN` is relation-wide operational authority permitting PostgreSQL
+  maintenance and `LOCK TABLE`, not tenant application DML; `SELECT`/`INSERT` grant
+  options, DML-bearing role administration, executable privileged definer authority,
+  and view-mediated RLS-bypass authority are authorization capabilities rather than
+  application DML; `TRUNCATE` is outside RLS; tenant-local `DELETE` or `UPDATE`
+  violates the append-only durable-intent invariant; and `REFERENCES`/`TRIGGER` can
+  install relation behavior outside the package DML contract. Inert membership alone
+  is not a bypass. Re-prove live enabled/forced RLS, the sole canonical tenant policy
+  identity/command/role scope, parser-normalized `USING`/`WITH CHECK` predicates and
+  allowed catalog dependencies, and the complete effective/session-selectable role,
+  definer, and reachable-view authority envelopes before tenant binding or outbox
+  data SQL. A migration success record is point-in-time evidence and does not
+  authorize later same-name policy, ACL, membership, routine, view, or role-authority
+  drift. The normal runtime role needs only non-grantable `SELECT` and `INSERT` on the
+  outbox. Replay serialization must use transaction-scoped advisory locking on the
+  validated tenant/event identity rather than `SELECT ... FOR UPDATE`, so
+  serialization never requires ambient row-mutation authority. Do not authenticate
+  runtime connections as a database creator, role administrator, replication
+  identity, relation maintainer, DML delegator, privileged definer gateway,
+  privileged-view gateway, or other administrator and rely on `SET ROLE` or `SET
+  SESSION AUTHORIZATION` as a downgrade; administrative, replication, maintenance,
+  grant-capable, membership-delegating, executable-privileged,
   view-mediated-RLS-bypass, and owner-capable login sessions are outside the
   application isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
