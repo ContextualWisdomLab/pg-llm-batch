@@ -230,3 +230,32 @@ def test_role_authority_query_rejects_unsafe_security_definer_search_path() -> N
         "ARRAY['search_path=pg_catalog, pg_temp']::pg_catalog.text[], false)"
     ) in sql
     assert params == ()
+
+
+def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
+    """Caller-selectable owner-rights views must not bypass the forced tenant policy."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "JOIN pg_catalog.pg_rewrite AS exposed_view_rule" in sql
+    assert "JOIN pg_catalog.pg_depend AS exposed_view_dependency" in sql
+    assert (
+        "exposed_view_dependency.refobjid OPERATOR(pg_catalog.=) admitted_relation.oid"
+        in sql
+    )
+    assert (
+        "NOT COALESCE(exposed_view.reloptions OPERATOR(pg_catalog.@>) "
+        "ARRAY['security_invoker=true']::pg_catalog.text[], false)"
+    ) in sql
+    assert "exposed_view_owner.rolsuper OR exposed_view_owner.rolbypassrls" in sql
+    assert (
+        "pg_catalog.has_table_privilege(selectable_role.oid, exposed_view.oid, 'SELECT')"
+        in sql
+    )
+    assert (
+        "pg_catalog.has_any_column_privilege(exposed_view_owner.oid, "
+        "admitted_relation.oid, 'SELECT')"
+    ) in sql
+    assert params == ()
