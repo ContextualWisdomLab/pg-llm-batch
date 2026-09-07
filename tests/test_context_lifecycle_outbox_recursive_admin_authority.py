@@ -25,7 +25,7 @@ class _RoleCursor:
 
 
 def test_session_reachable_authority_recurses_across_set_and_admin_edges() -> None:
-    """A selectable role's ADMIN edge must recursively widen the future SET closure."""
+    """Only an ADMIN-bearing path may widen ordinary SET authority into future grants."""
     cursor = _RoleCursor()
 
     _require_rls_application_role(cursor)
@@ -33,10 +33,15 @@ def test_session_reachable_authority_recurses_across_set_and_admin_edges() -> No
     assert "pg_catalog.pg_auth_members" in cursor.sql
     assert "admin_option" in cursor.sql
     assert "set_option" in cursor.sql
-    assert "WITH RECURSIVE delegated_role" in cursor.sql
+    assert "WITH RECURSIVE delegated_role(role_oid, admin_seen)" in cursor.sql
     assert "delegated_membership.member" in cursor.sql
     assert "delegated_membership.roleid" in cursor.sql
+    assert (
+        "delegated_role.admin_seen OR delegated_membership.admin_option"
+        in cursor.sql
+    )
     assert (
         "delegated_membership.set_option OR delegated_membership.admin_option"
         in cursor.sql
     )
+    assert "AND delegated_role.admin_seen AND" in cursor.sql
