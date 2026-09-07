@@ -180,3 +180,91 @@ loaded = store.load("definer-search-path-a")
 assert loaded is not None
 assert loaded.evidence_id == "definer-search-path-a"
 PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE cwl_llm_batch_outbox_view_owner NOLOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS;
+GRANT USAGE, CREATE ON SCHEMA public TO cwl_llm_batch_outbox_view_owner;
+GRANT SELECT ON public.llm_context_lifecycle_outbox
+    TO cwl_llm_batch_outbox_view_owner;
+SET ROLE cwl_llm_batch_outbox_view_owner;
+CREATE VIEW public.cwl_llm_batch_outbox_privileged_view AS
+    SELECT tenant_scope, evidence_id
+    FROM public.llm_context_lifecycle_outbox;
+RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM cwl_llm_batch_outbox_view_owner;
+REVOKE ALL ON public.cwl_llm_batch_outbox_privileged_view FROM PUBLIC;
+GRANT SELECT ON public.cwl_llm_batch_outbox_privileged_view
+    TO cwl_llm_batch_outbox_definer_path_caller;
+SQL
+
+view_counts="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+    -U cwl_llm_batch_outbox_definer_path_caller -d postgres -Atq \
+    -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT pg_catalog.count(*) FROM ONLY public.llm_context_lifecycle_outbox;
+SELECT pg_catalog.count(*) FROM public.cwl_llm_batch_outbox_privileged_view;
+ROLLBACK;
+SQL
+)"
+if [[ "${view_counts}" != $'tenant-a\n1\n2' ]]; then
+  echo "privileged view specimen did not reproduce the forced-RLS bypass" >&2
+  printf '%s\n' "${view_counts}" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_definer_path_caller@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+try:
+    store.load("definer-search-path-a")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime admitted a caller-selectable non-security-invoker view whose BYPASSRLS "
+        "owner can read the lifecycle outbox across forced-RLS tenant boundaries"
+    )
+PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+ALTER VIEW public.cwl_llm_batch_outbox_privileged_view
+    SET (security_invoker = true);
+SQL
+
+safe_view_count="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+    -U cwl_llm_batch_outbox_definer_path_caller -d postgres -Atq \
+    -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT pg_catalog.count(*) FROM public.cwl_llm_batch_outbox_privileged_view;
+ROLLBACK;
+SQL
+)"
+if [[ "${safe_view_count}" != $'tenant-a\n1' ]]; then
+  echo "security-invoker view positive control did not preserve tenant RLS" >&2
+  printf '%s\n' "${safe_view_count}" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_definer_path_caller@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+loaded = store.load("definer-search-path-a")
+assert loaded is not None
+assert loaded.evidence_id == "definer-search-path-a"
+PY
