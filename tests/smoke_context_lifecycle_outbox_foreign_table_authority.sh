@@ -144,6 +144,57 @@ GRANT CREATE ON SCHEMA public TO cwl_llm_batch_outbox_fdw_outer_owner;
 GRANT SELECT ON public.cwl_llm_batch_outbox_foreign
     TO cwl_llm_batch_outbox_fdw_outer_owner;
 SET ROLE cwl_llm_batch_outbox_fdw_outer_owner;
+CREATE MATERIALIZED VIEW public.cwl_llm_batch_outbox_foreign_copy AS
+    SELECT tenant_scope, evidence_id
+    FROM public.cwl_llm_batch_outbox_foreign;
+RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM cwl_llm_batch_outbox_fdw_outer_owner;
+REVOKE ALL ON public.cwl_llm_batch_outbox_foreign_copy FROM PUBLIC;
+GRANT SELECT ON public.cwl_llm_batch_outbox_foreign_copy
+    TO cwl_llm_batch_outbox_fdw_caller;
+SQL
+
+materialized_foreign_count="$(
+  docker exec -i "${container}" psql -h 127.0.0.1 \
+    -U cwl_llm_batch_outbox_fdw_caller -d postgres -Atq \
+    -v ON_ERROR_STOP=1 <<'SQL'
+BEGIN;
+SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', 'tenant-a', true);
+SELECT pg_catalog.count(*) FROM public.cwl_llm_batch_outbox_foreign_copy;
+ROLLBACK;
+SQL
+)"
+if [[ "${materialized_foreign_count}" != $'tenant-a\n2' ]]; then
+  echo "foreign-table materialized-copy specimen did not retain cross-tenant rows" >&2
+  printf '%s\n' "${materialized_foreign_count}" >&2
+  exit 1
+fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_fdw_caller@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+try:
+    store.load("foreign-table-a")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(
+        "runtime admitted a selectable materialized copy whose definition reaches "
+        "opaque foreign-data authority"
+    )
+PY
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+REVOKE SELECT ON public.cwl_llm_batch_outbox_foreign_copy
+    FROM cwl_llm_batch_outbox_fdw_caller;
+GRANT CREATE ON SCHEMA public TO cwl_llm_batch_outbox_fdw_outer_owner;
+SET ROLE cwl_llm_batch_outbox_fdw_outer_owner;
 CREATE VIEW public.cwl_llm_batch_outbox_foreign_outer AS
     SELECT tenant_scope, evidence_id
     FROM public.cwl_llm_batch_outbox_foreign;
