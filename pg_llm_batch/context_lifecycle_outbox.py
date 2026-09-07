@@ -438,6 +438,38 @@ def _unsafe_outbox_constraint_sql() -> str:
     )
 
 
+def _unsafe_outbox_default_sql() -> str:
+    """Probe live omitted-column defaults that can execute after migration admission."""
+    return (
+        "((SELECT pg_catalog.count(*) "
+        "FROM pg_catalog.pg_attrdef AS live_outbox_default "
+        "WHERE live_outbox_default.adrelid OPERATOR(pg_catalog.=) admitted_relation.oid"
+        ") OPERATOR(pg_catalog.<>) 3 "
+        "OR EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_attrdef AS live_outbox_default "
+        "JOIN pg_catalog.pg_attribute AS live_outbox_default_attribute "
+        "ON live_outbox_default_attribute.attrelid OPERATOR(pg_catalog.=) "
+        "live_outbox_default.adrelid "
+        "AND live_outbox_default_attribute.attnum OPERATOR(pg_catalog.=) "
+        "live_outbox_default.adnum "
+        "WHERE live_outbox_default.adrelid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "AND NOT ("
+        "(live_outbox_default_attribute.attname OPERATOR(pg_catalog.=) 'tenant_scope' "
+        "AND pg_catalog.pg_get_expr(live_outbox_default.adbin, "
+        "live_outbox_default.adrelid, false) OPERATOR(pg_catalog.=) "
+        "'''standalone''::text') "
+        "OR (live_outbox_default_attribute.attname OPERATOR(pg_catalog.=) "
+        "'context_outbox_uuid' "
+        "AND pg_catalog.pg_get_expr(live_outbox_default.adbin, "
+        "live_outbox_default.adrelid, false) OPERATOR(pg_catalog.=) "
+        "'gen_random_uuid()') "
+        "OR (live_outbox_default_attribute.attname OPERATOR(pg_catalog.=) 'created_at' "
+        "AND pg_catalog.pg_get_expr(live_outbox_default.adbin, "
+        "live_outbox_default.adrelid, false) OPERATOR(pg_catalog.=) 'now()')"
+        ")))"
+    )
+
+
 def _require_rls_application_role(cursor: Any) -> None:
     """Reject unsafe runtime roles or drifted canonical RLS policy authority."""
     maintain_selectable = _maintain_privilege_sql("selectable_role.oid")
@@ -456,6 +488,7 @@ def _require_rls_application_role(cursor: Any) -> None:
     privileged_outbox_view = _privileged_outbox_view_sql("selectable_role.oid")
     unsafe_outbox_index = _unsafe_outbox_index_sql()
     unsafe_outbox_constraint = _unsafe_outbox_constraint_sql()
+    unsafe_outbox_default = _unsafe_outbox_default_sql()
     cursor.execute(
         "SELECT admitted_role.rolsuper "
         "OR NOT admitted_relation.relrowsecurity "
@@ -473,6 +506,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         f"{unsafe_outbox_index} "
         "OR "
         f"{unsafe_outbox_constraint} "
+        "OR "
+        f"{unsafe_outbox_default} "
         "OR ("
         "SELECT pg_catalog.count(*) FROM pg_catalog.pg_policy AS outbox_policy "
         "WHERE outbox_policy.polrelid OPERATOR(pg_catalog.=) admitted_relation.oid"
