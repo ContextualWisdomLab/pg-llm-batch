@@ -215,6 +215,9 @@ if ! grep -Fq "ck_llm_context_lifecycle_outbox_runtime_constraint_probe" \
 fi
 assert_runtime_rejected "constraint"
 
+docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT conname || E'\t' || pg_catalog.pg_get_expr(conbin, conrelid, false) FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname IN ('ck_llm_context_lifecycle_outbox_payload_canonical_v1', 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1', 'ck_llm_context_lifecycle_outbox_system_time_canonical_v1') ORDER BY conname;"
+
 psql_stdin <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
     DROP CONSTRAINT ck_llm_context_lifecycle_outbox_runtime_constraint_probe;
