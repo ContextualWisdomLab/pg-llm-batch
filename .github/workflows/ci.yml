@@ -114,6 +114,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_tenant_scope_authority.sh
       - name: Run lifecycle-outbox SECURITY INVOKER tenant-scope authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_invoker_tenant_scope_authority.sh
+      - name: Run lifecycle-outbox nested definer/invoker tenant-scope authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_invoker_tenant_scope_authority.sh
       - name: Verify PostgreSQL container log routing
         run: bash tests/smoke_postgres_container_logging.sh
       - name: Run legacy SQL cleanup integration smoke
