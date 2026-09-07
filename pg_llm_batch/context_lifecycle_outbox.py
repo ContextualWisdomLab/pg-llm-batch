@@ -419,7 +419,7 @@ def _unsafe_outbox_constraint_sql() -> str:
         "'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1' "
         "OR live_outbox_constraint_authority.conname OPERATOR(pg_catalog.=) "
         "'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'))"
-        "))))"
+        "))"
     )
 
 
