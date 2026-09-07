@@ -23,24 +23,30 @@
   closure, plus table- or column-level `SELECT WITH GRANT OPTION` and
   `INSERT WITH GRANT OPTION`. Outbox `MAINTAIN` is also forbidden: PostgreSQL
   defines it as relation-wide authority for maintenance operations including
-  `LOCK TABLE`, not application `SELECT`/`INSERT` DML. A session identity with
-  membership `ADMIN OPTION` over a role that directly/inheritedly carries outbox
-  `SELECT`/`INSERT`/`MAINTAIN`, or that can reach such authority through an
-  all-`SET TRUE` membership path, is also rejected. Callable non-system-schema
-  `SECURITY DEFINER` routines are rejected when their owner can directly
-  reintroduce forbidden authority through superuser, `CREATEROLE`, `REPLICATION`,
-  RLS-bypass status, exact or inherited table ownership, grant options,
-  `MAINTAIN`, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`; they are
-  also rejected when the owner can use membership `ADMIN OPTION` to redistribute
-  a role that directly, or through an all-`SET TRUE` path, carries the forbidden
-  runtime/operator envelope including `CREATEDB` or `MAINTAIN`. That executable-
-  principal check is transitive: once a caller can enter a user-schema
-  `SECURITY DEFINER`, admission must recursively follow any further user-schema
-  `SECURITY DEFINER` that the discovered owner can execute through schema `USAGE`
-  plus routine `EXECUTE`, using a cycle-safe owner closure. Every callable routine
-  in that closure must also pin routine-level `search_path = pg_catalog, pg_temp`;
-  absent or different name-resolution authority is rejected before tenant binding
-  or outbox data SQL rather than inheriting caller temporary-schema state. The
+  `LOCK TABLE`, not application `SELECT`/`INSERT` DML. A pure `SET TRUE` path
+  does not mint membership: the intended non-grantable outbox `SELECT`/`INSERT`
+  of an ordinary SET-selectable forced-RLS application role remains valid. The
+  delegated-DML envelope starts only once an `ADMIN OPTION` edge has been crossed
+  and that ADMIN-bearing state must then propagate recursively through later
+  `SET` or `ADMIN` edges. A session identity with membership `ADMIN OPTION` over
+  a role that directly/inheritedly carries outbox `SELECT`/`INSERT`/`MAINTAIN`,
+  or that can reach such authority through later `SET`/`ADMIN` membership edges,
+  is rejected. Callable non-system-schema `SECURITY DEFINER` routines are
+  rejected when their owner can directly reintroduce forbidden authority through
+  superuser, `CREATEROLE`, `REPLICATION`, RLS-bypass status, exact or inherited
+  table ownership, grant options, `MAINTAIN`, `TRUNCATE`, `DELETE`, `UPDATE`,
+  `REFERENCES`, or `TRIGGER`; they are also rejected when the owner can use
+  membership `ADMIN OPTION` to redistribute a role that directly, or through a
+  recursively mixed `SET`/`ADMIN` path, carries the forbidden runtime/operator
+  envelope including `CREATEDB` or `MAINTAIN`. Do not bound that delegated-definer
+  proof to one administered role plus one all-SET layer. That executable-principal
+  check is transitive: once a caller can enter a user-schema `SECURITY DEFINER`,
+  admission must recursively follow any further user-schema `SECURITY DEFINER`
+  that the discovered owner can execute through schema `USAGE` plus routine
+  `EXECUTE`, using a cycle-safe owner closure. Every callable routine in that
+  closure must also pin routine-level `search_path = pg_catalog, pg_temp`; absent
+  or different name-resolution authority is rejected before tenant binding or
+  outbox data SQL rather than inheriting caller temporary-schema state. The
   discovered definer owner must also pass the same reachable ordinary-view,
   materialized-copy, inheritance/partition, and opaque foreign-data authority probe
   as a runtime principal. A caller's missing direct foreign-table `SELECT` is not
