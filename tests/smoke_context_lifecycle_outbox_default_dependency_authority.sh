@@ -79,7 +79,10 @@ fi
 docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
 import psycopg
 
-from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.context_lifecycle_outbox import (
+    PostgresContextLifecycleOutboxStore,
+    _unsafe_outbox_default_sql,
+)
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
@@ -104,6 +107,17 @@ with psycopg.connect(
         if cursor.fetchone() != ("now()",):
             raise SystemExit(
                 "shadow default did not reproduce the search_path-sensitive deparse"
+            )
+        cursor.execute(
+            "SELECT "
+            + _unsafe_outbox_default_sql()
+            + " FROM pg_catalog.pg_class AS admitted_relation "
+            "WHERE admitted_relation.oid = "
+            "pg_catalog.to_regclass('public.llm_context_lifecycle_outbox')"
+        )
+        if cursor.fetchone() != (True,):
+            raise SystemExit(
+                "default-authority predicate trusted deparse text despite public.now() dependency"
             )
         try:
             store.load_in_transaction(cursor, "runtime-default-dependency-red")
