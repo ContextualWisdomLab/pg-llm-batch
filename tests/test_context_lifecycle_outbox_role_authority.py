@@ -239,7 +239,8 @@ def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
     _require_rls_application_role(cursor)
 
     sql, params = cursor.calls[0]
-    assert "WITH RECURSIVE reachable_relation(relation_oid, caller_oid) AS" in sql
+    assert "WITH RECURSIVE foreign_inheritance_ancestor(relation_oid) AS" in sql
+    assert "reachable_relation(relation_oid, caller_oid) AS" in sql
     assert "SELECT nested_relation.oid, reachable_relation.caller_oid" in sql
     assert "JOIN pg_catalog.pg_rewrite AS current_view_rule" in sql
     assert "JOIN pg_catalog.pg_depend AS current_view_dependency" in sql
