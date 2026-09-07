@@ -146,6 +146,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_role_admin_destructive_authority.sh
       - name: Run lifecycle-outbox live RLS policy-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_runtime_rls_policy_authority.sh
+      - name: Run lifecycle-outbox live table-program authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_runtime_program_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER replication-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_replication_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER admin-delegation smoke
