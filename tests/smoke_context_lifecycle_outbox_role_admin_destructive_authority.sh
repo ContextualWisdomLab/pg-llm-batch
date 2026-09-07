@@ -64,31 +64,39 @@ INSERT INTO public.llm_context_lifecycle_outbox (
 
 CREATE ROLE cwl_llm_batch_outbox_destructive_leaf NOLOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE cwl_llm_batch_outbox_destructive_bridge NOLOGIN
+CREATE ROLE cwl_llm_batch_outbox_destructive_inner NOLOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-CREATE ROLE cwl_llm_batch_outbox_destructive_admin LOGIN
+CREATE ROLE cwl_llm_batch_outbox_destructive_outer NOLOGIN
+    NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_destructive_login LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 
 GRANT USAGE ON SCHEMA public
     TO cwl_llm_batch_outbox_destructive_leaf,
-       cwl_llm_batch_outbox_destructive_bridge,
-       cwl_llm_batch_outbox_destructive_admin;
+       cwl_llm_batch_outbox_destructive_inner,
+       cwl_llm_batch_outbox_destructive_outer,
+       cwl_llm_batch_outbox_destructive_login;
+GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
+    TO cwl_llm_batch_outbox_destructive_login;
 GRANT TRUNCATE ON public.llm_context_lifecycle_outbox
     TO cwl_llm_batch_outbox_destructive_leaf;
 GRANT cwl_llm_batch_outbox_destructive_leaf
-    TO cwl_llm_batch_outbox_destructive_bridge
+    TO cwl_llm_batch_outbox_destructive_inner
     WITH INHERIT FALSE, SET TRUE;
-GRANT cwl_llm_batch_outbox_destructive_bridge
-    TO cwl_llm_batch_outbox_destructive_admin
+GRANT cwl_llm_batch_outbox_destructive_inner
+    TO cwl_llm_batch_outbox_destructive_outer
     WITH ADMIN TRUE, INHERIT FALSE, SET FALSE;
+GRANT cwl_llm_batch_outbox_destructive_outer
+    TO cwl_llm_batch_outbox_destructive_login
+    WITH INHERIT FALSE, SET TRUE;
 SQL
 
-initial_set="$(
+initial_inner_set="$(
   docker exec "${container}" psql -U postgres -d postgres -Atqc \
-    "SELECT pg_catalog.pg_has_role('cwl_llm_batch_outbox_destructive_admin', 'cwl_llm_batch_outbox_destructive_bridge', 'SET')"
+    "SELECT pg_catalog.pg_has_role('cwl_llm_batch_outbox_destructive_login', 'cwl_llm_batch_outbox_destructive_inner', 'SET')"
 )"
-if [[ "${initial_set}" != "f" ]]; then
-  echo "ADMIN specimen unexpectedly began with SET authority" >&2
+if [[ "${initial_inner_set}" != "f" ]]; then
+  echo "recursive ADMIN specimen unexpectedly began with inner SET authority" >&2
   exit 1
 fi
 
@@ -98,7 +106,7 @@ from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutbox
 from pg_llm_batch.exceptions import ConfigError
 
 store = PostgresContextLifecycleOutboxStore(
-    "postgresql://cwl_llm_batch_outbox_destructive_admin@127.0.0.1/postgres",
+    "postgresql://cwl_llm_batch_outbox_destructive_login@127.0.0.1/postgres",
     tenant_scope="tenant-a",
     tenant_scope_sha256="a" * 64,
 )
@@ -113,10 +121,13 @@ PY
 )"
 
 docker exec -i "${container}" psql -h 127.0.0.1 \
-  -U cwl_llm_batch_outbox_destructive_admin -d postgres -v ON_ERROR_STOP=1 <<'SQL'
-GRANT cwl_llm_batch_outbox_destructive_bridge
-    TO cwl_llm_batch_outbox_destructive_admin
+  -U cwl_llm_batch_outbox_destructive_login -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+SET ROLE cwl_llm_batch_outbox_destructive_outer;
+GRANT cwl_llm_batch_outbox_destructive_inner
+    TO cwl_llm_batch_outbox_destructive_login
     WITH INHERIT FALSE, SET TRUE;
+RESET ROLE;
+SET ROLE cwl_llm_batch_outbox_destructive_inner;
 SET ROLE cwl_llm_batch_outbox_destructive_leaf;
 TRUNCATE TABLE public.llm_context_lifecycle_outbox;
 SQL
@@ -126,11 +137,11 @@ remaining="$(
     "SELECT pg_catalog.count(*) FROM public.llm_context_lifecycle_outbox"
 )"
 if [[ "${remaining}" != "0" ]]; then
-  echo "ADMIN specimen did not materialize SET-reachable TRUNCATE authority" >&2
+  echo "recursive ADMIN specimen did not materialize SET-reachable TRUNCATE authority" >&2
   exit 1
 fi
 
 if [[ "${admission}" != "REJECTED" ]]; then
-  echo "runtime admitted ADMIN-delegatable SET path to destructive outbox authority" >&2
+  echo "runtime admitted selectable-role ADMIN path to destructive outbox authority" >&2
   exit 1
 fi
