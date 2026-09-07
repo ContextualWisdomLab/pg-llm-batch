@@ -33,18 +33,30 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
-canonical_expr="$({
+constraint_deparse() {
+  local constraint_name="$1"
   docker exec "${container}" psql -U postgres -d postgres -Atqc \
-    "SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_expr(conbin, conrelid, false), E'\\n[[:space:]]*', ' ', 'g') FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname = 'ck_llm_context_lifecycle_outbox_payload_canonical_v1'"
-} | tr -d '\r')"
-if [[ -z "${canonical_expr}" ]]; then
-  echo "canonical lifecycle-outbox payload CHECK deparse is unavailable" >&2
+    "SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_expr(conbin, conrelid, false), E'\\n[[:space:]]*', ' ', 'g') FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname = '${constraint_name}'" \
+    | tr -d '\r'
+}
+
+canonical_payload_expr="$(constraint_deparse ck_llm_context_lifecycle_outbox_payload_canonical_v1)"
+canonical_valid_time_expr="$(constraint_deparse ck_llm_context_lifecycle_outbox_valid_time_canonical_v1)"
+canonical_system_time_expr="$(constraint_deparse ck_llm_context_lifecycle_outbox_system_time_canonical_v1)"
+if [[ -z "${canonical_payload_expr}" || -z "${canonical_valid_time_expr}" || -z "${canonical_system_time_expr}" ]]; then
+  echo "canonical lifecycle-outbox CHECK deparse is unavailable" >&2
   exit 1
 fi
 
+# Replace every canonical CHECK that uses regex operators under one shadowing search path.
+# This removes the collateral deparse mismatch that a one-constraint specimen would cause:
+# built-in regex operators in untouched constraints would otherwise become schema-qualified,
+# letting the aggregate expression check fail for an unrelated reason.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 ALTER TABLE public.llm_context_lifecycle_outbox
-    DROP CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1;
+    DROP CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1,
+    DROP CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time_canonical_v1,
+    DROP CONSTRAINT ck_llm_context_lifecycle_outbox_system_time_canonical_v1;
 
 CREATE FUNCTION public.cwl_llm_batch_shadow_regex(text, text)
 RETURNS boolean
@@ -53,6 +65,12 @@ IMMUTABLE
 AS 'SELECT true';
 
 CREATE OPERATOR public.~ (
+    FUNCTION = public.cwl_llm_batch_shadow_regex,
+    LEFTARG = text,
+    RIGHTARG = text
+);
+
+CREATE OPERATOR public.!~ (
     FUNCTION = public.cwl_llm_batch_shadow_regex,
     LEFTARG = text,
     RIGHTARG = text
@@ -79,18 +97,66 @@ ALTER TABLE public.llm_context_lifecycle_outbox
         )
         AND provenance_ref_sha256 ~ '^[0-9a-f]{64}$'
         AND evidence_ref_sha256 ~ '^[0-9a-f]{64}$'
+    ),
+    ADD CONSTRAINT ck_llm_context_lifecycle_outbox_valid_time_canonical_v1
+    CHECK (
+        valid_time ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+        AND valid_time::timestamptz IS NOT NULL
+        AND valid_time !~ '[.]000000Z$'
+        AND valid_time = CASE
+            WHEN valid_time ~ '[.]' THEN
+                to_char(
+                    valid_time::timestamptz AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                )
+            ELSE
+                to_char(
+                    valid_time::timestamptz AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                )
+        END
+    ),
+    ADD CONSTRAINT ck_llm_context_lifecycle_outbox_system_time_canonical_v1
+    CHECK (
+        system_time ~ '^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([.]\d{6})?Z$'
+        AND system_time::timestamptz IS NOT NULL
+        AND system_time !~ '[.]000000Z$'
+        AND system_time = CASE
+            WHEN system_time ~ '[.]' THEN
+                to_char(
+                    system_time::timestamptz AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"'
+                )
+            ELSE
+                to_char(
+                    system_time::timestamptz AT TIME ZONE 'UTC',
+                    'YYYY-MM-DD"T"HH24:MI:SS"Z"'
+                )
+        END
     );
 RESET search_path;
 SQL
 
-hostile_expr="$({
+hostile_payload_expr="$({
   docker exec "${container}" psql -U postgres -d postgres -Atqc \
     "SET search_path = public, pg_catalog; SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_expr(conbin, conrelid, false), E'\\n[[:space:]]*', ' ', 'g') FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname = 'ck_llm_context_lifecycle_outbox_payload_canonical_v1'"
 } | tr -d '\r')"
+hostile_valid_time_expr="$({
+  docker exec "${container}" psql -U postgres -d postgres -Atqc \
+    "SET search_path = public, pg_catalog; SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_expr(conbin, conrelid, false), E'\\n[[:space:]]*', ' ', 'g') FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname = 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1'"
+} | tr -d '\r')"
+hostile_system_time_expr="$({
+  docker exec "${container}" psql -U postgres -d postgres -Atqc \
+    "SET search_path = public, pg_catalog; SELECT pg_catalog.regexp_replace(pg_catalog.pg_get_expr(conbin, conrelid, false), E'\\n[[:space:]]*', ' ', 'g') FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname = 'ck_llm_context_lifecycle_outbox_system_time_canonical_v1'"
+} | tr -d '\r')"
 
-if [[ "${hostile_expr}" != "${canonical_expr}" ]]; then
-  printf 'canonical deparse:\n%s\nhostile deparse:\n%s\n' "${canonical_expr}" "${hostile_expr}" >&2
-  echo "shadow-operator fixture does not preserve the claimed CHECK deparse identity" >&2
+if [[ "${hostile_payload_expr}" != "${canonical_payload_expr}" \
+   || "${hostile_valid_time_expr}" != "${canonical_valid_time_expr}" \
+   || "${hostile_system_time_expr}" != "${canonical_system_time_expr}" ]]; then
+  printf 'payload canonical:\n%s\npayload hostile:\n%s\n' "${canonical_payload_expr}" "${hostile_payload_expr}" >&2
+  printf 'valid-time canonical:\n%s\nvalid-time hostile:\n%s\n' "${canonical_valid_time_expr}" "${hostile_valid_time_expr}" >&2
+  printf 'system-time canonical:\n%s\nsystem-time hostile:\n%s\n' "${canonical_system_time_expr}" "${hostile_system_time_expr}" >&2
+  echo "shadow-operator fixture does not preserve the full canonical CHECK deparse set" >&2
   exit 1
 fi
 
@@ -109,7 +175,7 @@ with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
             "'public.llm_context_lifecycle_outbox'::pg_catalog.regclass"
         )
         assert cursor.fetchone() == (True,), (
-            "runtime CHECK authority probe admitted a same-deparse constraint "
-            "bound to a different operator object"
+            "runtime CHECK authority probe admitted a canonical-deparse constraint set "
+            "bound to different operator objects"
         )
 PY
