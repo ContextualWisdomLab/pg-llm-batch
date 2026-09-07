@@ -339,7 +339,7 @@ def _unsafe_outbox_index_sql() -> str:
 
 
 def _unsafe_outbox_constraint_sql() -> str:
-    """Probe persistent constraint-set authority added after migration admission."""
+    """Probe constraint-set and executable dependency authority after migration."""
     return (
         "((SELECT pg_catalog.count(*) "
         "FROM pg_catalog.pg_constraint AS live_outbox_constraint_authority "
@@ -434,6 +434,22 @@ def _unsafe_outbox_constraint_sql() -> str:
         "live_outbox_constraint_authority.conrelid, false), "
         "E'\\n[[:space:]]*', ' ', 'g') OPERATOR(pg_catalog.=) "
         "$pg_llm_batch_system_time$((system_time ~ '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}([.]\\d{6})?Z$'::text) AND ((system_time)::timestamp with time zone IS NOT NULL) AND (system_time !~ '[.]000000Z$'::text) AND (system_time = CASE WHEN (system_time ~ '[.]'::text) THEN to_char(((system_time)::timestamp with time zone AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'::text) ELSE to_char(((system_time)::timestamp with time zone AT TIME ZONE 'UTC'::text), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'::text) END))$pg_llm_batch_system_time$)))"
+        ") "
+        "OR EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_constraint AS live_outbox_check_dependency_owner "
+        "JOIN pg_catalog.pg_depend AS live_outbox_check_dependency "
+        "ON live_outbox_check_dependency.classid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_constraint'::pg_catalog.regclass "
+        "AND live_outbox_check_dependency.objid OPERATOR(pg_catalog.=) "
+        "live_outbox_check_dependency_owner.oid "
+        "AND live_outbox_check_dependency.objsubid OPERATOR(pg_catalog.=) 0 "
+        "WHERE live_outbox_check_dependency_owner.conrelid OPERATOR(pg_catalog.=) "
+        "admitted_relation.oid "
+        "AND live_outbox_check_dependency_owner.contype::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'c' "
+        "AND live_outbox_check_dependency.refobjsubid OPERATOR(pg_catalog.=) 0 "
+        "AND live_outbox_check_dependency.deptype::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'n'"
         "))"
     )
 
