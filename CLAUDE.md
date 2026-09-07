@@ -40,45 +40,51 @@
   plus routine `EXECUTE`, using a cycle-safe owner closure. Every callable routine
   in that closure must also pin routine-level `search_path = pg_catalog, pg_temp`;
   absent or different name-resolution authority is rejected before tenant binding
-  or outbox data SQL rather than inheriting caller temporary-schema state. A safe
-  outer owner therefore cannot hide a dangerous inner definer that the caller
-  cannot execute directly. Ordinary views form a second transitive authority
-  boundary. Starting with each caller-selectable view, admission must follow the
-  cycle-safe nested-view dependency closure using the principal PostgreSQL actually
-  applies at each edge: the original invoker for `security_invoker=true`, otherwise
-  the current view owner. Any reachable non-security-invoker view that directly
-  reads the outbox is rejected when its owner is a superuser or `BYPASSRLS`
-  principal with outbox read authority. This prevents a safe-looking outer view from
-  hiding a privileged inner view that exposes cross-tenant rows to a
-  `NOBYPASSRLS` runtime credential. Materialized views are a separate copied-data
-  boundary. PostgreSQL returns their persisted rows directly at read time and uses
-  the stored defining query only when the relation is populated or refreshed, so a
-  runtime base-table RLS check does not protect an older materialized copy. Admission
-  must include materialized relations that are directly caller-selectable or reached
-  through an ordinary view, then follow each materialized relation's definition
-  provenance through nested ordinary/materialized views. If that provenance reaches
-  the lifecycle outbox, reject the credential before tenant binding or outbox SQL;
-  do not infer safety from the materialized-view owner, mutable copied contents, a
-  tenant literal in definition text, or the authority used by the last refresh.
-  Foreign tables are another opaque authority boundary: a foreign-data wrapper uses
-  a foreign server and user mapping to determine remote access, so local RLS and role
-  catalogs cannot prove the remote principal or remote row-security semantics. Reject
-  any user-schema foreign table selectable by the runtime, reachable through an
-  ordinary view under that view's effective principal, or present anywhere in the
-  stored definition provenance of a runtime-readable materialized view before tenant
-  binding or outbox SQL. PostgreSQL inheritance and declarative partitioning can also
-  route a parent-table query into a foreign descendant while access permission is
-  checked on the named parent. Admission must build a cycle-safe foreign-ancestor
-  closure through `pg_catalog.pg_inherits` and reject any selectable ordinary or
-  partitioned parent, view-mediated parent, or materialized provenance node with a
-  foreign descendant. Missing direct child `SELECT`, partition bounds, parent names,
-  and local parent RLS are not durable remote-authorization evidence. A materialized
-  foreign-data copy remains opaque even after caller access to the source foreign
-  table is revoked because the copied rows no longer require another remote read. Do
-  not treat mutable FDW/user-mapping options, copied contents, tenant literals in
+  or outbox data SQL rather than inheriting caller temporary-schema state. The
+  discovered definer owner must also pass the same reachable ordinary-view,
+  materialized-copy, inheritance/partition, and opaque foreign-data authority probe
+  as a runtime principal. A caller's missing direct foreign-table `SELECT` is not
+  safety evidence once the callable routine executes with an owner whose foreign
+  server/user mapping can reach that relation; do not allowlist that authority by
+  parsing one current routine body. A safe outer owner therefore cannot hide a
+  dangerous inner definer that the caller cannot execute directly. Ordinary views
+  form a second transitive authority boundary. Starting with each caller-selectable
+  view, admission must follow the cycle-safe nested-view dependency closure using the
+  principal PostgreSQL actually applies at each edge: the original invoker for
+  `security_invoker=true`, otherwise the current view owner. Any reachable
+  non-security-invoker view that directly reads the outbox is rejected when its owner
+  is a superuser or `BYPASSRLS` principal with outbox read authority. This prevents a
+  safe-looking outer view from hiding a privileged inner view that exposes
+  cross-tenant rows to a `NOBYPASSRLS` runtime credential. Materialized views are a
+  separate copied-data boundary. PostgreSQL returns their persisted rows directly at
+  read time and uses the stored defining query only when the relation is populated or
+  refreshed, so a runtime base-table RLS check does not protect an older materialized
+  copy. Admission must include materialized relations that are directly
+  caller-selectable or reached through an ordinary view, then follow each materialized
+  relation's definition provenance through nested ordinary/materialized views. If that
+  provenance reaches the lifecycle outbox, reject the credential before tenant binding
+  or outbox SQL; do not infer safety from the materialized-view owner, mutable copied
+  contents, a tenant literal in definition text, or the authority used by the last
+  refresh. Foreign tables are another opaque authority boundary: a foreign-data wrapper
+  uses a foreign server and user mapping to determine remote access, so local RLS and
+  role catalogs cannot prove the remote principal or remote row-security semantics.
+  Reject any user-schema foreign table selectable by the runtime, reachable through an
+  ordinary view under that view's effective principal, reachable by a callable definer
+  owner, or present anywhere in the stored definition provenance of a runtime-readable
+  materialized view before tenant binding or outbox SQL. PostgreSQL inheritance and
+  declarative partitioning can also route a parent-table query into a foreign descendant
+  while access permission is checked on the named parent. Admission must build a
+  cycle-safe foreign-ancestor closure through `pg_catalog.pg_inherits` and reject any
+  selectable ordinary or partitioned parent, definer-owner-selectable parent,
+  view-mediated parent, or materialized provenance node with a foreign descendant.
+  Missing caller/child `SELECT`, partition bounds, parent names, and local parent RLS
+  are not durable remote-authorization evidence. A materialized foreign-data copy
+  remains opaque even after caller access to the source foreign table is revoked
+  because the copied rows no longer require another remote read. Do not treat mutable
+  FDW/user-mapping options, copied contents, routine body text, tenant literals in
   definition text, or last-refresh authority as durable authorization evidence;
   foreign-data workloads must use a role/connection separate from the lifecycle-
-  outbox runtime credential.
+  outbox runtime credential and every callable definer owner it can enter.
   PostgreSQL lets the membership administrator grant a role onward even when that
   administrator's own membership is `INHERIT FALSE, SET FALSE`; the recipient can
   then use the granted selectable path after a security-definer call returns.
