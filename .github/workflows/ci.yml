@@ -110,6 +110,8 @@ jobs:
         run: docker build --tag pg-llm-batch:ci .
       - name: Build PostgreSQL image
         run: docker build --tag pg-llm-batch-postgres:ci docker/postgres
+      - name: Run lifecycle-outbox SECURITY DEFINER tenant-scope authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_tenant_scope_authority.sh
       - name: Verify PostgreSQL container log routing
         run: bash tests/smoke_postgres_container_logging.sh
       - name: Run legacy SQL cleanup integration smoke

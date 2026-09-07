@@ -49,3 +49,17 @@ def test_callable_security_definer_authority_closure_is_recursive() -> None:
         in cursor.sql
     )
     assert "UNION" in cursor.sql
+
+
+def test_callable_security_definer_rejects_tenant_scope_proconfig_override() -> None:
+    """Function-local tenant binding must not override the package-owned RLS scope."""
+    cursor = CapturingCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert "pg_catalog.unnest" in cursor.sql
+    assert "definer_setting.setting" in cursor.sql
+    assert (
+        "pg_catalog.split_part(definer_setting.setting, '=', 1) "
+        "OPERATOR(pg_catalog.=) 'pg_llm_batch.tenant_scope'"
+    ) in cursor.sql
