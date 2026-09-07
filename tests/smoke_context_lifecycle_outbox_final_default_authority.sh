@@ -2,6 +2,7 @@
 set -euo pipefail
 
 image="pg-llm-batch-postgres:ci"
+component_image="pg-llm-batch:ci"
 container="pg-llm-batch-outbox-default-authority-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/06_context_lifecycle_outbox_row_admission_authority.sql"
 
@@ -37,6 +38,11 @@ fi
 # on every new durable intent. A restore/operator can replace one after migration 0008
 # was recorded as applied without changing CHECK/RLS/trigger/rule/index authority.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE cwl_llm_batch_outbox_default_runtime
+    LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_default_runtime;
+GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
+    TO cwl_llm_batch_outbox_default_runtime;
 CREATE FUNCTION public.pg_llm_batch_outbox_created_at_probe()
 RETURNS timestamptz
 LANGUAGE plpgsql
@@ -91,6 +97,35 @@ if ! grep -Fq "operator default rejected canonical event" \
   echo "default-authority RED failed for the wrong reason" >&2
   exit 1
 fi
+
+# Migration 0009 already proves this drift when it is re-run, but runtime admission is
+# the durable boundary: a point-in-time migration record must not authorize a later
+# omitted-column default replacement. The store must reject before tenant binding or
+# lifecycle data SQL, even for a read that would not execute the malicious default.
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+import psycopg
+
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_default_runtime@127.0.0.1/postgres",
+    tenant_scope="standalone",
+    tenant_scope_sha256="0" * 64,
+)
+with psycopg.connect(
+    "postgresql://cwl_llm_batch_outbox_default_runtime@127.0.0.1/postgres"
+) as connection:
+    with connection.cursor() as cursor:
+        try:
+            store.load_in_transaction(cursor, "runtime-default-authority-red")
+        except ConfigError:
+            pass
+        else:
+            raise SystemExit(
+                "runtime admission accepted post-migration created_at default drift"
+            )
+PY
 
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/tmp/pg-llm-batch-outbox-admission-default.out 2>&1; then
