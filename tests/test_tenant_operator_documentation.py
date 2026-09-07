@@ -123,6 +123,17 @@ def test_owner_instructions_cover_parent_mediated_foreign_data_authority() -> No
         assert "foreign" in document.lower()
 
 
+def test_owner_instructions_cover_definer_owned_foreign_data_authority() -> None:
+    """Owner instructions must reject foreign authority reached through definer owners."""
+    for path in (AGENTS_PATH, CLAUDE_PATH):
+        document = _normalized(path)
+        assert "SECURITY DEFINER" in document
+        assert "definer owner" in document.lower()
+        assert "foreign" in document.lower()
+        assert "user mapping" in document.lower() or "user-mapping" in document.lower()
+        assert "missing direct" in document.lower()
+
+
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
     """The implementation plan must preserve the reviewed default-deny RLS order."""
     plan = _normalized(IMPLEMENTATION_PLAN_PATH)
