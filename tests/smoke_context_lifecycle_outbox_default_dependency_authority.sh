@@ -96,17 +96,24 @@ with psycopg.connect(
     with connection.cursor() as cursor:
         cursor.execute("SET search_path = public, pg_catalog")
         cursor.execute(
-            "SELECT pg_catalog.pg_get_expr(d.adbin, d.adrelid, false) "
+            "SELECT a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid, false) "
             "FROM pg_catalog.pg_attrdef AS d "
             "JOIN pg_catalog.pg_attribute AS a "
             "ON a.attrelid = d.adrelid AND a.attnum = d.adnum "
             "WHERE d.adrelid = "
             "'public.llm_context_lifecycle_outbox'::pg_catalog.regclass "
-            "AND a.attname = 'created_at'"
+            "ORDER BY a.attname"
         )
-        if cursor.fetchone() != ("now()",):
+        defaults = cursor.fetchall()
+        expected_defaults = [
+            ("context_outbox_uuid", "gen_random_uuid()"),
+            ("created_at", "now()"),
+            ("tenant_scope", "'standalone'::text"),
+        ]
+        if defaults != expected_defaults:
             raise SystemExit(
-                "shadow default did not reproduce the search_path-sensitive deparse"
+                "default dependency specimen did not isolate a deparse collision: "
+                f"{defaults!r}"
             )
         cursor.execute(
             "SELECT "
