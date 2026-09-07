@@ -132,27 +132,33 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   Inert membership alone is not a bypass. Re-prove live enabled/forced RLS, the sole
   canonical tenant policy identity/command/role scope, parser-normalized `USING`/
   `WITH CHECK` predicates and allowed catalog dependencies, the absence of any
-  non-internal trigger or rewrite rule attached to the canonical outbox, and the live
-  outbox index-program boundary: no expression or partial index, only the default
-  `pg_catalog` operator class for each exact key type/access method, and no standalone
-  UNIQUE arbiter outside the canonical primary key and `(tenant_scope, evidence_id)`
-  replay constraint. The complete effective/session-selectable role, definer,
-  reachable-view, reachable-materialized-copy, and reachable-foreign-data authority
-  envelopes must also pass before tenant binding or outbox data SQL. A migration
-  success record is point-in-time evidence and does not authorize later same-name
-  policy, ACL, membership, routine, view, materialized view, foreign relation/mapping,
-  role-authority, trigger, rewrite-rule, or index-program/uniqueness drift. The normal
-  runtime role needs only non-grantable `SELECT` and `INSERT` on the outbox. Replay
-  serialization must use transaction-scoped advisory locking on the validated
-  tenant/event identity rather than `SELECT ... FOR UPDATE`, so serialization never
-  requires ambient row-mutation authority. Do not authenticate runtime connections as
-  a database creator, role administrator, replication identity, relation maintainer,
-  DML delegator, privileged definer gateway, privileged-view/materialized-copy/foreign-
-  data gateway, or other administrator and rely on `SET ROLE` or `SET SESSION
-  AUTHORIZATION` as a downgrade; administrative, replication, maintenance, grant-
-  capable, membership-delegating, executable-privileged, view-mediated-RLS-bypass,
-  materialized-copy, foreign-data, and owner-capable login sessions are outside the
-  application isolation guarantee.
+  non-internal trigger or rewrite rule attached to the canonical outbox, the exact
+  live `pg_catalog.pg_constraint` set, and the live outbox index-program boundary.
+  Runtime constraint authority is exactly the canonical nondeferrable primary key on
+  `context_outbox_uuid`, the nondeferrable `(tenant_scope, evidence_id)` replay UNIQUE,
+  and the three validated, inheritable canonical CHECK constraints; any added FK,
+  EXCLUDE, CHECK, PK, UNIQUE, deferrability/validation drift, key-column drift, or
+  missing canonical constraint fails closed before tenant binding or outbox data SQL.
+  The index boundary allows no expression or partial index, requires the default
+  `pg_catalog` operator class for each exact key type/access method, and allows no
+  standalone UNIQUE arbiter outside those canonical PK/UNIQUE constraints. The
+  complete effective/session-selectable role, definer, reachable-view,
+  reachable-materialized-copy, and reachable-foreign-data authority envelopes must
+  also pass before tenant binding or outbox data SQL. A migration success record is
+  point-in-time evidence and does not authorize later same-name policy, ACL,
+  membership, routine, view, materialized view, foreign relation/mapping,
+  role-authority, trigger, rewrite-rule, constraint-set, or index-program/uniqueness
+  drift. The normal runtime role needs only non-grantable `SELECT` and `INSERT` on the
+  outbox. Replay serialization must use transaction-scoped advisory locking on the
+  validated tenant/event identity rather than `SELECT ... FOR UPDATE`, so
+  serialization never requires ambient row-mutation authority. Do not authenticate
+  runtime connections as a database creator, role administrator, replication identity,
+  relation maintainer, DML delegator, privileged definer gateway, privileged-view/
+  materialized-copy/foreign-data gateway, or other administrator and rely on `SET ROLE`
+  or `SET SESSION AUTHORIZATION` as a downgrade; administrative, replication,
+  maintenance, grant-capable, membership-delegating, executable-privileged,
+  view-mediated-RLS-bypass, materialized-copy, foreign-data, and owner-capable login
+  sessions are outside the application isolation guarantee.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
