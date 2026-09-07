@@ -179,3 +179,38 @@ if ! grep -Eq \
   exit 1
 fi
 assert_runtime_rejected "index-program"
+
+psql_stdin <<'SQL'
+DROP INDEX public.idx_llm_context_lifecycle_outbox_runtime_program_probe;
+DROP FUNCTION public.pg_llm_batch_outbox_runtime_index_probe(text);
+ALTER TABLE public.llm_context_lifecycle_outbox
+    ADD CONSTRAINT ck_llm_context_lifecycle_outbox_runtime_constraint_probe
+    CHECK (event_type <> 'batch.lifecycle.blocked');
+SQL
+
+if docker exec -i "${container}" psql \
+    -U cwl_llm_batch_outbox_program_runtime -d postgres -v ON_ERROR_STOP=1 \
+    >/tmp/pg-llm-batch-runtime-constraint-authority.out 2>&1 <<'SQL'; then
+SET pg_llm_batch.tenant_scope = 'tenant-a';
+INSERT INTO public.llm_context_lifecycle_outbox (
+    tenant_scope, evidence_id, event_type, tenant_scope_sha256,
+    subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, truth_status,
+    valid_time, system_time, provenance_ref_sha256, evidence_ref_sha256
+) VALUES (
+    'tenant-a', 'runtime-program-constraint-red', 'batch.lifecycle.blocked',
+    repeat('a', 64), repeat('b', 64), repeat('c', 64), repeat('d', 64),
+    'observed', '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z',
+    repeat('e', 64), repeat('f', 64)
+);
+SQL
+  cat /tmp/pg-llm-batch-runtime-constraint-authority.out >&2
+  echo "post-migration CHECK did not demonstrate persistent row-admission authority" >&2
+  exit 1
+fi
+if ! grep -Fq "ck_llm_context_lifecycle_outbox_runtime_constraint_probe" \
+    /tmp/pg-llm-batch-runtime-constraint-authority.out; then
+  cat /tmp/pg-llm-batch-runtime-constraint-authority.out >&2
+  echo "constraint-authority specimen failed for the wrong reason" >&2
+  exit 1
+fi
+assert_runtime_rejected "constraint"
