@@ -134,6 +134,16 @@ def test_owner_instructions_cover_definer_owned_foreign_data_authority() -> None
         assert "missing direct" in document.lower()
 
 
+def test_owner_instructions_cover_runtime_check_semantics_authority() -> None:
+    """Owner instructions must re-prove canonical CHECK expressions after migration."""
+    for path in (AGENTS_PATH, CLAUDE_PATH):
+        document = _normalized(path)
+        assert "pg_get_expr" in document
+        assert "same-name" in document.lower()
+        assert "check" in document.lower()
+        assert "semantic" in document.lower()
+
+
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
     """The implementation plan must preserve the reviewed default-deny RLS order."""
     plan = _normalized(IMPLEMENTATION_PLAN_PATH)
