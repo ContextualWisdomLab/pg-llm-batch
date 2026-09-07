@@ -97,21 +97,22 @@
   `SECURITY DEFINER` executes with its owner's privileges rather than the caller's
   privileges. Admission must re-prove the sole canonical tenant policy's command,
   role scope, permissive mode, `USING`/`WITH CHECK` predicates, reviewed catalog
-  dependencies, and the full reachable privileged-view/materialized-copy/foreign-
-  data boundary before tenant binding or outbox SQL. Direct runtime `CREATEDB` and
-  `CREATEROLE` are database/role administration capabilities; callable `CREATEROLE`
-  is executable within the definer boundary, while `CREATEDB` remains covered when
-  membership administration grants that authority onward for later invoker-context
-  use. `REPLICATION` is separate cluster-level connection and slot authority whether
-  held directly or anywhere in the callable-definer owner closure, and direct DML
-  grant options, relation maintenance, authority-bearing role administration,
-  executable privileged definer authority, view-mediated RLS bypass authority,
-  materialized outbox/foreign-data copies, and reachable foreign data are outside
-  application DML. Runtime identities remain `NOSUPERUSER NOCREATEDB NOCREATEROLE
-  NOREPLICATION NOBYPASSRLS` and need only non-grantable outbox `SELECT` and `INSERT`.
-  Migration success is point-in-time evidence, not continuing authority after policy,
-  ACL, membership, routine, view, materialized view, foreign relation/mapping, or role-
-  attribute DDL.
+  dependencies, the absence of any non-internal trigger or rewrite rule attached to
+  the canonical outbox, and the full reachable privileged-view/materialized-copy/
+  foreign-data boundary before tenant binding or outbox SQL. Direct runtime `CREATEDB`
+  and `CREATEROLE` are database/role administration capabilities; callable
+  `CREATEROLE` is executable within the definer boundary, while `CREATEDB` remains
+  covered when membership administration grants that authority onward for later
+  invoker-context use. `REPLICATION` is separate cluster-level connection and slot
+  authority whether held directly or anywhere in the callable-definer owner closure,
+  and direct DML grant options, relation maintenance, authority-bearing role
+  administration, executable privileged definer authority, view-mediated RLS bypass
+  authority, materialized outbox/foreign-data copies, and reachable foreign data are
+  outside application DML. Runtime identities remain `NOSUPERUSER NOCREATEDB
+  NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only non-grantable outbox `SELECT`
+  and `INSERT`. Migration success is point-in-time evidence, not continuing authority
+  after policy, ACL, membership, routine, view, materialized view, foreign relation/
+  mapping, role-attribute, trigger, or rewrite-rule DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
