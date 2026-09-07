@@ -63,11 +63,15 @@
   Foreign tables are another opaque authority boundary: a foreign-data wrapper uses
   a foreign server and user mapping to determine remote access, so local RLS and role
   catalogs cannot prove the remote principal or remote row-security semantics. Reject
-  any user-schema foreign table selectable by the runtime, or reachable through an
-  ordinary view under that view's effective principal, before tenant binding or
-  outbox SQL. Do not treat mutable FDW/user-mapping options as durable authorization
-  evidence; foreign-data workloads must use a role/connection separate from the
-  lifecycle-outbox runtime credential.
+  any user-schema foreign table selectable by the runtime, reachable through an
+  ordinary view under that view's effective principal, or present anywhere in the
+  stored definition provenance of a runtime-readable materialized view before tenant
+  binding or outbox SQL. A materialized foreign-data copy remains opaque even after
+  caller access to the source foreign table is revoked because the copied rows no
+  longer require another remote read. Do not treat mutable FDW/user-mapping options,
+  copied contents, tenant literals in definition text, or last-refresh authority as
+  durable authorization evidence; foreign-data workloads must use a role/connection
+  separate from the lifecycle-outbox runtime credential.
   PostgreSQL lets the membership administrator grant a role onward even when that
   administrator's own membership is `INHERIT FALSE, SET FALSE`; the recipient can
   then use the granted selectable path after a security-definer call returns.
@@ -75,7 +79,7 @@
   privileges. Admission must re-prove the sole canonical tenant policy's command,
   role scope, permissive mode, `USING`/`WITH CHECK` predicates, reviewed catalog
   dependencies, and the full reachable privileged-view/materialized-copy/foreign-
-  table boundary before tenant binding or outbox SQL. Direct runtime `CREATEDB` and
+  data boundary before tenant binding or outbox SQL. Direct runtime `CREATEDB` and
   `CREATEROLE` are database/role administration capabilities; callable `CREATEROLE`
   is executable within the definer boundary, while `CREATEDB` remains covered when
   membership administration grants that authority onward for later invoker-context
@@ -83,11 +87,11 @@
   held directly or anywhere in the callable-definer owner closure, and direct DML
   grant options, relation maintenance, authority-bearing role administration,
   executable privileged definer authority, view-mediated RLS bypass authority,
-  materialized outbox copies, and reachable foreign data are outside application
-  DML. Runtime identities remain `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION
-  NOBYPASSRLS` and need only non-grantable outbox `SELECT` and `INSERT`. Migration
-  success is point-in-time evidence, not continuing authority after policy, ACL,
-  membership, routine, view, materialized view, foreign relation/mapping, or role-
+  materialized outbox/foreign-data copies, and reachable foreign data are outside
+  application DML. Runtime identities remain `NOSUPERUSER NOCREATEDB NOCREATEROLE
+  NOREPLICATION NOBYPASSRLS` and need only non-grantable outbox `SELECT` and `INSERT`.
+  Migration success is point-in-time evidence, not continuing authority after policy,
+  ACL, membership, routine, view, materialized view, foreign relation/mapping, or role-
   attribute DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
