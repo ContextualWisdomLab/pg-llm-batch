@@ -127,17 +127,16 @@ def test_role_authority_query_rejects_admin_option_over_runtime_authority() -> N
 
 
 def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> None:
-    """Delegation must include DML reachable through an administered role's SET path."""
+    """Future-grant delegation must cover DML after an ADMIN-bearing SET path."""
     cursor = RoleCursor((False, False))
 
     _require_rls_application_role(cursor)
 
     sql, params = cursor.calls[0]
-    assert "FROM pg_catalog.pg_roles AS delegated_dml_role" in sql
-    assert (
-        "pg_catalog.pg_has_role(selectable_role.oid, delegated_dml_role.oid, 'SET')"
-        in sql
-    )
+    assert "JOIN pg_catalog.pg_roles AS delegated_dml_role" in sql
+    assert "delegated_membership.roleid" in sql
+    assert "delegated_membership.set_option OR delegated_membership.admin_option" in sql
+    assert "delegated_role.admin_seen" in sql
     assert (
         "pg_catalog.has_any_column_privilege(delegated_dml_role.oid, "
         "admitted_relation.oid, 'SELECT')"
