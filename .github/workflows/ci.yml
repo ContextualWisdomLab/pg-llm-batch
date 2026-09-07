@@ -57,7 +57,7 @@ jobs:
         with:
           egress-policy: audit
       - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
@@ -124,6 +124,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_row_admission_authority.sh
       - name: Run lifecycle-outbox final default-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_final_default_authority.sh
+      - name: Run lifecycle-outbox default dependency-authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_default_dependency_authority.sh
       - name: Run lifecycle-outbox final column-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_final_column_authority.sh
       - name: Run lifecycle-outbox final relation-authority smoke
