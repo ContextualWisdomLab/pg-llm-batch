@@ -46,14 +46,11 @@ def test_materialized_provenance_fail_closes_foreign_sources() -> None:
 
     _require_rls_application_role(cursor)
 
-    assert "JOIN pg_catalog.pg_class AS materialized_source_relation_guard" in cursor.sql
+    assert "foreign_inheritance_ancestor(relation_oid)" in cursor.sql
+    assert "JOIN pg_catalog.pg_inherits AS foreign_inheritance_edge" in cursor.sql
     assert (
-        "materialized_source_relation_guard.oid OPERATOR(pg_catalog.=) "
+        "foreign_inheritance_ancestor.relation_oid OPERATOR(pg_catalog.=) "
         "materialized_source.source_oid"
-    ) in cursor.sql
-    assert (
-        "materialized_source_relation_guard.relkind::pg_catalog.text "
-        "OPERATOR(pg_catalog.=) 'f'"
         in cursor.sql
     )
 
@@ -68,14 +65,33 @@ def test_role_authority_query_follows_partitioned_foreign_descendants() -> None:
         "exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'p'"
         in cursor.sql
     )
-    assert "JOIN pg_catalog.pg_inherits AS reachable_partition_edge" in cursor.sql
     assert (
-        "reachable_partition_edge.inhparent OPERATOR(pg_catalog.=) "
-        "reachable_partition.relation_oid"
+        "foreign_inheritance_edge.inhrelid OPERATOR(pg_catalog.=) "
+        "foreign_inheritance_ancestor.relation_oid"
         in cursor.sql
     )
     assert (
-        "reachable_partition_child.relkind::pg_catalog.text "
-        "OPERATOR(pg_catalog.=) 'f'"
+        "foreign_inheritance_edge.inhparent"
+        in cursor.sql
+    )
+    assert (
+        "foreign_inheritance_ancestor.relation_oid OPERATOR(pg_catalog.=) "
+        "exposed_relation.oid"
+        in cursor.sql
+    )
+
+
+def test_role_authority_query_follows_traditional_foreign_inheritance() -> None:
+    """Inherited parent access must close the same opaque foreign-data authority."""
+    cursor = ForeignTableAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert (
+        "exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'r'"
+        in cursor.sql
+    )
+    assert (
+        "nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'r'"
         in cursor.sql
     )
