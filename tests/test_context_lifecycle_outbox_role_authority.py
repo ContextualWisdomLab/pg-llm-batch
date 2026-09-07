@@ -239,32 +239,36 @@ def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
     _require_rls_application_role(cursor)
 
     sql, params = cursor.calls[0]
-    assert "WITH RECURSIVE reachable_view(view_oid, caller_oid) AS" in sql
-    assert "SELECT nested_view.oid, reachable_view.caller_oid" in sql
+    assert "WITH RECURSIVE reachable_relation(relation_oid, caller_oid) AS" in sql
+    assert "SELECT nested_relation.oid, reachable_relation.caller_oid" in sql
     assert "JOIN pg_catalog.pg_rewrite AS current_view_rule" in sql
     assert "JOIN pg_catalog.pg_depend AS current_view_dependency" in sql
     assert (
         "CASE WHEN COALESCE(current_view.reloptions OPERATOR(pg_catalog.@>) "
         "ARRAY['security_invoker=true']::pg_catalog.text[], false) THEN "
-        "reachable_view.caller_oid ELSE current_view.relowner END"
+        "reachable_relation.caller_oid ELSE current_view.relowner END"
     ) in sql
-    assert "JOIN pg_catalog.pg_rewrite AS exposed_view_rule" in sql
+    assert "FROM pg_catalog.pg_rewrite AS exposed_view_rule" in sql
     assert "JOIN pg_catalog.pg_depend AS exposed_view_dependency" in sql
     assert (
         "exposed_view_dependency.refobjid OPERATOR(pg_catalog.=) admitted_relation.oid"
         in sql
     )
     assert (
-        "NOT COALESCE(exposed_view.reloptions OPERATOR(pg_catalog.@>) "
+        "NOT COALESCE(exposed_relation.reloptions OPERATOR(pg_catalog.@>) "
         "ARRAY['security_invoker=true']::pg_catalog.text[], false)"
     ) in sql
-    assert "exposed_view_owner.rolsuper OR exposed_view_owner.rolbypassrls" in sql
     assert (
-        "pg_catalog.has_table_privilege(selectable_role.oid, exposed_view.oid, 'SELECT')"
+        "exposed_relation_owner.rolsuper OR exposed_relation_owner.rolbypassrls"
         in sql
     )
     assert (
-        "pg_catalog.has_any_column_privilege(exposed_view_owner.oid, "
+        "pg_catalog.has_table_privilege(selectable_role.oid, exposed_relation.oid, "
+        "'SELECT')"
+        in sql
+    )
+    assert (
+        "pg_catalog.has_any_column_privilege(exposed_relation_owner.oid, "
         "admitted_relation.oid, 'SELECT')"
     ) in sql
     assert params == ()
@@ -281,5 +285,8 @@ def test_role_authority_query_rejects_reachable_materialized_outbox_copy() -> No
     assert "materialized_source(materialized_oid, source_oid)" in sql
     assert "reachable_materialized.relkind::pg_catalog.text" in sql
     assert "OPERATOR(pg_catalog.=) 'm'" in sql
-    assert "materialized_source.source_oid OPERATOR(pg_catalog.=) admitted_relation.oid" in sql
+    assert (
+        "materialized_source.source_oid OPERATOR(pg_catalog.=) admitted_relation.oid"
+        in sql
+    )
     assert params == ()
