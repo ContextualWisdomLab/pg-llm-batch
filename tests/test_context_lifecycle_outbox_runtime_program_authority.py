@@ -53,3 +53,21 @@ def test_runtime_admission_reproves_attached_index_program_authority() -> None:
     assert "live_outbox_opclass.opcintype OPERATOR(pg_catalog.=) live_outbox_attribute.atttypid" in cursor.sql
     assert "live_outbox_index.indisunique" in cursor.sql
     assert "live_outbox_constraint.conindid OPERATOR(pg_catalog.=) live_outbox_index.indexrelid" in cursor.sql
+
+
+def test_runtime_admission_reproves_attached_constraint_authority() -> None:
+    """Post-migration CHECK/FK/PK/UNIQUE/EXCLUDE drift must fail closed."""
+    cursor = ProgramAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert "FROM pg_catalog.pg_constraint AS live_outbox_constraint_authority" in cursor.sql
+    assert (
+        "live_outbox_constraint_authority.conrelid OPERATOR(pg_catalog.=) admitted_relation.oid"
+        in cursor.sql
+    )
+    assert "live_outbox_constraint_authority.contype::pg_catalog.text" in cursor.sql
+    assert "ck_llm_context_lifecycle_outbox_payload_canonical_v1" in cursor.sql
+    assert "ck_llm_context_lifecycle_outbox_valid_time_canonical_v1" in cursor.sql
+    assert "ck_llm_context_lifecycle_outbox_system_time_canonical_v1" in cursor.sql
+    assert "uq_llm_context_lifecycle_outbox_tenant_evidence" in cursor.sql
