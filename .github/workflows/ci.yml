@@ -132,6 +132,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_final_relation_authority.sh
       - name: Run lifecycle-outbox CHECK-expression authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_check_expression_authority.sh
+      - name: Verify lifecycle-outbox CHECK deparse fixture identity
+        run: bash tests/smoke_context_lifecycle_outbox_check_deparse_fixture.sh
       - name: Run lifecycle-outbox final RLS authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_final_rls_authority.sh
       - name: Run lifecycle-outbox effective-role RLS authority smoke
