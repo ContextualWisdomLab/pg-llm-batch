@@ -44,11 +44,7 @@ def test_role_admission_rejects_maintain_across_executable_authority_closure() -
         "admitted_relation.oid, 'MAINTAIN')"
     ) in sql
     assert (
-        "pg_catalog.has_table_privilege(definer_admin_role.oid, "
-        "admitted_relation.oid, 'MAINTAIN')"
-    ) in sql
-    assert (
-        "pg_catalog.has_table_privilege(definer_admin_set_role.oid, "
+        "pg_catalog.has_table_privilege(definer_delegated_role_details.oid, "
         "admitted_relation.oid, 'MAINTAIN')"
     ) in sql
 
@@ -64,6 +60,6 @@ def test_maintain_probe_is_guarded_for_supported_postgresql_16() -> None:
         "CASE WHEN pg_catalog.current_setting('server_version_num')::pg_catalog.int4 "
         "OPERATOR(pg_catalog.>=) 170000 THEN pg_catalog.has_table_privilege("
     )
-    assert sql.count("'MAINTAIN'") == 6
-    assert sql.count(version_gate) == 6
-    assert sql.count("ELSE false END") >= 6
+    assert sql.count("'MAINTAIN'") == 5
+    assert sql.count(version_gate) == 5
+    assert sql.count("ELSE false END") >= 5
