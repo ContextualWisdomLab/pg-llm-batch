@@ -119,22 +119,12 @@ def test_security_definer_admin_delegation_foreign_authority_is_fail_closed() ->
     _require_rls_application_role(cursor)
 
     assert (
-        "pg_catalog.has_schema_privilege(definer_admin_role.oid, "
+        "pg_catalog.has_schema_privilege(definer_delegated_role_details.oid, "
         "exposed_relation_schema.oid, 'USAGE')"
         in cursor.sql
     )
     assert (
-        "pg_catalog.has_table_privilege(definer_admin_role.oid, "
-        "exposed_relation.oid, 'SELECT')"
-        in cursor.sql
-    )
-    assert (
-        "pg_catalog.has_schema_privilege(definer_admin_set_role.oid, "
-        "exposed_relation_schema.oid, 'USAGE')"
-        in cursor.sql
-    )
-    assert (
-        "pg_catalog.has_table_privilege(definer_admin_set_role.oid, "
+        "pg_catalog.has_table_privilege(definer_delegated_role_details.oid, "
         "exposed_relation.oid, 'SELECT')"
         in cursor.sql
     )
