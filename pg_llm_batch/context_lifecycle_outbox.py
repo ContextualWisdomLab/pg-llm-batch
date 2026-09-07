@@ -103,6 +103,41 @@ def _maintain_privilege_sql(role_expression: str) -> str:
     )
 
 
+def _privileged_outbox_view_sql(role_expression: str) -> str:
+    """Build a probe for caller-selectable views that can bypass outbox RLS."""
+    return (
+        "EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_class AS exposed_view "
+        "JOIN pg_catalog.pg_namespace AS exposed_view_schema "
+        "ON exposed_view_schema.oid OPERATOR(pg_catalog.=) exposed_view.relnamespace "
+        "JOIN pg_catalog.pg_roles AS exposed_view_owner "
+        "ON exposed_view_owner.oid OPERATOR(pg_catalog.=) exposed_view.relowner "
+        "JOIN pg_catalog.pg_rewrite AS exposed_view_rule "
+        "ON exposed_view_rule.ev_class OPERATOR(pg_catalog.=) exposed_view.oid "
+        "JOIN pg_catalog.pg_depend AS exposed_view_dependency "
+        "ON exposed_view_dependency.classid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_rewrite'::pg_catalog.regclass "
+        "AND exposed_view_dependency.objid OPERATOR(pg_catalog.=) exposed_view_rule.oid "
+        "AND exposed_view_dependency.refclassid OPERATOR(pg_catalog.=) "
+        "'pg_catalog.pg_class'::pg_catalog.regclass "
+        "AND exposed_view_dependency.refobjid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "WHERE exposed_view.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'v' "
+        "AND exposed_view_schema.nspname NOT LIKE 'pg\\_%' ESCAPE '\\' "
+        "AND exposed_view_schema.nspname OPERATOR(pg_catalog.<>) 'information_schema' "
+        "AND NOT COALESCE("
+        "exposed_view.reloptions OPERATOR(pg_catalog.@>) "
+        "ARRAY['security_invoker=true']::pg_catalog.text[], false) "
+        "AND pg_catalog.has_schema_privilege("
+        f"{role_expression}, exposed_view_schema.oid, 'USAGE') "
+        "AND pg_catalog.has_table_privilege("
+        f"{role_expression}, exposed_view.oid, 'SELECT') "
+        "AND pg_catalog.has_any_column_privilege("
+        "exposed_view_owner.oid, admitted_relation.oid, 'SELECT') "
+        "AND (exposed_view_owner.rolsuper OR exposed_view_owner.rolbypassrls)"
+        ")"
+    )
+
+
 def _require_rls_application_role(cursor: Any) -> None:
     """Reject unsafe runtime roles or drifted canonical RLS policy authority."""
     maintain_selectable = _maintain_privilege_sql("selectable_role.oid")
@@ -110,6 +145,7 @@ def _require_rls_application_role(cursor: Any) -> None:
     maintain_definer = _maintain_privilege_sql("definer_role.oid")
     maintain_definer_admin = _maintain_privilege_sql("definer_admin_role.oid")
     maintain_definer_admin_set = _maintain_privilege_sql("definer_admin_set_role.oid")
+    privileged_outbox_view = _privileged_outbox_view_sql("selectable_role.oid")
     cursor.execute(
         "SELECT admitted_role.rolsuper "
         "OR NOT admitted_relation.relrowsecurity "
@@ -310,6 +346,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "definer_admin_set_role.oid, admitted_relation.oid, 'TRIGGER')))"
         "))"
         ")) "
+        "OR "
+        f"{privileged_outbox_view} "
         "OR pg_catalog.has_any_column_privilege("
         "selectable_role.oid, admitted_relation.oid, 'SELECT WITH GRANT OPTION') "
         "OR pg_catalog.has_any_column_privilege("
@@ -657,15 +695,15 @@ class PostgresContextLifecycleOutboxStore:
         can return to application code. Both the effective ``CURRENT_USER`` and the
         authenticated ``SESSION_USER`` role-selection closure must remain ordinary RLS
         subjects without outbox-owner, destructive, replication, database/role
-        administration, delegable DML, relation-programming, or executable privileged
-        user-schema ``SECURITY DEFINER`` authority, while the canonical relation still
-        has RLS enabled and forced with the sole reviewed tenant policy semantics. The
-        live admission is checked before tenant state is bound or durable rows are
-        touched. Security-critical function, relation, and policy authority is
-        explicitly schema-qualified, and ``ONLY`` prevents inherited relations from
-        widening the canonical durable row source if an inheritance edge appears after
-        migration admission. The outbox does not mutate or inherit the caller
-        transaction's ``search_path``.
+        administration, delegable DML, relation-programming, caller-selectable
+        privileged-view, or executable privileged user-schema ``SECURITY DEFINER``
+        authority, while the canonical relation still has RLS enabled and forced with
+        the sole reviewed tenant policy semantics. The live admission is checked before
+        tenant state is bound or durable rows are touched. Security-critical function,
+        relation, and policy authority is explicitly schema-qualified, and ``ONLY``
+        prevents inherited relations from widening the canonical durable row source if
+        an inheritance edge appears after migration admission. The outbox does not
+        mutate or inherit the caller transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
