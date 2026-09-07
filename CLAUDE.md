@@ -66,12 +66,19 @@
   any user-schema foreign table selectable by the runtime, reachable through an
   ordinary view under that view's effective principal, or present anywhere in the
   stored definition provenance of a runtime-readable materialized view before tenant
-  binding or outbox SQL. A materialized foreign-data copy remains opaque even after
-  caller access to the source foreign table is revoked because the copied rows no
-  longer require another remote read. Do not treat mutable FDW/user-mapping options,
-  copied contents, tenant literals in definition text, or last-refresh authority as
-  durable authorization evidence; foreign-data workloads must use a role/connection
-  separate from the lifecycle-outbox runtime credential.
+  binding or outbox SQL. PostgreSQL inheritance and declarative partitioning can also
+  route a parent-table query into a foreign descendant while access permission is
+  checked on the named parent. Admission must build a cycle-safe foreign-ancestor
+  closure through `pg_catalog.pg_inherits` and reject any selectable ordinary or
+  partitioned parent, view-mediated parent, or materialized provenance node with a
+  foreign descendant. Missing direct child `SELECT`, partition bounds, parent names,
+  and local parent RLS are not durable remote-authorization evidence. A materialized
+  foreign-data copy remains opaque even after caller access to the source foreign
+  table is revoked because the copied rows no longer require another remote read. Do
+  not treat mutable FDW/user-mapping options, copied contents, tenant literals in
+  definition text, or last-refresh authority as durable authorization evidence;
+  foreign-data workloads must use a role/connection separate from the lifecycle-
+  outbox runtime credential.
   PostgreSQL lets the membership administrator grant a role onward even when that
   administrator's own membership is `INHERIT FALSE, SET FALSE`; the recipient can
   then use the granted selectable path after a security-definer call returns.

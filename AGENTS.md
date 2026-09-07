@@ -83,12 +83,20 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   foreign table directly, an ordinary view's effective principal can reach one, or a
   runtime-readable materialized view has a foreign table anywhere in its stored
   definition provenance, reject the credential before tenant binding or outbox data
-  SQL. A materialized copy remains opaque after the source privilege is revoked
-  because its stored rows no longer require a remote read. Do not parse or allowlist
-  mutable FDW/user-mapping options, current copied contents, tenant literals in
-  definition text, or last-refresh authority as a substitute for remote authorization
-  evidence; workloads that need foreign-data access must use a separate role and
-  connection from the lifecycle-outbox runtime credential.
+  SQL. PostgreSQL inheritance and declarative partitioning also allow access through
+  a named ordinary or partitioned parent while a foreign descendant performs the
+  remote read; parent access does not require a separate caller `SELECT` grant on the
+  child. Admission must therefore build a cycle-safe foreign-ancestor closure through
+  `pg_catalog.pg_inherits` and reject a selectable parent, view-mediated parent, or
+  materialized provenance node whenever that relation has a foreign descendant.
+  Missing child ACLs, partition bounds, parent names, or local parent RLS are not
+  durable evidence of remote authorization. A materialized copy remains opaque after
+  the source privilege is revoked because its stored rows no longer require a remote
+  read. Do not parse or allowlist mutable FDW/user-mapping options, current copied
+  contents, tenant literals in definition text, or last-refresh authority as a
+  substitute for remote authorization evidence; workloads that need foreign-data
+  access must use a separate role and connection from the lifecycle-outbox runtime
+  credential.
   PostgreSQL permits a role administrator to grant the administered role to a new
   principal even when the administrator's own membership is `INHERIT FALSE, SET
   FALSE`; the new principal can then use the granted role's selectable path after
