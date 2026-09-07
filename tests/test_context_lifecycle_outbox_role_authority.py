@@ -268,3 +268,18 @@ def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
         "admitted_relation.oid, 'SELECT')"
     ) in sql
     assert params == ()
+
+
+def test_role_authority_query_rejects_reachable_materialized_outbox_copy() -> None:
+    """A selectable materialized outbox copy must fail admission even behind a view."""
+    cursor = RoleCursor((False, False))
+
+    _require_rls_application_role(cursor)
+
+    sql, params = cursor.calls[0]
+    assert "reachable_relation(relation_oid, caller_oid)" in sql
+    assert "materialized_source(materialized_oid, source_oid)" in sql
+    assert "reachable_materialized.relkind::pg_catalog.text" in sql
+    assert "OPERATOR(pg_catalog.=) 'm'" in sql
+    assert "materialized_source.source_oid OPERATOR(pg_catalog.=) admitted_relation.oid" in sql
+    assert params == ()
