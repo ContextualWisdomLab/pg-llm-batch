@@ -268,6 +268,12 @@ def _require_rls_application_role(cursor: Any) -> None:
     maintain_definer_admin = _maintain_privilege_sql("definer_admin_role.oid")
     maintain_definer_admin_set = _maintain_privilege_sql("definer_admin_set_role.oid")
     privileged_definer_relation = _privileged_outbox_view_sql("definer_role.oid")
+    privileged_definer_admin_relation = _privileged_outbox_view_sql(
+        "definer_admin_role.oid"
+    )
+    privileged_definer_admin_set_relation = _privileged_outbox_view_sql(
+        "definer_admin_set_role.oid"
+    )
     privileged_outbox_view = _privileged_outbox_view_sql("selectable_role.oid")
     cursor.execute(
         "SELECT admitted_role.rolsuper "
@@ -441,6 +447,8 @@ def _require_rls_application_role(cursor: Any) -> None:
         "definer_admin_role.oid, admitted_relation.oid, 'REFERENCES') "
         "OR pg_catalog.has_table_privilege("
         "definer_admin_role.oid, admitted_relation.oid, 'TRIGGER') "
+        "OR "
+        f"{privileged_definer_admin_relation} "
         "OR EXISTS ("
         "SELECT 1 FROM pg_catalog.pg_roles AS definer_admin_set_role "
         "WHERE pg_catalog.pg_has_role("
@@ -468,7 +476,9 @@ def _require_rls_application_role(cursor: Any) -> None:
         "OR pg_catalog.has_any_column_privilege("
         "definer_admin_set_role.oid, admitted_relation.oid, 'REFERENCES') "
         "OR pg_catalog.has_table_privilege("
-        "definer_admin_set_role.oid, admitted_relation.oid, 'TRIGGER')))"
+        "definer_admin_set_role.oid, admitted_relation.oid, 'TRIGGER') "
+        "OR "
+        f"{privileged_definer_admin_set_relation}))"
         "))"
         ")) "
         "OR "
