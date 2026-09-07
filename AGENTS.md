@@ -26,7 +26,14 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   credential. A role with arbitrary SQL can select an arbitrary tenant scope;
   do not expose the lifecycle application role through generic tenant-controlled
   SQL, and never describe RLS as a substitute for authorization or
-  SQL-injection prevention.
+  SQL-injection prevention. Caller-visible non-system-schema `SECURITY INVOKER`
+  routines are part of this boundary too: if a selectable principal has schema
+  `USAGE` plus routine `EXECUTE`, admission must inspect that invoker routine's
+  `proconfig` directly and reject a function-local `pg_llm_batch.tenant_scope`
+  setting before tenant binding or outbox data I/O. Do not fold this check into
+  the `SECURITY DEFINER` owner closure: an invoker routine executes with the
+  caller/selectable principal's authority, whereas a definer routine switches to
+  its owner principal.
 - Keep PostgreSQL row-level security enabled and forced. Application connections
   must remain `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`
   across both effective `CURRENT_USER` and authenticated `SESSION_USER`
