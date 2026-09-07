@@ -156,3 +156,5 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_materialized_view_authority.sh
       - name: Run lifecycle-outbox foreign-table authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_foreign_table_authority.sh
+      - name: Run lifecycle-outbox partitioned foreign authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_partitioned_foreign_authority.sh

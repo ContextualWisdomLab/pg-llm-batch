@@ -56,3 +56,26 @@ def test_materialized_provenance_fail_closes_foreign_sources() -> None:
         "OPERATOR(pg_catalog.=) 'f'"
         in cursor.sql
     )
+
+
+def test_role_authority_query_follows_partitioned_foreign_descendants() -> None:
+    """Parent-only SELECT must not hide a foreign partition from runtime admission."""
+    cursor = ForeignTableAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert (
+        "exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'p'"
+        in cursor.sql
+    )
+    assert "JOIN pg_catalog.pg_inherits AS reachable_partition_edge" in cursor.sql
+    assert (
+        "reachable_partition_edge.inhparent OPERATOR(pg_catalog.=) "
+        "reachable_partition.relation_oid"
+        in cursor.sql
+    )
+    assert (
+        "reachable_partition_child.relkind::pg_catalog.text "
+        "OPERATOR(pg_catalog.=) 'f'"
+        in cursor.sql
+    )
