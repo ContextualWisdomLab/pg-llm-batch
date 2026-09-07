@@ -273,11 +273,13 @@ docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<
 CREATE ROLE cwl_llm_batch_outbox_nested_view_owner NOLOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT USAGE, CREATE ON SCHEMA public TO cwl_llm_batch_outbox_nested_view_owner;
+GRANT CREATE ON SCHEMA public TO cwl_llm_batch_outbox_view_owner;
 SET ROLE cwl_llm_batch_outbox_view_owner;
 CREATE VIEW public.cwl_llm_batch_outbox_nested_inner AS
     SELECT tenant_scope, evidence_id
     FROM public.llm_context_lifecycle_outbox;
 RESET ROLE;
+REVOKE CREATE ON SCHEMA public FROM cwl_llm_batch_outbox_view_owner;
 REVOKE ALL ON public.cwl_llm_batch_outbox_nested_inner FROM PUBLIC;
 GRANT SELECT ON public.cwl_llm_batch_outbox_nested_inner
     TO cwl_llm_batch_outbox_nested_view_owner;
