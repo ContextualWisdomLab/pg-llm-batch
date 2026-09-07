@@ -331,7 +331,13 @@ def test_json_snapshot_rejects_huge_integer_before_decimal_materialization(
         raising=False,
     )
 
-    _assert_record_rejected({"value": oversized_integer})
+    with pytest.raises(ValidationError) as caught:
+        result_application._snapshot_json_record({"value": oversized_integer})
+
+    assert caught.value.details["field"] == "item.record"
+    assert caught.value.details["value"] == "<redacted>"
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
 
 
 def test_mutated_checkpoint_semantics_are_redacted_before_store_access() -> None:
