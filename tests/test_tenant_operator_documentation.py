@@ -144,6 +144,23 @@ def test_owner_instructions_cover_runtime_check_semantics_authority() -> None:
         assert "semantic" in document.lower()
 
 
+def test_owner_instructions_cover_runtime_default_semantics_authority() -> None:
+    """Owner instructions must re-prove canonical omitted-column defaults after migration."""
+    for path in (AGENTS_PATH, CLAUDE_PATH):
+        document = _normalized(path)
+        assert "pg_attrdef" in document
+        assert "pg_attribute" in document
+        assert "pg_get_expr" in document
+        assert "'standalone'::text" in document
+        assert "context_outbox_uuid" in document
+        assert "gen_random_uuid()" in document
+        assert "created_at" in document
+        assert "now()" in document
+        assert "missing" in document.lower()
+        assert "additional" in document.lower()
+        assert "before tenant binding" in document.lower()
+
+
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
     """The implementation plan must preserve the reviewed default-deny RLS order."""
     plan = _normalized(IMPLEMENTATION_PLAN_PATH)
