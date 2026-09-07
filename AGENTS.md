@@ -145,12 +145,20 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   fails closed before tenant binding or outbox data SQL. The index boundary allows no
   expression or partial index, requires the default `pg_catalog` operator class for
   each exact key type/access method, and allows no standalone UNIQUE arbiter outside
-  those canonical PK/UNIQUE constraints. The complete effective/session-selectable
-  role, definer, reachable-view, reachable-materialized-copy, and reachable-foreign-
-  data authority envelopes must also pass before tenant binding or outbox data SQL. A
-  migration success record is point-in-time evidence and does not authorize later
-  same-name policy, ACL, membership, routine, view, materialized view, foreign
-  relation/mapping, role-authority, trigger, rewrite-rule, constraint-set, or index-
+  those canonical PK/UNIQUE constraints. Runtime admission must also re-authenticate
+  every omitted-column default through `pg_catalog.pg_attrdef` joined to
+  `pg_catalog.pg_attribute`, deparsing each expression with
+  `pg_catalog.pg_get_expr(...)`. Exactly three defaults are allowed:
+  `tenant_scope = 'standalone'::text`, `context_outbox_uuid = gen_random_uuid()`, and
+  `created_at = now()`. A missing or additional default, renamed default-bearing
+  column, or semantically substituted expression fails closed before tenant binding or
+  outbox data SQL; a migration success record does not confer continuing default-
+  expression authority. The complete effective/session-selectable role, definer,
+  reachable-view, reachable-materialized-copy, and reachable-foreign-data authority
+  envelopes must also pass before tenant binding or outbox data SQL. A migration
+  success record is point-in-time evidence and does not authorize later same-name
+  policy, ACL, membership, routine, view, materialized view, foreign relation/mapping,
+  role-authority, trigger, rewrite-rule, constraint-set, default-expression, or index-
   program/uniqueness drift. The normal runtime role needs only non-grantable `SELECT`
   and `INSERT` on the outbox. Replay serialization must use transaction-scoped advisory
   locking on the validated tenant/event identity rather than `SELECT ... FOR UPDATE`,
