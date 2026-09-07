@@ -2,6 +2,7 @@
 set -euo pipefail
 
 image="pg-llm-batch-postgres:ci"
+component_image="pg-llm-batch:ci"
 container="pg-llm-batch-outbox-check-deparse-${GITHUB_RUN_ID:-local}-$$"
 
 cleanup() {
@@ -92,3 +93,23 @@ if [[ "${hostile_expr}" != "${canonical_expr}" ]]; then
   echo "shadow-operator fixture does not preserve the claimed CHECK deparse identity" >&2
   exit 1
 fi
+
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+import psycopg
+
+from pg_llm_batch.context_lifecycle_outbox import _unsafe_outbox_constraint_sql
+
+with psycopg.connect("postgresql://postgres@127.0.0.1/postgres") as connection:
+    with connection.cursor() as cursor:
+        cursor.execute("SET search_path = public, pg_catalog")
+        cursor.execute(
+            "SELECT " + _unsafe_outbox_constraint_sql() + " "
+            "FROM pg_catalog.pg_class AS admitted_relation "
+            "WHERE admitted_relation.oid = "
+            "'public.llm_context_lifecycle_outbox'::pg_catalog.regclass"
+        )
+        assert cursor.fetchone() == (True,), (
+            "runtime CHECK authority probe admitted a same-deparse constraint "
+            "bound to a different operator object"
+        )
+PY
