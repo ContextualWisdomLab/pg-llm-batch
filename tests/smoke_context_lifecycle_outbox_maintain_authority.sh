@@ -48,6 +48,9 @@ docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   < pg_llm_batch/migrations/0009_context_lifecycle_outbox_row_admission_authority.sql
 
+docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT conname || E'\t' || pg_catalog.pg_get_expr(conbin, conrelid, false) FROM pg_catalog.pg_constraint WHERE conrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND conname IN ('ck_llm_context_lifecycle_outbox_payload_canonical_v1', 'ck_llm_context_lifecycle_outbox_valid_time_canonical_v1', 'ck_llm_context_lifecycle_outbox_system_time_canonical_v1') ORDER BY conname;"
+
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE cwl_llm_batch_outbox_maintainer LOGIN
     NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
