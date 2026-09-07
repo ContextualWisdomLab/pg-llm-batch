@@ -98,8 +98,12 @@
   privileges. Admission must re-prove the sole canonical tenant policy's command,
   role scope, permissive mode, `USING`/`WITH CHECK` predicates, reviewed catalog
   dependencies, the absence of any non-internal trigger or rewrite rule attached to
-  the canonical outbox, and the full reachable privileged-view/materialized-copy/
-  foreign-data boundary before tenant binding or outbox SQL. Direct runtime `CREATEDB`
+  the canonical outbox, and the live outbox index-program boundary: expression and
+  partial indexes are rejected, every simple key must use the default `pg_catalog`
+  operator class for its exact type/access method, and standalone UNIQUE indexes are
+  rejected unless they back the canonical primary key or `(tenant_scope, evidence_id)`
+  replay constraint. The full reachable privileged-view/materialized-copy/foreign-data
+  boundary must also pass before tenant binding or outbox SQL. Direct runtime `CREATEDB`
   and `CREATEROLE` are database/role administration capabilities; callable
   `CREATEROLE` is executable within the definer boundary, while `CREATEDB` remains
   covered when membership administration grants that authority onward for later
@@ -112,7 +116,7 @@
   NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only non-grantable outbox `SELECT`
   and `INSERT`. Migration success is point-in-time evidence, not continuing authority
   after policy, ACL, membership, routine, view, materialized view, foreign relation/
-  mapping, role-attribute, trigger, or rewrite-rule DDL.
+  mapping, role-attribute, trigger, rewrite-rule, or index-program/uniqueness DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
