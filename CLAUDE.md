@@ -113,12 +113,15 @@
   indexes are rejected unless they back the canonical primary key or replay
   constraint. Runtime admission must also re-authenticate every omitted-column default
   from `pg_catalog.pg_attrdef` joined to `pg_catalog.pg_attribute` and deparse each
-  expression through `pg_catalog.pg_get_expr(...)`. Exactly three defaults are
-  permitted: `tenant_scope = 'standalone'::text`,
+  expression through `pg_catalog.pg_get_expr(...)`. Deparse equality is necessary but
+  not sufficient default authority: admission must also authenticate each admitted
+  default's dependency identity through `pg_catalog.pg_depend` and reject any normal
+  dependency attached to that default before tenant binding or outbox data SQL.
+  Exactly three defaults are permitted: `tenant_scope = 'standalone'::text`,
   `context_outbox_uuid = gen_random_uuid()`, and `created_at = now()`. Any missing or
   additional default, renamed default-bearing column, or semantically substituted
-  expression fails closed before tenant binding or outbox SQL; migration success does
-  not confer continuing default-expression authority. The full reachable
+  expression fails closed before tenant binding or outbox data SQL; migration success
+  does not confer continuing default-expression authority. The full reachable
   privileged-view/materialized-copy/foreign-data boundary must also pass before tenant
   binding or outbox SQL. Direct runtime `CREATEDB` and `CREATEROLE` are database/role
   administration capabilities; callable `CREATEROLE` is executable within the definer
