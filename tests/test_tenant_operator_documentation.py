@@ -10,6 +10,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_LIFECYCLE_GUIDE = REPOSITORY_ROOT / "docs" / "remote-batch-lifecycle.md"
 README_PATH = REPOSITORY_ROOT / "README.md"
 ARCHITECTURE_PATH = REPOSITORY_ROOT / "ARCHITECTURE.md"
+AGENTS_PATH = REPOSITORY_ROOT / "AGENTS.md"
+CLAUDE_PATH = REPOSITORY_ROOT / "CLAUDE.md"
 DOCTORING_PATH = (
     REPOSITORY_ROOT / "docs" / "doctoring" / "tenant-scoped-lifecycle.md"
 )
@@ -108,6 +110,17 @@ def test_docs_include_definer_membership_admin_delegation_boundary() -> None:
         assert "SECURITY DEFINER" in document
     assert "cba5f92a62f91c6aecee2c2c68f9f1cfcda25e6c" in doctoring
     assert "988ed9b611bc442891e9769ae86a0caf63764ab3" in doctoring
+
+
+def test_owner_instructions_cover_parent_mediated_foreign_data_authority() -> None:
+    """Owner instructions must preserve the inheritance/partition foreign-data guard."""
+    for path in (AGENTS_PATH, CLAUDE_PATH):
+        document = _normalized(path)
+        assert "pg_inherits" in document
+        assert "inheritance" in document.lower()
+        assert "partition" in document.lower()
+        assert "parent" in document.lower()
+        assert "foreign" in document.lower()
 
 
 def test_migration_plan_preserves_atomic_default_deny_rls_order() -> None:
