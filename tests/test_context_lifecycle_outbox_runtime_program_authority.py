@@ -35,3 +35,21 @@ def test_runtime_admission_reproves_attached_table_program_authority() -> None:
     assert "NOT live_outbox_trigger.tgisinternal" in cursor.sql
     assert "FROM pg_catalog.pg_rewrite AS live_outbox_rule" in cursor.sql
     assert "live_outbox_rule.ev_class OPERATOR(pg_catalog.=) admitted_relation.oid" in cursor.sql
+
+
+def test_runtime_admission_reproves_attached_index_program_authority() -> None:
+    """Post-migration index expressions, predicates, or custom opclasses must fail closed."""
+    cursor = ProgramAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert "FROM pg_catalog.pg_index AS live_outbox_index" in cursor.sql
+    assert "live_outbox_index.indrelid OPERATOR(pg_catalog.=) admitted_relation.oid" in cursor.sql
+    assert "live_outbox_index.indexprs IS NOT NULL" in cursor.sql
+    assert "live_outbox_index.indpred IS NOT NULL" in cursor.sql
+    assert "FROM pg_catalog.pg_opclass AS live_outbox_opclass" in cursor.sql
+    assert "live_outbox_opclass.opcnamespace OPERATOR(pg_catalog.=) 'pg_catalog'::pg_catalog.regnamespace" in cursor.sql
+    assert "live_outbox_opclass.opcdefault" in cursor.sql
+    assert "live_outbox_opclass.opcintype OPERATOR(pg_catalog.=) live_outbox_attribute.atttypid" in cursor.sql
+    assert "live_outbox_index.indisunique" in cursor.sql
+    assert "live_outbox_constraint.conindid OPERATOR(pg_catalog.=) live_outbox_index.indexrelid" in cursor.sql
