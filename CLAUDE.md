@@ -98,25 +98,31 @@
   privileges. Admission must re-prove the sole canonical tenant policy's command,
   role scope, permissive mode, `USING`/`WITH CHECK` predicates, reviewed catalog
   dependencies, the absence of any non-internal trigger or rewrite rule attached to
-  the canonical outbox, and the live outbox index-program boundary: expression and
-  partial indexes are rejected, every simple key must use the default `pg_catalog`
-  operator class for its exact type/access method, and standalone UNIQUE indexes are
-  rejected unless they back the canonical primary key or `(tenant_scope, evidence_id)`
-  replay constraint. The full reachable privileged-view/materialized-copy/foreign-data
-  boundary must also pass before tenant binding or outbox SQL. Direct runtime `CREATEDB`
-  and `CREATEROLE` are database/role administration capabilities; callable
-  `CREATEROLE` is executable within the definer boundary, while `CREATEDB` remains
-  covered when membership administration grants that authority onward for later
-  invoker-context use. `REPLICATION` is separate cluster-level connection and slot
-  authority whether held directly or anywhere in the callable-definer owner closure,
-  and direct DML grant options, relation maintenance, authority-bearing role
-  administration, executable privileged definer authority, view-mediated RLS bypass
-  authority, materialized outbox/foreign-data copies, and reachable foreign data are
-  outside application DML. Runtime identities remain `NOSUPERUSER NOCREATEDB
-  NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only non-grantable outbox `SELECT`
-  and `INSERT`. Migration success is point-in-time evidence, not continuing authority
-  after policy, ACL, membership, routine, view, materialized view, foreign relation/
-  mapping, role-attribute, trigger, rewrite-rule, or index-program/uniqueness DDL.
+  the canonical outbox, the exact live `pg_catalog.pg_constraint` set, and the live
+  outbox index-program boundary. Runtime constraint authority is exactly the canonical
+  nondeferrable primary key on `context_outbox_uuid`, the nondeferrable
+  `(tenant_scope, evidence_id)` replay UNIQUE, and the three validated, inheritable
+  canonical CHECK constraints; added FK/EXCLUDE/CHECK/PK/UNIQUE constraints or
+  validation, deferrability, key-column, or missing-canonical-constraint drift fails
+  closed before tenant binding or outbox SQL. Expression and partial indexes are
+  rejected, every simple key must use the default `pg_catalog` operator class for its
+  exact type/access method, and standalone UNIQUE indexes are rejected unless they
+  back the canonical primary key or replay constraint. The full reachable
+  privileged-view/materialized-copy/foreign-data boundary must also pass before tenant
+  binding or outbox SQL. Direct runtime `CREATEDB` and `CREATEROLE` are database/role
+  administration capabilities; callable `CREATEROLE` is executable within the definer
+  boundary, while `CREATEDB` remains covered when membership administration grants
+  that authority onward for later invoker-context use. `REPLICATION` is separate
+  cluster-level connection and slot authority whether held directly or anywhere in the
+  callable-definer owner closure, and direct DML grant options, relation maintenance,
+  authority-bearing role administration, executable privileged definer authority,
+  view-mediated RLS bypass authority, materialized outbox/foreign-data copies, and
+  reachable foreign data are outside application DML. Runtime identities remain
+  `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only
+  non-grantable outbox `SELECT` and `INSERT`. Migration success is point-in-time
+  evidence, not continuing authority after policy, ACL, membership, routine, view,
+  materialized view, foreign relation/mapping, role-attribute, trigger, rewrite-rule,
+  constraint-set, or index-program/uniqueness DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
