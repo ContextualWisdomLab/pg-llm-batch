@@ -103,9 +103,15 @@
   compare parser/deparser-normalized semantic authority from
   `pg_catalog.pg_get_expr(...)`; a same-name CHECK carrying a different semantic
   predicate is constraint drift and must fail closed before tenant binding or outbox
-  SQL. Runtime constraint authority is exactly the canonical nondeferrable primary
-  key on `context_outbox_uuid`, the nondeferrable `(tenant_scope, evidence_id)` replay
-  UNIQUE, and the three validated, inheritable canonical CHECK constraints; added
+  SQL. CHECK dependency identity is part of that authority: deparse equality is
+  necessary but not sufficient. Runtime admission must inspect
+  `pg_catalog.pg_depend` and reject any whole-object normal dependency of an admitted
+  CHECK before tenant binding or outbox data SQL. A user-schema operator or function
+  selected by caller `search_path` can be same-deparse while referring to a different
+  object OID, so its displayed token is not canonical identity. Runtime constraint
+  authority is exactly the canonical nondeferrable primary key on
+  `context_outbox_uuid`, the nondeferrable `(tenant_scope, evidence_id)` replay UNIQUE,
+  and the three validated, inheritable canonical CHECK constraints; added
   FK/EXCLUDE/CHECK/PK/UNIQUE constraints or validation, deferrability, key-column, or
   missing-canonical-constraint drift fails closed before tenant binding or outbox SQL.
   Expression and partial indexes are rejected, every simple key must use the default
