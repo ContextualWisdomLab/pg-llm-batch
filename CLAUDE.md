@@ -111,22 +111,29 @@
   Expression and partial indexes are rejected, every simple key must use the default
   `pg_catalog` operator class for its exact type/access method, and standalone UNIQUE
   indexes are rejected unless they back the canonical primary key or replay
-  constraint. The full reachable privileged-view/materialized-copy/foreign-data
-  boundary must also pass before tenant binding or outbox SQL. Direct runtime
-  `CREATEDB` and `CREATEROLE` are database/role administration capabilities; callable
-  `CREATEROLE` is executable within the definer boundary, while `CREATEDB` remains
-  covered when membership administration grants that authority onward for later
-  invoker-context use. `REPLICATION` is separate cluster-level connection and slot
-  authority whether held directly or anywhere in the callable-definer owner closure,
-  and direct DML grant options, relation maintenance, authority-bearing role
-  administration, executable privileged definer authority, view-mediated RLS bypass
-  authority, materialized outbox/foreign-data copies, and reachable foreign data are
-  outside application DML. Runtime identities remain
+  constraint. Runtime admission must also re-authenticate every omitted-column default
+  from `pg_catalog.pg_attrdef` joined to `pg_catalog.pg_attribute` and deparse each
+  expression through `pg_catalog.pg_get_expr(...)`. Exactly three defaults are
+  permitted: `tenant_scope = 'standalone'::text`,
+  `context_outbox_uuid = gen_random_uuid()`, and `created_at = now()`. Any missing or
+  additional default, renamed default-bearing column, or semantically substituted
+  expression fails closed before tenant binding or outbox SQL; migration success does
+  not confer continuing default-expression authority. The full reachable
+  privileged-view/materialized-copy/foreign-data boundary must also pass before tenant
+  binding or outbox SQL. Direct runtime `CREATEDB` and `CREATEROLE` are database/role
+  administration capabilities; callable `CREATEROLE` is executable within the definer
+  boundary, while `CREATEDB` remains covered when membership administration grants that
+  authority onward for later invoker-context use. `REPLICATION` is separate
+  cluster-level connection and slot authority whether held directly or anywhere in the
+  callable-definer owner closure, and direct DML grant options, relation maintenance,
+  authority-bearing role administration, executable privileged definer authority,
+  view-mediated RLS bypass authority, materialized outbox/foreign-data copies, and
+  reachable foreign data are outside application DML. Runtime identities remain
   `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS` and need only
   non-grantable outbox `SELECT` and `INSERT`. Migration success is point-in-time
   evidence, not continuing authority after policy, ACL, membership, routine, view,
   materialized view, foreign relation/mapping, role-attribute, trigger, rewrite-rule,
-  constraint-set, or index-program/uniqueness DDL.
+  constraint-set, default-expression, or index-program/uniqueness DDL.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
