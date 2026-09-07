@@ -56,7 +56,13 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   visibility. Every callable routine in that closure must also pin its routine-level
   `search_path = pg_catalog, pg_temp`; absent or different name-resolution authority
   is rejected before tenant binding or outbox data SQL, rather than trusting caller
-  temporary-schema state or unqualified user-schema objects. Caller-selectable
+  temporary-schema state or unqualified user-schema objects. The callable definer
+  owner itself must also pass the same reachable ordinary-view, materialized-copy,
+  inheritance/partition, and opaque foreign-data authority probe as a runtime
+  principal. A caller's missing direct `SELECT` on a foreign relation is not evidence
+  of safety when a callable definer executes with an owner that has that relation
+  authority through its own foreign-server/user-mapping context. Do not parse one
+  current routine body to allowlist that owner capability. Caller-selectable
   ordinary views are a second executable authority graph: admission must follow the
   cycle-safe view dependency closure from every view the runtime can select, applying
   PostgreSQL's effective principal at each edge—the invoking runtime principal for a
@@ -80,23 +86,24 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   wrappers resolve remote access through foreign servers and user mappings, so local
   RLS, local role attributes, and local relation ownership cannot prove the remote
   principal or remote row-security semantics. If the runtime can select a user-schema
-  foreign table directly, an ordinary view's effective principal can reach one, or a
-  runtime-readable materialized view has a foreign table anywhere in its stored
-  definition provenance, reject the credential before tenant binding or outbox data
-  SQL. PostgreSQL inheritance and declarative partitioning also allow access through
-  a named ordinary or partitioned parent while a foreign descendant performs the
-  remote read; parent access does not require a separate caller `SELECT` grant on the
-  child. Admission must therefore build a cycle-safe foreign-ancestor closure through
-  `pg_catalog.pg_inherits` and reject a selectable parent, view-mediated parent, or
+  foreign table directly, an ordinary view's effective principal can reach one, a
+  callable definer owner can reach one, or a runtime-readable materialized view has a
+  foreign table anywhere in its stored definition provenance, reject the credential
+  before tenant binding or outbox data SQL. PostgreSQL inheritance and declarative
+  partitioning also allow access through a named ordinary or partitioned parent while
+  a foreign descendant performs the remote read; parent access does not require a
+  separate caller `SELECT` grant on the child. Admission must therefore build a
+  cycle-safe foreign-ancestor closure through `pg_catalog.pg_inherits` and reject a
+  selectable parent, definer-owner-selectable parent, view-mediated parent, or
   materialized provenance node whenever that relation has a foreign descendant.
-  Missing child ACLs, partition bounds, parent names, or local parent RLS are not
-  durable evidence of remote authorization. A materialized copy remains opaque after
-  the source privilege is revoked because its stored rows no longer require a remote
-  read. Do not parse or allowlist mutable FDW/user-mapping options, current copied
-  contents, tenant literals in definition text, or last-refresh authority as a
-  substitute for remote authorization evidence; workloads that need foreign-data
-  access must use a separate role and connection from the lifecycle-outbox runtime
-  credential.
+  Missing caller/child ACLs, partition bounds, parent names, or local parent RLS are
+  not durable evidence of remote authorization. A materialized copy remains opaque
+  after the source privilege is revoked because its stored rows no longer require a
+  remote read. Do not parse or allowlist mutable FDW/user-mapping options, current
+  copied contents, routine body text, tenant literals in definition text, or
+  last-refresh authority as a substitute for remote authorization evidence; workloads
+  that need foreign-data access must use a separate role and connection from the
+  lifecycle-outbox runtime credential and every callable definer owner it can enter.
   PostgreSQL permits a role administrator to grant the administered role to a new
   principal even when the administrator's own membership is `INHERIT FALSE, SET
   FALSE`; the new principal can then use the granted role's selectable path after
