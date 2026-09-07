@@ -214,3 +214,39 @@ if ! grep -Fq "ck_llm_context_lifecycle_outbox_runtime_constraint_probe" \
   exit 1
 fi
 assert_runtime_rejected "constraint"
+
+psql_stdin <<'SQL'
+ALTER TABLE public.llm_context_lifecycle_outbox
+    DROP CONSTRAINT ck_llm_context_lifecycle_outbox_runtime_constraint_probe;
+ALTER TABLE public.llm_context_lifecycle_outbox
+    DROP CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1;
+ALTER TABLE public.llm_context_lifecycle_outbox
+    ADD CONSTRAINT ck_llm_context_lifecycle_outbox_payload_canonical_v1 CHECK (true);
+SQL
+
+if ! docker exec -i "${container}" psql \
+    -U cwl_llm_batch_outbox_program_runtime -d postgres -v ON_ERROR_STOP=1 \
+    >/tmp/pg-llm-batch-runtime-constraint-semantic-authority.out 2>&1 <<'SQL'; then
+SET pg_llm_batch.tenant_scope = 'tenant-a';
+INSERT INTO public.llm_context_lifecycle_outbox (
+    tenant_scope, evidence_id, event_type, tenant_scope_sha256,
+    subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, truth_status,
+    valid_time, system_time, provenance_ref_sha256, evidence_ref_sha256
+) VALUES (
+    'tenant-a', 'runtime-program-constraint-semantic-red', 'INVALID EVENT TYPE',
+    repeat('a', 64), repeat('b', 64), repeat('c', 64), repeat('d', 64),
+    'observed', '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z',
+    repeat('e', 64), repeat('f', 64)
+);
+SQL
+  cat /tmp/pg-llm-batch-runtime-constraint-semantic-authority.out >&2
+  echo "same-name weakened CHECK did not demonstrate semantic row-admission drift" >&2
+  exit 1
+fi
+semantic_rows="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM public.llm_context_lifecycle_outbox WHERE evidence_id = 'runtime-program-constraint-semantic-red';")"
+if [[ "${semantic_rows}" != "1" ]]; then
+  echo "same-name weakened CHECK did not persist the forbidden specimen" >&2
+  exit 1
+fi
+assert_runtime_rejected "same-name CHECK semantic"
