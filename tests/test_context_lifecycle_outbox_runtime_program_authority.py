@@ -71,3 +71,30 @@ def test_runtime_admission_reproves_attached_constraint_authority() -> None:
     assert "ck_llm_context_lifecycle_outbox_valid_time_canonical_v1" in cursor.sql
     assert "ck_llm_context_lifecycle_outbox_system_time_canonical_v1" in cursor.sql
     assert "uq_llm_context_lifecycle_outbox_tenant_evidence" in cursor.sql
+
+
+def test_runtime_admission_sql_has_balanced_parenthesis_authority() -> None:
+    """Generated admission SQL must not carry unmatched grouping outside literals."""
+    cursor = ProgramAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    depth = 0
+    in_literal = False
+    index = 0
+    while index < len(cursor.sql):
+        character = cursor.sql[index]
+        if character == "'":
+            if in_literal and index + 1 < len(cursor.sql) and cursor.sql[index + 1] == "'":
+                index += 2
+                continue
+            in_literal = not in_literal
+        elif not in_literal and character == "(":
+            depth += 1
+        elif not in_literal and character == ")":
+            depth -= 1
+            assert depth >= 0
+        index += 1
+
+    assert not in_literal
+    assert depth == 0
