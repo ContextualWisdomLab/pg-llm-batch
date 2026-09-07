@@ -15,7 +15,14 @@
 - Treat the custom setting as a trusted application boundary rather than a
   credential. A database role with arbitrary SQL can call `set_config` for an
   arbitrary tenant scope, so generic tenant-controlled SQL, SQL injection, and
-  incorrect identity mapping remain outside the RLS guarantee.
+  incorrect identity mapping remain outside the RLS guarantee. Caller-visible
+  non-system-schema `SECURITY INVOKER` routines are part of the same executable
+  boundary: when a selectable principal has schema `USAGE` and routine `EXECUTE`,
+  inspect that invoker routine's `proconfig` directly and reject any function-local
+  `pg_llm_batch.tenant_scope` setting before tenant binding or outbox data I/O.
+  Keep this separate from `SECURITY DEFINER` recursion because an invoker routine
+  retains the caller/selectable principal while a definer routine changes to its
+  owner principal.
 - Keep row-level security enabled and forced. Runtime admission must reject
   `SUPERUSER`/`CREATEDB`/`CREATEROLE`/`REPLICATION`/`BYPASSRLS`,
   owner/destructive/programming/maintenance authority reachable from
