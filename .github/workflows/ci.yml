@@ -152,6 +152,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_chain_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER search-path authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_search_path_authority.sh
+      - name: Run lifecycle-outbox SECURITY DEFINER foreign-data authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_security_definer_foreign_authority.sh
       - name: Run lifecycle-outbox materialized-view authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_materialized_view_authority.sh
       - name: Run lifecycle-outbox foreign-table authority smoke
