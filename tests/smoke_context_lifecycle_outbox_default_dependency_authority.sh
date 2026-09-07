@@ -34,9 +34,9 @@ if [[ "${ready}" != "1" ]]; then
 fi
 
 # pg_get_expr() is a presentation API whose qualification depends on search_path.
-# Bind created_at to an operator-owned function with the same visible spelling as the
-# PostgreSQL builtin, then prove both the semantic pg_depend edge and the textual
-# deparse collision seen by a caller that explicitly puts public before pg_catalog.
+# Bind both executable defaults to operator-owned functions with the same visible
+# spellings as their PostgreSQL builtins. This keeps every deparsed default string
+# textually canonical while pg_depend retains different executable object identities.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE cwl_llm_batch_outbox_default_dependency_runtime
     LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
@@ -48,9 +48,15 @@ RETURNS timestamptz
 LANGUAGE sql
 VOLATILE
 AS $$ SELECT '2001-01-01T00:00:00Z'::timestamptz $$;
+CREATE FUNCTION public.gen_random_uuid()
+RETURNS uuid
+LANGUAGE sql
+VOLATILE
+AS $$ SELECT '00000000-0000-0000-0000-000000000001'::uuid $$;
 SET search_path = public, pg_catalog;
 ALTER TABLE public.llm_context_lifecycle_outbox
-    ALTER COLUMN created_at SET DEFAULT now();
+    ALTER COLUMN created_at SET DEFAULT now(),
+    ALTER COLUMN context_outbox_uuid SET DEFAULT gen_random_uuid();
 RESET search_path;
 SQL
 
@@ -68,11 +74,13 @@ dependency_count="$({
         AND dep.refobjsubid = 0
         AND dep.deptype = 'n'
       WHERE d.adrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
-        AND a.attname = 'created_at'
-        AND dep.refobjid = 'public.now()'::pg_catalog.regprocedure";
+        AND ((a.attname = 'created_at'
+              AND dep.refobjid = 'public.now()'::pg_catalog.regprocedure)
+          OR (a.attname = 'context_outbox_uuid'
+              AND dep.refobjid = 'public.gen_random_uuid()'::pg_catalog.regprocedure))";
 } | tr -d '[:space:]')"
-if [[ "${dependency_count}" != "1" ]]; then
-  echo "shadow default did not retain the expected public.now() dependency" >&2
+if [[ "${dependency_count}" != "2" ]]; then
+  echo "shadow defaults did not retain both expected operator-function dependencies" >&2
   exit 1
 fi
 
@@ -124,7 +132,8 @@ with psycopg.connect(
         )
         if cursor.fetchone() != (True,):
             raise SystemExit(
-                "default-authority predicate trusted deparse text despite public.now() dependency"
+                "default-authority predicate trusted canonical deparse text despite "
+                "operator-owned executable dependencies"
             )
         try:
             store.load_in_transaction(cursor, "runtime-default-dependency-red")
@@ -132,6 +141,7 @@ with psycopg.connect(
             pass
         else:
             raise SystemExit(
-                "runtime admission trusted deparse text despite public.now() dependency"
+                "runtime admission trusted canonical deparse text despite "
+                "operator-owned executable dependencies"
             )
 PY
