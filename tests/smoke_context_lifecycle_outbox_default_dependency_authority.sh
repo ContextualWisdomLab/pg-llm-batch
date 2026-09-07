@@ -33,27 +33,29 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
-# pg_get_expr() is a presentation API whose qualification depends on search_path.
-# Bind both executable defaults to operator-owned functions with the same visible
-# spellings as their PostgreSQL builtins. This keeps every deparsed default string
-# textually canonical while pg_depend retains different executable object identities.
+# pg_get_expr() reconstructs presentation SQL against the active search_path. Bind
+# both executable defaults to operator-owned functions in a shadow schema whose
+# functions have the same visible spellings as the canonical PostgreSQL functions.
+# The text remains canonical while pg_depend retains different executable identities.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
 CREATE ROLE cwl_llm_batch_outbox_default_dependency_runtime
     LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
-GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_default_dependency_runtime;
+CREATE SCHEMA cwl_default_shadow;
+GRANT USAGE ON SCHEMA public, cwl_default_shadow
+    TO cwl_llm_batch_outbox_default_dependency_runtime;
 GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
     TO cwl_llm_batch_outbox_default_dependency_runtime;
-CREATE FUNCTION public.now()
+CREATE FUNCTION cwl_default_shadow.now()
 RETURNS timestamptz
 LANGUAGE sql
 VOLATILE
 AS $$ SELECT '2001-01-01T00:00:00Z'::timestamptz $$;
-CREATE FUNCTION public.gen_random_uuid()
+CREATE FUNCTION cwl_default_shadow.gen_random_uuid()
 RETURNS uuid
 LANGUAGE sql
 VOLATILE
 AS $$ SELECT '00000000-0000-0000-0000-000000000001'::uuid $$;
-SET search_path = public, pg_catalog;
+SET search_path = cwl_default_shadow, pg_catalog, public;
 ALTER TABLE public.llm_context_lifecycle_outbox
     ALTER COLUMN created_at SET DEFAULT now(),
     ALTER COLUMN context_outbox_uuid SET DEFAULT gen_random_uuid();
@@ -75,9 +77,9 @@ dependency_count="$({
         AND dep.deptype = 'n'
       WHERE d.adrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
         AND ((a.attname = 'created_at'
-              AND dep.refobjid = 'public.now()'::pg_catalog.regprocedure)
+              AND dep.refobjid = 'cwl_default_shadow.now()'::pg_catalog.regprocedure)
           OR (a.attname = 'context_outbox_uuid'
-              AND dep.refobjid = 'public.gen_random_uuid()'::pg_catalog.regprocedure))";
+              AND dep.refobjid = 'cwl_default_shadow.gen_random_uuid()'::pg_catalog.regprocedure))";
 } | tr -d '[:space:]')"
 if [[ "${dependency_count}" != "2" ]]; then
   echo "shadow defaults did not retain both expected operator-function dependencies" >&2
@@ -102,7 +104,7 @@ with psycopg.connect(
     "postgresql://cwl_llm_batch_outbox_default_dependency_runtime@127.0.0.1/postgres"
 ) as connection:
     with connection.cursor() as cursor:
-        cursor.execute("SET search_path = public, pg_catalog")
+        cursor.execute("SET search_path = cwl_default_shadow, pg_catalog, public")
         cursor.execute(
             "SELECT a.attname, pg_catalog.pg_get_expr(d.adbin, d.adrelid, false) "
             "FROM pg_catalog.pg_attrdef AS d "
