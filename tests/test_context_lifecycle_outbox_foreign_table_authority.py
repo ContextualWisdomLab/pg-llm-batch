@@ -70,10 +70,7 @@ def test_role_authority_query_follows_partitioned_foreign_descendants() -> None:
         "foreign_inheritance_ancestor.relation_oid"
         in cursor.sql
     )
-    assert (
-        "foreign_inheritance_edge.inhparent"
-        in cursor.sql
-    )
+    assert "foreign_inheritance_edge.inhparent" in cursor.sql
     assert (
         "foreign_inheritance_ancestor.relation_oid OPERATOR(pg_catalog.=) "
         "exposed_relation.oid"
@@ -93,5 +90,23 @@ def test_role_authority_query_follows_traditional_foreign_inheritance() -> None:
     )
     assert (
         "nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'r'"
+        in cursor.sql
+    )
+
+
+def test_security_definer_owner_foreign_authority_is_fail_closed() -> None:
+    """Callable definer owners must not retain an opaque foreign-data read path."""
+    cursor = ForeignTableAuthorityCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert (
+        "pg_catalog.has_schema_privilege(definer_role.oid, "
+        "exposed_relation_schema.oid, 'USAGE')"
+        in cursor.sql
+    )
+    assert (
+        "pg_catalog.has_table_privilege(definer_role.oid, "
+        "exposed_relation.oid, 'SELECT')"
         in cursor.sql
     )
