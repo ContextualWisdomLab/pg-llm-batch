@@ -104,7 +104,7 @@ def _maintain_privilege_sql(role_expression: str) -> str:
 
 
 def _privileged_outbox_view_sql(role_expression: str) -> str:
-    """Probe reachable views and materialized copies that escape live outbox RLS."""
+    """Probe reachable views, copied rows, and opaque foreign-data authority."""
     return (
         "EXISTS ("
         "WITH RECURSIVE reachable_relation(relation_oid, caller_oid) AS ("
@@ -115,7 +115,8 @@ def _privileged_outbox_view_sql(role_expression: str) -> str:
         "ON exposed_relation_schema.oid OPERATOR(pg_catalog.=) "
         "exposed_relation.relnamespace "
         "WHERE (exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'v' "
-        "OR exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'm') "
+        "OR exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'm' "
+        "OR exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'f') "
         "AND exposed_relation_schema.nspname NOT LIKE 'pg\\_%' ESCAPE '\\' "
         "AND exposed_relation_schema.nspname OPERATOR(pg_catalog.<>) "
         "'information_schema' "
@@ -142,7 +143,8 @@ def _privileged_outbox_view_sql(role_expression: str) -> str:
         "ON nested_relation_schema.oid OPERATOR(pg_catalog.=) nested_relation.relnamespace "
         "WHERE current_view.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'v' "
         "AND (nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'v' "
-        "OR nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'm') "
+        "OR nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'm' "
+        "OR nested_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'f') "
         "AND nested_relation_schema.nspname NOT LIKE 'pg\\_%' ESCAPE '\\' "
         "AND nested_relation_schema.nspname OPERATOR(pg_catalog.<>) 'information_schema' "
         "AND pg_catalog.has_table_privilege("
@@ -221,7 +223,8 @@ def _privileged_outbox_view_sql(role_expression: str) -> str:
         "WHERE materialized_source.materialized_oid OPERATOR(pg_catalog.=) "
         "exposed_relation.oid "
         "AND materialized_source.source_oid OPERATOR(pg_catalog.=) admitted_relation.oid"
-        ")))"
+        ")) "
+        "OR exposed_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.=) 'f')"
         ")"
     )
 
