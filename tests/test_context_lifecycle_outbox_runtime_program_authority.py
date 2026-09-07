@@ -71,6 +71,11 @@ def test_runtime_admission_reproves_attached_constraint_authority() -> None:
     assert "ck_llm_context_lifecycle_outbox_valid_time_canonical_v1" in cursor.sql
     assert "ck_llm_context_lifecycle_outbox_system_time_canonical_v1" in cursor.sql
     assert "uq_llm_context_lifecycle_outbox_tenant_evidence" in cursor.sql
+    assert (
+        "pg_catalog.pg_get_expr(live_outbox_constraint_authority.conbin, "
+        "live_outbox_constraint_authority.conrelid, false)"
+        in cursor.sql
+    )
 
 
 def test_runtime_admission_sql_has_balanced_parenthesis_authority() -> None:
