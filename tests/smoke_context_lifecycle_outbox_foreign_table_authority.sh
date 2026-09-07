@@ -83,9 +83,13 @@ CREATE SERVER cwl_llm_batch_outbox_fdw_server
     OPTIONS (host '127.0.0.1', port '5432', dbname 'postgres');
 CREATE USER MAPPING FOR cwl_llm_batch_outbox_fdw_caller
     SERVER cwl_llm_batch_outbox_fdw_server
-    OPTIONS (user 'cwl_llm_batch_outbox_fdw_remote', password 'fixture-only-password');
+    OPTIONS (user 'cwl_llm_batch_outbox_fdw_remote', password_required 'false');
+CREATE USER MAPPING FOR cwl_llm_batch_outbox_fdw_outer_owner
+    SERVER cwl_llm_batch_outbox_fdw_server
+    OPTIONS (user 'cwl_llm_batch_outbox_fdw_remote', password_required 'false');
 GRANT USAGE ON FOREIGN SERVER cwl_llm_batch_outbox_fdw_server
-    TO cwl_llm_batch_outbox_fdw_caller;
+    TO cwl_llm_batch_outbox_fdw_caller,
+       cwl_llm_batch_outbox_fdw_outer_owner;
 
 CREATE FOREIGN TABLE public.cwl_llm_batch_outbox_foreign (
     tenant_scope text,
