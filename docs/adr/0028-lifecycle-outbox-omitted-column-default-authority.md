@@ -14,20 +14,24 @@ Migration 0008 owns convergence. It establishes the canonical defaults and verif
 
 A changed default is executable write-path authority. PostgreSQL permits a column default to be an expression and evaluates it whenever an insert omits the column or asks for `DEFAULT`. A volatile function can therefore reject or alter an otherwise-canonical direct insert even when the visible column shape remains unchanged. `pg_attrdef` stores the default expression in `adbin`; PostgreSQL documents `pg_get_expr(adbin, adrelid)` as the supported SQL representation.
 
-The repository currently runs the PostgreSQL 16 container profile. Current PostgreSQL 18 documentation is used as the primary specification because the catalog and default-expression interfaces relied on here are also present in the supported runtime version; acceptance remains executable against the repository's actual PostgreSQL image.
+Exact deparse text is necessary but not sufficient authority. A restored or operator-modified default can deparse to the same visible expression while the stored parse tree references a different database object. `pg_depend` records dependency relationships by catalog/OID identity. In particular, a normal dependency (`deptype = 'n'`) proves that the default object is bound to a separately created referenced object; name-equivalent text alone does not prove that the package-owned executable authority is unchanged. The canonical defaults used here do not require such a normal dependency, so admitting one would silently widen executable authority.
+
+The repository currently runs the PostgreSQL 16 container profile. Current PostgreSQL 18 documentation is used as the primary specification because the catalog, dependency, and expression-deparse interfaces relied on here are also present in the supported runtime version; acceptance remains executable against the repository's actual PostgreSQL image.
 
 ## Decision
 
-Migration 0008 remains the sole convergence owner. Migration 0009 is a fail-closed final verifier and does not repair operator drift.
+Migration 0008 remains the sole convergence owner. Migration 0009 is a fail-closed final verifier and does not repair operator drift. Runtime `_require_rls_application_role()` is a second, continuing admission boundary: migration success is point-in-time evidence and cannot authorize later default drift.
 
-Before admitting the outbox, migration 0009 must re-read `pg_attribute` and `pg_attrdef` and prove all of the following:
+Before admitting the outbox, migration 0009 and runtime admission must re-read `pg_attribute` and `pg_attrdef` and prove all of the following:
 
 - `tenant_scope` is a live, non-generated, non-identity, NOT NULL `text` column with a default whose deparsed expression is exactly `'standalone'::text`;
 - `context_outbox_uuid` is a live, non-generated, non-identity, NOT NULL `uuid` column with a default whose deparsed expression is exactly `gen_random_uuid()`;
 - `created_at` is a live, non-generated, non-identity, NOT NULL `timestamp with time zone` column with a default whose deparsed expression is exactly `now()`; and
-- any mismatch fails through the existing content-free `unexpected lifecycle outbox row-admission authority` boundary.
+- any mismatch fails through the existing content-free `unexpected lifecycle outbox row-admission authority` boundary before tenant binding or outbox data SQL.
 
-The package migration and Docker initializer must remain byte-identical. Realistic container acceptance must prove both classes of executable default authority: an operator-supplied `created_at` default can reject a package-shaped insert, and an operator-supplied `tenant_scope` default can reject an otherwise-canonical direct insert that omits the tenant column. Migration 0009 must reject both catalog states. After explicit test cleanup and restoration of each canonical default, migration 0009 must succeed again.
+Runtime admission must additionally authenticate dependency identity for each admitted `pg_attrdef` through `pg_catalog.pg_depend`. Any normal dependency attached to an otherwise text-equivalent canonical default is rejected before tenant binding or outbox data SQL. This deliberately fails closed rather than attempting to infer safety from a function/operator name, schema, `search_path`, or deparsed text.
+
+The package migration and Docker initializer must remain byte-identical. Realistic container acceptance must prove three classes of executable default authority: an operator-supplied `created_at` default can reject a package-shaped insert; an operator-supplied `tenant_scope` default can reject an otherwise-canonical direct insert that omits the tenant column; and a same-deparsed default whose parse tree is bound to a non-canonical object identity must be rejected by runtime admission. After explicit test cleanup and restoration of each canonical default, admission must succeed again.
 
 This does not redefine tenant authorization. The package path continues to derive tenant scope only from the trusted host boundary and supplies it explicitly; the `standalone` default is compatibility schema, not an identity credential or RLS bypass mechanism.
 
@@ -37,11 +41,13 @@ Trust migration history alone was rejected because a successful earlier migratio
 
 Checking only `pg_attribute.atthasdef` was rejected because it proves only that some default exists, not which expression will execute.
 
+Comparing only `pg_get_expr(...)` output was rejected because deparse equality is presentation-level semantic evidence, not dependency identity. A parse tree can retain name-equivalent output while being bound to a different executable object, and `pg_depend` is the catalog authority for those object relationships.
+
 Ignoring `tenant_scope` because the package insert supplies it explicitly was rejected because the repository intentionally keeps `DEFAULT 'standalone'` as part of the supported schema contract. Final admission cannot claim exact catalog authority while accepting arbitrary executable semantics on a retained compatibility surface.
 
-Allow-listing user function names or schemas was rejected because names are mutable metadata and do not establish the package-owned default semantics.
+Allow-listing user function names or schemas was rejected because names are mutable metadata and do not establish the package-owned default semantics or referenced-object identity.
 
-Automatically resetting defaults in migration 0009 was rejected because 0009 is the final admission verifier. Silent repair would erase operator evidence and split convergence authority with migration 0008.
+Automatically resetting defaults in migration 0009 or runtime admission was rejected because those paths are admission verifiers. Silent repair would erase operator evidence and split convergence authority with migration 0008.
 
 Supplying UUID and timestamp values explicitly from application code was rejected for this repair because it changes the established database-owned durable identity and insertion-time semantics rather than closing the catalog-verification gap.
 
@@ -64,13 +70,22 @@ The final `tenant_scope`-default authority repair extends the same decision rath
 - causal package fix `83dc4c2d0d67c87b2769b2c71f5b097d8fbdbc89` adds the exact `pg_attrdef`/`pg_get_expr` check; and
 - Docker mirror repair `38e0248e142ad543bab24e55f6bd8d4267a09b36` restores package/Docker byte identity.
 
-This ADR remains Proposed until the unchanged exact head executes the full hosted PostgreSQL/container acceptance and repository quality gates. A queued, pending, stale, predecessor, synthetic, or otherwise non-executed workflow is not GREEN evidence.
+Continuing runtime admission and dependency-identity lineage is also retained:
+
+- runtime RED/repair lineage first extended `_require_rls_application_role()` to re-read the three canonical defaults after migration instead of transferring migration-time evidence to later connections;
+- exact predecessor `18bd0319804373df4c1803d4753fd576de617dd1` supplied the realistic same-deparse/different-object dependency specimen and produced hosted PostgreSQL RED;
+- causal production fix `df8c0450d6f1c0caa6464badbc452c5c298dbca0` adds the `pg_catalog.pg_depend` normal-dependency rejection to runtime default admission; and
+- owner-contract RED `6d24afd2b02839e5b0473808768a72a5c52a1346` verifies that AGENTS/CLAUDE cannot regress to a deparse-only contract after the production guard exists.
+
+This ADR remains Proposed until the current protected integration path executes the full hosted PostgreSQL/container acceptance and repository quality gates. A queued, pending, stale, predecessor, synthetic, or otherwise non-executed workflow is not GREEN evidence.
 
 ## Consequences
 
-A restore or operator that intentionally changes any reviewed outbox default must reconcile the schema explicitly before the package will admit it. This may turn previously latent drift into an installation failure, which is intentional: the package cannot treat unknown executable default authority as durable lifecycle truth.
+A restore or operator that intentionally changes any reviewed outbox default must reconcile the schema explicitly before the package will admit it. This may turn previously latent drift into an installation or runtime-admission failure, which is intentional: the package cannot treat unknown executable default authority as durable lifecycle truth.
 
-The additional `tenant_scope` check protects the declared direct/operator compatibility surface without changing the package tenant-binding path. It does not imply that arbitrary direct SQL is authorized; AGENTS/CLAUDE continue to treat the custom tenant setting as a trusted application boundary rather than a credential.
+The additional `pg_depend` read is part of admission cost and therefore part of complete buyer-path performance evidence. It must not be omitted from p95 measurement merely because it is a security catalog check.
+
+The `tenant_scope` check protects the declared direct/operator compatibility surface without changing the package tenant-binding path. It does not imply that arbitrary direct SQL is authorized; AGENTS/CLAUDE continue to treat the custom tenant setting as a trusted application boundary rather than a credential.
 
 The change does not add cross-service SQL, provider coupling, prompt/response storage, a mutable upstream dependency, or new publication authority. It narrows only the pg-llm-batch-owned lifecycle persistence boundary.
 
@@ -85,3 +100,7 @@ PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: ALTER
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: pg_attrdef*. https://www.postgresql.org/docs/18/catalog-pg-attrdef.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: pg_attribute*. https://www.postgresql.org/docs/18/catalog-pg-attribute.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: pg_depend*. https://www.postgresql.org/docs/18/catalog-pg-depend.html
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: System information functions and operators*. https://www.postgresql.org/docs/18/functions-info.html
