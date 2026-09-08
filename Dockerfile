@@ -29,19 +29,23 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
     apt-get update && \
     apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/* \
-      /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
-      /usr/local/lib/python3.11/site-packages/pip* \
-      /usr/local/lib/python3.11/site-packages/setuptools* \
-      /usr/local/lib/python3.11/site-packages/wheel* && \
+      /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14 \
+      /usr/local/lib/python3.14/site-packages/pip* \
+      /usr/local/lib/python3.14/site-packages/setuptools* \
+      /usr/local/lib/python3.14/site-packages/wheel* && \
     adduser --system --no-create-home appuser
 
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:${PATH}"
 
 # pg8000 is the admitted production PostgreSQL client. Keep the component image
-# free of the superseded native libpq runtime and prove the packaged selector can
-# construct the admitted adapter in the final image stage.
-RUN ! dpkg-query -W libpq5 >/dev/null 2>&1 && \
+# free of the superseded native libpq runtime and the base image's package
+# installer toolchain, and prove the packaged selector can construct the
+# admitted adapter in the final image stage.
+RUN ! command -v pip >/dev/null 2>&1 && \
+    ! command -v pip3 >/dev/null 2>&1 && \
+    ! command -v pip3.14 >/dev/null 2>&1 && \
+    ! dpkg-query -W libpq5 >/dev/null 2>&1 && \
     python -c '__import__("pg_llm_batch.postgres_driver_runtime", fromlist=["retained_postgres_driver"]).retained_postgres_driver()'
 
 # Run as a non-root user (trivy DS-0002).
