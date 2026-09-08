@@ -38,6 +38,10 @@ class _Cursor:
             return None
         return self.driver.fetchone_rows.pop(0)
 
+    def row_count(self) -> int:
+        """Report the successful lifecycle write represented by this test double."""
+        return 1
+
 
 class _Connection:
     """Expose a cursor and commit counter for the fake driver."""
@@ -163,7 +167,11 @@ def test_reserve_remote_batch_observation_order_uses_database_sequence(
     assert order == 41
     assert driver.connections == ["postgresql://x"]
     assert driver.executions == [
-        ("SELECT nextval('llm_remote_batch_observation_sequence')", None)
+        (
+            "SELECT set_config('pg_llm_batch.tenant_scope', %s, true)",
+            ("standalone",),
+        ),
+        ("SELECT nextval('llm_remote_batch_observation_sequence')", None),
     ]
 
 
