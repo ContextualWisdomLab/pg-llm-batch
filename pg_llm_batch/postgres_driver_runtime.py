@@ -8,6 +8,8 @@ injection for tests and alternate infrastructure wiring.
 
 from __future__ import annotations
 
+from importlib import import_module
+
 from .postgres_driver_port import PostgresDriverPort
 
 
@@ -25,11 +27,12 @@ def retained_postgres_driver() -> PostgresDriverPort:
     """Return the single admitted concrete driver behind the neutral port.
 
     The production construction boundary verifies the exact pg8000 distribution
-    version and import origin before package code executes. Keeping construction
-    centralized prevents bounded contexts from acquiring a second concrete
-    database-client authority while the package graph is promoted.
+    version and import origin before package code executes. Importing that
+    boundary through :mod:`importlib` preserves genuinely lazy construction and
+    lets tests replace the construction module without a package-level cached
+    attribute becoming a second authority.
     """
-    from . import pg8000_driver_adapter
+    pg8000_driver_adapter = import_module("pg_llm_batch.pg8000_driver_adapter")
 
     try:
         return pg8000_driver_adapter.load_pg8000_driver()
