@@ -37,7 +37,7 @@ class _BootstrapConfigFailureDriver:
 def test_compose_bootstrap_preserves_existing_config_error() -> None:
     """Private DSN assembly must not relabel an established configuration decision."""
     with pytest.raises(ConfigError, match="policy rejected"):
-        compose_bootstrap.build_private_postgres_dsn(
+        compose_bootstrap._build_private_dsn(
             "host=localhost dbname=batch user=batch",
             "secret",
             postgres_driver=_BootstrapConfigFailureDriver(),
