@@ -29,3 +29,11 @@ def test_component_builder_copies_declared_legal_files_before_sync() -> None:
     metadata_copy = "COPY pyproject.toml uv.lock README.md LICENSE NOTICE ./"
     assert metadata_copy in text
     assert text.index(metadata_copy) < text.index("RUN uv sync --frozen --no-dev --no-editable")
+
+
+def test_component_runtime_does_not_install_libpq() -> None:
+    """The pg8000 production image must not retain the superseded libpq runtime."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    runtime_stage = text.split("FROM python:3.14-slim@", maxsplit=2)[-1]
+
+    assert re.search(r"(?:^|\s)libpq5(?:\s|$)", runtime_stage) is None
