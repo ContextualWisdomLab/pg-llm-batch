@@ -180,6 +180,25 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     assert '"pg8000' not in project.casefold()
 
 
+def test_ci_pg8000_candidate_health_matches_selected_runtime_capabilities() -> None:
+    """Candidate parity must not wait for an extension disabled by its image."""
+    workflow = _read(".github/workflows/ci.yml")
+    dockerfile = _read("docker/postgres/Dockerfile")
+    candidate_health_step = next(
+        step
+        for steps in _workflow_job_steps(workflow)
+        for step in steps
+        if _step_top_level_field(step, "name")
+        == "Wait for candidate PostgreSQL health contract"
+    )
+
+    assert "docker build --tag pg-llm-batch-postgres:ci docker/postgres" in workflow
+    assert "FROM postgres-base AS runtime" in dockerfile
+    assert "ENV ENABLE_TIKTOKEN=0" in dockerfile
+    assert "component IN ('database','com_config')" in candidate_health_step
+    assert "pg_tiktoken" not in candidate_health_step
+
+
 def test_ci_pg8000_candidate_pins_and_hashes_full_dependency_closure() -> None:
     """Candidate proof must not resolve mutable transitive wheels at install time."""
     workflow = _read(".github/workflows/ci.yml")
