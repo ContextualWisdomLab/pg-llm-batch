@@ -1,8 +1,9 @@
 """Provider-neutral PostgreSQL driver contracts for runtime decoupling.
 
-The package currently has direct Psycopg coupling at several infrastructure
-boundaries. These abstract ports describe the database capabilities those
-callers actually need without choosing a concrete PostgreSQL driver. Concrete
+The active production-migration lane selects an admitted pg8000 adapter behind
+these ports, while Psycopg remains only an optional development/test baseline on
+that lane. These abstract ports describe the database capabilities bounded
+contexts actually need without choosing a concrete PostgreSQL driver. Concrete
 adapters remain infrastructure concerns and must preserve parameterized SQL,
 transaction semantics, connection-string handling, JSONB adaptation, and
 PostgreSQL error classification.

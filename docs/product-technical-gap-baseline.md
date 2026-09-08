@@ -14,7 +14,7 @@ The repository has no immutable GitHub release at the latest refresh. A green Dr
 
 ## Active delivery lanes
 
-PR #233 remains the dependency-root integration lane and must be judged from its live head and base. Its repository-local deterministic lanes have been green on the unchanged current head, while required central CodeQL/OpenCode/Noema settlement and a structurally satisfiable independent approval path remain non-passing owner prerequisites. Leaf churn, synthetic status, self-approval, and routine administrator bypass are not substitutes.
+PR #233 remains the dependency-root integration lane and must be judged from its live head and base. Its repository-local deterministic lanes have been green on the unchanged current head, while required central CodeQL/OpenCode/Noema settlement and a structurally satisfiable independent approval path remain non-passing owner prerequisites. Leaf churn, synthetic status, self-approval, and routine administrator bypass are not substitutes. The central CodeQL repair has continued to move through its own ordinary owner lineage; pg-llm-batch must consume only protected central behavior and must not copy that mutable workflow source locally.
 
 PR #323 is the active Draft migration lane for issue #322. It established `PostgresDriverPort`, retained the Psycopg implementation as a verification baseline, proved pg8000 1.31.5 behind the neutral port, and has now promoted the admitted pg8000 adapter into the branch's single centralized runtime selector. The branch manifest declares exact `pg8000==1.31.5` as the default runtime dependency; Psycopg 3.3.4 remains only in the `test` optional dependency and `dev` dependency group for legacy-baseline verification. The regenerated lock resolves pg8000 with `python-dateutil` and `scramp`/`asn1crypto` and no Psycopg dependency in the project default runtime edge.
 
@@ -26,14 +26,25 @@ The production construction boundary `load_pg8000_driver()` admits only exact pg
 
 The selector and `pyproject.toml` were promoted before the committed `uv.lock` had converged. Exact head `8972ec9a1f1e94ad40b5490be88e5e53d1dd200b` therefore produced a useful reality RED: frozen/default container installation still followed the stale lock and installed Psycopg rather than pg8000, while the production selector required pg8000. The PostgreSQL/container smoke failed through `retained_postgres_driver()` with the fixed unavailable-driver boundary, and the locked-dependency unit lane also failed before product tests. The failure was not a log-routing defect and did not justify a selector fallback or relaxed frozen install.
 
-A bounded exact-head lock finalizer regenerated and verified the lock, proved that the project default runtime edge contains pg8000 and excludes Psycopg, ran `uv sync --locked --no-dev`, proved exact pg8000 1.31.5 is installed while Psycopg is absent from that production environment, constructed `Pg8000DriverAdapter` through the centralized selector, built the package, committed only `uv.lock`, and removed its own temporary workflow in the same descendant. Commit `e1045b6ed74e848cd99a50b02b42fe731fcc8b9b` is the resulting graph repair. Because that commit was authored by the workflow token, its automatically materialized pull-request CI/Release runs reported `action_required` without jobs; they are not GREEN evidence. A normal user-authored descendant must therefore re-run the full exact-head acceptance on the unchanged repaired graph.
+A bounded exact-head lock finalizer regenerated and verified the lock, proved that the project default runtime edge contains pg8000 and excludes Psycopg, ran `uv sync --locked --no-dev`, proved exact pg8000 1.31.5 is installed while Psycopg is absent from that production environment, constructed `Pg8000DriverAdapter` through the centralized selector, built the package, committed only `uv.lock`, and removed its own temporary workflow in the same descendant. Commit `e1045b6ed74e848cd99a50b02b42fe731fcc8b9b` is the resulting graph repair. Because that commit was authored by the workflow token, its automatically materialized pull-request CI/Release runs reported `action_required` without jobs; they are not GREEN evidence.
+
+The later production-promotion RED at `3e0103fcf0a94327828b62137666f52fa12b6561` then exposed three post-cutover defects: the CLI confidentiality classifier had become coupled to pg8000's intentionally narrower connection grammar, a workflow contract still asserted the pre-promotion dependency state, and the packaged restore smoke directly imported removed Psycopg. Minimal causal repair `2afd5be12847b51c8d476c59f5b328c697069780` separated argv confidentiality from concrete-driver connectability, updated the production dependency assertion, and routed restore acceptance through `retained_postgres_driver()`.
+
+On unchanged `2afd5be12847b51c8d476c59f5b328c697069780`, CI `34256203888` and Release Acceptance `34256203857` both completed successfully. The CI generation covered Python 3.10/3.11/3.12/3.13/3.14 plus the container/PostgreSQL runtime lane; its quality job reported 100% public docstrings, 100% owned production statement/branch coverage (`4632/4632`, `1318/1318`), `1649 passed, 5 deselected`, lock verification, and package build success. This proves the Draft branch's then-exact source, not protected integration or immutable release.
+
+### Transport-security boundary remains separate
+
+Issue #322 is a dependency-license migration and does not close PostgreSQL transport-security issue #123. pg8000 1.31.5 documents `ssl_context=None` as attempting SSL and falling back to a plain socket when the server rejects SSL. The current #323 adapter does not supply an explicit verified `SSLContext`, so its successful PostgreSQL smokes are not evidence that remote transport encryption or server identity is mandatory. PostgreSQL 18 recommends `verify-full` in security-sensitive environments because it requires encryption, CA validation, and hostname matching.
+
+Issue #123 remains the canonical owner for the package-wide transport policy. Its acceptance must cover package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA/hostname success, wrong CA and hostname mismatch, downgrade/plaintext refusal, recovery, and caller-owned connection authority. #323 must not race that broad policy or describe the driver migration as TLS/server-identity completion.
 
 ## Highest-priority gaps
 
 | Gap | Current state | Required next evidence |
 | --- | --- | --- |
-| Commercial PostgreSQL runtime dependency | P0 / active Draft | Re-prove the repaired pg8000 default graph on one exact current #323 head, then carry it through normal protected integration and immutable release evidence. |
-| Production driver contract parity | Active / promoted on branch | Run real PostgreSQL/RLS/recovery/health/migration/package-installed acceptance through the production selector and fail closed on any pg8000 semantic mismatch. |
+| Commercial PostgreSQL runtime dependency | P0 / active Draft / exact branch GREEN observed | Preserve the proven pg8000 default graph through normal prerequisite integration, non-force reconciliation, one unchanged final #323 head, protected merge, and immutable release evidence. Any new #323 commit must reacquire exact-head acceptance. |
+| PostgreSQL transport encryption / server identity | P0 security / canonical issue #123 | Complete the existing owner lane with realistic TLS-enabled PostgreSQL acceptance, explicit downgrade refusal and server-identity verification; do not infer this from #322 or pg8000's opportunistic default. |
+| Production driver contract parity | Active / promoted on branch | Preserve real PostgreSQL/RLS/recovery/health/migration/package-installed acceptance through the production selector and fail closed on any newly proven pg8000 semantic mismatch. |
 | Supply-chain admission | Active / strengthened | Bind exact pg8000 closure hashes, permissive-license evidence, vulnerability results, built package, SBOM, provenance, and reproducibility to the same final artifact/head. |
 | Public commercial-license surface | Child lane #321 | Keep README/docs public wording conservative until #323's pg8000 graph is protected and accepted; then non-force restack #321 and update only its owned public files. |
 | Dependency-root governance | External owner paths / non-passing | #233 still requires authenticated current-head central CodeQL/OpenCode/Noema settlement and a satisfiable independent approval path before normal protected integration. |
@@ -53,7 +64,8 @@ Completion requires all of the following on the final production graph, not only
 - the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
 - retained Psycopg verification dependencies remain outside production/default installation and release runtime evidence;
 - package, license, vulnerability, SBOM, provenance, and reproducibility evidence bind the same immutable artifacts;
-- the final unchanged protected head passes exact-source required checks and then-live review/ruleset requirements without self-approval or gate weakening.
+- the final unchanged protected head passes exact-source required checks and then-live review/ruleset requirements without self-approval or gate weakening; and
+- issue #322 completion is not represented as transport-security completion: remote TLS/server-identity policy remains issue #123 authority until that separate acceptance is integrated and released.
 
 ## Context Fabric boundary
 
@@ -64,3 +76,9 @@ Prompt, response, batch-result, and user data remain pg/product-domain data and 
 ## Evidence discipline
 
 Queued, pending, skipped-required, `action_required`, cancelled, absent, predecessor-head, model-only, and status-only evidence is non-passing. A current blocker is the next work item at its actual owner: pg-owned causes require a realistic RED, the smallest causal repair, focused/full GREEN, and exact-head refetch; foreign-owned causes require advancement of the existing owner path followed by independent pg work. A report, comment, handoff, or documentation-only change is never completion while executable code/test/release work remains.
+
+## References
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: SSL support*. https://www.postgresql.org/docs/18/libpq-ssl.html
+
+Locke, T. (2025). *pg8000 1.31.5: Python interface to PostgreSQL*. PyPI. https://pypi.org/project/pg8000/1.31.5/

@@ -1,10 +1,11 @@
-"""Candidate-only pg8000 PostgreSQL error classification.
+"""pg8000 PostgreSQL error classification shared by admission and runtime use.
 
-The production package still uses Psycopg while the commercial driver migration
-is incomplete. This module proves only narrow pg8000 error semantics needed by
-``PostgresDriverPort`` without importing pg8000 into the committed runtime
-dependency graph. Callers must inject the exact admitted DB-API module from the
-candidate environment; message text is never used as authority.
+The exact pg8000 1.31.5 production adapter now reuses this narrow classifier
+that was originally proved in the candidate lane. Callers inject the admitted
+DB-API module; classification relies on exact exception type plus SQLSTATE and
+never on message text. Keeping the already reviewed classifier avoids a second
+runtime error-authority implementation while protected integration and release
+evidence remain pending.
 """
 
 from __future__ import annotations
