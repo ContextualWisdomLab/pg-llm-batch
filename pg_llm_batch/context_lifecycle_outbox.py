@@ -1164,12 +1164,15 @@ class PostgresContextLifecycleOutboxStore:
         privileged-view/materialized-copy/foreign-data, or executable privileged
         user-schema ``SECURITY DEFINER`` authority, while the canonical relation still
         has RLS enabled and forced with the sole reviewed tenant policy semantics. The
-        live admission is checked before tenant state is bound or durable rows are
-        touched. Security-critical function, relation, and policy authority is
-        explicitly schema-qualified, and ``ONLY`` prevents inherited relations from
-        widening the canonical durable row source if an inheritance edge appears after
-        migration admission. The outbox does not mutate or inherit the caller
-        transaction's ``search_path``.
+        read path pulls forward PostgreSQL's normal ``ACCESS SHARE`` relation lock
+        before live admission and retains it through tenant binding and the consuming
+        ``SELECT``. This keeps the relation identity admitted by the catalog proof from
+        being renamed, replaced, dropped, or otherwise changed by concurrent DDL that
+        requires ``ACCESS EXCLUSIVE`` between admission and the read. Security-critical
+        function, relation, and policy authority is explicitly schema-qualified, and
+        ``ONLY`` prevents inherited relations from widening the canonical durable row
+        source if an inheritance edge appears after migration admission. The outbox
+        does not mutate or inherit the caller transaction's ``search_path``.
         """
         if type(for_update) is not bool:
             raise ValidationError(
@@ -1191,6 +1194,10 @@ class PostgresContextLifecycleOutboxStore:
                 provenance_ref_sha256="0" * 64,
                 evidence_ref_sha256="0" * 64,
             )
+        )
+        cursor.execute(
+            "LOCK TABLE ONLY public.llm_context_lifecycle_outbox "
+            "IN ACCESS SHARE MODE"
         )
         _require_rls_application_role(cursor)
         cursor.execute(
