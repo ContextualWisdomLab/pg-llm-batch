@@ -234,7 +234,7 @@ jobs:
           path: /tmp/pg8000-candidate-py314
           format: cyclonedx-json
           output-file: release-evidence/production-runtime.cdx.json
-          syft-version: 1.51.1
+          syft-version: v1.51.1
           dependency-snapshot: false
           upload-artifact: false
           upload-release-assets: false
