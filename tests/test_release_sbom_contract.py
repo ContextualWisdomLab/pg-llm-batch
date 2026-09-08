@@ -17,7 +17,7 @@ def test_ci_emits_validated_sbom_from_exact_production_environment() -> None:
         "step-security/sbom-action@a2040c89fdf602b1abf5d2f46ac2c83bc6b341b7"
         in workflow
     )
-    assert "syft-version: 1.51.1" in workflow
+    assert "syft-version: v1.51.1" in workflow
     assert "path: /tmp/pg8000-candidate-py314" in workflow
     assert "format: cyclonedx-json" in workflow
     assert "output-file: release-evidence/production-runtime.cdx.json" in workflow
