@@ -19,9 +19,9 @@ class ForeignTableAuthorityCursor:
         assert params is None
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the ordinary-role verdict so only query shape is under test."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the ordinary-role verdict and admitted relation identity."""
+        return (False, False, 4242)
 
 
 def test_role_authority_query_fail_closes_reachable_foreign_tables() -> None:

@@ -19,9 +19,9 @@ class ProgramAuthorityCursor:
         assert params is None
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the safe verdict so only query structure is under test."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the safe verdict and admitted relation identity."""
+        return (False, False, 4242)
 
 
 def test_runtime_admission_reproves_attached_table_program_authority() -> None:

@@ -19,9 +19,9 @@ class CapturingCursor:
         assert params is None
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the safe admission verdict used by the static query contract."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the safe admission verdict and admitted relation identity."""
+        return (False, False, 4242)
 
 
 def test_callable_security_definer_owner_rejects_admin_delegation_authority() -> None:

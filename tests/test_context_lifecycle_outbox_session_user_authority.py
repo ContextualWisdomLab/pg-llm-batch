@@ -18,9 +18,9 @@ class SessionAuthorityCursor:
         """Record one normalized admission query."""
         self.calls.append((" ".join(sql.split()), params or ()))
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Model the current effective role as apparently safe."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Model a safe role pair plus the exact admitted relation identity."""
+        return (False, False, 4242)
 
 
 def test_role_admission_inspects_authenticated_session_set_role_escape() -> None:

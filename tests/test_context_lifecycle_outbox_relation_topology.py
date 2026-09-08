@@ -20,7 +20,9 @@ class RecordingCursor:
         normalized = " ".join(sql.split())
         self.calls.append(normalized)
         if normalized.startswith("SELECT admitted_role.rolsuper"):
-            self.result = (False, False)
+            self.result = (False, False, 4242)
+        elif normalized.startswith("SELECT live_relation.oid"):
+            self.result = (True, *(None for _ in range(11)))
         else:
             self.result = None
 
@@ -43,11 +45,11 @@ def test_load_uses_only_canonical_outbox_relation() -> None:
     relation_reads = [
         sql
         for sql in cursor.calls
-        if "FROM ONLY public.llm_context_lifecycle_outbox" in sql
+        if "ONLY public.llm_context_lifecycle_outbox" in sql
     ]
-    assert relation_reads == [
-        "SELECT evidence_id, event_type, tenant_scope_sha256, subject_ref_sha256, "
-        "authority_ref_sha256, origin_ref_sha256, truth_status, valid_time, system_time, "
-        "provenance_ref_sha256, evidence_ref_sha256 FROM ONLY "
-        "public.llm_context_lifecycle_outbox WHERE tenant_scope = %s AND evidence_id = %s"
-    ]
+    assert len(relation_reads) == 2
+    assert relation_reads[0] == (
+        "LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE"
+    )
+    assert "LEFT JOIN ONLY public.llm_context_lifecycle_outbox AS admitted_outbox" in relation_reads[1]
+    assert "admitted_outbox.tableoid OPERATOR(pg_catalog.=) %s::pg_catalog.oid" in relation_reads[1]

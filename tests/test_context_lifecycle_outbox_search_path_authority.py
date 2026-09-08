@@ -32,11 +32,11 @@ class RecordingCursor:
         parameters = params or ()
         self.calls.append((normalized, parameters))
         if normalized.startswith("SELECT admitted_role.rolsuper"):
-            self.result = (False, False)
+            self.result = (False, False, 4242)
         elif normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
-        elif normalized.startswith("SELECT evidence_id"):
-            self.result = None
+        elif normalized.startswith("SELECT live_relation.oid"):
+            self.result = (True, *(None for _ in range(11)))
         else:
             self.result = None
 
@@ -63,8 +63,9 @@ def test_runtime_qualifies_authority_without_mutating_caller_search_path() -> No
     )
     assert statements[1].startswith("SELECT admitted_role.rolsuper")
     assert statements[2].startswith("SELECT pg_catalog.set_config")
-    # ONLY is intentional: inherited relations are outside the canonical owner table.
-    assert "FROM ONLY public.llm_context_lifecycle_outbox" in statements[3]
+    assert statements[3].startswith("SELECT live_relation.oid")
+    assert "LEFT JOIN ONLY public.llm_context_lifecycle_outbox" in statements[3]
+    assert "admitted_outbox.tableoid" in statements[3]
 
 
 def test_forward_and_rollback_migrations_pin_search_path_inside_do_block() -> None:

@@ -27,11 +27,16 @@ class RoleCursor:
         return self.row
 
 
+def safe_cursor() -> RoleCursor:
+    """Return one safe authority verdict with a valid admitted PostgreSQL OID."""
+    return RoleCursor((False, False, 4242))
+
+
 def test_application_role_requires_separated_forced_rls_authority() -> None:
     """A safe effective/login role closure is admitted through one catalog query."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
-    _require_rls_application_role(cursor)
+    assert _require_rls_application_role(cursor) == 4242
 
     assert len(cursor.calls) == 1
     sql, params = cursor.calls[0]
@@ -47,18 +52,23 @@ def test_application_role_requires_separated_forced_rls_authority() -> None:
 @pytest.mark.parametrize(
     "authority_row",
     (
-        (True, False),
-        (False, True),
-        (True, True),
+        (True, False, 4242),
+        (False, True, 4242),
+        (True, True, 4242),
         None,
         (False,),
-        [False, False],
+        (False, False),
+        (False, False, 0),
+        (False, False, -1),
+        (False, False, 0x100000000),
+        (False, False, True),
+        [False, False, 4242],
     ),
 )
 def test_application_role_rejects_rls_bypass_or_schema_authority(
     authority_row: Any,
 ) -> None:
-    """Any combined unsafe verdict other than exact false/false fails closed."""
+    """Unsafe or malformed role/relation authority verdicts fail closed."""
     cursor = RoleCursor(authority_row)
 
     with pytest.raises(ConfigError, match="separated forced RLS authority"):
@@ -67,7 +77,7 @@ def test_application_role_rejects_rls_bypass_or_schema_authority(
 
 def test_role_authority_query_covers_effective_and_authenticated_role_closure() -> None:
     """Admission must inspect role-selection/admin escape from the authenticated login."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 
@@ -106,7 +116,7 @@ def test_role_authority_query_covers_effective_and_authenticated_role_closure() 
 
 def test_role_authority_query_rejects_admin_option_over_runtime_authority() -> None:
     """Membership administration must not delegate outbox DML or MAINTAIN authority."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 
@@ -128,7 +138,7 @@ def test_role_authority_query_rejects_admin_option_over_runtime_authority() -> N
 
 def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> None:
     """Future-grant delegation must cover DML after an ADMIN-bearing SET path."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 
@@ -150,7 +160,7 @@ def test_role_authority_query_rejects_admin_option_over_set_reachable_dml() -> N
 
 def test_role_authority_query_rejects_executable_security_definer_escape() -> None:
     """Callable definer code must not reintroduce forbidden outbox authority."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 
@@ -208,7 +218,7 @@ def test_role_authority_query_rejects_executable_security_definer_escape() -> No
 
 def test_role_authority_query_rejects_unsafe_security_definer_search_path() -> None:
     """Every callable definer edge must pin catalog lookup ahead of temporary objects."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 
@@ -233,7 +243,7 @@ def test_role_authority_query_rejects_unsafe_security_definer_search_path() -> N
 
 def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
     """Nested owner-rights views must not hide a forced-RLS bypass from the caller."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 
@@ -276,7 +286,7 @@ def test_role_authority_query_rejects_privileged_outbox_view_escape() -> None:
 
 def test_role_authority_query_rejects_reachable_materialized_outbox_copy() -> None:
     """A selectable materialized outbox copy must fail admission even behind a view."""
-    cursor = RoleCursor((False, False))
+    cursor = safe_cursor()
 
     _require_rls_application_role(cursor)
 

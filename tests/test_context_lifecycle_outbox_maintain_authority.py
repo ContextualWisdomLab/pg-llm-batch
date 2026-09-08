@@ -19,9 +19,9 @@ class MaintainAuthorityCursor:
         assert params is None
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the exact admitted verdict shape expected by the boundary."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the exact admitted verdict shape, including relation identity."""
+        return (False, False, 4242)
 
 
 def test_role_admission_rejects_maintain_across_executable_authority_closure() -> None:

@@ -19,9 +19,9 @@ class _RoleCursor:
         assert params in (None, ())
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the exact safe verdict so query construction can complete."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the exact safe verdict and admitted relation identity."""
+        return (False, False, 4242)
 
 
 def test_admin_delegated_set_role_uses_full_forbidden_authority_envelope() -> None:

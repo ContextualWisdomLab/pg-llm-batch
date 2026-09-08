@@ -19,9 +19,9 @@ class CapturingCursor:
         assert params is None
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the safe positive-control verdict expected by package admission."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the safe positive-control verdict and admitted relation identity."""
+        return (False, False, 4242)
 
 
 def test_callable_security_definer_owner_rejects_replication_authority() -> None:

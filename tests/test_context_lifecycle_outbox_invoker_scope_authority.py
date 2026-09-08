@@ -22,9 +22,9 @@ class CapturingCursor:
         assert params is None
         self.sql = " ".join(sql.split())
 
-    def fetchone(self) -> tuple[bool, bool]:
-        """Return the safe catalog verdict used by this static contract."""
-        return (False, False)
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the safe catalog verdict and admitted relation identity."""
+        return (False, False, 4242)
 
 
 def _read_repository_text(relative_path: str) -> str:
