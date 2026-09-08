@@ -71,7 +71,12 @@ class RacingCursor:
 
     def fetchone(self):
         row = self._cursor.fetchone()
-        if not self.attack_attempted and row == (False, False):
+        if (
+            not self.attack_attempted
+            and type(row) is tuple
+            and len(row) == 3
+            and row[:2] == (False, False)
+        ):
             self.attack_attempted = True
             try:
                 with self._attacker_connection.cursor() as attacker:
