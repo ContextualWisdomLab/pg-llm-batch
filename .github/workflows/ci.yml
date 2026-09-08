@@ -167,6 +167,22 @@ jobs:
           db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67  /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl
           4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274  /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
           EOF
+      - name: Download exact pg8000 candidate source distribution
+        shell: bash
+        run: |
+          mkdir -p /tmp/pg8000-candidate-source
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output /tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz \
+            https://files.pythonhosted.org/packages/c8/9a/077ab21e700051e03d8c5232b6bcb9a1a4d4b6242c9a0226df2cfa306414/pg8000-1.31.5.tar.gz
+      - name: Verify pg8000 candidate source digest
+        run: >-
+          echo "46ebb03be52b7a77c03c725c79da2ca281d6e8f59577ca66b17c9009618cae78  /tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz"
+          | sha256sum --check --strict
+      - name: Verify pg8000 candidate source-wheel parity
+        run: >-
+          python tools/verify_candidate_source_wheel_parity.py
+          /tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz
+          /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl
       - name: Verify pg8000 candidate dependency licenses
         run: python tools/verify_candidate_wheel_licenses.py /tmp/pg8000-candidate
       - name: Install exact candidate closure into release Python environments
