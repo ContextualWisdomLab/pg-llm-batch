@@ -33,12 +33,14 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           prune-cache: true
-      - name: Regenerate lock and emit compressed diagnostic
-        shell: bash
+      - name: Regenerate lock
         run: |
           uv lock
           uv lock --check
-          echo LOCK_GZIP_BASE64_BEGIN
-          gzip -9 -c uv.lock | base64 -w0
-          echo
-          echo LOCK_GZIP_BASE64_END
+      - name: Upload regenerated lock
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: regenerated-uv-lock
+          path: uv.lock
+          if-no-files-found: error
+          retention-days: 1
