@@ -1,3 +1,5 @@
+"""Unicode-boundary tests for PostgreSQL driver candidate evidence."""
+
 from __future__ import annotations
 
 import pytest
