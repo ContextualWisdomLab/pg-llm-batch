@@ -138,29 +138,32 @@ BEGIN
     -- Column catalog identity is final row-admission authority as well. CHECK predicates
     -- evaluate UNKNOWN as passing, and UNIQUE admits multiple NULL keys, so post-0008
     -- nullability drift can bypass the payload and replay-identity contract without
-    -- changing any named CHECK/UNIQUE object. Re-prove the complete live column set,
-    -- exact PostgreSQL types/collations, nullability/default presence, generated/identity
-    -- status, and absence of physical dropped-column tombstones. Drift is operator-owned
-    -- reconciliation work; this final verifier never rewrites a live relation silently.
+    -- changing any named CHECK/UNIQUE object. Type modifiers are identity too: the same
+    -- atttypid can retain different coercion/storage semantics, such as unrestricted
+    -- timestamptz versus timestamptz(0). Re-prove the complete live column set, exact
+    -- PostgreSQL types/type modifiers/collations, nullability/default presence,
+    -- generated/identity status, and absence of physical dropped-column tombstones.
+    -- Drift is operator-owned reconciliation work; this final verifier never rewrites
+    -- a live relation silently.
     IF EXISTS (
         SELECT 1
         FROM (
             VALUES
-                ('context_outbox_uuid', 'pg_catalog.uuid'::pg_catalog.regtype, true, true),
-                ('tenant_scope', 'pg_catalog.text'::pg_catalog.regtype, true, true),
-                ('evidence_id', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('event_type', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('tenant_scope_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('subject_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('authority_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('origin_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('truth_status', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('valid_time', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('system_time', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('provenance_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('evidence_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, true, false),
-                ('created_at', 'timestamp with time zone'::pg_catalog.regtype, true, true)
-        ) AS expected(attname, atttypid, attnotnull, atthasdef)
+                ('context_outbox_uuid', 'pg_catalog.uuid'::pg_catalog.regtype, -1, true, true),
+                ('tenant_scope', 'pg_catalog.text'::pg_catalog.regtype, -1, true, true),
+                ('evidence_id', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('event_type', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('tenant_scope_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('subject_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('authority_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('origin_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('truth_status', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('valid_time', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('system_time', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('provenance_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('evidence_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false),
+                ('created_at', 'timestamp with time zone'::pg_catalog.regtype, -1, true, true)
+        ) AS expected(attname, atttypid, atttypmod, attnotnull, atthasdef)
         LEFT JOIN pg_catalog.pg_attribute AS actual
           ON actual.attrelid =
              'public.llm_context_lifecycle_outbox'::pg_catalog.regclass
@@ -169,6 +172,7 @@ BEGIN
          AND NOT actual.attisdropped
         WHERE actual.attnum IS NULL
            OR actual.atttypid IS DISTINCT FROM expected.atttypid
+           OR actual.atttypmod IS DISTINCT FROM expected.atttypmod
            OR actual.attcollation IS DISTINCT FROM (
                SELECT canonical_type.typcollation
                FROM pg_catalog.pg_type AS canonical_type

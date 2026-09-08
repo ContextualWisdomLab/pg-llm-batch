@@ -498,6 +498,58 @@ def _unsafe_outbox_default_sql() -> str:
     )
 
 
+def _unsafe_outbox_column_sql() -> str:
+    """Probe complete live column-catalog authority for the admitted outbox relation."""
+    return (
+        "(EXISTS ("
+        "SELECT 1 FROM (VALUES "
+        "('context_outbox_uuid', 'pg_catalog.uuid'::pg_catalog.regtype, -1, true, true), "
+        "('tenant_scope', 'pg_catalog.text'::pg_catalog.regtype, -1, true, true), "
+        "('evidence_id', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('event_type', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('tenant_scope_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('subject_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('authority_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('origin_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('truth_status', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('valid_time', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('system_time', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('provenance_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('evidence_ref_sha256', 'pg_catalog.text'::pg_catalog.regtype, -1, true, false), "
+        "('created_at', 'timestamp with time zone'::pg_catalog.regtype, -1, true, true)"
+        ") AS expected(attname, atttypid, atttypmod, attnotnull, atthasdef) "
+        "LEFT JOIN pg_catalog.pg_attribute AS actual "
+        "ON actual.attrelid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "AND actual.attname OPERATOR(pg_catalog.=) expected.attname "
+        "AND actual.attnum OPERATOR(pg_catalog.>) 0 "
+        "AND NOT actual.attisdropped "
+        "WHERE actual.attnum IS NULL "
+        "OR actual.atttypid IS DISTINCT FROM expected.atttypid "
+        "OR actual.atttypmod IS DISTINCT FROM expected.atttypmod "
+        "OR actual.attcollation IS DISTINCT FROM ("
+        "SELECT canonical_type.typcollation "
+        "FROM pg_catalog.pg_type AS canonical_type "
+        "WHERE canonical_type.oid OPERATOR(pg_catalog.=) expected.atttypid"
+        ") "
+        "OR actual.attnotnull IS DISTINCT FROM expected.attnotnull "
+        "OR actual.atthasdef IS DISTINCT FROM expected.atthasdef "
+        "OR actual.attgenerated OPERATOR(pg_catalog.<>) '' "
+        "OR actual.attidentity OPERATOR(pg_catalog.<>) ''"
+        ") OR ("
+        "SELECT pg_catalog.count(*) FROM pg_catalog.pg_attribute AS actual "
+        "WHERE actual.attrelid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "AND actual.attnum OPERATOR(pg_catalog.>) 0 "
+        "AND NOT actual.attisdropped"
+        ") OPERATOR(pg_catalog.<>) 14 "
+        "OR EXISTS ("
+        "SELECT 1 FROM pg_catalog.pg_attribute AS dropped_column "
+        "WHERE dropped_column.attrelid OPERATOR(pg_catalog.=) admitted_relation.oid "
+        "AND dropped_column.attnum OPERATOR(pg_catalog.>) 0 "
+        "AND dropped_column.attisdropped"
+        "))"
+    )
+
+
 def _require_rls_application_role(cursor: Any) -> int:
     """Reject unsafe runtime authority and return the exact admitted relation OID."""
     maintain_selectable = _maintain_privilege_sql("selectable_role.oid")
@@ -517,6 +569,7 @@ def _require_rls_application_role(cursor: Any) -> int:
     unsafe_outbox_index = _unsafe_outbox_index_sql()
     unsafe_outbox_constraint = _unsafe_outbox_constraint_sql()
     unsafe_outbox_default = _unsafe_outbox_default_sql()
+    unsafe_outbox_column = _unsafe_outbox_column_sql()
     cursor.execute(
         "SELECT admitted_role.rolsuper "
         "OR admitted_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.<>) 'r' "
@@ -540,6 +593,8 @@ def _require_rls_application_role(cursor: Any) -> int:
         "SELECT 1 FROM pg_catalog.pg_rewrite AS live_outbox_rule "
         "WHERE live_outbox_rule.ev_class OPERATOR(pg_catalog.=) admitted_relation.oid"
         ") "
+        "OR "
+        f"{unsafe_outbox_column} "
         "OR "
         f"{unsafe_outbox_index} "
         "OR "
