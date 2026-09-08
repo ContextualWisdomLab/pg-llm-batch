@@ -32,6 +32,10 @@ class _Cursor:
         """Record one SQL execution and its bound parameters."""
         self.driver.executions.append((sql, params))
 
+    def row_count(self) -> int:
+        """Report the successful lifecycle write represented by this test double."""
+        return 1
+
 
 class _Connection:
     """Expose the small connection surface used by the lifecycle helper."""
