@@ -104,6 +104,23 @@ def test_loader_rejects_shadow_package_before_import(monkeypatch) -> None:
         load_pg8000_driver()
 
 
+def test_loader_rejects_missing_package_spec_before_import(monkeypatch) -> None:
+    """Missing import authority must fail closed before candidate code executes."""
+    _install_admitted_distribution_metadata(monkeypatch)
+    monkeypatch.setattr(pg8000_driver_adapter, "find_spec", lambda name: None, raising=False)
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "import_module",
+        lambda name: pytest.fail("unresolved package code must not execute"),
+    )
+
+    with pytest.raises(
+        Pg8000DriverUnavailableError,
+        match="^PostgreSQL driver origin is not admitted$",
+    ):
+        load_pg8000_driver()
+
+
 def test_loader_rejects_unadmitted_version_before_import(monkeypatch) -> None:
     monkeypatch.setattr(
         pg8000_driver_adapter,
@@ -131,6 +148,32 @@ def test_loader_normalizes_missing_distribution_without_import(monkeypatch) -> N
         pg8000_driver_adapter,
         "distribution_version",
         missing_distribution,
+    )
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "import_module",
+        lambda name: pytest.fail("missing distributions must not be imported"),
+    )
+
+    with pytest.raises(
+        Pg8000DriverUnavailableError,
+        match="^PostgreSQL driver is unavailable$",
+    ):
+        load_pg8000_driver()
+
+
+def test_loader_normalizes_distribution_disappearing_before_origin_check(monkeypatch) -> None:
+    """Metadata disappearance between version and origin checks stays content-free."""
+    _install_admitted_distribution_metadata(monkeypatch)
+
+    def missing_distribution(package: str):
+        raise PackageNotFoundError(package)
+
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "distribution",
+        missing_distribution,
+        raising=False,
     )
     monkeypatch.setattr(
         pg8000_driver_adapter,
