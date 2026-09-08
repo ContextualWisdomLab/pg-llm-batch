@@ -82,16 +82,20 @@ def test_load_in_transaction_requires_exact_boolean_lock_authority(
 
 
 def test_load_in_transaction_accepts_exact_false_lock_authority() -> None:
-    """The ordinary unlocked read retains its transaction-local tenant binding."""
+    """Ordinary reads retain relation authority without a row-update lock."""
     cursor = RecordingCursor()
 
     assert _store().load_in_transaction(cursor, "event-1", for_update=False) is None
 
-    assert len(cursor.calls) == 3
-    assert cursor.calls[0][0].startswith("SELECT admitted_role.rolsuper")
-    assert cursor.calls[1][0].startswith("SELECT pg_catalog.set_config")
-    assert "pg_advisory_xact_lock" not in cursor.calls[2][0]
-    assert "FOR UPDATE" not in cursor.calls[2][0]
+    assert len(cursor.calls) == 4
+    assert cursor.calls[0] == (
+        "LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE",
+        None,
+    )
+    assert cursor.calls[1][0].startswith("SELECT admitted_role.rolsuper")
+    assert cursor.calls[2][0].startswith("SELECT pg_catalog.set_config")
+    assert "pg_advisory_xact_lock" not in cursor.calls[3][0]
+    assert "FOR UPDATE" not in cursor.calls[3][0]
 
 
 def test_load_in_transaction_serializes_identity_without_row_update_lock() -> None:
@@ -100,14 +104,18 @@ def test_load_in_transaction_serializes_identity_without_row_update_lock() -> No
 
     assert _store().load_in_transaction(cursor, "event-1", for_update=True) is None
 
-    assert len(cursor.calls) == 4
-    assert cursor.calls[0][0].startswith("SELECT admitted_role.rolsuper")
-    assert cursor.calls[1][0].startswith("SELECT pg_catalog.set_config")
-    assert cursor.calls[2] == (
+    assert len(cursor.calls) == 5
+    assert cursor.calls[0] == (
+        "LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE",
+        None,
+    )
+    assert cursor.calls[1][0].startswith("SELECT admitted_role.rolsuper")
+    assert cursor.calls[2][0].startswith("SELECT pg_catalog.set_config")
+    assert cursor.calls[3] == (
         "SELECT pg_catalog.pg_advisory_xact_lock(%s)",
         (_event_identity_lock_key("standalone", "event-1"),),
     )
-    assert "FOR UPDATE" not in cursor.calls[3][0]
+    assert "FOR UPDATE" not in cursor.calls[4][0]
 
 
 def test_event_identity_lock_key_is_stable_signed_bigint() -> None:
