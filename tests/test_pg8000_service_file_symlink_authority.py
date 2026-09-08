@@ -71,3 +71,33 @@ def test_candidate_service_file_rejects_path_substitution_before_open(
         match="PostgreSQL connection selector is invalid",
     ):
         Pg8000CandidateServiceFileResolver(service_file)("analytics")
+
+
+def test_candidate_service_file_normalizes_open_failure_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed if the selected regular path cannot be opened after preflight."""
+    service_file = tmp_path / "pg_service.conf"
+    service_file.write_text(
+        "[analytics]\nhost=selected.example\nport=5432\ndbname=batch\nuser=batch\n",
+        encoding="utf-8",
+    )
+
+    def failing_open(
+        _path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        _flags: int,
+        _mode: int = 0o777,
+        *,
+        dir_fd: int | None = None,
+    ) -> int:
+        del dir_fd
+        raise OSError("synthetic path-open failure")
+
+    monkeypatch.setattr(os, "open", failing_open)
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        Pg8000CandidateServiceFileResolver(service_file)("analytics")
