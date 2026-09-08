@@ -8,7 +8,7 @@ pg-llm-batch owns durable PostgreSQL-backed asynchronous LLM batch preparation, 
 
 ## Protected-main truth
 
-The protected integration branch is `main`. At the latest refresh it was `bdff1273d3885dedc5187632e1c8838b470c9b6d`. The package remains version `0.1.0`, and its production dependency graph still includes `psycopg[binary]>=3.1`. Therefore issue #322, replacement of the LGPL-family Psycopg runtime dependency, remains an open commercial-policy defect. No public release should claim that the current `pip install .` runtime graph is commercially clean while that defect remains.
+The protected integration branch is `main`. At the latest refresh it was `5913c4bad79d6bc29d7cc1c624abb7db2ea6a77c`. The package remains version `0.1.0`, and its production dependency graph still includes `psycopg[binary]>=3.1`. Therefore issue #322, replacement of the LGPL-family Psycopg runtime dependency, remains an open commercial-policy defect. No public release should claim that the current `pip install .` runtime graph is commercially clean while that defect remains.
 
 The repository has no immutable GitHub release at the latest refresh. A release is not ready merely because a branch is green: one exact protected head must pass the repository's applicable CI, security, coverage/docstring, package, SBOM/provenance, reproducibility, migration/rollback/recovery, operability, and review gates before version/tag/publication evidence is promoted.
 
