@@ -230,4 +230,59 @@ def test_psycopg_cursor_fail_closed_edges() -> None:
         cursor.row_count()
 
 
-# Remaining file content intentionally unchanged below this point.
+class _ClosedShape:
+    """Expose an invalid non-boolean Psycopg closed-state signal."""
+
+    closed = 1
+
+
+def test_psycopg_connection_rejects_non_boolean_closed_state() -> None:
+    """Closed-state authority cannot rely on integer truthiness."""
+    with pytest.raises(PsycopgDriverAdapterError, match="closed state"):
+        PsycopgConnectionAdapter(_ClosedShape()).is_closed()
+
+
+def test_psycopg_conninfo_wrappers_narrow_programming_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only conninfo grammar failures become the neutral invalid-selector category."""
+    def fail_parse(_dsn: str) -> dict[str, str]:
+        raise ProgrammingError("bad")
+
+    def fail_render(**_params: str) -> str:
+        raise ProgrammingError("bad")
+
+    monkeypatch.setattr(psycopg_adapter, "conninfo_to_dict", fail_parse)
+    monkeypatch.setattr(psycopg_adapter, "make_conninfo", fail_render)
+    adapter = PsycopgDriverAdapter()
+    with pytest.raises(PsycopgInvalidConninfoError):
+        adapter.parse_conninfo("bad")
+    with pytest.raises(PsycopgInvalidConninfoError):
+        adapter.make_conninfo({"host": "bad"})
+
+
+def test_runtime_selector_distinguishes_missing_psycopg_from_other_import_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Optional-client absence is redacted while unrelated package defects propagate."""
+    original_import = builtins.__import__
+
+    def missing_psycopg(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name.endswith("psycopg_driver_adapter"):
+            error = ModuleNotFoundError("missing psycopg")
+            error.name = "psycopg"
+            raise error
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_psycopg)
+    with pytest.raises(runtime.PostgresDriverUnavailableError, match="unavailable"):
+        runtime.retained_postgres_driver()
+
+    def missing_other(name: str, *args: Any, **kwargs: Any) -> Any:
+        if name.endswith("psycopg_driver_adapter"):
+            error = ModuleNotFoundError("missing other")
+            error.name = "other_dependency"
+            raise error
+        return original_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", missing_other)
+    with pytest.raises(ModuleNotFoundError):
+        runtime.retained_postgres_driver()
