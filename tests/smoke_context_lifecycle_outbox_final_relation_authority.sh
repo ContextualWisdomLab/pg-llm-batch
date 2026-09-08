@@ -2,6 +2,7 @@
 set -euo pipefail
 
 image="pg-llm-batch-postgres:ci"
+component_image="pg-llm-batch:ci"
 container="pg-llm-batch-outbox-final-relation-authority-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/06_context_lifecycle_outbox_row_admission_authority.sql"
 
@@ -9,6 +10,41 @@ cleanup() {
   docker rm --force "${container}" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+
+assert_runtime_accepts() {
+  docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_relation_runtime@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+assert store.load("runtime-relation-missing") is None
+PY
+}
+
+assert_runtime_rejected() {
+  local description="$1"
+  docker run --rm -i --network "container:${container}" "${component_image}" python - "${description}" <<'PY'
+import sys
+
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_relation_runtime@127.0.0.1/postgres",
+    tenant_scope="tenant-a",
+    tenant_scope_sha256="a" * 64,
+)
+try:
+    store.load("runtime-relation-missing")
+except ConfigError as exc:
+    assert "separated forced RLS authority" in str(exc)
+else:
+    raise AssertionError(f"runtime admitted post-migration {sys.argv[1]} drift")
+PY
+}
 
 docker run --detach \
   --name "${container}" \
@@ -33,10 +69,23 @@ if [[ "${ready}" != "1" ]]; then
   exit 1
 fi
 
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE cwl_llm_batch_outbox_relation_owner LOGIN NOSUPERUSER NOBYPASSRLS;
+CREATE ROLE cwl_llm_batch_outbox_relation_runtime LOGIN NOSUPERUSER NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_relation_owner, cwl_llm_batch_outbox_relation_runtime;
+ALTER TABLE public.llm_context_lifecycle_outbox OWNER TO cwl_llm_batch_outbox_relation_owner;
+GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox TO cwl_llm_batch_outbox_relation_runtime;
+SQL
+
+# Prove the fresh canonical relation remains usable by the same non-privileged runtime
+# role before each hostile relation-authority specimen is introduced.
+assert_runtime_accepts
+
 # Migration 0008 has already completed in this image. A restore/operator can later
 # weaken the persistence contract without changing the table's columns, constraints,
-# RLS policies, defaults, triggers/rules, or indexes. Final admission must therefore
-# prove current relation durability instead of trusting migration history.
+# RLS policies, defaults, triggers/rules, or indexes. Final and continuing runtime
+# admission must therefore prove current relation durability instead of trusting
+# migration history.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'ALTER TABLE public.llm_context_lifecycle_outbox SET UNLOGGED;'
 
@@ -46,6 +95,7 @@ if [[ "${persistence}" != "u" ]]; then
   echo "SET UNLOGGED did not reproduce relation durability drift" >&2
   exit 1
 fi
+assert_runtime_rejected "UNLOGGED durability"
 
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/tmp/pg-llm-batch-outbox-final-relation.out 2>&1; then
@@ -66,11 +116,12 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'ALTER TABLE public.llm_context_lifecycle_outbox SET LOGGED;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+assert_runtime_accepts
 
 # Inheritance is a second post-convergence relation-topology authority. PostgreSQL
 # parent scans can recurse into children while PK/UNIQUE constraints do not become a
-# cross-hierarchy replay arbiter. A child attached after 0008 must therefore make the
-# final verifier fail closed as well.
+# cross-hierarchy replay arbiter. A child attached after 0008 must therefore make both
+# the continuing runtime and final verifier fail closed.
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'CREATE TABLE public.llm_context_lifecycle_outbox_post_convergence_shadow () INHERITS (public.llm_context_lifecycle_outbox);'
 
@@ -80,6 +131,7 @@ if [[ "${inheritance_edges}" == "0" ]]; then
   echo "inheritance specimen did not create relation-topology drift" >&2
   exit 1
 fi
+assert_runtime_rejected "inheritance topology"
 
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/tmp/pg-llm-batch-outbox-final-inheritance.out 2>&1; then
@@ -98,6 +150,7 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'DROP TABLE public.llm_context_lifecycle_outbox_post_convergence_shadow;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+assert_runtime_accepts
 
 # Table access methods are executable storage authority. PostgreSQL permits a
 # superuser/operator to register an additional table AM and ALTER an existing table to
@@ -115,6 +168,7 @@ if [[ "${access_method}" != "pg_llm_batch_shadow_heap" ]]; then
   echo "SET ACCESS METHOD did not reproduce relation storage-authority drift" >&2
   exit 1
 fi
+assert_runtime_rejected "table access-method"
 
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/tmp/pg-llm-batch-outbox-final-access-method.out 2>&1; then
@@ -135,3 +189,4 @@ docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   'DROP ACCESS METHOD pg_llm_batch_shadow_heap;'
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+assert_runtime_accepts
