@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import ModuleType
 from typing import Any
 
 import pytest
@@ -18,7 +19,17 @@ from pg_llm_batch.postgres_driver_candidate import (
     PostgresDriverCandidateEvidence,
     PostgresDriverCandidateEvidenceError,
 )
-from tests.test_postgres_driver_edge_coverage import _candidate_module
+
+
+def _candidate_module() -> ModuleType:
+    """Build exact DB-API error authority without importing the candidate package."""
+    module = ModuleType("candidate_pg8000_errors")
+
+    class ProgrammingErrorCandidate(Exception):
+        pass
+
+    module.ProgrammingError = ProgrammingErrorCandidate
+    return module
 
 
 class _TransactionConnection:
