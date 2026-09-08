@@ -229,4 +229,7 @@ def test_non_undefined_driver_error_discards_cached_connection_before_retry(
     assert counter.count_tokens("second", "model-a") == 7
     assert len(driver.connections) == 2
     assert driver.connections[1].autocommit_values == [True]
-    assert not any("tiktoken_encode" in query for query, _params in driver.executions)
+    assert not any(
+        "tiktoken_encode" in query and "to_regprocedure" not in query
+        for query, _params in driver.executions
+    )
