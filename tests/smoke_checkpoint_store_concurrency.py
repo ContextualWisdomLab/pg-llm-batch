@@ -7,12 +7,11 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
-import psycopg
-
 from pg_llm_batch.checkpoint_store import (
     CheckpointConflictError,
     PostgresBatchResultCheckpointStore,
 )
+from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver
 from pg_llm_batch.result_streaming import BatchResultCheckpoint
 
 DSN = os.environ.get(
@@ -117,8 +116,9 @@ def assert_caller_transaction_contract(store: PostgresBatchResultCheckpointStore
     """Prove business effect and checkpoint share caller commit/rollback authority."""
     rolled_back = checkpoint("batch-transaction-rollback", line_count=1, digest_character="4")
     committed = checkpoint("batch-transaction-commit", line_count=1, digest_character="5")
+    driver = retained_postgres_driver()
 
-    with psycopg.connect(DSN) as connection:
+    with driver.connect(DSN) as connection:
         with connection.cursor() as cursor:
             cursor.execute(
                 "CREATE TEMP TABLE checkpoint_acceptance_effects ("
@@ -160,7 +160,7 @@ def assert_caller_transaction_contract(store: PostgresBatchResultCheckpointStore
 
 
 def main() -> None:
-    """Run the live checkpoint-store acceptance contract."""
+    """Run the live checkpoint-store acceptance contract through the admitted driver."""
     store = PostgresBatchResultCheckpointStore(DSN)
     assert_initial_race_contract(store)
     assert_compare_and_swap_contract(store)
