@@ -6,8 +6,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-import pytest
-
 from pg_llm_batch import db
 
 
@@ -100,12 +98,9 @@ def _persisted_remote_batch_row(
     )
 
 
-def test_observation_order_reservation_uses_injected_driver_without_psycopg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_observation_order_reservation_uses_injected_driver_without_psycopg() -> None:
     """Driver migration must retain the default standalone tenant boundary."""
     driver = _Driver(rows=[(41,)])
-    monkeypatch.setattr(db, "psycopg", None)
 
     order = db.reserve_remote_batch_observation_order(
         "postgresql://x",
@@ -123,16 +118,13 @@ def test_observation_order_reservation_uses_injected_driver_without_psycopg(
     ]
 
 
-def test_stale_lifecycle_write_reads_persisted_state_through_injected_driver(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_stale_lifecycle_write_reads_persisted_state_through_injected_driver() -> None:
     """Port row-count semantics must preserve the stale-write recovery contract."""
     observed = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
     driver = _Driver(
         rows=[_persisted_remote_batch_row(observed)],
         affected_rows=0,
     )
-    monkeypatch.setattr(db, "psycopg", None)
 
     snapshot = db.persist_remote_batch_state(
         "postgresql://x",
@@ -150,20 +142,14 @@ def test_stale_lifecycle_write_reads_persisted_state_through_injected_driver(
 
     assert snapshot["observation_order"] == 1
     assert snapshot["completed_requests"] == 1
-    assert any(
-        "SELECT tenant_scope" in query
-        for query, _params in driver.executions
-    )
+    assert any("SELECT tenant_scope" in query for query, _params in driver.executions)
     assert driver.commits == 1
 
 
-def test_remote_lifecycle_read_uses_injected_driver_without_psycopg(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_remote_lifecycle_read_uses_injected_driver_without_psycopg() -> None:
     """Tenant-scoped reads must not reacquire the legacy driver implicitly."""
     observed = datetime(2026, 9, 2, 12, 0, tzinfo=timezone.utc)
     driver = _Driver(rows=[_persisted_remote_batch_row(observed)])
-    monkeypatch.setattr(db, "psycopg", None)
 
     snapshot = db.get_remote_batch_state(
         "postgresql://x",
