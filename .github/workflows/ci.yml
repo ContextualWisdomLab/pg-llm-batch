@@ -114,10 +114,24 @@ jobs:
         run: bash tests/smoke_postgres_container_logging.sh
       - name: Run legacy SQL cleanup integration smoke
         run: bash tests/smoke_legacy_sql_cleanup.sh
+      - name: Set up Python 3.10 for candidate parity
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+      - name: Create Python 3.10 candidate environment
+        run: python -m venv /tmp/pg8000-candidate-py310
+      - name: Set up Python 3.12 for candidate parity
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Create Python 3.12 candidate environment
+        run: python -m venv /tmp/pg8000-candidate-py312
       - name: Set up Python 3.14 for candidate parity
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+      - name: Create Python 3.14 candidate environment
+        run: python -m venv /tmp/pg8000-candidate-py314
       - name: Set up uv for candidate parity
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
@@ -145,16 +159,26 @@ jobs:
           EOF
       - name: Verify pg8000 candidate dependency licenses
         run: python tools/verify_candidate_wheel_licenses.py /tmp/pg8000-candidate
-      - name: Install exact candidate closure into the CI environment
-        run: >-
-          uv pip install --python .venv/bin/python --no-deps
-          /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl
-          /tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl
-          /tmp/pg8000-candidate/scramp-1.4.17-py3-none-any.whl
-          /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl
-          /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
-      - name: Verify candidate environment dependency consistency
-        run: uv pip check --python .venv/bin/python
+      - name: Install exact candidate closure into release Python environments
+        shell: bash
+        run: |
+          for interpreter in \
+            /tmp/pg8000-candidate-py310/bin/python \
+            /tmp/pg8000-candidate-py312/bin/python \
+            /tmp/pg8000-candidate-py314/bin/python; do
+            uv pip install --python "$interpreter" --no-deps \
+              /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl \
+              /tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl \
+              /tmp/pg8000-candidate/scramp-1.4.17-py3-none-any.whl \
+              /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl \
+              /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
+          done
+      - name: Verify pg8000 candidate Python 3.10 environment
+        run: uv pip check --python /tmp/pg8000-candidate-py310/bin/python
+      - name: Verify pg8000 candidate Python 3.12 environment
+        run: uv pip check --python /tmp/pg8000-candidate-py312/bin/python
+      - name: Verify pg8000 candidate Python 3.14 environment
+        run: uv pip check --python /tmp/pg8000-candidate-py314/bin/python
       - name: Start candidate PostgreSQL runtime
         shell: bash
         run: |
@@ -202,8 +226,12 @@ jobs:
           done
           docker logs "$PG8000_CANDIDATE_CONTAINER"
           exit 1
-      - name: Run real pg8000 candidate PostgreSQL smoke
-        run: uv run --no-sync python tests/smoke_pg8000_candidate_postgres.py
+      - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.10
+        run: PYTHONPATH=. /tmp/pg8000-candidate-py310/bin/python tests/smoke_pg8000_candidate_postgres.py
+      - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.12
+        run: PYTHONPATH=. /tmp/pg8000-candidate-py312/bin/python tests/smoke_pg8000_candidate_postgres.py
+      - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.14
+        run: PYTHONPATH=. /tmp/pg8000-candidate-py314/bin/python tests/smoke_pg8000_candidate_postgres.py
       - name: Tear down candidate PostgreSQL runtime
         if: ${{ always() }}
         shell: bash
