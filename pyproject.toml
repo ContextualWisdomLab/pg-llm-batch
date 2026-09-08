@@ -13,7 +13,7 @@ license-files = ["LICENSE", "NOTICE"]
 authors = [{ name = "ContextualWisdomLab" }]
 keywords = ["postgres", "llm", "batch", "pg_tiktoken", "tokenization"]
 dependencies = [
-    "psycopg[binary]>=3.1",
+    "pg8000==1.31.5",
     "aiohttp>=3.14.3",
 ]
 
