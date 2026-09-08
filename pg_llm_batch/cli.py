@@ -18,7 +18,7 @@ Subcommands:
 
 The DSN is resolved from --dsn or the PG_LLM_BATCH_DSN bootstrap env var only.
 Command-line DSNs may select a database but may not carry password/private-key
-credentials; use standard libpq secret mechanisms outside process argv. All
+credentials; use standard PostgreSQL secret mechanisms outside process argv. All
 other config/secrets come from the database KV stores. Secret plaintext and
 count-tokens prompt content are never accepted as command-line arguments.
 """
@@ -30,11 +30,13 @@ import asyncio
 import getpass
 import json
 import re
+import shlex
 import sys
 import warnings
 from contextlib import ExitStack
 from functools import partial
 from typing import List, Optional
+from urllib.parse import unquote_plus, urlsplit
 
 from . import db, postgres_driver_runtime
 from .batch_api_client import BatchAPIClient, config_credentials_provider
@@ -57,6 +59,8 @@ CLI_DSN_SENSITIVE_PARAMETERS = frozenset(
         "oauth_client_secret",
     }
 )
+_CLI_POSTGRES_URI_SCHEMES = frozenset({"postgres", "postgresql"})
+_CLI_CONNINFO_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 
 
 class _RedactingArgumentParser(argparse.ArgumentParser):
@@ -72,14 +76,83 @@ class _RedactingArgumentParser(argparse.ArgumentParser):
         super().error(redacted_message)
 
 
+class _CliDsnSyntaxError(ValueError):
+    """Identify malformed CLI selector syntax without retaining rejected content."""
+
+
 def _default_postgres_driver() -> PostgresDriverPort:
     """Delegate concrete-driver construction to the canonical runtime selector.
 
-    CLI parsing owns credential-safe argument validation, not the concrete
-    PostgreSQL client choice. A single selector keeps migration cutover atomic
-    across CLI, service, persistence, and Compose surfaces.
+    Runtime connection ownership remains centralized even though CLI argv
+    confidentiality is intentionally classified without concrete-driver
+    connectability rules.
     """
     return postgres_driver_runtime.retained_postgres_driver()
+
+
+def _default_cli_dsn_parameter_names(value: str) -> frozenset[str]:
+    """Classify PostgreSQL selector keys without choosing a concrete DB client.
+
+    This parser is deliberately narrower than a connection parser: it recognizes
+    parameter names needed for argv confidentiality policy while leaving backend
+    compatibility and service resolution to the admitted runtime driver. Values
+    are never normalized into a replacement selector or returned to callers.
+    """
+    stripped = value.strip()
+    if not stripped:
+        raise _CliDsnSyntaxError
+
+    scheme_match = re.match(r"(?i)^([a-z][a-z0-9+.-]*):", stripped)
+    if scheme_match is not None:
+        scheme = scheme_match.group(1).casefold()
+        if scheme not in _CLI_POSTGRES_URI_SCHEMES or not stripped[
+            len(scheme) :
+        ].startswith("://"):
+            raise _CliDsnSyntaxError
+        try:
+            parsed = urlsplit(stripped)
+            _ = parsed.hostname
+        except ValueError:
+            raise _CliDsnSyntaxError from None
+
+        names: set[str] = set()
+        if parsed.password is not None:
+            names.add("password")
+        for query_item in parsed.query.split("&"):
+            if not query_item:
+                continue
+            encoded_key = query_item.split("=", 1)[0]
+            names.add(unquote_plus(encoded_key).casefold())
+        return frozenset(names)
+
+    lexer = shlex.shlex(value, posix=True)
+    lexer.whitespace_split = True
+    lexer.commenters = ""
+    try:
+        tokens = list(lexer)
+    except ValueError:
+        raise _CliDsnSyntaxError from None
+
+    names: set[str] = set()
+    token_index = 0
+    while token_index < len(tokens):
+        token = tokens[token_index]
+        if "=" in token:
+            key, _ignored_value = token.split("=", 1)
+            token_index += 1
+        elif token_index + 1 < len(tokens) and tokens[token_index + 1] == "=":
+            key = token
+            token_index += 2
+            if token_index < len(tokens) and "=" not in tokens[token_index]:
+                token_index += 1
+        else:
+            raise _CliDsnSyntaxError
+        if _CLI_CONNINFO_KEY.fullmatch(key) is None:
+            raise _CliDsnSyntaxError
+        names.add(key.casefold())
+    if not names:
+        raise _CliDsnSyntaxError
+    return frozenset(names)
 
 
 def _validate_cli_dsn(
@@ -87,20 +160,23 @@ def _validate_cli_dsn(
     *,
     postgres_driver: PostgresDriverPort | None = None,
 ) -> str:
-    """Accept valid PostgreSQL selectors without concrete-driver coupling."""
-    driver = (
-        postgres_driver
-        if postgres_driver is not None
-        else _default_postgres_driver()
-    )
-    try:
-        parameters = driver.parse_conninfo(value)
-    except Exception as exc:
-        if driver.is_invalid_conninfo(exc):
+    """Accept credential-free selectors without concrete-driver coupling."""
+    if postgres_driver is None:
+        try:
+            parameters = _default_cli_dsn_parameter_names(value)
+        except _CliDsnSyntaxError:
             raise argparse.ArgumentTypeError(
                 "Postgres DSN must be valid connection information"
             ) from None
-        raise
+    else:
+        try:
+            parameters = postgres_driver.parse_conninfo(value)
+        except Exception as exc:
+            if postgres_driver.is_invalid_conninfo(exc):
+                raise argparse.ArgumentTypeError(
+                    "Postgres DSN must be valid connection information"
+                ) from None
+            raise
     if CLI_DSN_SENSITIVE_PARAMETERS.intersection(parameters):
         raise argparse.ArgumentTypeError(
             "Credential-bearing Postgres DSNs are not accepted in --dsn; "

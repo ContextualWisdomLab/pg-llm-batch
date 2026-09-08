@@ -5,8 +5,7 @@ from __future__ import annotations
 
 import os
 
-import psycopg
-
+from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver
 from pg_llm_batch.postgres_restore_acceptance import (
     PostgresRestoreAcceptanceError,
     inspect_postgres_restore_catalog,
@@ -38,8 +37,9 @@ def _require_incomplete_catalog(connection: object) -> None:
 
 def main() -> None:
     """Prove packaged indexes pass and same-name wrong-shape indexes fail closed."""
-    with psycopg.connect(DSN) as connection:
-        connection.autocommit = True
+    connection = retained_postgres_driver().connect(DSN)
+    try:
+        connection.set_autocommit(True)
         _require_complete_catalog(connection)
         with connection.cursor() as cursor:
             cursor.execute(
@@ -87,6 +87,8 @@ def main() -> None:
                 "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)"
             )
         _require_complete_catalog(connection)
+    finally:
+        connection.close()
 
 
 if __name__ == "__main__":

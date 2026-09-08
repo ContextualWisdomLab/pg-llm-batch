@@ -177,7 +177,14 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     assert "PG_LLM_BATCH_POSTGRES_PASSWORD=$candidate_password" not in workflow
     assert "PG8000_CANDIDATE_PASSWORD_FILE" in workflow
     assert "Tear down candidate PostgreSQL runtime" in workflow
-    assert '"pg8000' not in project.casefold()
+    project_section = re.search(
+        r"(?ms)^\[project\]\n(?P<body>.*?)(?=^\[|\Z)",
+        project,
+    )
+    assert project_section is not None
+    production_dependencies = project_section.group("body").casefold()
+    assert '"pg8000==1.31.5"' in production_dependencies
+    assert '"psycopg' not in production_dependencies
 
 
 def test_ci_pg8000_candidate_keeps_0600_secrets_for_both_runtime_identities() -> None:
