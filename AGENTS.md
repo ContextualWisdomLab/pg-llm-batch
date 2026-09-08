@@ -30,10 +30,17 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   routines are part of this boundary too: if a selectable principal has schema
   `USAGE` plus routine `EXECUTE`, admission must inspect that invoker routine's
   `proconfig` directly and reject a function-local `pg_llm_batch.tenant_scope`
-  setting before tenant binding or outbox data I/O. Do not fold this check into
-  the `SECURITY DEFINER` owner closure: an invoker routine executes with the
-  caller/selectable principal's authority, whereas a definer routine switches to
-  its owner principal.
+  setting before tenant binding or outbox data I/O. Keep the direct caller scan
+  separate from `SECURITY DEFINER` owner traversal because an invoker routine
+  executes with the current invoker principal whereas a definer routine switches
+  to its owner principal. Once admission enters a callable `SECURITY DEFINER`
+  owner, however, that owner is the current invoker principal for any
+  `SECURITY INVOKER` routine it can call. The definer-owner closure must therefore
+  also scan every non-system-schema invoker routine that discovered owner can
+  execute through schema `USAGE` plus routine `EXECUTE` and reject a package
+  tenant-scope `proconfig` override before accepting the definer path. This is not
+  owner-following for the invoker routine; the probe stays bound to the principal
+  that PostgreSQL will actually use while the invoker executes.
 - Keep PostgreSQL row-level security enabled and forced. Application connections
   must remain `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`
   across both effective `CURRENT_USER` and authenticated `SESSION_USER`
