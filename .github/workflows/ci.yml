@@ -137,7 +137,17 @@ jobs:
         with:
           prune-cache: true
       - name: Install locked project dependencies
-        run: uv sync --locked
+        shell: bash
+        run: |
+          uv sync --locked
+          for environment in \
+            /tmp/pg8000-candidate-py310 \
+            /tmp/pg8000-candidate-py312 \
+            /tmp/pg8000-candidate-py314; do
+            UV_PROJECT_ENVIRONMENT="$environment" \
+              uv sync --locked --no-dev --no-install-project \
+              --python "$environment/bin/python"
+          done
       - name: Download exact pg8000 candidate dependency closure
         run: >-
           python -m pip download --no-deps --only-binary=:all:
