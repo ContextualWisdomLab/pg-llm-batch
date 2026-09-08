@@ -28,11 +28,11 @@ PR #323 is the active Draft migration lane for issue #322. It established `Postg
 
 The branch preserves real PostgreSQL acceptance for parameter binding, no-parameter DB-API execution, tuple-row normalization, finite fetch budgets, exact/unknown row counts, transaction/context ownership, terminal connection state, thread-affine use, tenant/RLS/session behavior, UUID/timestamp round-trip, SQLSTATE classification, cleanup precedence, JSONB adaptation, packaged restore-catalog behavior, server-terminated-session recovery, exact dependency/source digests, license evidence, source-wheel parity, package-installed execution, and Python 3.10/3.12/3.14 PostgreSQL runtime smokes.
 
-The component image now follows the same production dependency decision. Exact repair `6dbc8461ca0549327077ed16bd2d4763466069eb` installs only `curl` from the pinned Debian snapshot, fails the image build if `libpq5` remains installed transitively, and constructs `retained_postgres_driver()` from the copied no-dev environment in the final image stage. Exact CI `34289670789` and Release Acceptance `34289670788` are terminal success on that repair head. This baseline commit is a new documentation descendant and must reacquire its own exact-head acceptance before #323 is current-head GREEN again.
+The component image follows the same production decision. Exact source repair `b83c6ca7dce1f553c549a1be94bb880274a089ee` removes the stale Python 3.11 cleanup inherited after the image moved to Python 3.14, deletes the Python 3.14 pip/setuptools/wheel packaging toolchain from the final image, fails image construction if `pip`, `pip3`, `pip3.14`, or Debian `libpq5` remain available, and still proves `retained_postgres_driver()` can be constructed from the copied no-dev environment. Exact CI `34291089042` and Release Acceptance `34291089064` are terminal success on that source head. This baseline update is a documentation descendant and must reacquire its own exact-head acceptance before #323 is treated as current-head GREEN.
 
 ### Public commercial surface: PR #321
 
-PR #321 owns only `README.md` and `docs/index.md` relative to #323. Before the component-image repair, exact child `16526740d8809acc888b9b2958e9008843cb0ade` was an ordinary two-parent descendant of then-parent `7143ac2e1b7c8a1ae718d8820aba26a76608be15` and had independently reached CI `34286352438` plus Release Acceptance `34286352439` success. Parent #323 has since advanced, so that child is stale by design. After this baseline descendant is stable, #321 must be reconciled again through ordinary non-force ancestry while preserving only its two documentation blobs, then reacquire exact-child acceptance. Predecessor GREEN is not transferred.
+PR #321 owns only `README.md` and `docs/index.md` relative to #323. Exact child `2e5a1b6d580b15c11e07ada10be34e6ebf203e0f` was an ordinary two-parent descendant of then-parent `776e855ed75a796f3816a5a2dcd5672a46c6207f` and independently reached CI `34290200485` plus Release Acceptance `34290200446` success. Parent #323 has since advanced through the packaging-toolchain repair and this baseline update, so that child is stale by design. After the current parent is stable, #321 must be reconciled again through ordinary non-force ancestry while preserving only its two documentation blobs, then reacquire exact-child acceptance. Predecessor GREEN is not transferred.
 
 ## Runtime-graph RED and causal repair
 
@@ -78,6 +78,14 @@ Exact `3d277f5146488e3ec351f496c89141cb5316cb0f` made the package-installation a
 
 Exact `6dbc846...` reached CI `34289670789` and Release Acceptance `34289670788` terminal success. The component build therefore proves both that the final image contains no `libpq5` package, including transitive installation, and that its no-dev packaged runtime can construct the admitted pg8000 adapter. The same CI also preserves production SBOM policy and real pg8000/PostgreSQL smokes. This removes an unnecessary native runtime surface; it does not claim remote TLS/server-identity completion.
 
+## Component-image Python packaging-toolchain repair
+
+The component image had moved to `python:3.14-slim`, but its cleanup still removed `/usr/local/bin/pip3.11` and Python 3.11 `pip`, `setuptools`, and `wheel` directories. That stale cleanup left the base image's Python 3.14 package-installation authority in the final commercial runtime even though the application executes from the copied no-dev virtual environment.
+
+Test-first commit `98b52e229e9b83cba2970537f0255435c8e87777` added the explicit Python 3.14 cleanup contract. Its CI `34290977814` was cancelled when the branch immediately advanced, so it is source-level test-first evidence rather than a hosted RED; Release Acceptance `34290977972` succeeded separately and is not substituted for the cancelled CI. Minimal repair `b83c6ca7dce1f553c549a1be94bb880274a089ee` corrected the cleanup paths to Python 3.14 and made final-image construction fail if `pip`, `pip3`, or `pip3.14` remains discoverable. It preserves the existing no-`libpq5` and admitted-driver construction proofs.
+
+Exact source repair `b83c6ca...` reached CI `34291089042` and Release Acceptance `34291089064` terminal success. This shrinks the mutable installation surface of the runtime image without claiming that absence of package-manager executables is itself a complete container-hardening or supply-chain guarantee.
+
 ## Public-surface RED and repair
 
 An earlier #321 reconciliation exposed a real documentation RED at exact `d546f6d8106cbf41bf5d72fa8e595363c4e7febe` / CI `34260943035`: five current-parent operator/security contracts had been dropped from README while production coverage/docstring gates still passed. Minimal repair `224ed124b675eaf0ec1f558a458286610387500b` restored the 1 MiB `count-tokens` stdin limit, canonical retirement wording for the old SQL provider retriever, the closed transient GET retry-status set, `source_superusers_trusted` logical-restore trust/rollback boundaries, and explicit non-retry rules for TLS handshake/certificate and fingerprint failures. Exact CI `34262344110` and Release Acceptance `34262344236` then succeeded.
@@ -86,7 +94,7 @@ An earlier #321 reconciliation exposed a real documentation RED at exact `d546f6
 
 ## Transport-security boundary remains separate
 
-Issue #322 is a dependency-license/supply-chain migration and does not close PostgreSQL transport-security issue #123. Successful pg8000 connections, explicit service-file authority hardening, production SBOM policy, and component-image libpq removal do not prove mandatory verified remote TLS/server identity.
+Issue #322 is a dependency-license/supply-chain migration and does not close PostgreSQL transport-security issue #123. Successful pg8000 connections, explicit service-file authority hardening, production SBOM policy, component-image libpq removal, and packaging-toolchain removal do not prove mandatory verified remote TLS/server identity.
 
 Issue #123 remains canonical for package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA/hostname success, wrong-CA and hostname-mismatch rejection, plaintext/downgrade refusal, server SSL refusal, recovery, and caller-owned connection authority. #323/#321 must not present driver migration or SBOM success as TLS completion.
 
@@ -101,7 +109,7 @@ Issue #123 remains canonical for package-created remote TCP connections, deliber
 | Production driver contract parity | Active / promoted on branch | Preserve real PostgreSQL/RLS/recovery/health/migration/package-installed acceptance through the production selector and fail closed on newly proven semantic mismatch. |
 | Supply-chain admission | Active / strengthened | Bind exact pg8000 hashes, positive license evidence, vulnerability results, built package, validated SBOM, provenance, reproducibility, and the minimized component runtime to the same immutable release artifact/head. |
 | Public commercial-license surface | Child #321 / stale after parent advance | Preserve only `README.md` + `docs/index.md` through ordinary non-force reconciliation onto final #323 and reacquire exact-child CI/Release. |
-| Component-image dependency surface | Repaired on #323 | Preserve the final-image no-`libpq5` package proof, pg8000 selector construction, health probe, and container/PostgreSQL acceptance through protected integration and release. |
+| Component-image dependency surface | Repaired on #323 | Preserve no-`libpq5`, no-runtime-pip, admitted-driver construction, health-probe, and container/PostgreSQL acceptance proofs through protected integration and release. |
 | Dependency-root governance | External owner paths / non-passing | #233 still requires authenticated current-head central CodeQL/OpenCode/Noema settlement and independent approval before normal protected integration. |
 | Immutable product release | Not published | After protected integration, perform and verify version/CHANGELOG/tag/package/license/vulnerability/SBOM/provenance/reproducibility/rollback publication. |
 | Context Graph / EA projection | Candidate-only until released authority exists | Do not pin mutable producer heads; adopt only verified released contracts from canonical owners. |
@@ -118,7 +126,7 @@ Completion requires all of the following on the final production graph and immut
 - explicit service-file capability cannot be redirected by final-component symlink, inode substitution, later CWD changes, or replacement of the selected parent directory at the same pathname;
 - concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests through the production selector;
 - the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
-- the component image does not retain the superseded `libpq5` runtime and can construct the admitted pg8000 selector from its final no-dev environment;
+- the component image does not retain the superseded `libpq5` runtime or inherited Python packaging executables, and can construct the admitted pg8000 selector from its final no-dev environment;
 - retained Psycopg verification dependencies stay outside production/default installation and release runtime evidence;
 - package, license, vulnerability, validated SBOM, provenance, and reproducibility evidence bind the same immutable artifacts;
 - the final unchanged protected head passes exact-source required checks and live review/ruleset requirements without self-approval or gate weakening; and
