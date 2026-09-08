@@ -156,27 +156,36 @@
   evidence, not continuing authority after policy, ACL, membership, routine, view,
   materialized view, foreign relation/mapping, role-attribute, trigger, rewrite-rule,
   constraint-set, default-expression, or index-program/uniqueness DDL.
-- The outbox write path must close the admission-to-write DDL race. Before live
-  authority admission, `enqueue_in_transaction()` acquires `LOCK TABLE ONLY
-  public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` and retains that table
-  lock through the durable `INSERT` and caller-owned transaction. This is the normal
-  table lock class used by PostgreSQL modifying DML, pulled forward so a concurrent
-  `CREATE TRIGGER` or other conflicting schema DDL cannot change executable write
-  authority between the catalog proof and the statement that consumes it. Do not
-  replace this with an advisory lock, a post-hoc recheck, or `ACCESS EXCLUSIVE`.
-  Ordinary application roles remain limited to non-grantable `SELECT`/`INSERT`; the
-  existing `INSERT` privilege is sufficient to acquire `ROW EXCLUSIVE`. Treat lock
-  acquisition and contention as part of complete buyer-path latency evidence.
-- The outbox read path must close the corresponding admission-to-read relation-identity
-  race. Before live authority admission, `load_in_transaction()` acquires `LOCK TABLE
-  ONLY public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE` and retains it through
-  tenant binding, optional tenant/event advisory serialization, and the consuming
-  `SELECT`. Do not rely on the later `SELECT` to acquire its ordinary `ACCESS SHARE`
-  lock after admission: concurrent `ACCESS EXCLUSIVE` DDL could rename or replace the
-  admitted relation in that gap. Do not widen reads to `ROW EXCLUSIVE` or
-  `ACCESS EXCLUSIVE`; `ACCESS SHARE` is the minimal relation-identity fence and remains
-  compatible with ordinary reads and writes. Its acquisition/wait is part of complete
-  buyer-path latency evidence rather than removable security overhead.
+- The outbox write path must close both the admission-to-write DDL race and qualified-
+  name rebinding. Before live authority admission, `enqueue_in_transaction()` acquires
+  `LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` and
+  retains that table lock through the durable `INSERT` and caller-owned transaction.
+  That lock protects the admitted relation object from conflicting table-program/
+  relation DDL, but it does not authenticate an independently mutable schema/name
+  binding. `_require_rls_application_role()` must return the exact validated outbox
+  `pg_class.oid`; the consuming data-modifying CTE must resolve the then-live qualified
+  name with `pg_catalog.to_regclass(...)` and perform the `INSERT` only when that OID
+  equals the admitted OID. A standalone identity recheck followed by a separate write
+  is another TOCTOU interval. Do not replace the design with an advisory lock,
+  post-hoc recheck, caller `search_path`, schema qualification alone, or
+  `ACCESS EXCLUSIVE`. Ordinary application roles remain limited to non-grantable
+  `SELECT`/`INSERT`. Lock acquisition/wait and live OID proof are part of complete
+  buyer-path latency evidence.
+- The outbox read path must close both the admission-to-read relation-object and
+  namespace-name races. Before live authority admission, `load_in_transaction()`
+  acquires `LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE`
+  and retains it through tenant binding, optional tenant/event advisory serialization,
+  and the consuming `SELECT`. `ACCESS SHARE` protects the admitted relation object but
+  does not authenticate the independently mutable `public` schema/name binding.
+  `_require_rls_application_role()` must return the exact validated outbox
+  `pg_class.oid`; the consuming read must resolve the then-live qualified name with
+  `pg_catalog.to_regclass(...)`, require that OID to equal the admitted OID, and accept
+  a durable row only when its `tableoid` is the admitted OID. Keep the equality proof
+  inside the statement that can return evidence; a separate pre-read check recreates a
+  TOCTOU interval. Do not widen reads to `ROW EXCLUSIVE` or `ACCESS EXCLUSIVE`, and do
+  not treat schema qualification, caller `search_path`, or the package advisory lock
+  as relation identity. Lock acquisition/wait and live OID proof remain part of the
+  complete buyer-path latency evidence.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
