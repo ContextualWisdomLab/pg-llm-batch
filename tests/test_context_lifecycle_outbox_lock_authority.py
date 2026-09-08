@@ -5,7 +5,11 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
+import pg_llm_batch.context_lifecycle_outbox as lifecycle_outbox
 from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ValidationError
 
 
 class RecordingCursor:
@@ -34,6 +38,14 @@ class RecordingCursor:
         return self.result
 
 
+class BehaviorBearingLockAuthority:
+    """Expose behavior that exact-boolean validation must never execute."""
+
+    def __bool__(self) -> bool:
+        """Fail if product code evaluates caller-controlled truthiness."""
+        raise AssertionError("behavior-bearing lock authority executed")
+
+
 def store() -> PostgresContextLifecycleOutboxStore:
     """Create one package store without opening a database connection."""
     return PostgresContextLifecycleOutboxStore(
@@ -41,6 +53,38 @@ def store() -> PostgresContextLifecycleOutboxStore:
         tenant_scope="tenant-a",
         tenant_scope_sha256="a" * 64,
     )
+
+
+@pytest.mark.parametrize(
+    "for_update",
+    (1, "true", None, BehaviorBearingLockAuthority()),
+)
+def test_load_in_transaction_requires_exact_boolean_lock_authority(
+    for_update: Any,
+) -> None:
+    """Invalid lock authority fails before truthiness or PostgreSQL interaction."""
+    cursor = RecordingCursor()
+
+    with pytest.raises(ValidationError) as raised:
+        store().load_in_transaction(
+            cursor,
+            "event-1",
+            for_update=for_update,  # type: ignore[arg-type]
+        )
+
+    assert raised.value.details == {
+        "field": "for_update",
+        "value": "<redacted>",
+        "reason": "must be an exact boolean",
+    }
+    assert cursor.calls == []
+
+
+@pytest.mark.parametrize("malformed_row", (object(), ("bad",)))
+def test_durable_row_snapshot_rejects_invalid_internal_shape(malformed_row: Any) -> None:
+    """Internal durable-row validation rejects non-sequence and wrong-width state."""
+    with pytest.raises(RuntimeError, match="invalid shape"):
+        lifecycle_outbox._evidence_from_row(malformed_row)
 
 
 def test_read_lock_precedes_live_authority_admission_and_identity_bound_select() -> None:
