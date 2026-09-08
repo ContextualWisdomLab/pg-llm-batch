@@ -7,8 +7,10 @@ filesystem-discovery authority while pg-llm-batch evaluates a replacement for
 Psycopg. This candidate resolver therefore reads exactly one caller-selected
 file, applies a finite byte budget, and returns only the exact target stanza.
 Relative caller paths are bound to the working directory that existed when the
-resolver was constructed, so a later process-wide working-directory change
-cannot redirect database connection authority.
+resolver was constructed. The selected parent-directory identity is retained as
+well, and each read is anchored to a descriptor for that exact directory, so a
+later working-directory or parent-path replacement cannot redirect database
+connection authority.
 
 The parser intentionally does not implement libpq LDAP lookup or ambient
 ``PGSERVICEFILE``/user/system search precedence. Those capabilities require
@@ -84,19 +86,56 @@ def _close_descriptor(descriptor: int, *, preserve_primary_error: bool) -> None:
         raise _invalid_service_file() from None
 
 
-def _read_bounded_utf8(path: Path) -> str:
-    """Read one explicit regular service file under a finite UTF-8 byte budget.
-
-    The caller-selected final path component must itself be a regular file. Its
-    device/inode identity is captured before opening and must match the retained
-    descriptor, so a symlink or pathname substitution cannot redirect database
-    connection authority. The descriptor is opened nonblocking where the
-    platform supports it and remains metadata-stable before and after the
-    bounded read.
-    """
+def _capture_parent_identity(parent: Path) -> tuple[int, int]:
+    """Bind the construction-time directory that owns the selected file name."""
     try:
-        selected = os.lstat(path)
+        observed = os.stat(parent)
     except (OSError, ValueError):
+        raise _invalid_service_file() from None
+    if not stat.S_ISDIR(observed.st_mode):
+        raise _invalid_service_file()
+    return observed.st_dev, observed.st_ino
+
+
+def _open_selected_parent(parent: Path, expected_identity: tuple[int, int]) -> int:
+    """Open and authenticate the selected parent before directory-relative file I/O."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_BINARY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+    )
+    try:
+        descriptor = os.open(parent, flags)
+    except (OSError, ValueError):
+        raise _invalid_service_file() from None
+
+    primary_error: BaseException | None = None
+    try:
+        observed = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(observed.st_mode)
+            or (observed.st_dev, observed.st_ino) != expected_identity
+        ):
+            raise _invalid_service_file()
+    except Pg8000CandidateInvalidConninfoError as exc:
+        primary_error = exc
+        raise
+    except (OSError, ValueError) as exc:
+        primary_error = exc
+        raise _invalid_service_file() from None
+    finally:
+        if primary_error is not None:
+            _close_descriptor(descriptor, preserve_primary_error=True)
+
+    return descriptor
+
+
+def _read_bounded_utf8_at(file_name: str, parent_descriptor: int) -> str:
+    """Read one regular service file relative to an authenticated parent descriptor."""
+    try:
+        selected = os.lstat(file_name, dir_fd=parent_descriptor)
+    except (OSError, ValueError, NotImplementedError):
         raise _invalid_service_file() from None
     if stat.S_ISLNK(selected.st_mode) or not stat.S_ISREG(selected.st_mode):
         raise _invalid_service_file()
@@ -107,10 +146,11 @@ def _read_bounded_utf8(path: Path) -> str:
         | getattr(os, "O_BINARY", 0)
         | getattr(os, "O_CLOEXEC", 0)
         | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
     )
     try:
-        descriptor = os.open(path, flags)
-    except (OSError, ValueError):
+        descriptor = os.open(file_name, flags, dir_fd=parent_descriptor)
+    except (OSError, ValueError, NotImplementedError):
         raise _invalid_service_file() from None
 
     primary_error: BaseException | None = None
@@ -162,27 +202,50 @@ def _read_bounded_utf8(path: Path) -> str:
     return text
 
 
+def _read_bounded_utf8(
+    path: Path,
+    expected_parent_identity: tuple[int, int],
+) -> str:
+    """Read service bytes through the construction-time parent-directory authority."""
+    parent_descriptor = _open_selected_parent(path.parent, expected_parent_identity)
+    primary_error: BaseException | None = None
+    try:
+        return _read_bounded_utf8_at(path.name, parent_descriptor)
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        _close_descriptor(
+            parent_descriptor,
+            preserve_primary_error=primary_error is not None,
+        )
+
+
 class Pg8000CandidateServiceFileResolver:
     """Resolve one service stanza from an explicit local service-file capability.
 
     ``service_file`` is selected by the caller and retained as a concrete path;
     relative paths are converted to absolute paths at construction, before any
-    later working-directory change can alter their referent. This object never
-    discovers user/system files and never reads environment variables. Duplicate
-    section/key authority and malformed target lines fail closed. Non-target
-    stanza contents are not promoted into the selected connection parameters.
+    later working-directory change can alter their referent. The parent directory
+    identity is also captured at construction. Resolution reopens and authenticates
+    that exact directory, then performs final-component metadata/open operations
+    relative to its retained descriptor. This object never discovers user/system
+    files and never reads environment variables. Duplicate section/key authority
+    and malformed target lines fail closed. Non-target stanza contents are not
+    promoted into the selected connection parameters.
     """
 
     def __init__(self, service_file: Path) -> None:
-        """Retain exactly one caller-selected path under its construction-time CWD."""
+        """Retain one caller-selected path and its construction-time parent identity."""
         if not isinstance(service_file, Path):
             raise _invalid_service_file()
         self._service_file = service_file.absolute()
+        self._parent_identity = _capture_parent_identity(self._service_file.parent)
 
     def __call__(self, service_name: str) -> dict[str, str]:
         """Return the exact target stanza or fail without reflecting file content."""
         target = _validate_service_name(service_name)
-        text = _read_bounded_utf8(self._service_file)
+        text = _read_bounded_utf8(self._service_file, self._parent_identity)
         sections: set[str] = set()
         target_found = False
         target_active = False

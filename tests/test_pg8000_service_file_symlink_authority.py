@@ -59,10 +59,11 @@ def test_candidate_service_file_rejects_path_substitution_before_open(
         *,
         dir_fd: int | None = None,
     ) -> int:
-        selected = replacement if Path(path) == service_file else path
+        if dir_fd is not None and Path(path) == Path(service_file.name):
+            return real_open(replacement.name, flags, mode, dir_fd=dir_fd)
         if dir_fd is None:
-            return real_open(selected, flags, mode)
-        return real_open(selected, flags, mode, dir_fd=dir_fd)
+            return real_open(path, flags, mode)
+        return real_open(path, flags, mode, dir_fd=dir_fd)
 
     monkeypatch.setattr(os, "open", substituted_open)
 
@@ -83,18 +84,20 @@ def test_candidate_service_file_normalizes_open_failure_after_preflight(
         "[analytics]\nhost=selected.example\nport=5432\ndbname=batch\nuser=batch\n",
         encoding="utf-8",
     )
+    real_open = os.open
 
-    def failing_open(
-        _path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
-        _flags: int,
-        _mode: int = 0o777,
+    def failing_file_open(
+        path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+        flags: int,
+        mode: int = 0o777,
         *,
         dir_fd: int | None = None,
     ) -> int:
-        del dir_fd
-        raise OSError("synthetic path-open failure")
+        if dir_fd is not None:
+            raise OSError("synthetic path-open failure")
+        return real_open(path, flags, mode)
 
-    monkeypatch.setattr(os, "open", failing_open)
+    monkeypatch.setattr(os, "open", failing_file_open)
 
     with pytest.raises(
         Pg8000CandidateInvalidConninfoError,
