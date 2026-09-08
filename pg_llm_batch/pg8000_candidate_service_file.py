@@ -84,12 +84,21 @@ def _close_descriptor(descriptor: int, *, preserve_primary_error: bool) -> None:
 def _read_bounded_utf8(path: Path) -> str:
     """Read one explicit regular service file under a finite UTF-8 byte budget.
 
-    The caller-selected path is opened nonblocking where the platform supports
-    it, then the retained descriptor is required to name one stable regular
-    file before and after the bounded read. This prevents a FIFO/device path or
-    in-place mutation from becoming connection-selector authority while bytes
-    are being inspected.
+    The caller-selected final path component must itself be a regular file. Its
+    device/inode identity is captured before opening and must match the retained
+    descriptor, so a symlink or pathname substitution cannot redirect database
+    connection authority. The descriptor is opened nonblocking where the
+    platform supports it and remains metadata-stable before and after the
+    bounded read.
     """
+    try:
+        selected = os.lstat(path)
+    except (OSError, ValueError):
+        raise _invalid_service_file() from None
+    if stat.S_ISLNK(selected.st_mode) or not stat.S_ISREG(selected.st_mode):
+        raise _invalid_service_file()
+    selected_identity = (selected.st_dev, selected.st_ino)
+
     flags = (
         os.O_RDONLY
         | getattr(os, "O_BINARY", 0)
@@ -104,7 +113,10 @@ def _read_bounded_utf8(path: Path) -> str:
     primary_error: BaseException | None = None
     try:
         before = os.fstat(descriptor)
-        if not stat.S_ISREG(before.st_mode):
+        if (
+            not stat.S_ISREG(before.st_mode)
+            or (before.st_dev, before.st_ino) != selected_identity
+        ):
             raise _invalid_service_file()
         before_snapshot = _service_file_snapshot(before)
 

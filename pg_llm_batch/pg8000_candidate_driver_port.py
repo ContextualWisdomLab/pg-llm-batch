@@ -10,10 +10,11 @@ only the resolved parameter subset already admitted by this candidate reaches
 pg8000. Query options, multi-host/socket forms, and other libpq-only semantics
 remain fail closed until they have separate compatibility evidence.
 
-The module does not import pg8000. An exact candidate DB-API module must be
-injected after artifact, license, integrity, and environment admission, keeping
-pg8000 out of the committed production dependency graph while issue #322 remains
-open.
+The module does not import pg8000. The runtime loader injects the exact admitted
+DB-API module only after artifact, license, integrity, and environment admission.
+pg8000 is now the pinned production runtime driver on this migration branch;
+issue #322 remains open until that graph reaches protected main and an immutable
+release carries the required license, SBOM, provenance, and rollback evidence.
 """
 
 from __future__ import annotations
