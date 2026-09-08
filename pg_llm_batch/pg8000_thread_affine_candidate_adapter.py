@@ -1,15 +1,15 @@
-"""Thread-affine pg8000 candidate adapters for concurrency admission.
+"""Thread-affine pg8000 adapters for concurrency admission and runtime reuse.
 
 pg8000 1.31.5 declares DB-API ``threadsafety == 1``: threads may share the
-module, but not connections. The portable candidate adapters intentionally do
-not invent a stronger guarantee. This layer binds each candidate connection and
-cursor to the thread that created it and fails before raw driver access when a
-capability crosses that boundary.
+module, but not connections. These adapters intentionally do not invent a
+stronger guarantee. They bind each connection and cursor to the thread that
+created it and fail before raw driver access when a capability crosses that
+boundary.
 
-The layer remains candidate-only. It is exercised by the exact-artifact
-PostgreSQL smoke test and must not be treated as production dependency approval
-until the remaining conninfo, error, recovery, package, SBOM, and provenance
-gates pass on one immutable artifact.
+This layer began as candidate evidence and is now reused by the admitted
+production ``Pg8000DriverAdapter``. The candidate class names preserve review
+lineage; production authority still belongs to the exact-version loader plus the
+repository's protected integration, package, SBOM, provenance, and release gates.
 """
 
 from __future__ import annotations

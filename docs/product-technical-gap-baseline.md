@@ -1,6 +1,6 @@
 # Product and technical gap baseline
 
-This document records shipped truth separately from active-PR evidence. Exact PR heads, checks, reviews, rulesets, and release identities must always be read live before merge or release decisions; this file is not a substitute for GitHub evidence.
+This document separates protected/shipped truth from active-PR evidence. Exact PR heads, checks, reviews, rulesets, security results, and releases must always be read live before merge or release decisions; this file is not a substitute for GitHub evidence.
 
 ## Product boundary
 
@@ -8,30 +8,48 @@ pg-llm-batch owns durable PostgreSQL-backed asynchronous LLM batch preparation, 
 
 ## Protected-main truth
 
-The protected integration branch is `main`. At the latest refresh it was `5913c4bad79d6bc29d7cc1c624abb7db2ea6a77c`. The package remains version `0.1.0`, and its production dependency graph still includes `psycopg[binary]>=3.1`. Therefore issue #322, replacement of the LGPL-family Psycopg runtime dependency, remains an open commercial-policy defect. No public release should claim that the current `pip install .` runtime graph is commercially clean while that defect remains.
+The protected integration branch is `main`. At the latest refresh it was `5913c4bad79d6bc29d7cc1c624abb7db2ea6a77c`. The package remains version `0.1.0`, and protected main still carries the Psycopg runtime graph. Therefore issue #322 remains an open commercial-policy defect at shipped/release authority even though the active #323 migration branch has advanced beyond that graph. No public release may claim the replacement is shipped until the pg8000 graph integrates normally into a protected exact head and the corresponding package/license/vulnerability/SBOM/provenance/reproducibility evidence passes on that same authority.
 
-The repository has no immutable GitHub release at the latest refresh. A release is not ready merely because a branch is green: one exact protected head must pass the repository's applicable CI, security, coverage/docstring, package, SBOM/provenance, reproducibility, migration/rollback/recovery, operability, and review gates before version/tag/publication evidence is promoted.
+The repository has no immutable GitHub release at the latest refresh. A green Draft branch is not release authority: one exact protected head must pass the repository's applicable CI, security, coverage/docstring, package, migration/rollback/recovery, operability, SBOM/provenance, reproducibility, and review gates before version/tag/publication evidence is promoted.
 
 ## Active delivery lanes
 
-PR #233 remains the dependency-root delivery lane and must be judged from its live head and live base, not predecessor evidence.
+PR #233 remains the dependency-root integration lane and must be judged from its live head and base. Its repository-local deterministic lanes have been green on the unchanged current head, while required central CodeQL/OpenCode/Noema settlement and a structurally satisfiable independent approval path remain non-passing owner prerequisites. Leaf churn, synthetic status, self-approval, and routine administrator bypass are not substitutes. The central CodeQL repair has continued to move through its own ordinary owner lineage; pg-llm-batch must consume only protected central behavior and must not copy that mutable workflow source locally.
 
-PR #323 is the active Draft migration lane for issue #322. It establishes a driver-neutral PostgreSQL anti-corruption port, retains Psycopg only as the current baseline adapter, and evaluates pg8000 1.31.5 as candidate evidence without promoting it into the production manifest. The lane exercises parameter binding, tuple-row normalization, row-count semantics, transaction and cleanup precedence, forced-RLS tenant scope, JSONB/UUID/timestamp behavior, exact candidate dependency hashes and license metadata, URI/keyword/explicit-service selection, packaged restore-catalog acceptance, thread-affinity rejection at the anti-corruption boundary, and real PostgreSQL candidate execution. Exact branch evidence now also terminates a live candidate backend from a second authenticated session, requires the severed capability to fail and become terminal, and proves recovery only by opening a fresh connection. That is candidate recovery evidence; it is not production-driver promotion.
+PR #323 is the active Draft migration lane for issue #322. It established `PostgresDriverPort`, retained the Psycopg implementation as a verification baseline, proved pg8000 1.31.5 behind the neutral port, and has now promoted the admitted pg8000 adapter into the branch's single centralized runtime selector. The branch manifest declares exact `pg8000==1.31.5` as the default runtime dependency; Psycopg 3.3.4 remains only in the `test` optional dependency and `dev` dependency group for legacy-baseline verification. The regenerated lock resolves pg8000 with `python-dateutil` and `scramp`/`asn1crypto` and no Psycopg dependency in the project default runtime edge.
 
-Candidate runtime parity now executes against the built pg-llm-batch wheel rather than repository import leakage. CI builds the exact source head with `uv build --wheel --no-sources`, installs that wheel without dependency resolution into each isolated Python 3.10, 3.12, and 3.14 candidate environment, runs `uv pip check`, changes out of the repository working tree, and runs the same real pg8000/PostgreSQL smoke without `PYTHONPATH`. This proves package-installed behavior for the candidate lane while the committed product metadata still intentionally retains the Psycopg baseline.
+The promotion preserves the existing candidate evidence: parameter binding, native no-parameter DB-API execution, tuple-row normalization, finite fetch budgets, exact/unknown row counts, transaction/context ownership, terminal connection state, thread-affine use, PostgreSQL RLS/session behavior, UUID/timestamp round-trip, SQLSTATE classification, cleanup precedence, JSONB adaptation, strict single-host URI/keyword conninfo parsing, explicit service-file resolution without ambient `PGSERVICEFILE` discovery, packaged restore-catalog acceptance, server-terminated-session recovery, exact dependency/license evidence, source-to-wheel Python payload parity, and package-installed execution outside the checkout across the supported Python matrix. Unsupported multi-host/socket/query/LDAP/ambient-service semantics remain fail closed rather than approximated.
 
-Candidate supply-chain admission now verifies both the exact five-wheel pg8000 closure and the published pg8000 1.31.5 source distribution before candidate installation. CI pins the wheel and source-distribution SHA-256 digests, reads bounded wheel `METADATA` without importing candidate code, rejects GPL/LGPL/AGPL-family declarations, requires positive reviewed permissive-license evidence for every exact package/version, and compares every Python source path and byte digest under the pg8000 package between the pinned source distribution and universal wheel. The parity verifier does not extract archives, import candidate code, follow archive links, or execute a source build. This closes the published source-to-wheel executable-payload parity gap for the selected candidate artifacts; it does not itself approve a production driver replacement or provide an upstream build attestation.
+The production construction boundary `load_pg8000_driver()` admits only exact pg8000 1.31.5, verifies the installed distribution identity and top-level import origin before package code executes, and optionally composes one caller-selected service file. The centralized `retained_postgres_driver()` now constructs that admitted adapter. This is a branch-level source/runtime fact, not protected-main or release authority.
+
+### Runtime-graph RED and causal repair
+
+The selector and `pyproject.toml` were promoted before the committed `uv.lock` had converged. Exact head `8972ec9a1f1e94ad40b5490be88e5e53d1dd200b` therefore produced a useful reality RED: frozen/default container installation still followed the stale lock and installed Psycopg rather than pg8000, while the production selector required pg8000. The PostgreSQL/container smoke failed through `retained_postgres_driver()` with the fixed unavailable-driver boundary, and the locked-dependency unit lane also failed before product tests. The failure was not a log-routing defect and did not justify a selector fallback or relaxed frozen install.
+
+A bounded exact-head lock finalizer regenerated and verified the lock, proved that the project default runtime edge contains pg8000 and excludes Psycopg, ran `uv sync --locked --no-dev`, proved exact pg8000 1.31.5 is installed while Psycopg is absent from that production environment, constructed `Pg8000DriverAdapter` through the centralized selector, built the package, committed only `uv.lock`, and removed its own temporary workflow in the same descendant. Commit `e1045b6ed74e848cd99a50b02b42fe731fcc8b9b` is the resulting graph repair. Because that commit was authored by the workflow token, its automatically materialized pull-request CI/Release runs reported `action_required` without jobs; they are not GREEN evidence.
+
+The later production-promotion RED at `3e0103fcf0a94327828b62137666f52fa12b6561` then exposed three post-cutover defects: the CLI confidentiality classifier had become coupled to pg8000's intentionally narrower connection grammar, a workflow contract still asserted the pre-promotion dependency state, and the packaged restore smoke directly imported removed Psycopg. Minimal causal repair `2afd5be12847b51c8d476c59f5b328c697069780` separated argv confidentiality from concrete-driver connectability, updated the production dependency assertion, and routed restore acceptance through `retained_postgres_driver()`.
+
+On unchanged `2afd5be12847b51c8d476c59f5b328c697069780`, CI `34256203888` and Release Acceptance `34256203857` both completed successfully. The CI generation covered Python 3.10/3.11/3.12/3.13/3.14 plus the container/PostgreSQL runtime lane; its quality job reported 100% public docstrings, 100% owned production statement/branch coverage (`4632/4632`, `1318/1318`), `1649 passed, 5 deselected`, lock verification, and package build success. This proves the Draft branch's then-exact source, not protected integration or immutable release.
+
+### Transport-security boundary remains separate
+
+Issue #322 is a dependency-license migration and does not close PostgreSQL transport-security issue #123. pg8000 1.31.5 documents `ssl_context=None` as attempting SSL and falling back to a plain socket when the server rejects SSL. The current #323 adapter does not supply an explicit verified `SSLContext`, so its successful PostgreSQL smokes are not evidence that remote transport encryption or server identity is mandatory. PostgreSQL 18 recommends `verify-full` in security-sensitive environments because it requires encryption, CA validation, and hostname matching.
+
+Issue #123 remains the canonical owner for the package-wide transport policy. Its acceptance must cover package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA/hostname success, wrong CA and hostname mismatch, downgrade/plaintext refusal, recovery, and caller-owned connection authority. #323 must not race that broad policy or describe the driver migration as TLS/server-identity completion.
 
 ## Highest-priority gaps
 
 | Gap | Current state | Required next evidence |
 | --- | --- | --- |
-| Commercial PostgreSQL runtime dependency | P0 / active | Complete issue #322: preserve shipped DB semantics while removing every disallowed GPL/LGPL/AGPL-family runtime package from the committed dependency graph. |
-| Candidate driver contract parity | Active Draft | Real server-terminated-session recovery, the Python 3.10/3.12/3.14 matrix, and built-wheel execution are proven. Close remaining selector/conninfo compatibility, realistic concurrency beyond the deterministic anti-cross-thread guard, timeout/health, and remaining schema/recovery surfaces before production promotion. |
-| Candidate supply-chain admission | Active / strengthened | Exact wheel/source hashes, source-to-wheel Python payload parity, closure license metadata, and installed-product-wheel execution are gated; complete vulnerability/SBOM/provenance and final production runtime-graph evidence before promotion. |
-| Dependency-root governance | External owner paths / non-passing | #233 has leaf CI/release/security evidence but still requires authenticated current-head compatibility CodeQL/OpenCode/Noema settlement and a structurally satisfiable independent approval path before normal protected integration. |
+| Commercial PostgreSQL runtime dependency | P0 / active Draft / exact branch GREEN observed | Preserve the proven pg8000 default graph through normal prerequisite integration, non-force reconciliation, one unchanged final #323 head, protected merge, and immutable release evidence. Any new #323 commit must reacquire exact-head acceptance. |
+| PostgreSQL transport encryption / server identity | P0 security / canonical issue #123 | Complete the existing owner lane with realistic TLS-enabled PostgreSQL acceptance, explicit downgrade refusal and server-identity verification; do not infer this from #322 or pg8000's opportunistic default. |
+| Production driver contract parity | Active / promoted on branch | Preserve real PostgreSQL/RLS/recovery/health/migration/package-installed acceptance through the production selector and fail closed on any newly proven pg8000 semantic mismatch. |
+| Supply-chain admission | Active / strengthened | Bind exact pg8000 closure hashes, permissive-license evidence, vulnerability results, built package, SBOM, provenance, and reproducibility to the same final artifact/head. |
+| Public commercial-license surface | Child lane #321 | Keep README/docs public wording conservative until #323's pg8000 graph is protected and accepted; then non-force restack #321 and update only its owned public files. |
+| Dependency-root governance | External owner paths / non-passing | #233 still requires authenticated current-head central CodeQL/OpenCode/Noema settlement and a satisfiable independent approval path before normal protected integration. |
 | Immutable product release | Not yet published | After the production dependency replacement and all gates pass on one integrated protected head, perform version/CHANGELOG/tag/package/SBOM/provenance/reproducibility/rollback publication and verify artifact identity. |
-| Context Graph / EA projection | Candidate-only until released authority exists | `context-graph-contracts` and `enterprise-architecture-core` currently expose no immutable GitHub release. Do not pin mutable producer heads. Continue pg-owned release-readiness seams and adopt only a verified released contract. |
+| Context Graph / EA projection | Candidate-only until released authority exists | Do not pin mutable producer heads. Continue pg-owned release-readiness seams and adopt only verified released contracts from canonical owners. |
 
 ## Commercial acceptance for issue #322
 
@@ -41,18 +59,26 @@ Completion requires all of the following on the final production graph, not only
 - commit, rollback, context-manager, cleanup-error precedence, cancellation/recovery, and connection lifecycle remain deterministic;
 - tenant authority and transaction-local `set_config` behavior remain correct under forced RLS and restricted roles;
 - JSON/JSONB, UUID, timestamp, row, row-count, and relevant PostgreSQL error semantics remain compatible;
-- DSN parsing/rendering preserves the repository's supported URI, keyword, and service-selector contract without credential leakage into argv or logs;
-- concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests;
-- the committed runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
+- DSN parsing/rendering preserves the supported URI, keyword, and explicit-service-selector contract without credential leakage into argv or logs;
+- concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests through the production selector;
+- the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
+- retained Psycopg verification dependencies remain outside production/default installation and release runtime evidence;
 - package, license, vulnerability, SBOM, provenance, and reproducibility evidence bind the same immutable artifacts;
-- the final unchanged head passes exact-source required checks and then-live review/ruleset requirements without self-approval or gate weakening.
+- the final unchanged protected head passes exact-source required checks and then-live review/ruleset requirements without self-approval or gate weakening; and
+- issue #322 completion is not represented as transport-security completion: remote TLS/server-identity policy remains issue #123 authority until that separate acceptance is integrated and released.
 
 ## Context Fabric boundary
 
-`context-graph-contracts` remains a contract-only Shared Kernel for canonical object/authority references, truth origin/status, bitemporal semantics, provenance, Context Assertion, and CloudEvents/schema/conformance/admission contracts. `enterprise-architecture-core` remains the EA Decision Plane. While their dedicated Context Fabric writer is active, pg-llm-batch treats both repositories as read-only source dependencies and advances their existing owner paths with exact consumer RED/GREEN criteria instead of creating competing writers.
+`context-graph-contracts` remains a contract-only Shared Kernel for canonical object/authority references, truth origin/status, bitemporal semantics, provenance, Context Assertion, and CloudEvents/schema/conformance/admission contracts. `enterprise-architecture-core` remains the EA Decision Plane. pg-llm-batch treats those repositories as foreign canonical owners and consumes only released contracts through explicit anti-corruption boundaries.
 
 Prompt, response, batch-result, and user data remain pg/product-domain data and are not copied into EA authoritative architecture tables. Deployable service/API/worker/database/runtime/provider/version and lifecycle/risk/ownership/remediation changes may be projected only through a verified released Context Graph contract with provenance.
 
 ## Evidence discipline
 
-Queued, pending, skipped-required, cancelled, absent, predecessor-head, model-only, and status-only evidence is non-passing. A current blocker is the next work item at its actual owner: pg-owned causes require a realistic RED, the smallest causal repair, focused/full GREEN, and exact-head refetch; foreign-owned causes require advancement of the existing owner path followed by independent pg work. A report, comment, handoff, or documentation-only change is never completion while executable code/test/release work remains.
+Queued, pending, skipped-required, `action_required`, cancelled, absent, predecessor-head, model-only, and status-only evidence is non-passing. A current blocker is the next work item at its actual owner: pg-owned causes require a realistic RED, the smallest causal repair, focused/full GREEN, and exact-head refetch; foreign-owned causes require advancement of the existing owner path followed by independent pg work. A report, comment, handoff, or documentation-only change is never completion while executable code/test/release work remains.
+
+## References
+
+PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: SSL support*. https://www.postgresql.org/docs/18/libpq-ssl.html
+
+Locke, T. (2025). *pg8000 1.31.5: Python interface to PostgreSQL*. PyPI. https://pypi.org/project/pg8000/1.31.5/
