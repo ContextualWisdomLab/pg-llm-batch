@@ -196,18 +196,20 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   rebinding. `enqueue_in_transaction()` must acquire `LOCK TABLE ONLY
   public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` before live authority
   admission and retain it through the caller transaction, including the durable
-  `INSERT`. The lock protects the admitted relation object from conflicting table-
-  program/relation DDL, but it does not by itself authenticate an independently
-  mutable schema/name binding. `_require_rls_application_role()` must return the exact
-  validated lifecycle-outbox `pg_class.oid`; the write must carry that admitted OID
-  into the same data-modifying CTE that can perform the `INSERT`, resolve the live
-  qualified name with `pg_catalog.to_regclass(...)`, and execute the write only when
-  the live OID equals the admitted OID. A standalone identity recheck followed by a
-  separate `INSERT` is another TOCTOU interval. Do not substitute a package advisory
-  lock, caller `search_path`, schema qualification alone, or `ACCESS EXCLUSIVE`.
-  The normal application role still needs only the existing non-grantable `SELECT` and
-  `INSERT` privileges. Lock acquisition/wait and the live OID proof are part of the
-  complete buyer-path latency measurement, not removable security overhead.
+  `INSERT`. A concurrent `CREATE TRIGGER` is one concrete table-program DDL specimen
+  that this ordering must keep behind the retained relation-object fence. The lock
+  protects the admitted relation object from conflicting table-program/relation DDL,
+  but it does not by itself authenticate an independently mutable schema/name binding.
+  `_require_rls_application_role()` must return the exact validated lifecycle-outbox
+  `pg_class.oid`; the write must carry that admitted OID into the same data-modifying
+  CTE that can perform the `INSERT`, resolve the live qualified name with
+  `pg_catalog.to_regclass(...)`, and execute the write only when the live OID equals
+  the admitted OID. A standalone identity recheck followed by a separate `INSERT` is
+  another TOCTOU interval. Do not substitute a package advisory lock, caller
+  `search_path`, schema qualification alone, or `ACCESS EXCLUSIVE`. The normal
+  application role still needs only the existing non-grantable `SELECT` and `INSERT`
+  privileges. Lock acquisition/wait and the live OID proof are part of the complete
+  buyer-path latency measurement, not removable security overhead.
 - The read path must close both admission-to-read relation-object and namespace-name
   races. `load_in_transaction()` must acquire `LOCK TABLE ONLY
   public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE` before live authority
