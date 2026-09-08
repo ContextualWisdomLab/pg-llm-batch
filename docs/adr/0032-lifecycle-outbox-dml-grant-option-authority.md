@@ -9,7 +9,9 @@ The lifecycle-outbox runtime is an application DML identity. Its normal database
 
 ADR 0031 already requires the effective/authenticated role closure to reject `SUPERUSER`, `CREATEDB`, `CREATEROLE`, `REPLICATION`, `BYPASSRLS`, outbox ownership or exercisable owner authority, `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, and `TRIGGER`. That direct-role check is necessary but not sufficient because PostgreSQL exposes further delegation and executable-authority paths.
 
-A caller-visible routine can also change the tenant-setting authority without changing database principal. `SECURITY INVOKER` is PostgreSQL's default function mode, and a function-level `SET` clause is applied when the function is entered and restored when it exits. Therefore a non-system-schema `SECURITY INVOKER` routine executable by an admitted selectable principal can carry `proconfig` containing `pg_llm_batch.tenant_scope=tenant-b`, execute with the caller's ordinary outbox privileges, and make forced RLS evaluate the function-local tenant instead of the package-bound tenant. This is distinct from `SECURITY DEFINER`: no owner elevation is required, so definer-owner recursion is the wrong principal model for this path.
+A caller-visible routine can also change the tenant-setting authority without changing database principal. `SECURITY INVOKER` is PostgreSQL's default function mode, and a function-level `SET` clause is applied when the function is entered and restored when it exits. Therefore a non-system-schema `SECURITY INVOKER` routine executable by an admitted selectable principal can carry `proconfig` containing `pg_llm_batch.tenant_scope=tenant-b`, execute with the caller's ordinary outbox privileges, and make forced RLS evaluate the function-local tenant instead of the package-bound tenant. This is distinct from `SECURITY DEFINER`: no owner elevation is required, so the direct invoker scan must use the principal that PostgreSQL actually keeps while the invoker executes rather than the invoker routine's owner.
+
+That distinction also applies after a `SECURITY DEFINER` transition. Once a caller enters a callable definer, PostgreSQL changes execution to the definer owner. If that discovered owner can then execute a non-system-schema `SECURITY INVOKER` whose `proconfig` sets `pg_llm_batch.tenant_scope`, the nested invoker retains the definer owner as its current principal and can redirect forced RLS even though the original caller cannot execute the inner invoker directly. A realistic nested specimen at `210c1708ae70b0d1178ca63184599623c3f6db3e`, wired by `8eae5faf16b6f3d00327b9ad009f0fdcfb28ae62`, proves the tenant-a caller can receive tenant-b data through the outer-definer/inner-invoker path. CI `34168966066` is the hosted RED for that exact authority gap; the minimal runtime repair is `d43f12f32041ca5c4f4312dd1255e9b3de6ebbfb`.
 
 PostgreSQL 17 introduced table `MAINTAIN` as relation-wide operational authority. It authorizes `VACUUM`, `ANALYZE`, `CLUSTER`, `REFRESH MATERIALIZED VIEW`, `REINDEX`, and `LOCK TABLE`. A tenant application identity has no product need for those operations. In particular, `LOCK TABLE` can turn a nominally read/append runtime identity into an availability-control principal, while `CLUSTER` and `REINDEX` can take heavyweight relation/index locks. `MAINTAIN` is therefore outside the same runtime envelope as destructive/programming authority even though it does not itself mean tenant-row DML.
 
@@ -50,17 +52,19 @@ The authenticated `SESSION_USER` is rejected when it has `MEMBER WITH ADMIN OPTI
 
 This follows what the authenticated identity can redistribute, not only what its current effective role can exercise.
 
-### Caller-visible `SECURITY INVOKER` tenant-setting authority
+### `SECURITY INVOKER` tenant-setting authority
 
 For every selectable principal, admission scans non-system-schema `SECURITY INVOKER` routines for which that principal has schema `USAGE` plus routine `EXECUTE`. If any callable invoker routine has a `proconfig` entry whose setting key is exactly `pg_llm_batch.tenant_scope`, admission rejects the credential before package tenant binding or outbox data I/O.
 
-This scan is deliberately direct on the selectable principal. `SECURITY INVOKER` executes with caller authority, so following the routine owner would mis-model PostgreSQL execution semantics. The existing recursive `SECURITY DEFINER` owner closure remains separate because a definer routine changes the effective execution principal. Function bodies are not parsed or allow-listed; the stored function-local setting itself is executable tenant authority.
+The same execution-principal rule is applied inside the callable-definer closure. Each discovered `SECURITY DEFINER` owner is the current PostgreSQL principal while that definer executes, so admission also scans non-system-schema `SECURITY INVOKER` routines that the discovered owner can execute through schema `USAGE` plus routine `EXECUTE`. A tenant-scope `proconfig` entry on such an invoker rejects the enclosing definer path before tenant binding or outbox data I/O. The implementation does not follow the invoker routine owner; it evaluates the principal that PostgreSQL will actually retain while the invoker runs.
+
+Function bodies are not parsed or allow-listed. The stored function-local setting itself is executable tenant authority. The direct selectable-principal scan and the definer-owner scan are separate applications of the same invariant because PostgreSQL can change the current execution principal at a `SECURITY DEFINER` edge.
 
 ### Callable `SECURITY DEFINER` authority
 
 For each non-system-schema `SECURITY DEFINER` routine that a selectable/administerable runtime role can execute through schema `USAGE` plus routine `EXECUTE`, admission enters the routine owner's executable-principal closure. The closure is recursive: for every discovered definer owner, admission also follows non-system-schema `SECURITY DEFINER` routines that owner can execute through schema `USAGE` plus routine `EXECUTE`, using `UNION` de-duplication so cyclic routine-owner graphs terminate.
 
-Every discovered definer owner is checked against the same direct authority envelope:
+Every discovered definer owner is checked against the same direct authority envelope and against nested invoker tenant-setting authority reachable from that owner:
 
 - `SUPERUSER`;
 - `CREATEROLE`;
@@ -68,8 +72,9 @@ Every discovered definer owner is checked against the same direct authority enve
 - `BYPASSRLS`;
 - exact outbox ownership or exercisable owner authority;
 - outbox `SELECT WITH GRANT OPTION` or `INSERT WITH GRANT OPTION`;
-- on PostgreSQL 17+, outbox `MAINTAIN`; and
-- outbox `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`.
+- on PostgreSQL 17+, outbox `MAINTAIN`;
+- outbox `TRUNCATE`, `DELETE`, `UPDATE`, `REFERENCES`, or `TRIGGER`; and
+- any non-system-schema `SECURITY INVOKER` routine executable by that owner whose `proconfig` sets `pg_llm_batch.tenant_scope`.
 
 The executable-definer membership-administration envelope additionally rejects a discovered definer owner that has `MEMBER WITH ADMIN OPTION` over a role when that administered role either directly carries, or has an all-`SET TRUE` path to, forbidden runtime/operator authority. The target/reachable authority checked by the current implementation includes:
 
@@ -80,9 +85,9 @@ The executable-definer membership-administration envelope additionally rejects a
 
 This target check intentionally uses ordinary `SELECT`/`INSERT` rather than only grant-option forms: after the definer grants the role to the caller, ordinary DML held by that role becomes usable authority. On PostgreSQL 17+, `MAINTAIN` is likewise checked as ordinary authority because the relation-wide operational capability itself is outside the application identity, regardless of whether it is grantable. Likewise, `CREATEDB` is checked on an administered/reachable role because that authority can be granted to the caller for later invoker-context use even though direct callable-definer `CREATEDB` is not currently treated as an executable in-function capability.
 
-The recursive closure is intentionally authority-based rather than function-body-based. PostgreSQL documents `SECURITY DEFINER` as executing with the owner's privileges and `EXECUTE` as the privilege that permits routine invocation. The package does not attempt to prove that an arbitrary PL/pgSQL, SQL, extension, or dynamically executed body currently invokes every routine its owner could invoke; instead it refuses to call a definer when entering that owner principal can continue into another privileged definer principal. This is conservative, but it keeps the application/runtime boundary independent of mutable routine bodies and procedural-language parsing.
+The recursive closure is intentionally authority-based rather than function-body-based. PostgreSQL documents `SECURITY DEFINER` as executing with the owner's privileges and `EXECUTE` as the privilege that permits routine invocation. The package does not attempt to prove that an arbitrary PL/pgSQL, SQL, extension, or dynamically executed body currently invokes every routine its owner could invoke; instead it refuses to call a definer when entering that owner principal can continue into another privileged definer principal or invoke a tenant-setting invoker. This is conservative, but it keeps the application/runtime boundary independent of mutable routine bodies and procedural-language parsing.
 
-The guard uses PostgreSQL's own role/privilege inquiry functions and catalogs, including `pg_proc.prosecdef`, function owner OIDs, `pg_roles` attributes, `has_schema_privilege`, `has_function_privilege`, `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')`, `pg_has_role(..., 'SET')`, `has_table_privilege`, and `has_any_column_privilege`. PostgreSQL-owned `pg_*` schemas and `information_schema` remain outside this user-schema definer guard; operator policy may impose a stricter database-wide prohibition.
+The guard uses PostgreSQL's own role/privilege inquiry functions and catalogs, including `pg_proc.prosecdef`, `pg_proc.proconfig`, function owner OIDs, `pg_roles` attributes, `has_schema_privilege`, `has_function_privilege`, `pg_has_role(..., 'MEMBER WITH ADMIN OPTION')`, `pg_has_role(..., 'SET')`, `has_table_privilege`, and `has_any_column_privilege`. PostgreSQL-owned `pg_*` schemas and `information_schema` remain outside this user-schema routine guard; operator policy may impose a stricter database-wide prohibition.
 
 ### Reachable ordinary views and materialized outbox copies
 
@@ -102,11 +107,15 @@ Rejected. RLS controls row access; it does not make authorization delegation par
 
 ### Inspect only `SECURITY DEFINER` routine settings
 
-Rejected. Function-local `SET` is also executable in `SECURITY INVOKER`, which retains the caller principal and can therefore override `pg_llm_batch.tenant_scope` while using the caller's otherwise valid outbox privileges. The realistic PostgreSQL RED at `803f80802f26e13fdc2eb89c3f76fc1943264c8f` demonstrates that cross-tenant read path.
+Rejected. Function-local `SET` is also executable in `SECURITY INVOKER`, which retains the current principal and can therefore override `pg_llm_batch.tenant_scope` while using that principal's otherwise valid outbox privileges. The direct realistic PostgreSQL RED at `803f80802f26e13fdc2eb89c3f76fc1943264c8f` and the nested definer-to-invoker RED at `8eae5faf16b6f3d00327b9ad009f0fdcfb28ae62` demonstrate both current-principal cases.
 
-### Fold `SECURITY INVOKER` into recursive definer-owner traversal
+### Treat every `SECURITY INVOKER` as belonging only to the original caller scan
 
-Rejected. It evaluates the wrong principal. An invoker routine runs with the selectable caller's authority, whereas a definer routine switches to the routine owner. The two paths share catalog facts (`pg_proc`, schema `USAGE`, function `EXECUTE`, and `proconfig`) but not execution-principal semantics.
+Rejected. That would freeze the execution principal at connection entry and ignore a preceding `SECURITY DEFINER` transition. When an outer definer changes execution to its owner, a nested invoker retains that owner, not the original caller. The correct invariant is to scan invokers against each principal that PostgreSQL can make current along the admitted executable path, without substituting the invoker routine's owner.
+
+### Follow the `SECURITY INVOKER` routine owner
+
+Rejected. It evaluates the wrong principal. An invoker routine executes with the current invoker principal; the routine owner is not an authority transition. Direct caller invokers are therefore checked against selectable principals, while invokers reached after a definer transition are checked against the discovered definer owner that is current at that point.
 
 ### Allow `MAINTAIN` because it is not tenant-row DML
 
@@ -182,12 +191,15 @@ Rejected. Runtime code does not own database authorization policy. Silent ACL or
 
 ## Verification lineage
 
-### SECURITY INVOKER tenant-setting authority
+### `SECURITY INVOKER` tenant-setting authority
 
-- realistic runtime specimen `a009e21546825e7e1dc63cbebe66e95040227bdc`, wired into CI by `803f80802f26e13fdc2eb89c3f76fc1943264c8f`;
-- hosted reality RED: CI `34166912141`, PostgreSQL/container job `101879773504`, where the ordinary caller used a callable `SECURITY INVOKER` function-local tenant setting to read tenant B while package authority was tenant A;
-- causal production repair `15e5f7f38c3533594e4b53d1ce8907d2e5225a3c`, whose exact CI `34167480315` and Release Acceptance `34167480340` succeeded;
-- owner-contract RED `fa308d82c413f0a3f2ffd81bdc541b5b087fab39`: CI `34167830872` reported `3 failed, 1643 passed, 7 deselected` because AGENTS, CLAUDE, and ADR 0032 had not yet retained the invoker boundary.
+- realistic direct-invoker runtime specimen `a009e21546825e7e1dc63cbebe66e95040227bdc`, wired into CI by `803f80802f26e13fdc2eb89c3f76fc1943264c8f`;
+- hosted direct-invoker reality RED: CI `34166912141`, PostgreSQL/container job `101879773504`, where the ordinary caller used a callable `SECURITY INVOKER` function-local tenant setting to read tenant B while package authority was tenant A;
+- causal direct-invoker production repair `15e5f7f38c3533594e4b53d1ce8907d2e5225a3c`, whose exact CI `34167480315` and Release Acceptance `34167480340` succeeded;
+- owner-contract RED `fa308d82c413f0a3f2ffd81bdc541b5b087fab39`: CI `34167830872` reported `3 failed, 1643 passed, 7 deselected` because AGENTS, CLAUDE, and ADR 0032 had not yet retained the invoker boundary;
+- realistic nested definer-to-invoker specimen `210c1708ae70b0d1178ca63184599623c3f6db3e`, wired into CI by exact head `8eae5faf16b6f3d00327b9ad009f0fdcfb28ae62`;
+- hosted nested reality RED: CI `34168966066`, PostgreSQL/container job `101885465574`; existing direct definer and direct invoker smokes passed before the new nested specimen failed, isolating the missing execution-principal edge;
+- minimal causal production repair `d43f12f32041ca5c4f4312dd1255e9b3de6ebbfb`, which adds a `pg_proc`/`pg_namespace`/`proconfig` scan for invoker routines executable by each discovered definer owner without rewriting routine configuration or parsing routine bodies.
 
 ### Direct object delegation
 
@@ -243,13 +255,13 @@ The nested-definer specimen gives the outer owner no forbidden outbox or cluster
 
 The admin-delegation specimen deliberately gives the definer owner no `CREATEROLE` and no direct destructive relation privilege. It grants an `INHERIT FALSE, SET FALSE` bridge that has `SET TRUE` to an outbox `TRUNCATE` role, proves the ordinary caller can traverse the newly granted role chain and empty the outbox, revokes the caller's materialized bridge membership, and then requires package admission to reject the still-callable latent authority. That separates the causal defect from both direct definer privileges and already-materialized caller authority.
 
-Earlier heads, partial jobs, and superseded workflow runs are lineage only. ADR 0032 remains Proposed until one unchanged exact repaired head executes the static contracts, full unit/coverage gates, the normal PostgreSQL-16 container suite, the materialized-copy specimen, and the digest-pinned PostgreSQL-18 `MAINTAIN` specimen successfully.
+Earlier heads, partial jobs, and superseded workflow runs are lineage only. ADR 0032 remains Proposed until one unchanged exact repaired head executes the static contracts, full unit/coverage gates, the normal PostgreSQL-16 container suite, the materialized-copy specimen, the nested definer-to-invoker specimen, and the digest-pinned PostgreSQL-18 `MAINTAIN` specimen successfully.
 
 ## Consequences
 
 The application connection remains able to perform only its product DML and cannot deliberately act as a privilege-delegation, relation-maintenance, privileged-function, privileged-view, copied-outbox, or caller-executable tenant-setting gateway. Security/SOC 2/CSAP evidence can treat ACL changes, role membership administration, role creation, replication administration, relation maintenance/destructive authority, privileged user-schema routines, callable invoker tenant-setting overrides, ordinary owner-rights view paths, and materialized outbox copies as operator-owned changes rather than hidden application behavior.
 
-The direct caller-visible `SECURITY INVOKER` scan adds `pg_proc`/namespace/ACL/`proconfig` work to every admission. It is not removable security overhead: buyer-path latency evidence must include it from connection acquisition through admission, tenant binding, data I/O, and cleanup, varying callable-routine/schema cardinality and connection pressure rather than relying on a warm-cache-only specimen.
+The invoker scans add `pg_proc`/namespace/ACL/`proconfig` work to every admission for direct selectable principals and for every definer owner reachable through the executable-principal closure. This is not removable security overhead: buyer-path latency evidence must include it from connection acquisition through admission, tenant binding, data I/O, and cleanup, varying callable-routine/schema cardinality, definer depth/fanout, and connection pressure rather than relying on a warm-cache-only specimen.
 
 PostgreSQL 16 remains a supported runtime without pretending that a PostgreSQL-17 privilege exists there. PostgreSQL 17+ deployments gain the stricter relation-maintenance check from the same source path. The check is intentionally authority-based rather than body-based. This is stricter for deployments that intentionally expose privileged user-schema functions, privileged view paths, materialized copies of the outbox, or relation-maintenance privileges to the same runtime identity or to an owner principal reachable through such a function/view: those deployments must separate the authority behind another role/connection or remove the executable/read edge. That operational cost is preferred to claiming tenant/application least authority while the same login can enter a graph that reaches operator authority or copied cross-tenant evidence.
 
