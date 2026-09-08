@@ -160,20 +160,26 @@ jobs:
         run: |
           candidate_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
           echo "::add-mask::$candidate_password"
-          password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-password.XXXXXX")"
-          printf '%s' "$candidate_password" > "$password_file"
-          chmod 600 "$password_file"
+          host_password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-host-password.XXXXXX")"
+          container_password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-container-password.XXXXXX")"
+          printf '%s' "$candidate_password" > "$host_password_file"
+          printf '%s' "$candidate_password" > "$container_password_file"
+          chmod 600 "$host_password_file" "$container_password_file"
+          runner_uid="$(id -u)"
           postgres_runtime_uid="$(docker run --rm --entrypoint id pg-llm-batch-postgres:ci -u)"
           test -n "$postgres_runtime_uid"
-          sudo chown "$postgres_runtime_uid" "$password_file"
-          test "$(stat -c '%a' "$password_file")" = "600"
-          test "$(stat -c '%u' "$password_file")" = "$postgres_runtime_uid"
+          sudo chown "$postgres_runtime_uid" "$container_password_file"
+          test "$(stat -c '%a' "$host_password_file")" = "600"
+          test "$(stat -c '%a' "$container_password_file")" = "600"
+          test "$(stat -c '%u' "$host_password_file")" = "$runner_uid"
+          test "$(stat -c '%u' "$container_password_file")" = "$postgres_runtime_uid"
           container="pg-llm-batch-pg8000-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          echo "PG8000_CANDIDATE_PASSWORD_FILE=$password_file" >> "$GITHUB_ENV"
+          echo "PG8000_CANDIDATE_PASSWORD_FILE=$host_password_file" >> "$GITHUB_ENV"
+          echo "PG8000_CANDIDATE_CONTAINER_PASSWORD_FILE=$container_password_file" >> "$GITHUB_ENV"
           echo "PG8000_CANDIDATE_CONTAINER=$container" >> "$GITHUB_ENV"
           docker run --detach --name "$container" \
             --publish 127.0.0.1:5432:5432 \
-            --mount "type=bind,source=$password_file,target=/run/secrets/postgres_password,readonly" \
+            --mount "type=bind,source=$container_password_file,target=/run/secrets/postgres_password,readonly" \
             --env POSTGRES_USER=pgllm \
             --env POSTGRES_DB=pgllm \
             --env POSTGRES_PASSWORD_FILE=/run/secrets/postgres_password \
@@ -206,5 +212,8 @@ jobs:
             docker rm --force "$PG8000_CANDIDATE_CONTAINER" >/dev/null 2>&1 || true
           fi
           if [ -n "${PG8000_CANDIDATE_PASSWORD_FILE:-}" ]; then
-            sudo rm -f "$PG8000_CANDIDATE_PASSWORD_FILE"
+            rm -f "$PG8000_CANDIDATE_PASSWORD_FILE"
+          fi
+          if [ -n "${PG8000_CANDIDATE_CONTAINER_PASSWORD_FILE:-}" ]; then
+            sudo rm -f "$PG8000_CANDIDATE_CONTAINER_PASSWORD_FILE"
           fi
