@@ -38,6 +38,12 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:${PATH}"
 
+# pg8000 is the admitted production PostgreSQL client. Keep the component image
+# free of the superseded native libpq runtime and prove the packaged selector can
+# construct the admitted adapter in the final image stage.
+RUN ! dpkg-query -W libpq5 >/dev/null 2>&1 && \
+    python -c 'from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver; retained_postgres_driver()'
+
 # Run as a non-root user (trivy DS-0002).
 USER appuser
 
