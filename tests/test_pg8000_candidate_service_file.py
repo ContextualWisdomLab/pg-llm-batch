@@ -161,7 +161,7 @@ def test_candidate_service_file_uses_nonblocking_descriptor_open(
     """Reach the service-file byte budget without a blocking special-file open."""
     service_file = tmp_path / "pg_service.conf"
     service_file.write_text("[analytics]\nhost=db.example\n", encoding="utf-8")
-    observed_flags: list[int] = []
+    file_open_flags: list[int] = []
     real_open = os.open
 
     def recording_open(
@@ -171,18 +171,18 @@ def test_candidate_service_file_uses_nonblocking_descriptor_open(
         *,
         dir_fd: int | None = None,
     ) -> int:
-        observed_flags.append(flags)
-        if dir_fd is None:
-            return real_open(path, flags, mode)
-        return real_open(path, flags, mode, dir_fd=dir_fd)
+        if dir_fd is not None:
+            file_open_flags.append(flags)
+            return real_open(path, flags, mode, dir_fd=dir_fd)
+        return real_open(path, flags, mode)
 
     monkeypatch.setattr(os, "open", recording_open)
 
     resolved = Pg8000CandidateServiceFileResolver(service_file)("analytics")
     assert resolved["host"] == "db.example"
-    assert observed_flags
+    assert file_open_flags
     if hasattr(os, "O_NONBLOCK"):
-        assert observed_flags[0] & os.O_NONBLOCK
+        assert file_open_flags[0] & os.O_NONBLOCK
 
 
 def test_candidate_service_file_rejects_non_regular_opened_descriptor(
