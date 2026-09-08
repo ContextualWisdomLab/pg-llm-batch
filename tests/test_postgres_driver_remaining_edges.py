@@ -38,13 +38,13 @@ def _candidate_module(*, include_connect: bool = False) -> ModuleType:
     """Build exact DB-API candidate authority without importing the package."""
     module = ModuleType("candidate_pg8000_errors")
 
-    class ProgrammingErrorCandidate(Exception):
+    class DatabaseErrorCandidate(Exception):
         pass
 
     module.apilevel = "2.0"
     module.paramstyle = "format"
     module.threadsafety = 1
-    module.ProgrammingError = ProgrammingErrorCandidate
+    module.DatabaseError = DatabaseErrorCandidate
     if include_connect:
         module.connect = lambda **_kwargs: _TransactionConnection()
     return module
@@ -145,7 +145,7 @@ def test_candidate_error_classifier_rejects_wrong_exact_exception_type() -> None
 def test_candidate_error_classifier_rejects_missing_server_payload() -> None:
     """The exact candidate exception class still needs one PostgreSQL response payload."""
     module = _candidate_module()
-    error_type = vars(module)["ProgrammingError"]
+    error_type = vars(module)["DatabaseError"]
     assert isinstance(error_type, type)
     assert is_pg8000_candidate_undefined_function(error_type(), dbapi_module=module) is False
 
@@ -179,7 +179,7 @@ def test_candidate_driver_covers_remaining_fail_closed_selector_edges(
 
     module = _candidate_module(include_connect=True)
     driver = Pg8000CandidateDriverAdapter(module)
-    error_type = vars(module)["ProgrammingError"]
+    error_type = vars(module)["DatabaseError"]
     assert isinstance(error_type, type)
     assert driver.is_undefined_function(error_type({"C": "42883"})) is True
 
