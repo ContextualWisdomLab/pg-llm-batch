@@ -59,7 +59,7 @@ class _Connection:
 
 
 class _Psycopg:
-    """Minimal psycopg replacement used by the database helper tests."""
+    """Minimal PostgreSQL driver replacement used by database helper tests."""
 
     def __init__(self, fetchone_rows: list[Any] | None = None) -> None:
         self.executions: list[tuple[str, Any]] = []
@@ -156,7 +156,7 @@ def test_reserve_remote_batch_observation_order_uses_database_sequence(
 ) -> None:
     """The lifecycle ticket comes from the shared PostgreSQL sequence."""
     driver = _Psycopg(fetchone_rows=[(41,)])
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     order = db.reserve_remote_batch_observation_order("postgresql://x")
 
@@ -177,7 +177,8 @@ def test_reserve_remote_batch_observation_order_rejects_invalid_rows(
 ) -> None:
     """An invalid sequence result cannot become a lifecycle order."""
     rows = [] if row is None else [row]
-    monkeypatch.setattr(db, "psycopg", _Psycopg(fetchone_rows=rows))
+    driver = _Psycopg(fetchone_rows=rows)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     with pytest.raises(RuntimeError, match="invalid order"):
         db.reserve_remote_batch_observation_order("postgresql://x")
@@ -188,7 +189,7 @@ def test_persist_remote_batch_state_upserts_curated_terminal_snapshot(
 ) -> None:
     """A terminal provider observation is stored without arbitrary response data."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     observed = datetime(2026, 8, 4, 9, 0, tzinfo=timezone.utc)
     snapshot = db.persist_remote_batch_state(
         "postgresql://x",
@@ -242,7 +243,7 @@ def test_persist_remote_batch_state_normalizes_untrusted_optional_fields(
 ) -> None:
     """Invalid optional provider values become deterministic safe defaults."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     snapshot = db.persist_remote_batch_state(
         "postgresql://x",
         "  edge  ",
@@ -289,7 +290,7 @@ def test_persist_remote_batch_state_normalizes_non_json_metadata(
 ) -> None:
     """Non-JSON provider metadata becomes the canonical empty object."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     snapshot = db.persist_remote_batch_state(
         "postgresql://x",
         "primary",
@@ -305,7 +306,7 @@ def test_persist_remote_batch_state_normalizes_cyclic_metadata(
 ) -> None:
     """A cyclic metadata graph cannot escape the JSON trust boundary."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     metadata: dict[str, Any] = {}
     metadata["self"] = metadata
 
@@ -325,7 +326,7 @@ def test_persist_remote_batch_state_bounds_metadata_bytes(
 ) -> None:
     """Excessive canonical metadata is discarded before the database write."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     snapshot = db.persist_remote_batch_state(
         "postgresql://x",
         "primary",
@@ -342,7 +343,8 @@ def test_persist_remote_batch_state_rejects_invalid_observation_order(
     observation_order: Any,
 ) -> None:
     """Only positive non-boolean integer lifecycle orders are accepted."""
-    monkeypatch.setattr(db, "psycopg", _Psycopg())
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     with pytest.raises(ValueError, match="observation_order"):
         db.persist_remote_batch_state(
             "postgresql://x",
@@ -358,7 +360,8 @@ def test_persist_remote_batch_state_rejects_invalid_endpoint_alias(
     endpoint_alias: Any,
 ) -> None:
     """Lifecycle identities require a non-empty textual endpoint alias."""
-    monkeypatch.setattr(db, "psycopg", _Psycopg())
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     with pytest.raises(ValueError, match="endpoint_alias"):
         db.persist_remote_batch_state(
             "postgresql://x",
@@ -374,7 +377,8 @@ def test_persist_remote_batch_state_rejects_non_object_payload(
     provider_batch: Any,
 ) -> None:
     """Provider lifecycle payloads must be mapping objects."""
-    monkeypatch.setattr(db, "psycopg", _Psycopg())
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     with pytest.raises(ValueError, match="provider_batch"):
         db.persist_remote_batch_state(
             "postgresql://x",
@@ -390,7 +394,8 @@ def test_persist_remote_batch_state_rejects_missing_remote_id(
     remote_id: Any,
 ) -> None:
     """A durable row cannot be written without a provider batch identifier."""
-    monkeypatch.setattr(db, "psycopg", _Psycopg())
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     with pytest.raises(ValueError, match="provider batch id"):
         db.persist_remote_batch_state(
             "postgresql://x",
@@ -404,7 +409,8 @@ def test_persist_remote_batch_state_requires_aware_observation_time(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Audit timestamps must be timezone-aware to remain unambiguous."""
-    monkeypatch.setattr(db, "psycopg", _Psycopg())
+    driver = _Psycopg()
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
     with pytest.raises(ValueError, match="timezone-aware"):
         db.persist_remote_batch_state(
             "postgresql://x",
