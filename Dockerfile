@@ -27,7 +27,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260812T000000Z/ trixie-security main' \
       > /etc/apt/sources.list.d/debian-snapshot.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libpq5 curl && \
+    apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/* \
       /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
       /usr/local/lib/python3.11/site-packages/pip* \
