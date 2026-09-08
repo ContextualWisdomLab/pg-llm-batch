@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import builtins
 from types import ModuleType
 from typing import Any
 
@@ -212,7 +211,7 @@ class _LenFailure:
 
 
 def test_psycopg_cursor_fail_closed_edges() -> None:
-    """Retained adapter normalizes no-row evidence and rejects malformed driver output."""
+    """Legacy test adapter normalizes no-row evidence and rejects malformed output."""
     raw = _RawPsycopgCursor()
     cursor = PsycopgCursorAdapter(raw)
     assert cursor.fetchone() is None
@@ -259,30 +258,30 @@ def test_psycopg_conninfo_wrappers_narrow_programming_errors(monkeypatch: pytest
         adapter.make_conninfo({"host": "bad"})
 
 
-def test_runtime_selector_distinguishes_missing_psycopg_from_other_import_failures(
+def test_runtime_selector_redacts_admitted_absence_but_propagates_other_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Optional-client absence is redacted while unrelated package defects propagate."""
-    original_import = builtins.__import__
+    """Admitted-driver absence is redacted while unrelated defects propagate."""
+    module = ModuleType("pg_llm_batch.pg8000_driver_adapter")
 
-    def missing_psycopg(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name.endswith("psycopg_driver_adapter"):
-            error = ModuleNotFoundError("missing psycopg")
-            error.name = "psycopg"
-            raise error
-        return original_import(name, *args, **kwargs)
+    class DriverUnavailable(RuntimeError):
+        pass
 
-    monkeypatch.setattr(builtins, "__import__", missing_psycopg)
+    module.Pg8000DriverUnavailableError = DriverUnavailable
+
+    def unavailable() -> object:
+        raise DriverUnavailable("internal driver detail")
+
+    module.load_pg8000_driver = unavailable
+    monkeypatch.setattr(runtime, "import_module", lambda _name: module)
     with pytest.raises(runtime.PostgresDriverUnavailableError, match="unavailable"):
         runtime.retained_postgres_driver()
 
-    def missing_other(name: str, *args: Any, **kwargs: Any) -> Any:
-        if name.endswith("psycopg_driver_adapter"):
-            error = ModuleNotFoundError("missing other")
-            error.name = "other_dependency"
-            raise error
-        return original_import(name, *args, **kwargs)
+    def unrelated_failure() -> object:
+        error = ModuleNotFoundError("missing other")
+        error.name = "other_dependency"
+        raise error
 
-    monkeypatch.setattr(builtins, "__import__", missing_other)
+    module.load_pg8000_driver = unrelated_failure
     with pytest.raises(ModuleNotFoundError):
         runtime.retained_postgres_driver()
