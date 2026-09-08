@@ -48,7 +48,7 @@ class _Connection:
 
 
 class _Psycopg:
-    """Psycopg double returning one configured JSONB value."""
+    """Driver-port double returning one configured JSONB value."""
 
     def __init__(self, content: Any) -> None:
         self.row = (content,)
@@ -88,33 +88,37 @@ class _Psycopg:
     ],
 )
 def test_load_virtual_payload_rejects_malformed_persisted_state(
-    monkeypatch: pytest.MonkeyPatch,
     content: Any,
 ) -> None:
     """Malformed package-owned JSONB must fail closed instead of being coerced."""
-    monkeypatch.setattr(db, "psycopg", _Psycopg(content))
+    driver = _Psycopg(content)
 
     with pytest.raises(db.VirtualPayloadIntegrityError) as captured:
-        db.load_virtual_payload("postgresql://example", "file-1")
+        db.load_virtual_payload(
+            "postgresql://example",
+            "file-1",
+            postgres_driver=driver,
+        )
 
     assert str(captured.value) == "Stored virtual payload failed integrity validation"
     assert captured.value.__cause__ is None
     assert captured.value.__context__ is None
 
 
-def test_load_virtual_payload_preserves_valid_multiline_jsonl(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_load_virtual_payload_preserves_valid_multiline_jsonl() -> None:
     """Valid canonical payloads retain exact persisted UTF-8 text and framing."""
     payload = '{"custom_id":"r1","score":1.5,"body":{"input":"one"}}\n' \
         '{"custom_id":"r2","body":{"input":"two"}}\n'
-    monkeypatch.setattr(
-        db,
-        "psycopg",
-        _Psycopg({"text": payload, "line_count": 2}),
-    )
+    driver = _Psycopg({"text": payload, "line_count": 2})
 
-    assert db.load_virtual_payload("postgresql://example", "file-1") == payload
+    assert (
+        db.load_virtual_payload(
+            "postgresql://example",
+            "file-1",
+            postgres_driver=driver,
+        )
+        == payload
+    )
 
 
 def test_upload_validates_local_payload_before_credential_resolution(
