@@ -209,6 +209,17 @@ if [[ "${drift_type_identity%%:*}" != "${canonical_type_identity%%:*}" ]] || \
   exit 1
 fi
 
+# Keep every already-authenticated created_at catalog property canonical. Otherwise an
+# existing type/default/collation/nullability guard could reject the ALTER and make this
+# specimen falsely look like typmod authority. After the ALTER, atttypmod must be the
+# only reviewed column-identity field that differs from the just-verified schema.
+non_typmod_authority_canonical="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT (actual.atttypid = 'timestamp with time zone'::pg_catalog.regtype AND actual.attcollation IS NOT DISTINCT FROM canonical_type.typcollation AND actual.attnotnull AND actual.atthasdef AND actual.attgenerated = '' AND actual.attidentity = '' AND pg_catalog.pg_get_expr(admission_default.adbin, admission_default.adrelid, false) = 'now()')::int FROM pg_catalog.pg_attribute AS actual JOIN pg_catalog.pg_type AS canonical_type ON canonical_type.oid = actual.atttypid JOIN pg_catalog.pg_attrdef AS admission_default ON admission_default.adrelid = actual.attrelid AND admission_default.adnum = actual.attnum WHERE actual.attrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND actual.attname = 'created_at' AND actual.attnum > 0 AND NOT actual.attisdropped")"
+if [[ "${non_typmod_authority_canonical}" != "1" ]]; then
+  echo "created_at typmod specimen changed another authenticated column/default property" >&2
+  exit 1
+fi
+
 drift_fraction="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
   "SELECT to_char(created_at AT TIME ZONE 'UTC', 'US') FROM public.llm_context_lifecycle_outbox WHERE evidence_id = 'typmod-drift'")"
 if [[ "${drift_fraction}" == "123456" ]]; then
