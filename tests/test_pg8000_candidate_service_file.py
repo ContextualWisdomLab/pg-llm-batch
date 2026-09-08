@@ -42,6 +42,31 @@ def test_candidate_service_file_resolves_exact_section_without_ambient_state(
     }
 
 
+def test_candidate_service_file_binds_relative_path_at_resolver_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Do not let later working-directory changes redirect explicit file authority."""
+    selected_dir = tmp_path / "selected"
+    redirected_dir = tmp_path / "redirected"
+    selected_dir.mkdir()
+    redirected_dir.mkdir()
+    (selected_dir / "pg_service.conf").write_text(
+        "[analytics]\nhost=selected.example\nport=5432\ndbname=batch\nuser=batch\n",
+        encoding="utf-8",
+    )
+    (redirected_dir / "pg_service.conf").write_text(
+        "[analytics]\nhost=redirected.example\nport=5432\ndbname=batch\nuser=batch\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(selected_dir)
+    resolver = Pg8000CandidateServiceFileResolver(Path("pg_service.conf"))
+    monkeypatch.chdir(redirected_dir)
+
+    assert resolver("analytics")["host"] == "selected.example"
+
+
 def test_candidate_service_file_rejects_missing_duplicate_or_empty_target(
     tmp_path: Path,
 ) -> None:

@@ -6,6 +6,9 @@ and the database driver must not silently acquire process-environment or
 filesystem-discovery authority while pg-llm-batch evaluates a replacement for
 Psycopg. This candidate resolver therefore reads exactly one caller-selected
 file, applies a finite byte budget, and returns only the exact target stanza.
+Relative caller paths are bound to the working directory that existed when the
+resolver was constructed, so a later process-wide working-directory change
+cannot redirect database connection authority.
 
 The parser intentionally does not implement libpq LDAP lookup or ambient
 ``PGSERVICEFILE``/user/system search precedence. Those capabilities require
@@ -163,17 +166,18 @@ class Pg8000CandidateServiceFileResolver:
     """Resolve one service stanza from an explicit local service-file capability.
 
     ``service_file`` is selected by the caller and retained as a concrete path;
-    this object never discovers user/system files and never reads environment
-    variables. Duplicate section/key authority and malformed target lines fail
-    closed. Non-target stanza contents are not promoted into the selected
-    connection parameters.
+    relative paths are converted to absolute paths at construction, before any
+    later working-directory change can alter their referent. This object never
+    discovers user/system files and never reads environment variables. Duplicate
+    section/key authority and malformed target lines fail closed. Non-target
+    stanza contents are not promoted into the selected connection parameters.
     """
 
     def __init__(self, service_file: Path) -> None:
-        """Retain exactly one caller-selected service file after validating its path type."""
+        """Retain exactly one caller-selected path under its construction-time CWD."""
         if not isinstance(service_file, Path):
             raise _invalid_service_file()
-        self._service_file = service_file
+        self._service_file = service_file.absolute()
 
     def __call__(self, service_name: str) -> dict[str, str]:
         """Return the exact target stanza or fail without reflecting file content."""
