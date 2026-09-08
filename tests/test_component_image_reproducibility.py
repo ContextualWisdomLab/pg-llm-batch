@@ -49,8 +49,7 @@ def test_component_image_uses_one_fixed_debian_snapshot() -> None:
 
 
 def test_component_image_preserves_minimal_runtime_packages() -> None:
-    """Snapshot hardening retains PostgreSQL client and health-probe packages."""
+    """Snapshot hardening retains the health-probe package only."""
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
-    assert re.search(r"apt-get install[^\n]*\blibpq5\b", dockerfile)
     assert re.search(r"apt-get install[^\n]*\bcurl\b", dockerfile)

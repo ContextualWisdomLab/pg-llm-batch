@@ -27,7 +27,7 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
       'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260812T000000Z/ trixie-security main' \
       > /etc/apt/sources.list.d/debian-snapshot.list && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libpq5 curl && \
+    apt-get install -y --no-install-recommends curl && \
     rm -rf /var/lib/apt/lists/* \
       /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.11 \
       /usr/local/lib/python3.11/site-packages/pip* \
@@ -37,6 +37,12 @@ RUN rm -f /etc/apt/sources.list.d/debian.sources && \
 
 COPY --from=builder /app/.venv /app/.venv
 ENV PATH="/app/.venv/bin:${PATH}"
+
+# pg8000 is the admitted production PostgreSQL client. Keep the component image
+# free of the superseded native libpq runtime and prove the packaged selector can
+# construct the admitted adapter in the final image stage.
+RUN ! dpkg-query -W libpq5 >/dev/null 2>&1 && \
+    python -c '__import__("pg_llm_batch.postgres_driver_runtime", fromlist=["retained_postgres_driver"]).retained_postgres_driver()'
 
 # Run as a non-root user (trivy DS-0002).
 USER appuser
