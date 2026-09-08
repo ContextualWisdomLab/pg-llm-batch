@@ -192,31 +192,38 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   administrative, replication, maintenance, grant-capable, membership-delegating,
   executable-privileged, view-mediated-RLS-bypass, materialized-copy, foreign-data,
   and owner-capable login sessions are outside the application isolation guarantee.
-- The write path must close the admission-to-write DDL race rather than treating live
-  catalog admission as transferable to a later statement. `enqueue_in_transaction()`
-  must acquire `LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE
-  MODE` before live authority admission and retain it through the caller transaction,
-  including the durable `INSERT`. This deliberately pulls forward the table lock that
-  PostgreSQL ordinary DML already uses: concurrent `CREATE TRIGGER` and other
-  conflicting schema DDL must wait instead of changing executable row authority after
-  admission. Do not substitute a package advisory lock, a second post-hoc catalog
-  check, or `ACCESS EXCLUSIVE`; the former does not participate in PostgreSQL table-DDL
-  locking and the latter needlessly serializes compatible application DML. The normal
-  application role still needs only the existing non-grantable `SELECT` and `INSERT`
-  privileges, which are sufficient for `ROW EXCLUSIVE`. Lock acquisition and
-  contention are part of the complete buyer-path latency measurement, not removable
-  security overhead.
-- The read path must close the admission-to-read relation-identity race rather than
-  relying on a later `SELECT` to acquire relation authority after admission.
-  `load_in_transaction()` must acquire `LOCK TABLE ONLY
+- The write path must close both the admission-to-write DDL race and qualified-name
+  rebinding. `enqueue_in_transaction()` must acquire `LOCK TABLE ONLY
+  public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` before live authority
+  admission and retain it through the caller transaction, including the durable
+  `INSERT`. The lock protects the admitted relation object from conflicting table-
+  program/relation DDL, but it does not by itself authenticate an independently
+  mutable schema/name binding. `_require_rls_application_role()` must return the exact
+  validated lifecycle-outbox `pg_class.oid`; the write must carry that admitted OID
+  into the same data-modifying CTE that can perform the `INSERT`, resolve the live
+  qualified name with `pg_catalog.to_regclass(...)`, and execute the write only when
+  the live OID equals the admitted OID. A standalone identity recheck followed by a
+  separate `INSERT` is another TOCTOU interval. Do not substitute a package advisory
+  lock, caller `search_path`, schema qualification alone, or `ACCESS EXCLUSIVE`.
+  The normal application role still needs only the existing non-grantable `SELECT` and
+  `INSERT` privileges. Lock acquisition/wait and the live OID proof are part of the
+  complete buyer-path latency measurement, not removable security overhead.
+- The read path must close both admission-to-read relation-object and namespace-name
+  races. `load_in_transaction()` must acquire `LOCK TABLE ONLY
   public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE` before live authority
   admission and retain it through tenant binding, optional tenant/event advisory
-  serialization, and the consuming `SELECT`. Concurrent `ACCESS EXCLUSIVE` DDL must
-  wait rather than rename, replace, or drop the admitted relation between the catalog
-  proof and data access. Do not widen ordinary reads to `ROW EXCLUSIVE` or
-  `ACCESS EXCLUSIVE`; `ACCESS SHARE` is the minimal fence and remains compatible with
-  ordinary reads and writes. Treat its acquisition and wait as part of complete
-  buyer-path latency evidence, not removable security overhead.
+  serialization, and the consuming `SELECT`. `ACCESS SHARE` protects the admitted
+  relation object against conflicting relation DDL, but it does not authenticate the
+  independently mutable `public` schema/name binding. `_require_rls_application_role()`
+  must return the exact validated lifecycle-outbox `pg_class.oid`, and the consuming
+  read itself must resolve the live qualified name with `pg_catalog.to_regclass(...)`,
+  require that live OID to equal the admitted OID, and accept a durable row only when
+  its `tableoid` is the admitted OID. Keep the identity comparison in the statement
+  that can return evidence; a standalone pre-read recheck only creates another TOCTOU
+  interval. Do not widen ordinary reads to `ROW EXCLUSIVE` or `ACCESS EXCLUSIVE`, and
+  do not treat schema qualification, caller `search_path`, or the package advisory
+  lock as object identity. Treat lock acquisition/wait and the live OID proof as part
+  of complete buyer-path latency evidence.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
