@@ -53,3 +53,43 @@ def test_load_uses_only_canonical_outbox_relation() -> None:
     )
     assert "LEFT JOIN ONLY public.llm_context_lifecycle_outbox AS admitted_outbox" in relation_reads[1]
     assert "admitted_outbox.tableoid OPERATOR(pg_catalog.=) %s::pg_catalog.oid" in relation_reads[1]
+
+
+def test_runtime_admission_reproves_canonical_relation_storage_authority() -> None:
+    """Every I/O must re-prove logged heap storage and no inheritance topology."""
+    store = PostgresContextLifecycleOutboxStore(
+        "postgresql://unit",
+        tenant_scope="tenant-a",
+        tenant_scope_sha256="a" * 64,
+    )
+    cursor = RecordingCursor()
+
+    assert store.load_in_transaction(cursor, "event-1") is None
+
+    admission_sql = next(
+        sql
+        for sql in cursor.calls
+        if sql.startswith("SELECT admitted_role.rolsuper")
+    )
+    assert (
+        "admitted_relation.relkind::pg_catalog.text OPERATOR(pg_catalog.<>) 'r'"
+        in admission_sql
+    )
+    assert (
+        "admitted_relation.relpersistence::pg_catalog.text OPERATOR(pg_catalog.<>) 'p'"
+        in admission_sql
+    )
+    assert "JOIN pg_catalog.pg_namespace AS admitted_namespace" in admission_sql
+    assert (
+        "admitted_namespace.nspname OPERATOR(pg_catalog.<>) 'public'" in admission_sql
+    )
+    assert "JOIN pg_catalog.pg_am AS admitted_table_access_method" in admission_sql
+    assert (
+        "admitted_table_access_method.amname OPERATOR(pg_catalog.<>) 'heap'"
+        in admission_sql
+    )
+    assert (
+        "admitted_table_access_method.amtype::pg_catalog.text OPERATOR(pg_catalog.<>) 't'"
+        in admission_sql
+    )
+    assert "FROM pg_catalog.pg_inherits AS live_outbox_inheritance" in admission_sql
