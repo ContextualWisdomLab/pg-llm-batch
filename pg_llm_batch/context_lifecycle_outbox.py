@@ -498,8 +498,8 @@ def _unsafe_outbox_default_sql() -> str:
     )
 
 
-def _require_rls_application_role(cursor: Any) -> None:
-    """Reject unsafe runtime roles or drifted canonical RLS policy authority."""
+def _require_rls_application_role(cursor: Any) -> int:
+    """Reject unsafe runtime authority and return the exact admitted relation OID."""
     maintain_selectable = _maintain_privilege_sql("selectable_role.oid")
     maintain_delegated_dml = _maintain_privilege_sql("delegated_dml_role.oid")
     maintain_definer = _maintain_privilege_sql("definer_role.oid")
@@ -846,7 +846,7 @@ def _require_rls_application_role(cursor: Any) -> None:
         "OR selectable_role.rolreplication "
         "OR selectable_role.rolbypassrls"
         ")"
-        ") "
+        "), admitted_relation.oid "
         "FROM pg_catalog.pg_class AS admitted_relation "
         "JOIN pg_catalog.pg_roles AS admitted_role "
         "ON admitted_role.rolname OPERATOR(pg_catalog.=) CURRENT_USER "
@@ -854,10 +854,17 @@ def _require_rls_application_role(cursor: Any) -> None:
         "pg_catalog.to_regclass('public.llm_context_lifecycle_outbox')"
     )
     role_row = cursor.fetchone()
-    if type(role_row) is not tuple or role_row != (False, False):
+    if (
+        type(role_row) is not tuple
+        or len(role_row) != 3
+        or role_row[:2] != (False, False)
+        or type(role_row[2]) is not int
+        or not 0 < role_row[2] <= 0xFFFFFFFF
+    ):
         raise ConfigError(
             "Lifecycle outbox application role must have separated forced RLS authority"
         )
+    return role_row[2]
 
 
 def _migration_file_error() -> ConfigError:
@@ -1019,6 +1026,24 @@ def _evidence_from_row(row: Any) -> ContextLifecycleEvidenceSeed:
     )
 
 
+def _evidence_from_identity_row(row: Any) -> Optional[ContextLifecycleEvidenceSeed]:
+    """Require one same-statement relation-identity verdict before accepting a row."""
+    if type(row) is tuple:
+        snapshot = row
+    elif type(row) is list:
+        snapshot = tuple(row)
+    else:
+        raise RuntimeError("context lifecycle outbox identity row has an invalid shape")
+    if len(snapshot) != 12:
+        raise RuntimeError("context lifecycle outbox identity row has an invalid shape")
+    if snapshot[0] is not True:
+        raise ConfigError("Lifecycle outbox relation identity changed after admission")
+    evidence_snapshot = snapshot[1:]
+    if all(value is None for value in evidence_snapshot):
+        return None
+    return _evidence_from_row(evidence_snapshot)
+
+
 def apply_context_lifecycle_outbox_schema(
     postgres_dsn: str,
     migration_path: Optional[str] = None,
@@ -1133,6 +1158,88 @@ class PostgresContextLifecycleOutboxStore:
             reason="tenant scope identity does not match outbox tenant scope binding",
         )
 
+    def _select_admitted_evidence(
+        self,
+        cursor: Any,
+        admitted_relation_oid: int,
+        evidence_id: str,
+    ) -> Optional[ContextLifecycleEvidenceSeed]:
+        """Read only when the live qualified relation still matches the admitted OID."""
+        cursor.execute(
+            "SELECT live_relation.oid OPERATOR(pg_catalog.=) %s::pg_catalog.oid, "
+            f"{_OUTBOX_COLUMNS} "
+            "FROM (SELECT pg_catalog.to_regclass("
+            "'public.llm_context_lifecycle_outbox')::pg_catalog.oid AS oid"
+            ") AS live_relation "
+            "LEFT JOIN ONLY public.llm_context_lifecycle_outbox AS admitted_outbox "
+            "ON admitted_outbox.tableoid OPERATOR(pg_catalog.=) %s::pg_catalog.oid "
+            "AND admitted_outbox.tenant_scope OPERATOR(pg_catalog.=) %s "
+            "AND admitted_outbox.evidence_id OPERATOR(pg_catalog.=) %s",
+            (
+                admitted_relation_oid,
+                admitted_relation_oid,
+                self.tenant_scope,
+                evidence_id,
+            ),
+        )
+        evidence = _evidence_from_identity_row(cursor.fetchone())
+        if evidence is None:
+            return None
+        return self._require_tenant_binding(evidence, durable_row=True)
+
+    def _load_in_transaction_with_relation_oid(
+        self,
+        cursor: Any,
+        evidence_id: str,
+        *,
+        for_update: bool,
+    ) -> tuple[Optional[ContextLifecycleEvidenceSeed], int]:
+        """Load one event and retain the exact relation identity admitted for the I/O."""
+        if type(for_update) is not bool:
+            raise ValidationError(
+                field="for_update",
+                value="<redacted>",
+                reason="must be an exact boolean",
+            )
+        probe = _validated_evidence(
+            ContextLifecycleEvidenceSeed(
+                evidence_id=evidence_id,
+                event_type="probe",
+                tenant_scope_sha256="0" * 64,
+                subject_ref_sha256="0" * 64,
+                authority_ref_sha256="0" * 64,
+                origin_ref_sha256="0" * 64,
+                truth_status="observed",
+                valid_time="1970-01-01T00:00:00Z",
+                system_time="1970-01-01T00:00:00Z",
+                provenance_ref_sha256="0" * 64,
+                evidence_ref_sha256="0" * 64,
+            )
+        )
+        cursor.execute(
+            "LOCK TABLE ONLY public.llm_context_lifecycle_outbox "
+            "IN ACCESS SHARE MODE"
+        )
+        admitted_relation_oid = _require_rls_application_role(cursor)
+        cursor.execute(
+            "SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', %s, true)",
+            (self.tenant_scope,),
+        )
+        if for_update:
+            cursor.execute(
+                "SELECT pg_catalog.pg_advisory_xact_lock(%s)",
+                (_event_identity_lock_key(self.tenant_scope, probe.evidence_id),),
+            )
+            cursor.fetchone()
+        return (
+            self._select_admitted_evidence(
+                cursor,
+                admitted_relation_oid,
+                probe.evidence_id,
+            ),
+            admitted_relation_oid,
+        )
+
     def load(self, evidence_id: str) -> Optional[ContextLifecycleEvidenceSeed]:
         """Load one durable event through a package-owned read transaction."""
         _require_psycopg()
@@ -1166,62 +1273,23 @@ class PostgresContextLifecycleOutboxStore:
         has RLS enabled and forced with the sole reviewed tenant policy semantics. The
         read path pulls forward PostgreSQL's normal ``ACCESS SHARE`` relation lock
         before live admission and retains it through tenant binding and the consuming
-        ``SELECT``. This keeps the relation identity admitted by the catalog proof from
-        being renamed, replaced, dropped, or otherwise changed by concurrent DDL that
-        requires ``ACCESS EXCLUSIVE`` between admission and the read. Security-critical
-        function, relation, and policy authority is explicitly schema-qualified, and
-        ``ONLY`` prevents inherited relations from widening the canonical durable row
-        source if an inheritance edge appears after migration admission. The outbox
-        does not mutate or inherit the caller transaction's ``search_path``.
+        ``SELECT``. The lock retains the admitted relation object against conflicting
+        table-level DDL; it does not by itself freeze an independently renameable
+        namespace-name binding. Admission therefore returns the exact relation OID,
+        and the consuming SELECT proves in the same SQL statement that the live
+        qualified name still resolves to that OID before any evidence row is accepted.
+        The selected row's ``tableoid`` must also match the admitted OID. Security-
+        critical function, relation, and policy authority is explicitly schema-
+        qualified, and ``ONLY`` prevents inherited relations from widening the
+        canonical durable row source. The outbox does not mutate or inherit the caller
+        transaction's ``search_path``.
         """
-        if type(for_update) is not bool:
-            raise ValidationError(
-                field="for_update",
-                value="<redacted>",
-                reason="must be an exact boolean",
-            )
-        probe = _validated_evidence(
-            ContextLifecycleEvidenceSeed(
-                evidence_id=evidence_id,
-                event_type="probe",
-                tenant_scope_sha256="0" * 64,
-                subject_ref_sha256="0" * 64,
-                authority_ref_sha256="0" * 64,
-                origin_ref_sha256="0" * 64,
-                truth_status="observed",
-                valid_time="1970-01-01T00:00:00Z",
-                system_time="1970-01-01T00:00:00Z",
-                provenance_ref_sha256="0" * 64,
-                evidence_ref_sha256="0" * 64,
-            )
+        loaded, _admitted_relation_oid = self._load_in_transaction_with_relation_oid(
+            cursor,
+            evidence_id,
+            for_update=for_update,
         )
-        cursor.execute(
-            "LOCK TABLE ONLY public.llm_context_lifecycle_outbox "
-            "IN ACCESS SHARE MODE"
-        )
-        _require_rls_application_role(cursor)
-        cursor.execute(
-            "SELECT pg_catalog.set_config('pg_llm_batch.tenant_scope', %s, true)",
-            (self.tenant_scope,),
-        )
-        if for_update:
-            cursor.execute(
-                "SELECT pg_catalog.pg_advisory_xact_lock(%s)",
-                (_event_identity_lock_key(self.tenant_scope, probe.evidence_id),),
-            )
-            cursor.fetchone()
-        cursor.execute(
-            f"SELECT {_OUTBOX_COLUMNS} FROM ONLY public.llm_context_lifecycle_outbox "
-            "WHERE tenant_scope = %s AND evidence_id = %s",
-            (self.tenant_scope, probe.evidence_id),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-        return self._require_tenant_binding(
-            _evidence_from_row(row),
-            durable_row=True,
-        )
+        return loaded
 
     def enqueue(
         self,
@@ -1248,9 +1316,13 @@ class PostgresContextLifecycleOutboxStore:
         state. The evidence tenant identity must match the explicit tenant binding of
         this store before any transaction-local SQL is executed. The write path pulls
         forward the table's normal ``ROW EXCLUSIVE`` DML lock before live authority
-        admission and retains it through the caller transaction, preventing concurrent
-        table-program or schema DDL from changing executable write authority between
-        admission and the durable INSERT. The caller owns commit and rollback.
+        admission and retains it through the caller transaction, blocking conflicting
+        table-program DDL on the admitted relation object. Namespace rename/recreation
+        is a separate name-resolution boundary, so the admitted relation OID is carried
+        from the guarded load into the INSERT. One data-modifying CTE resolves the live
+        qualified name, requires that OID to equal the admitted OID, and performs the
+        INSERT only under that same-statement identity proof. The caller owns commit
+        and rollback.
         """
         candidate = self._require_tenant_binding(
             _validated_evidence(evidence),
@@ -1260,7 +1332,7 @@ class PostgresContextLifecycleOutboxStore:
             "LOCK TABLE ONLY public.llm_context_lifecycle_outbox "
             "IN ROW EXCLUSIVE MODE"
         )
-        existing = self.load_in_transaction(
+        existing, admitted_relation_oid = self._load_in_transaction_with_relation_oid(
             cursor,
             candidate.evidence_id,
             for_update=True,
@@ -1274,23 +1346,51 @@ class PostgresContextLifecycleOutboxStore:
             )
 
         cursor.execute(
+            "WITH live_relation AS ("
+            "SELECT pg_catalog.to_regclass("
+            "'public.llm_context_lifecycle_outbox')::pg_catalog.oid AS oid"
+            "), attempted_insert AS ("
             "INSERT INTO public.llm_context_lifecycle_outbox ("
             "tenant_scope, evidence_id, event_type, tenant_scope_sha256, "
             "subject_ref_sha256, authority_ref_sha256, origin_ref_sha256, "
             "truth_status, valid_time, system_time, provenance_ref_sha256, "
-            "evidence_ref_sha256) VALUES ("
-            "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "evidence_ref_sha256) "
+            "SELECT %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s "
+            "FROM live_relation "
+            "WHERE live_relation.oid OPERATOR(pg_catalog.=) %s::pg_catalog.oid "
             "ON CONFLICT (tenant_scope, evidence_id) DO NOTHING "
-            "RETURNING evidence_id",
-            (self.tenant_scope, *_evidence_values(candidate)),
+            "RETURNING evidence_id"
+            ") "
+            "SELECT live_relation.oid OPERATOR(pg_catalog.=) %s::pg_catalog.oid, "
+            "attempted_insert.evidence_id "
+            "FROM live_relation LEFT JOIN attempted_insert ON true",
+            (
+                self.tenant_scope,
+                *_evidence_values(candidate),
+                admitted_relation_oid,
+                admitted_relation_oid,
+            ),
         )
-        if cursor.fetchone() is not None:
+        insert_row = cursor.fetchone()
+        if type(insert_row) is tuple:
+            insert_snapshot = insert_row
+        elif type(insert_row) is list:
+            insert_snapshot = tuple(insert_row)
+        else:
+            raise RuntimeError("context lifecycle outbox insert result has an invalid shape")
+        if len(insert_snapshot) != 2:
+            raise RuntimeError("context lifecycle outbox insert result has an invalid shape")
+        if insert_snapshot[0] is not True:
+            raise ConfigError("Lifecycle outbox relation identity changed after admission")
+        if insert_snapshot[1] is not None:
+            if type(insert_snapshot[1]) is not str or insert_snapshot[1] != candidate.evidence_id:
+                raise RuntimeError("context lifecycle outbox insert returned invalid identity")
             return candidate
 
-        concurrent = self.load_in_transaction(
+        concurrent = self._select_admitted_evidence(
             cursor,
+            admitted_relation_oid,
             candidate.evidence_id,
-            for_update=True,
         )
         if concurrent is None:
             raise RuntimeError("context lifecycle outbox insert conflict row disappeared")
