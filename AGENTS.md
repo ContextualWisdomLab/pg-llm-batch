@@ -206,6 +206,17 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   privileges, which are sufficient for `ROW EXCLUSIVE`. Lock acquisition and
   contention are part of the complete buyer-path latency measurement, not removable
   security overhead.
+- The read path must close the admission-to-read relation-identity race rather than
+  relying on a later `SELECT` to acquire relation authority after admission.
+  `load_in_transaction()` must acquire `LOCK TABLE ONLY
+  public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE` before live authority
+  admission and retain it through tenant binding, optional tenant/event advisory
+  serialization, and the consuming `SELECT`. Concurrent `ACCESS EXCLUSIVE` DDL must
+  wait rather than rename, replace, or drop the admitted relation between the catalog
+  proof and data access. Do not widen ordinary reads to `ROW EXCLUSIVE` or
+  `ACCESS EXCLUSIVE`; `ACCESS SHARE` is the minimal fence and remains compatible with
+  ordinary reads and writes. Treat its acquisition and wait as part of complete
+  buyer-path latency evidence, not removable security overhead.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas
