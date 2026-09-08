@@ -131,3 +131,29 @@ def test_candidate_cursor_rejects_cross_thread_driver_access(operation: str) -> 
         _run_on_worker(callbacks[operation])
 
     assert raw.calls == 0
+
+
+def test_candidate_owner_thread_exercises_complete_connection_and_cursor_surface() -> None:
+    """The owner thread may use every admitted cursor and transaction capability."""
+    raw_connection = _RawConnection()
+    connection = Pg8000ThreadAffineCandidateConnectionAdapter(raw_connection)
+
+    with connection as entered:
+        assert entered is connection
+        cursor = entered.cursor()
+        with cursor as active:
+            assert active is cursor
+            assert active.execute("SELECT %s", (1,)) is active
+            assert active.executemany("SELECT %s", [(1,)]) is active
+            assert active.fetchone() == (1,)
+            assert active.fetchmany(1) == [(1,)]
+            assert active.fetchall() == [(1,)]
+            assert active.row_count() == 1
+        entered.commit()
+        entered.rollback()
+        entered.set_autocommit(True)
+        assert entered.is_closed() is False
+
+    connection.close()
+    assert connection.is_closed() is True
+    assert raw_connection.calls > 0

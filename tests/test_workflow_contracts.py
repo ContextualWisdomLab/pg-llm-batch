@@ -180,6 +180,51 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     assert '"pg8000' not in project.casefold()
 
 
+def test_ci_pg8000_candidate_keeps_0600_secrets_for_both_runtime_identities() -> None:
+    """Give host smoke and DB runtime separate private copies of one credential."""
+    workflow = _read(".github/workflows/ci.yml")
+    dockerfile = _read("docker/postgres/Dockerfile")
+
+    assert "USER postgres" in dockerfile
+    assert 'host_password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-host-password.XXXXXX")"' in workflow
+    assert 'container_password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-container-password.XXXXXX")"' in workflow
+    assert 'chmod 600 "$host_password_file" "$container_password_file"' in workflow
+    assert 'runner_uid="$(id -u)"' in workflow
+    assert (
+        'postgres_runtime_uid="$(docker run --rm --entrypoint id '
+        'pg-llm-batch-postgres:ci -u)"'
+    ) in workflow
+    assert 'sudo chown "$postgres_runtime_uid" "$container_password_file"' in workflow
+    assert 'test "$(stat -c \'%u\' "$host_password_file")" = "$runner_uid"' in workflow
+    assert (
+        'test "$(stat -c \'%u\' "$container_password_file")" '
+        '= "$postgres_runtime_uid"'
+    ) in workflow
+    assert 'PG8000_CANDIDATE_PASSWORD_FILE=$host_password_file' in workflow
+    assert 'source=$container_password_file,target=/run/secrets/postgres_password' in workflow
+    assert "POSTGRES_HOST_AUTH_METHOD=trust" not in workflow
+    assert "chmod 644" not in workflow
+
+
+def test_ci_pg8000_candidate_health_matches_selected_runtime_capabilities() -> None:
+    """Candidate parity must not wait for an extension disabled by its image."""
+    workflow = _read(".github/workflows/ci.yml")
+    dockerfile = _read("docker/postgres/Dockerfile")
+    candidate_health_step = next(
+        step
+        for steps in _workflow_job_steps(workflow)
+        for step in steps
+        if _step_top_level_field(step, "name")
+        == "Wait for candidate PostgreSQL health contract"
+    )
+
+    assert "docker build --tag pg-llm-batch-postgres:ci docker/postgres" in workflow
+    assert "FROM postgres-base AS runtime" in dockerfile
+    assert "ENV ENABLE_TIKTOKEN=0" in dockerfile
+    assert "component IN ('database','com_config')" in candidate_health_step
+    assert "pg_tiktoken" not in candidate_health_step
+
+
 def test_ci_pg8000_candidate_pins_and_hashes_full_dependency_closure() -> None:
     """Candidate proof must not resolve mutable transitive wheels at install time."""
     workflow = _read(".github/workflows/ci.yml")

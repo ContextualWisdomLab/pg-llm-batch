@@ -32,6 +32,10 @@ class _Cursor:
         """Record one SQL execution and its bound parameters."""
         self.driver.executions.append((sql, params))
 
+    def row_count(self) -> int:
+        """Report the successful lifecycle write represented by this test double."""
+        return 1
+
 
 class _Connection:
     """Expose the small connection surface used by the lifecycle helper."""
@@ -55,7 +59,7 @@ class _Connection:
 
 
 class _Psycopg:
-    """Minimal psycopg replacement for deterministic SQL contract tests."""
+    """Minimal PostgreSQL driver replacement for deterministic SQL contract tests."""
 
     def __init__(self) -> None:
         self.executions: list[tuple[str, Any]] = []
@@ -124,7 +128,7 @@ def test_sparse_observations_cannot_reduce_persisted_request_counts(
 ) -> None:
     """Newer sparse polls or cancellations must not erase known progress counts."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     db.persist_remote_batch_state(
         "postgresql://example",
@@ -187,7 +191,7 @@ def test_persistence_rejects_oversized_provider_id_before_database_access(
 ) -> None:
     """Unsupported provider IDs cannot reach PostgreSQL or its CHECK constraint."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     with pytest.raises(ValueError, match="remote_batch_id"):
         db.persist_remote_batch_state(
@@ -206,7 +210,7 @@ def test_persistence_rejects_nul_alias_before_database_access(
 ) -> None:
     """PostgreSQL-incompatible NUL aliases fail before opening a connection."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     with pytest.raises(ValueError, match="endpoint_alias"):
         db.persist_remote_batch_state(
@@ -306,7 +310,7 @@ def test_operator_docs_define_current_state_and_tenant_trust_boundaries() -> Non
     """Lifecycle documentation must bound audit and tenant assurances."""
     documentation = " ".join(
         (
-  Path(__file__).parents[1] / "docs" / "remote-batch-lifecycle.md"
+            Path(__file__).parents[1] / "docs" / "remote-batch-lifecycle.md"
         ).read_text(encoding="utf-8").split()
     )
 
@@ -334,7 +338,7 @@ def test_remote_field_contract_rejects_invalid_optional_ids_before_database_acce
 ) -> None:
     """Every present provider file identifier is validated before PostgreSQL."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     with pytest.raises(ValueError, match=field):
         db.persist_remote_batch_state(
@@ -433,7 +437,7 @@ def test_remote_field_contract_rejects_nul_lifecycle_text_before_database_access
 ) -> None:
     """NUL-bearing lifecycle status fails before PostgreSQL persistence."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
+    monkeypatch.setattr(db, "retained_postgres_driver", lambda: driver)
 
     with pytest.raises(ValueError, match="batch_status"):
         db.persist_remote_batch_state(

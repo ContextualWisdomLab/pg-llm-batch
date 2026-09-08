@@ -6,8 +6,9 @@ image without adding the candidate to the production dependency graph. The
 checks cover the candidate URI, keyword, and explicit service connection
 selectors, portable connection/cursor ACL, thread-affine connection use,
 transaction, parameter, JSONB, UUID/timestamp, affected-row, narrow PostgreSQL
-error classification, restore-catalog inspection, and transaction-local tenant
-semantics that must be proven before candidate promotion.
+error classification, restore-catalog inspection, transport recovery, and
+transaction-local tenant semantics that must be proven before candidate
+promotion.
 """
 
 from __future__ import annotations
@@ -309,6 +310,57 @@ def _assert_undefined_function_classification() -> None:
         connection.close()
 
 
+def _assert_transport_failure_recovery() -> None:
+    """Prove a severed candidate session is discarded and a fresh one recovers.
+
+    The CI PostgreSQL user owns the ephemeral server and may terminate one of its
+    own backends. The victim operation must surface the server-side disconnect;
+    local close must then mark that capability terminal even if protocol cleanup
+    itself reports the severed transport. Recovery authority is a newly opened
+    connection, never reuse of the failed session.
+    """
+    victim = _connection()
+    terminator = _connection()
+    try:
+        with victim.cursor() as cursor:
+            cursor.execute("SELECT pg_backend_pid()")
+            row = cursor.fetchone()
+            if row is None or len(row) != 1 or type(row[0]) is not int:
+                raise AssertionError("candidate backend identity evidence changed")
+            backend_pid = row[0]
+
+        terminator.set_autocommit(True)
+        with terminator.cursor() as cursor:
+            cursor.execute("SELECT pg_terminate_backend(%s)", (backend_pid,))
+            if cursor.fetchone() != (True,):
+                raise AssertionError("candidate backend termination did not succeed")
+
+        try:
+            with victim.cursor() as cursor:
+                cursor.execute("SELECT 1")
+        except BaseException:
+            pass
+        else:
+            raise AssertionError("candidate reused a server-terminated session")
+    finally:
+        terminator.close()
+        try:
+            victim.close()
+        except BaseException:
+            pass
+        if not victim.is_closed():
+            raise AssertionError("candidate failed connection did not become terminal")
+
+    recovered = _connection()
+    try:
+        with recovered.cursor() as cursor:
+            cursor.execute("SELECT 1")
+            if cursor.fetchone() != (1,):
+                raise AssertionError("candidate fresh-session recovery changed")
+    finally:
+        recovered.close()
+
+
 def _assert_typed_rls_read(
     expected_uuid: uuid.UUID,
     expected_time: datetime,
@@ -361,6 +413,7 @@ def main() -> None:
 
     _assert_restore_catalog_inspection()
     _assert_undefined_function_classification()
+    _assert_transport_failure_recovery()
     _cleanup()
     try:
         evidence_uuid, evidence_time = _prepare_rls_fixture()

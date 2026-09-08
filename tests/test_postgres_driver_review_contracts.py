@@ -1,3 +1,5 @@
+"""Review regressions for PostgreSQL driver row-count and tenant contracts."""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone

@@ -30,6 +30,10 @@ class _MetadataCursor:
         """Record one SQL execution for deterministic trust-boundary assertions."""
         self.driver.executions.append((sql, params))
 
+    def row_count(self) -> int:
+        """Report the successful lifecycle UPSERT used by these contract tests."""
+        return 1
+
 
 class _MetadataConnection:
     """Expose the connection operations used by lifecycle persistence."""
@@ -53,7 +57,7 @@ class _MetadataConnection:
 
 
 class _MetadataPsycopg:
-    """Minimal psycopg replacement for provider metadata contract tests."""
+    """Minimal driver port for provider metadata contract tests."""
 
     def __init__(self) -> None:
         self.executions: list[tuple[str, Any]] = []
@@ -124,18 +128,17 @@ def _metadata_credentials(_alias: str) -> GatewayCredentials:
     ids=("nul-value", "nul-key", "nested-nul-value"),
 )
 def test_postgresql_incompatible_nul_metadata_normalizes_to_empty_object(
-    monkeypatch: pytest.MonkeyPatch,
     provider_metadata: dict[str, Any],
 ) -> None:
     """NUL-bearing JSON metadata must fail closed before the jsonb parameter."""
     driver = _MetadataPsycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     snapshot = db.persist_remote_batch_state(
         "postgresql://example",
         "primary",
         {"id": "batch-1", "metadata": provider_metadata},
         observation_order=22,
+        postgres_driver=driver,
     )
 
     assert snapshot["provider_metadata"] == {}
@@ -148,12 +151,9 @@ def test_postgresql_incompatible_nul_metadata_normalizes_to_empty_object(
     assert driver.commits == 1
 
 
-def test_postgresql_safe_metadata_retains_json_scalars_and_literal_escape(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_postgresql_safe_metadata_retains_json_scalars_and_literal_escape() -> None:
     """Safe nested JSON and a literal backslash escape must remain unchanged."""
     driver = _MetadataPsycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
     provider_metadata = {
         "empty_object": {},
         "empty_values": [],
@@ -166,6 +166,7 @@ def test_postgresql_safe_metadata_retains_json_scalars_and_literal_escape(
         "primary",
         {"id": "batch-2", "metadata": provider_metadata},
         observation_order=23,
+        postgres_driver=driver,
     )
 
     assert snapshot["provider_metadata"] == provider_metadata

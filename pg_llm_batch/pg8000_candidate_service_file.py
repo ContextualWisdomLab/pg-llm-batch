@@ -71,6 +71,16 @@ def _service_file_snapshot(observed: os.stat_result) -> tuple[int, int, int, int
     )
 
 
+def _close_descriptor(descriptor: int, *, preserve_primary_error: bool) -> None:
+    """Close one retained descriptor without replacing an established primary error."""
+    try:
+        os.close(descriptor)
+    except OSError:
+        if preserve_primary_error:
+            return
+        raise _invalid_service_file() from None
+
+
 def _read_bounded_utf8(path: Path) -> str:
     """Read one explicit regular service file under a finite UTF-8 byte budget.
 
@@ -121,11 +131,10 @@ def _read_bounded_utf8(path: Path) -> str:
         primary_error = exc
         raise _invalid_service_file() from None
     finally:
-        try:
-            os.close(descriptor)
-        except OSError:
-            if primary_error is None:
-                raise _invalid_service_file() from None
+        _close_descriptor(
+            descriptor,
+            preserve_primary_error=primary_error is not None,
+        )
 
     if len(payload) > _MAX_SERVICE_FILE_BYTES:
         raise _invalid_service_file()
@@ -149,6 +158,7 @@ class Pg8000CandidateServiceFileResolver:
     """
 
     def __init__(self, service_file: Path) -> None:
+        """Retain exactly one caller-selected service file after validating its path type."""
         if not isinstance(service_file, Path):
             raise _invalid_service_file()
         self._service_file = service_file

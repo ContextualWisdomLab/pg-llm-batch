@@ -1,3 +1,5 @@
+"""Contract tests for the provider-neutral PostgreSQL driver port."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping

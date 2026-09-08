@@ -1,3 +1,5 @@
+"""Parity tests for the retained Psycopg implementation of the driver port."""
+
 from __future__ import annotations
 
 from typing import Any

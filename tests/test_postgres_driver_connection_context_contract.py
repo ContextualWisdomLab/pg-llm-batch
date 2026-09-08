@@ -1,3 +1,5 @@
+"""Connection-context parity contract for PostgreSQL driver candidates."""
+
 from __future__ import annotations
 
 from pg_llm_batch.postgres_driver_candidate import (

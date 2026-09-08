@@ -1,3 +1,5 @@
+"""Immutable candidate-report provenance tests for PostgreSQL driver admission."""
+
 from __future__ import annotations
 
 from dataclasses import fields
