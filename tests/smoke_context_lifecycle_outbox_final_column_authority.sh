@@ -130,3 +130,132 @@ SQL
 
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/dev/null
+
+# A type OID is not a complete PostgreSQL column-type identity. timestamptz and
+# timestamptz(0) share atttypid, while atttypmod controls retained fractional-second
+# precision. Reproduce that material same-type drift before requiring both final
+# migration verification and continuing runtime admission to fail closed.
+canonical_type_identity="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT atttypid::text || ':' || atttypmod::text FROM pg_catalog.pg_attribute WHERE attrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND attname = 'created_at' AND attnum > 0 AND NOT attisdropped")"
+if [[ "${canonical_type_identity}" != *":-1" ]]; then
+  echo "canonical created_at typmod is not the expected unrestricted timestamptz identity" >&2
+  exit 1
+fi
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+INSERT INTO public.llm_context_lifecycle_outbox (
+    tenant_scope,
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256,
+    created_at
+) VALUES (
+    'standalone', 'typmod-baseline', 'batch.lifecycle.allowed',
+    repeat('0', 64), repeat('1', 64), repeat('2', 64), repeat('3', 64),
+    'observed', '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z',
+    repeat('4', 64), repeat('5', 64),
+    '2026-09-08 00:00:00.123456+00'::pg_catalog.timestamptz
+);
+SQL
+
+baseline_fraction="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT to_char(created_at AT TIME ZONE 'UTC', 'US') FROM public.llm_context_lifecycle_outbox WHERE evidence_id = 'typmod-baseline'")"
+if [[ "${baseline_fraction}" != "123456" ]]; then
+  echo "canonical created_at did not retain the baseline fractional precision" >&2
+  exit 1
+fi
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+DELETE FROM public.llm_context_lifecycle_outbox WHERE evidence_id = 'typmod-baseline';
+ALTER TABLE public.llm_context_lifecycle_outbox
+    ALTER COLUMN created_at TYPE timestamp(0) with time zone
+    USING created_at::timestamp(0) with time zone;
+INSERT INTO public.llm_context_lifecycle_outbox (
+    tenant_scope,
+    evidence_id,
+    event_type,
+    tenant_scope_sha256,
+    subject_ref_sha256,
+    authority_ref_sha256,
+    origin_ref_sha256,
+    truth_status,
+    valid_time,
+    system_time,
+    provenance_ref_sha256,
+    evidence_ref_sha256,
+    created_at
+) VALUES (
+    'standalone', 'typmod-drift', 'batch.lifecycle.allowed',
+    repeat('0', 64), repeat('1', 64), repeat('2', 64), repeat('3', 64),
+    'observed', '1970-01-01T00:00:00Z', '1970-01-01T00:00:00Z',
+    repeat('4', 64), repeat('5', 64),
+    '2026-09-08 00:00:00.123456+00'::pg_catalog.timestamptz
+);
+SQL
+
+drift_type_identity="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT atttypid::text || ':' || atttypmod::text FROM pg_catalog.pg_attribute WHERE attrelid = 'public.llm_context_lifecycle_outbox'::pg_catalog.regclass AND attname = 'created_at' AND attnum > 0 AND NOT attisdropped")"
+if [[ "${drift_type_identity%%:*}" != "${canonical_type_identity%%:*}" ]] || \
+   [[ "${drift_type_identity##*:}" == "${canonical_type_identity##*:}" ]]; then
+  echo "created_at typmod specimen did not preserve atttypid while changing atttypmod" >&2
+  exit 1
+fi
+
+drift_fraction="$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT to_char(created_at AT TIME ZONE 'UTC', 'US') FROM public.llm_context_lifecycle_outbox WHERE evidence_id = 'typmod-drift'")"
+if [[ "${drift_fraction}" == "123456" ]]; then
+  echo "created_at typmod drift did not alter stored fractional-second semantics" >&2
+  exit 1
+fi
+
+runtime_rejected=0
+if docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+import psycopg
+
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_final_column_runtime@127.0.0.1/postgres",
+    tenant_scope="standalone",
+    tenant_scope_sha256="0" * 64,
+)
+with psycopg.connect(
+    "postgresql://cwl_llm_batch_outbox_final_column_runtime@127.0.0.1/postgres"
+) as connection:
+    with connection.cursor() as cursor:
+        try:
+            store.load_in_transaction(cursor, "runtime-column-typmod-authority-red")
+        except ConfigError:
+            raise SystemExit(0)
+        raise SystemExit(17)
+PY
+then
+  runtime_rejected=1
+fi
+
+migration_rejected=0
+if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+  -f "${migration}" >/tmp/pg-llm-batch-outbox-final-column-typmod.out 2>&1; then
+  migration_rejected=0
+elif grep -Fq "unexpected lifecycle outbox row-admission authority" \
+  /tmp/pg-llm-batch-outbox-final-column-typmod.out; then
+  migration_rejected=1
+else
+  cat /tmp/pg-llm-batch-outbox-final-column-typmod.out >&2
+  echo "column typmod drift failed for an unrelated migration reason" >&2
+  exit 1
+fi
+
+if [[ "${runtime_rejected}" != "1" || "${migration_rejected}" != "1" ]]; then
+  echo "same-atttypid column typmod drift remained admissible: runtime_rejected=${runtime_rejected} migration_rejected=${migration_rejected}" >&2
+  exit 1
+fi
