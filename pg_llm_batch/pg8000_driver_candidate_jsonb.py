@@ -1,11 +1,11 @@
-"""Candidate-only JSONB adaptation for the pg8000 migration lane.
+"""JSONB adaptation shared by pg8000 admission and production runtime.
 
-pg8000 1.31.5's DB-API contract sends JSON as serialized text and returns JSON
-values deserialized. The production runtime still uses Psycopg; this module only
-proves the JSONB parameter adaptation needed before a permissively licensed
-candidate can implement ``PostgresDriverPort.jsonb``. It does not promote
-pg8000 into the runtime dependency graph or bypass the remaining conninfo, RLS,
-recovery, package, SBOM, and provenance gates.
+pg8000 1.31.5 sends JSON as serialized text and returns JSON values
+deserialized. ``Pg8000DriverAdapter`` reuses this serializer after exact-artifact
+admission so JSONB semantics stay in one reviewed anti-corruption boundary rather
+than being copied into a second production implementation. The historical
+``candidate`` names preserve the migration evidence lineage; protected
+integration and immutable release remain separate authorities.
 """
 
 from __future__ import annotations
@@ -14,11 +14,11 @@ import json
 
 
 class Pg8000CandidateJsonbError(RuntimeError):
-    """Report an invalid candidate JSONB value without reflecting payload content.
+    """Report an invalid pg8000 JSONB value without reflecting payload content.
 
     The error intentionally contains no serialized value because batch payloads
     may contain purpose-bound user or provider content. Callers can classify the
-    candidate contract failure without turning diagnostics into a content leak.
+    adaptation failure without turning diagnostics into a content leak.
     """
 
 
@@ -27,11 +27,11 @@ def adapt_pg8000_jsonb(value: object) -> str:
 
     PostgreSQL JSON/JSONB does not admit IEEE non-finite numeric literals, and an
     isolated Unicode surrogate cannot be encoded as the UTF-8 client text sent to
-    PostgreSQL. The candidate therefore fails closed before database I/O for
-    either case and for objects that Python's JSON encoder cannot represent.
-    Non-ASCII text is retained as Unicode rather than escaped so the adapter can
-    exercise the same client-encoding boundary used by real multilingual batch
-    payloads.
+    PostgreSQL. The adapter therefore fails closed before database I/O for either
+    case and for objects that Python's JSON encoder cannot represent. Non-ASCII
+    text is retained as Unicode rather than escaped so production and admission
+    paths exercise the same client-encoding boundary used by real multilingual
+    batch payloads.
 
     Args:
         value: A caller-validated JSON-compatible Python value.
