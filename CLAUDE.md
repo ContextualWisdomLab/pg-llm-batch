@@ -167,6 +167,16 @@
   Ordinary application roles remain limited to non-grantable `SELECT`/`INSERT`; the
   existing `INSERT` privilege is sufficient to acquire `ROW EXCLUSIVE`. Treat lock
   acquisition and contention as part of complete buyer-path latency evidence.
+- The outbox read path must close the corresponding admission-to-read relation-identity
+  race. Before live authority admission, `load_in_transaction()` acquires `LOCK TABLE
+  ONLY public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE` and retains it through
+  tenant binding, optional tenant/event advisory serialization, and the consuming
+  `SELECT`. Do not rely on the later `SELECT` to acquire its ordinary `ACCESS SHARE`
+  lock after admission: concurrent `ACCESS EXCLUSIVE` DDL could rename or replace the
+  admitted relation in that gap. Do not widen reads to `ROW EXCLUSIVE` or
+  `ACCESS EXCLUSIVE`; `ACCESS SHARE` is the minimal relation-identity fence and remains
+  compatible with ordinary reads and writes. Its acquisition/wait is part of complete
+  buyer-path latency evidence rather than removable security overhead.
 - Keep owner-enforcement relaxation, legacy backfill, constraint migration, and
   forced-RLS restoration inside one atomic PostgreSQL statement.
 - Keep `pg_llm_batch/schema.sql` and
