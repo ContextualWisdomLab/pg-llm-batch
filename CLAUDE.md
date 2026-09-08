@@ -160,9 +160,11 @@
   name rebinding. Before live authority admission, `enqueue_in_transaction()` acquires
   `LOCK TABLE ONLY public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` and
   retains that table lock through the durable `INSERT` and caller-owned transaction.
-  That lock protects the admitted relation object from conflicting table-program/
-  relation DDL, but it does not authenticate an independently mutable schema/name
-  binding. `_require_rls_application_role()` must return the exact validated outbox
+  A concurrent `CREATE TRIGGER` is one concrete table-program DDL specimen that must
+  remain blocked behind this retained relation-object fence. That lock protects the
+  admitted relation object from conflicting table-program/relation DDL, but it does
+  not authenticate an independently mutable schema/name binding.
+  `_require_rls_application_role()` must return the exact validated outbox
   `pg_class.oid`; the consuming data-modifying CTE must resolve the then-live qualified
   name with `pg_catalog.to_regclass(...)` and perform the `INSERT` only when that OID
   equals the admitted OID. A standalone identity recheck followed by a separate write
