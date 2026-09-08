@@ -95,7 +95,6 @@ def test_terminal_undefined_function_failure_closes_cached_driver_session(
 ) -> None:
     """Both missing pg_tiktoken entry points must disable and release the session."""
     driver = _Driver()
-    monkeypatch.setattr(token_counter_module, "psycopg", None)
     monkeypatch.setattr(
         token_counter_module,
         "get_model_metadata",
