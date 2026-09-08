@@ -18,7 +18,7 @@ There is still no immutable GitHub Release. A GREEN Draft branch is not release 
 
 ### Dependency root: PR #233
 
-PR #233 remains the dependency-root integration prerequisite at exact `01d231fde23b82e2ced258d7bfcb4721ed75706d`. Its repository-local deterministic lanes are successful, while required compatibility CodeQL, OpenCode, Noema, and a qualifying independent approval remain non-passing owner prerequisites. Leaf churn, synthetic status, self-approval, gate weakening, or routine administrator bypass are not substitutes. pg-llm-batch must consume protected central workflow behavior rather than copy mutable central source.
+PR #233 remains the dependency-root integration prerequisite at exact `01d231fde23b82e2ced258d7bfcb4721ed75706d`. Its repository-local deterministic lanes are successful, while required compatibility CodeQL, OpenCode, Noema, and a qualifying independent approval remain non-passing owner prerequisites. Canonical central CodeQL repair remains `.github#2040@6706c231ab06a3c91c43fdb5b989cfcd79fff593`; its Security Scan, Semgrep, Python Security, and Agent Review Runtime Quality are successful while CodeQL `34251822255` remains terminal failure. Leaf churn, synthetic status, self-approval, gate weakening, or routine administrator bypass are not substitutes. pg-llm-batch must consume protected central workflow behavior rather than copy mutable central source.
 
 ### Commercial PostgreSQL driver: PR #323
 
@@ -28,11 +28,11 @@ PR #323 is the active Draft migration lane for issue #322. It established `Postg
 
 The branch preserves real PostgreSQL acceptance for parameter binding, no-parameter DB-API execution, tuple-row normalization, finite fetch budgets, exact/unknown row counts, transaction/context ownership, terminal connection state, thread-affine use, tenant/RLS/session behavior, UUID/timestamp round-trip, SQLSTATE classification, cleanup precedence, JSONB adaptation, packaged restore-catalog behavior, server-terminated-session recovery, exact dependency/source digests, license evidence, source-wheel parity, package-installed execution, and Python 3.10/3.12/3.14 PostgreSQL runtime smokes.
 
+The component image now follows the same production dependency decision. Exact repair `6dbc8461ca0549327077ed16bd2d4763466069eb` installs only `curl` from the pinned Debian snapshot, fails the image build if `libpq5` remains installed transitively, and constructs `retained_postgres_driver()` from the copied no-dev environment in the final image stage. Exact CI `34289670789` and Release Acceptance `34289670788` are terminal success on that repair head. This baseline commit is a new documentation descendant and must reacquire its own exact-head acceptance before #323 is current-head GREEN again.
+
 ### Public commercial surface: PR #321
 
-PR #321 owns only `README.md` and `docs/index.md` relative to #323. After the SBOM repair head reached exact GREEN, the stale child was reconciled by ordinary two-parent ancestry onto parent `bc774185a4ba3fcbebe924aa1051154c3a713339`, producing child `5d83585e9fb4b21adfaa8c319cee4f88384e5910`. The branch ref was advanced without force. Comparison against that parent has exact merge base `bc774185...`, ahead 50 / behind 0, with only `README.md` and `docs/index.md` as relative semantic delta. Its current CI/Release Acceptance were queued when this baseline descendant was authored; predecessor child evidence is not transferred.
-
-Because this baseline update itself advances #323 again, #321 must be reconciled once more after the final parent head is stable. Reconciliation must preserve the two-file semantic delta by ordinary non-force ancestry and reacquire exact-child acceptance.
+PR #321 owns only `README.md` and `docs/index.md` relative to #323. Before the component-image repair, exact child `16526740d8809acc888b9b2958e9008843cb0ade` was an ordinary two-parent descendant of then-parent `7143ac2e1b7c8a1ae718d8820aba26a76608be15` and had independently reached CI `34286352438` plus Release Acceptance `34286352439` success. Parent #323 has since advanced, so that child is stale by design. After this baseline descendant is stable, #321 must be reconciled again through ordinary non-force ancestry while preserving only its two documentation blobs, then reacquire exact-child acceptance. Predecessor GREEN is not transferred.
 
 ## Runtime-graph RED and causal repair
 
@@ -66,9 +66,17 @@ Exact `b22783b...` produced a real hosted RED in CI `34284615642` while Release 
 
 Primary-source inspection of the exact pinned SBOM action proved the cause: its installer URL is constructed as `https://raw.githubusercontent.com/anchore/${name}/${version}/install.sh`, and the action's own default Syft constant is v-prefixed. Passing `1.51.1` therefore targeted a nonexistent git ref; this was an integration/configuration defect, not a product-runtime failure. The test contract was corrected first in `bc6eae25fbbc419f978f0cab90361c51cc7fe36f`, then production workflow repair `bc774185a4ba3fcbebe924aa1051154c3a713339` changed only the corresponding workflow value to `v1.51.1`.
 
-Exact repair head `bc774185...` reached CI `34285340321` and Release Acceptance `34285340333` terminal success. All seven CI jobs succeeded. Critically, the container/PostgreSQL lane now completed `Generate production runtime SBOM`, `Verify production runtime SBOM policy`, and `Preserve production runtime SBOM`, then continued through candidate PostgreSQL startup, health acceptance, and real pg8000 smokes on Python 3.10/3.12/3.14. This proves the SBOM workflow on that exact Draft head; it does not prove protected integration or immutable release.
+Exact repair head `bc774185...` reached CI `34285340321` and Release Acceptance `34285340333` terminal success. All seven CI jobs succeeded. Critically, the container/PostgreSQL lane completed `Generate production runtime SBOM`, `Verify production runtime SBOM policy`, and `Preserve production runtime SBOM`, then continued through candidate PostgreSQL startup, health acceptance, and real pg8000 smokes on Python 3.10/3.12/3.14. This proves the SBOM workflow on that exact Draft head; it does not prove protected integration or immutable release.
 
-This baseline update is an ordinary documentation descendant of `bc774185...`; its own exact-head CI and Release Acceptance must pass before #323 can again be described as current-head GREEN. No predecessor GREEN is transferred across this documentation commit.
+## Component-image libpq RED and causal repair
+
+The pg8000 production graph left a stale native runtime dependency in the component image: its final stage still installed Debian `libpq5` even though the no-dev Python environment had no Psycopg production edge. Test-first exact head `a7b42da27e0bb91f741ec3e26cbf65cc29524536` added a contract rejecting that stale package and produced real CI RED `34289024297`; Release Acceptance `34289024298` succeeded separately and is not substituted for the CI failure.
+
+Minimal source repair `bcfc8c3d4e1511d605077d59da44088f0078948e` removed the direct `libpq5` installation while retaining `curl`, which remains required by the component health check. Evidence descendant `91103597c2f37e36cef3737238d39fe80b2f3307` added a final-image proof that `dpkg-query -W libpq5` must fail and that the copied no-dev environment can construct `retained_postgres_driver()`. Its container/PostgreSQL job successfully built the hardened component image and completed the real PostgreSQL/pg8000 path, but the overall CI `34289301474` was RED because the new proof exposed two stale test-contract assumptions rather than a runtime regression.
+
+Exact `3d277f5146488e3ec351f496c89141cb5316cb0f` made the package-installation assertion precise, and CI `34289483284` then exposed the remaining defects explicitly: `tests/test_component_image_reproducibility.py` still required `libpq5`, while the shared Dockerfile command parser split a semicolon inside the quoted Python proof and raised `ValueError: No closing quotation`. The correct repair was not to restore libpq. Test descendant `a27e22f4ed5ba5a670933b344dd6912f33d79402` retired the obsolete package expectation; final repair `6dbc8461ca0549327077ed16bd2d4763466069eb` expressed the same driver-construction proof without an internal semicolon so the existing command-aware upgrade detector remains valid.
+
+Exact `6dbc846...` reached CI `34289670789` and Release Acceptance `34289670788` terminal success. The component build therefore proves both that the final image contains no `libpq5` package, including transitive installation, and that its no-dev packaged runtime can construct the admitted pg8000 adapter. The same CI also preserves production SBOM policy and real pg8000/PostgreSQL smokes. This removes an unnecessary native runtime surface; it does not claim remote TLS/server-identity completion.
 
 ## Public-surface RED and repair
 
@@ -78,7 +86,7 @@ An earlier #321 reconciliation exposed a real documentation RED at exact `d546f6
 
 ## Transport-security boundary remains separate
 
-Issue #322 is a dependency-license/supply-chain migration and does not close PostgreSQL transport-security issue #123. Successful pg8000 connections, explicit service-file authority hardening, and production SBOM policy do not prove mandatory verified remote TLS/server identity.
+Issue #322 is a dependency-license/supply-chain migration and does not close PostgreSQL transport-security issue #123. Successful pg8000 connections, explicit service-file authority hardening, production SBOM policy, and component-image libpq removal do not prove mandatory verified remote TLS/server identity.
 
 Issue #123 remains canonical for package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA/hostname success, wrong-CA and hostname-mismatch rejection, plaintext/downgrade refusal, server SSL refusal, recovery, and caller-owned connection authority. #323/#321 must not present driver migration or SBOM success as TLS completion.
 
@@ -86,14 +94,14 @@ Issue #123 remains canonical for package-created remote TCP connections, deliber
 
 | Gap | Current state | Required next evidence |
 | --- | --- | --- |
-| Commercial PostgreSQL runtime dependency | P0 / active Draft / SBOM repair predecessor GREEN | Revalidate this documentation descendant, preserve the pg8000 default graph through normal prerequisite integration, obtain one unchanged final #323 head, merge normally, then bind immutable protected-release evidence. |
-| Production runtime SBOM | Active / exact repair GREEN on `bc774185...` | Reacquire exact-head acceptance after this baseline descendant; carry validated CycloneDX evidence through protected integration and bind release SBOM to the immutable released artifact. |
+| Commercial PostgreSQL runtime dependency | P0 / active Draft / component image repaired | Reacquire exact-head acceptance after this baseline descendant, preserve the pg8000 default graph through normal prerequisite integration, obtain one unchanged final #323 head, merge normally, then bind immutable protected-release evidence. |
+| Production runtime SBOM | Active / exact repair GREEN | Carry validated CycloneDX evidence through protected integration and bind release SBOM to the immutable released artifact. |
 | PostgreSQL transport encryption / server identity | P0 security / canonical issue #123 | Complete realistic TLS-enabled PostgreSQL acceptance, verified identity, downgrade refusal, recovery, and caller-owned policy; do not infer from #322. |
 | Explicit service-file authority | Active / repaired on #323 | Preserve final-component inode checks, construction-time CWD binding, authenticated parent-directory identity, descriptor-relative I/O, bounded parsing, and fixed diagnostics through final integration/release. |
 | Production driver contract parity | Active / promoted on branch | Preserve real PostgreSQL/RLS/recovery/health/migration/package-installed acceptance through the production selector and fail closed on newly proven semantic mismatch. |
-| Supply-chain admission | Active / strengthened | Bind exact pg8000 hashes, positive license evidence, vulnerability results, built package, validated SBOM, provenance, and reproducibility to the same immutable release artifact/head. |
-| Public commercial-license surface | Child #321 / must follow parent | Preserve only `README.md` + `docs/index.md` through ordinary non-force reconciliation onto final #323 and reacquire exact-child CI/Release. |
-| Component-image dependency surface | Candidate next buyer gap | Revalidate whether the component image still needs OS `libpq5` now that the production Python graph is pg8000; if no production consumer exists, prove removal with image/runtime/recovery tests rather than retaining a stale native client surface. |
+| Supply-chain admission | Active / strengthened | Bind exact pg8000 hashes, positive license evidence, vulnerability results, built package, validated SBOM, provenance, reproducibility, and the minimized component runtime to the same immutable release artifact/head. |
+| Public commercial-license surface | Child #321 / stale after parent advance | Preserve only `README.md` + `docs/index.md` through ordinary non-force reconciliation onto final #323 and reacquire exact-child CI/Release. |
+| Component-image dependency surface | Repaired on #323 | Preserve the final-image no-`libpq5` package proof, pg8000 selector construction, health probe, and container/PostgreSQL acceptance through protected integration and release. |
 | Dependency-root governance | External owner paths / non-passing | #233 still requires authenticated current-head central CodeQL/OpenCode/Noema settlement and independent approval before normal protected integration. |
 | Immutable product release | Not published | After protected integration, perform and verify version/CHANGELOG/tag/package/license/vulnerability/SBOM/provenance/reproducibility/rollback publication. |
 | Context Graph / EA projection | Candidate-only until released authority exists | Do not pin mutable producer heads; adopt only verified released contracts from canonical owners. |
@@ -110,6 +118,7 @@ Completion requires all of the following on the final production graph and immut
 - explicit service-file capability cannot be redirected by final-component symlink, inode substitution, later CWD changes, or replacement of the selected parent directory at the same pathname;
 - concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests through the production selector;
 - the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
+- the component image does not retain the superseded `libpq5` runtime and can construct the admitted pg8000 selector from its final no-dev environment;
 - retained Psycopg verification dependencies stay outside production/default installation and release runtime evidence;
 - package, license, vulnerability, validated SBOM, provenance, and reproducibility evidence bind the same immutable artifacts;
 - the final unchanged protected head passes exact-source required checks and live review/ruleset requirements without self-approval or gate weakening; and
