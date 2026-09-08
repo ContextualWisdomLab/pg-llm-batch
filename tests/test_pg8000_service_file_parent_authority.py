@@ -43,3 +43,49 @@ def test_candidate_service_file_rejects_parent_directory_replacement(
         match="PostgreSQL connection selector is invalid",
     ):
         resolver("analytics")
+
+
+def test_candidate_service_file_rejects_missing_parent_at_construction(
+    tmp_path: Path,
+) -> None:
+    """Require the caller-selected parent directory to exist when authority is bound."""
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        Pg8000CandidateServiceFileResolver(
+            tmp_path / "missing-parent" / "pg_service.conf"
+        )
+
+
+def test_candidate_service_file_rejects_non_directory_parent(
+    tmp_path: Path,
+) -> None:
+    """Reject a selected parent path that is not a directory capability."""
+    parent_file = tmp_path / "not-a-directory"
+    parent_file.write_text("not a directory", encoding="utf-8")
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        Pg8000CandidateServiceFileResolver(parent_file / "pg_service.conf")
+
+
+def test_candidate_service_file_rejects_parent_disappearance_after_binding(
+    tmp_path: Path,
+) -> None:
+    """Fail closed when the bound parent path disappears before resolution."""
+    selected_parent = tmp_path / "selected"
+    selected_parent.mkdir()
+    selected_file = selected_parent / "pg_service.conf"
+    _write_service_file(selected_file, host="selected.example")
+    resolver = Pg8000CandidateServiceFileResolver(selected_file)
+
+    selected_parent.rename(tmp_path / "selected-retained")
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        resolver("analytics")
