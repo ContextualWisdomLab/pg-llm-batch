@@ -24,7 +24,7 @@ class _NonSelectorFailureDriver:
 def test_cli_propagates_non_selector_driver_failure() -> None:
     """Unexpected concrete-driver defects remain distinguishable from bad argv."""
     with pytest.raises(RuntimeError, match="driver defect"):
-        cli.validate_cli_dsn("host=localhost", postgres_driver=_NonSelectorFailureDriver())
+        cli._validate_cli_dsn("host=localhost", postgres_driver=_NonSelectorFailureDriver())
 
 
 class _BootstrapConfigFailureDriver:
