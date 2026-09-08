@@ -250,8 +250,15 @@ def test_ci_pg8000_candidate_pins_and_hashes_full_dependency_closure() -> None:
         assert requirement in workflow
         assert digest in workflow
 
+    expected_interpreters = (
+        "/tmp/pg8000-candidate-py310/bin/python",
+        "/tmp/pg8000-candidate-py312/bin/python",
+        "/tmp/pg8000-candidate-py314/bin/python",
+    )
     assert "pip download --no-deps --only-binary=:all:" in workflow
-    assert "uv pip install --python .venv/bin/python --no-deps" in workflow
+    assert 'uv pip install --python "$interpreter" --no-deps' in workflow
+    for interpreter in expected_interpreters:
+        assert interpreter in workflow
     assert "/tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl" in workflow
     assert (
         "/tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl"
