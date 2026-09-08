@@ -1,13 +1,15 @@
-"""Regressions for the retained PostgreSQL driver selection boundary.
+"""Regressions for the canonical PostgreSQL driver selection boundary.
 
-The commercial driver migration must leave concrete Psycopg authority in one
-infrastructure adapter rather than importing the package from each bounded
-context. These tests exercise the default connection path through a lazy runtime
-selector while preserving explicit driver injection.
+Bounded contexts acquire PostgreSQL capability through one lazy runtime selector
+rather than importing a concrete client. The commercial migration keeps explicit
+driver injection available while requiring the default selector to construct the
+exact admitted production adapter.
 """
 
 from __future__ import annotations
 
+import sys
+from types import ModuleType
 from typing import Any
 
 import pg_llm_batch.checkpoint_store as checkpoint_store
@@ -15,6 +17,7 @@ import pg_llm_batch.config as config
 import pg_llm_batch.db as db
 import pg_llm_batch.health as health
 import pg_llm_batch.orchestrator as orchestrator
+import pg_llm_batch.postgres_driver_runtime as postgres_driver_runtime
 import pg_llm_batch.token_counter as token_counter
 from pg_llm_batch.postgres_driver_runtime import retained_postgres_driver
 
@@ -106,13 +109,25 @@ def test_token_counter_default_driver_uses_runtime_selector(monkeypatch) -> None
 
 
 def test_orchestrator_default_driver_uses_runtime_selector(monkeypatch) -> None:
-    """Batch assembly must not retain a direct concrete Psycopg authority path."""
+    """Batch assembly must not retain a direct concrete-driver authority path."""
     driver = _Driver()
     monkeypatch.setattr(orchestrator, "retained_postgres_driver", lambda: driver)
 
     service = orchestrator.PostgresBatchOrchestrator("postgresql://unit")
 
     assert service._postgres_driver is driver
+
+
+def test_runtime_selector_constructs_admitted_pg8000_loader(monkeypatch) -> None:
+    """The default selector must delegate to the admitted pg8000 loader only."""
+    driver = _Driver()
+    module = ModuleType("pg_llm_batch.pg8000_driver_adapter")
+    module.load_pg8000_driver = lambda: driver  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+
+    selected = postgres_driver_runtime.retained_postgres_driver()
+
+    assert selected is driver
 
 
 def test_runtime_selector_returns_postgres_driver_port() -> None:
