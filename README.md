@@ -3,8 +3,7 @@
 Standalone **and** embeddable Postgres LLM batch engine. It counts tokens
 **inside** PostgreSQL with [`pg_tiktoken`](https://github.com/postgresml/pg_tiktoken),
 assembles OpenAI-compatible JSONL batches under token/byte/record limits, and
-submits/polls/retrieves them against any OpenAI-compatible Batch API (OpenAI,
-Azure OpenAI, or a LiteLLM gateway).
+submits/polls/retrieves them through an authorized Batch API adapter.
 
 Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and
 relicensed to **Apache-2.0** (see [`NOTICE`](NOTICE) for provenance).
@@ -43,7 +42,11 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
 Provider-facing polling and retrieval stay behind the validated Python client
 boundary. The former bundled `pg_cron` + `pgsql-http` provider retriever is
 retired; automatic reconciliation remains a separate product capability rather
-than a second database-side network authority.
+than a second database-side network authority. `BatchInferencePort` is
+provider-neutral and does not discover providers/models, choose routing or
+fallback, or resolve credentials. CWL production hosts bind those authorities
+through released `contextual-orchestrator` contracts; mutable provider or model
+selection is not owned by this repository.
 
 | Piece | Module |
 | --- | --- |
@@ -65,7 +68,19 @@ than a second database-side network authority.
   for existing-volume cleanup and rollback compatibility.
 - Python 3.10+ with `psycopg[binary]` and `aiohttp` (installed via `pip install .`).
 - Tenant-scoped lifecycle deployments require an application database role with
-  `NOSUPERUSER NOBYPASSRLS` and a trusted host authorization boundary.
+  `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, forced-RLS
+  subject authority, and a trusted host authorization boundary. The
+  lifecycle-outbox runtime role is append-only: it needs `SELECT` and `INSERT`
+  but must not hold `UPDATE`, `DELETE`, `TRUNCATE`, `REFERENCES`, `TRIGGER`,
+  ownership, exercisable owner-role authority, database/role creation authority,
+  or PostgreSQL replication authority. `CREATEDB`, `CREATEROLE`, and
+  `REPLICATION` belong to separate operator identities rather than the tenant
+  application connection. Replay serialization uses a transaction advisory lock
+  rather than granting UPDATE for `SELECT ... FOR UPDATE`. Runtime admission
+  also re-proves the sole canonical tenant policy's command, role scope,
+  permissive mode, `USING`/`WITH CHECK` predicates, and reviewed catalog
+  dependencies before tenant binding or outbox SQL; migration success alone is
+  not continuing RLS authority.
 
 ---
 
@@ -198,12 +213,77 @@ Package helpers bind tenant scope with parameterized transaction-local PostgreSQ
 context and the schema enables and forces default-deny RLS. Provider metadata,
 resource identifiers, payloads, and headers never select `tenant_scope`.
 
+Lifecycle-outbox RLS policy authority is catalog-verified rather than inferred
+from the policy name. Canonical v2 binds the tenant comparison with
+`OPERATOR(pg_catalog.=)` and resolves the transaction-local setting through
+`pg_catalog.current_setting` in both `USING` and `WITH CHECK`. Migration 0008
+accepts an existing v2 without policy DDL only when PostgreSQL reports the exact
+all-command permissive `PUBLIC` role and canonical stored expressions. It
+repairs same-name semantic drift, fails closed on unknown policy names, and
+verifies the resulting policy before retiring v1/legacy names.
+
+Migration 0009 is the independent final RLS admission gate. It requires RLS to
+still be enabled and forced on the outbox, exactly one canonical-v2 policy, the
+same all-command/permissive/`PUBLIC` identity, exact `USING` and `WITH CHECK`
+tenant predicates, and the reviewed built-in function/operator dependency
+boundary. A restore or manual DDL sequence that disables RLS while leaving the
+policy row in place, or recreates the same canonical policy name with widened
+predicates, therefore fails closed instead of being admitted as ready. Migration
+0009 does not repair that state; operators reconcile it by reapplying migration
+0008 and investigating why the tenant isolation boundary changed.
+
+That final migration proof is point-in-time. Before each lifecycle-outbox
+transaction seam, runtime admission repeats the bounded live policy proof in the
+same catalog round trip used for role authority. Both RLS flags must still be
+set, exactly one canonical all-command permissive `PUBLIC` policy must remain,
+and its parser-normalized tenant predicates and reviewed function/operator
+dependencies must still match. Same-name `USING (true) WITH CHECK (true)` drift
+is rejected before the package sets `pg_llm_batch.tenant_scope` or reads/writes
+outbox rows; runtime never repairs policy DDL silently.
+
+Migration 0008 verifies package-owned payload and lifecycle timestamp CHECKs by
+executable catalog identity rather than name or comment alone. It creates
+session-local temporary probe CHECKs from the reviewed definitions and uses the
+same running PostgreSQL server's `pg_get_expr` output as the canonical parsed
+expression. A durable canonical CHECK is current only when its type,
+validation/inheritance state, parsed expression, and review stamp all match.
+Same-name/same-stamp predicate drift is rebuilt once and post-verified; an
+already-current durable constraint is not replaced on ordinary reapplication.
+
+The lifecycle outbox runtime uses
+`ON CONFLICT (tenant_scope, evidence_id) DO NOTHING` for idempotent durable
+replay. Migration 0008 therefore converges the matching
+`uq_llm_context_lifecycle_outbox_tenant_evidence` constraint even when the table
+already exists. The canonical state is a validated, NOT DEFERRABLE UNIQUE
+constraint over exactly `tenant_scope` and `evidence_id`; a missing, deferrable,
+wrong-kind, or wrong-column same-name constraint is repaired once. Existing
+duplicate durable identities make migration fail for operator reconciliation
+rather than being silently deleted or merged. Package replay preflight acquires
+`pg_advisory_xact_lock(bigint)` on a deterministic key derived from the validated
+tenant/event identity and then reads normally; it does not require UPDATE or a
+row-locking SELECT. Durable replay identity is still the full UNIQUE key and
+exact row contents, not the advisory key.
+
+Migration 0008 also requires the lifecycle outbox itself to remain an ordinary
+logged table in `public`. A structurally matching `UNLOGGED` relation is rejected
+before constraint, RLS, or index convergence because PostgreSQL does not WAL-log
+its data, truncates it after a crash or unclean shutdown, and does not replicate
+its contents to standbys. The migration does not silently run `SET LOGGED`;
+operators must reconcile any crash/replication gap and schedule the storage
+rewrite explicitly before reapplying the migration.
+
 The custom PostgreSQL setting is **not** a tenant credential. A database role
 that can execute arbitrary SQL can set arbitrary session state, so production
-application roles must be `NOSUPERUSER NOBYPASSRLS`, must not be exposed through
-a generic SQL surface, and still require normal authentication, authorization,
-and SQL-injection controls. Direct SQL consumers that do not establish an
-authorized tenant scope see no lifecycle rows after RLS is enabled.
+application roles must be
+`NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`, must not be
+exposed through a generic SQL surface, and still require normal authentication,
+authorization, and SQL-injection controls. Direct SQL consumers that do not
+establish an authorized tenant scope see no lifecycle rows after RLS is enabled.
+The outbox application role must also remain append-only: `UPDATE`, `DELETE`,
+`TRUNCATE`, `REFERENCES`, and `TRIGGER` belong to separated operator identities,
+not the runtime role. Database creation, role administration, replication-mode
+connections, and replication-slot authority likewise belong to separate
+operator identities.
 
 See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
 migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
@@ -256,6 +336,8 @@ db.apply_schema(dsn)
 The `credentials` argument to `BatchAPIClient` is a seam: pass
 `config_credentials_provider(...)` to use the KV stores, or supply your own
 `Callable[[str], GatewayCredentials]` to source credentials from your host app.
+In CWL production, that adapter must be driven by released contextual-orchestrator
+authority rather than local provider/model discovery or paid fallback selection.
 
 Files and Batches control-plane JSON responses are streamed through an
 independent 1 MiB decoded-byte budget before strict UTF-8 and JSON object
@@ -334,9 +416,7 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 - [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
   — opt-in operation traces/metrics, host ownership, privacy and cardinality
   boundaries, verification, and APA 7 references.
-- [`docs/papers/`](docs/papers/) — CC BY 4.0 reference papers on LLM batching
-  (PagedAttention/vLLM, DeepSpeed-FastGen) with citations.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`].

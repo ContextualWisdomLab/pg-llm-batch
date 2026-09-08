@@ -164,6 +164,9 @@ def test_module_execution_invokes_health_without_secret_in_argv(
         "argv",
         ["compose_bootstrap", "--password-file", str(password_file)],
     )
+    # Model a fresh ``python -m`` process rather than re-executing the module
+    # already imported above for direct unit coverage.
+    monkeypatch.delitem(sys.modules, "pg_llm_batch.compose_bootstrap", raising=False)
 
     runpy.run_module("pg_llm_batch.compose_bootstrap", run_name="__main__")
 

@@ -1,0 +1,65 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Static contract for transitive callable SECURITY DEFINER authority."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from pg_llm_batch.context_lifecycle_outbox import _require_rls_application_role
+
+
+class CapturingCursor:
+    """Capture the single live runtime-admission catalog query."""
+
+    def __init__(self) -> None:
+        self.sql = ""
+
+    def execute(self, sql: str, params: tuple[Any, ...] | None = None) -> None:
+        """Record normalized admission SQL without emulating PostgreSQL catalogs."""
+        assert params is None
+        self.sql = " ".join(sql.split())
+
+    def fetchone(self) -> tuple[bool, bool, int]:
+        """Return the safe admission verdict and admitted relation identity."""
+        return (False, False, 4242)
+
+
+def test_callable_security_definer_authority_closure_is_recursive() -> None:
+    """A caller-visible definer must carry nested executable definers into admission."""
+    cursor = CapturingCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert (
+        "WITH RECURSIVE executable_definer_owner(role_oid, routine_oid) AS"
+        in cursor.sql
+    )
+    assert "nested_executable_definer" in cursor.sql
+    assert "nested_definer_schema" in cursor.sql
+    assert (
+        "pg_catalog.has_schema_privilege(executable_definer_owner.role_oid, "
+        "nested_definer_schema.oid, 'USAGE')"
+    ) in cursor.sql
+    assert (
+        "pg_catalog.has_function_privilege(executable_definer_owner.role_oid, "
+        "nested_executable_definer.oid, 'EXECUTE')"
+    ) in cursor.sql
+    assert (
+        "SELECT nested_executable_definer.proowner, nested_executable_definer.oid"
+        in cursor.sql
+    )
+    assert "UNION" in cursor.sql
+
+
+def test_callable_security_definer_rejects_tenant_scope_proconfig_override() -> None:
+    """Function-local tenant binding must not override the package-owned RLS scope."""
+    cursor = CapturingCursor()
+
+    _require_rls_application_role(cursor)
+
+    assert "pg_catalog.unnest" in cursor.sql
+    assert "definer_setting.setting" in cursor.sql
+    assert (
+        "pg_catalog.split_part(definer_setting.setting, '=', 1) "
+        "OPERATOR(pg_catalog.=) 'pg_llm_batch.tenant_scope'"
+    ) in cursor.sql

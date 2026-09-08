@@ -26,10 +26,206 @@ add CODEOWNERS-based merge gates until multiple independent maintainers exist.
   credential. A role with arbitrary SQL can select an arbitrary tenant scope;
   do not expose the lifecycle application role through generic tenant-controlled
   SQL, and never describe RLS as a substitute for authorization or
-  SQL-injection prevention.
-- Keep PostgreSQL row-level security enabled and forced. Application roles must
-  be `NOSUPERUSER NOBYPASSRLS`; administrative bypass identities are outside
-  the application isolation guarantee.
+  SQL-injection prevention. Caller-visible non-system-schema `SECURITY INVOKER`
+  routines are part of this boundary too: if a selectable principal has schema
+  `USAGE` plus routine `EXECUTE`, admission must inspect that invoker routine's
+  `proconfig` directly and reject a function-local `pg_llm_batch.tenant_scope`
+  setting before tenant binding or outbox data I/O. Keep the direct caller scan
+  separate from `SECURITY DEFINER` owner traversal because an invoker routine
+  executes with the current invoker principal whereas a definer routine switches
+  to its owner principal. Once admission enters a callable `SECURITY DEFINER`
+  owner, however, that owner is the current invoker principal for any
+  `SECURITY INVOKER` routine it can call. The definer-owner closure must therefore
+  also scan every non-system-schema invoker routine that discovered owner can
+  execute through schema `USAGE` plus routine `EXECUTE` and reject a package
+  tenant-scope `proconfig` override before accepting the definer path. This is not
+  owner-following for the invoker routine; the probe stays bound to the principal
+  that PostgreSQL will actually use while the invoker executes.
+- Keep PostgreSQL row-level security enabled and forced. Application connections
+  must remain `NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS`
+  across both effective `CURRENT_USER` and authenticated `SESSION_USER`
+  authority. Admission must include every role the session user can select
+  through `SET ROLE` or make selectable through membership administration; a
+  safe-looking effective role is insufficient if the same login can later become
+  an unsafe role. A pure `SET TRUE` path does not mint membership: the intended
+  non-grantable outbox `SELECT`/`INSERT` on an ordinary SET-selectable forced-RLS
+  application role remains valid. The delegated-DML authority envelope begins
+  only after an `ADMIN OPTION` edge is crossed; that ADMIN-bearing state must be
+  preserved recursively through any later `SET` or `ADMIN` edge. No role in the
+  direct selectable closure may own the lifecycle outbox, have exercisable/
+  administerable owner authority via inherited `USAGE`, `SET ROLE`, or membership
+  administration, hold PostgreSQL `CREATEDB`, `CREATEROLE`, or `REPLICATION`, hold
+  `SELECT WITH GRANT OPTION` or `INSERT WITH GRANT OPTION` on the table or any
+  column, or hold `MAINTAIN`, `TRUNCATE`, `DELETE`, `UPDATE`, `TRIGGER`, or table/
+  column `REFERENCES` authority on the outbox. A session identity also must not
+  hold membership `ADMIN OPTION` over any role that carries outbox `SELECT`/
+  `INSERT`/`MAINTAIN` directly, inherits it, or can reach such authority through
+  recursively mixed `SET`/`ADMIN` membership edges. Callable non-system-schema
+  `SECURITY DEFINER` routines are likewise outside the runtime envelope when
+  their owner can exercise forbidden authority through superuser, `CREATEROLE`,
+  `REPLICATION`, or `BYPASSRLS` status, exact/inherited table ownership,
+  `SELECT`/`INSERT` grant options, `MAINTAIN`, `TRUNCATE`, `DELETE`, `UPDATE`,
+  `REFERENCES`, or `TRIGGER`; or when the owner can redistribute through membership
+  `ADMIN OPTION` a role that directly, or through a recursively mixed `SET`/`ADMIN`
+  path, carries forbidden runtime/operator authority including `CREATEDB` or
+  `MAINTAIN`. Do not bound delegated-definer authority to one administered role
+  plus one all-SET layer. This executable authority check is transitive across
+  user-schema `SECURITY DEFINER` routines: after admission enters one definer owner
+  principal, it must also inspect every further definer owner that principal can
+  invoke through schema `USAGE` plus routine `EXECUTE`, with cycle-safe closure
+  rather than only direct caller visibility. Every callable routine in that closure
+  must also pin its routine-level `search_path = pg_catalog, pg_temp`; absent or
+  different name-resolution authority is rejected before tenant binding or outbox
+  data SQL, rather than trusting caller temporary-schema state or unqualified user-
+  schema objects. The callable definer owner itself must also pass the same reachable
+  ordinary-view, materialized-copy, inheritance/partition, and opaque foreign-data
+  authority probe as a runtime principal. A caller's missing direct `SELECT` on a
+  foreign relation is not evidence of safety when a callable definer executes with an
+  owner that has that relation authority through its own foreign-server/user-mapping
+  context. Do not parse one current routine body to allowlist that owner capability.
+  Caller-selectable ordinary views are a second executable authority graph: admission
+  must follow the cycle-safe view dependency closure from every view the runtime can
+  select, applying PostgreSQL's effective principal at each edge—the invoking runtime
+  principal for a `security_invoker=true` view and otherwise the current view owner.
+  Any reachable non-security-invoker view that directly reads the lifecycle outbox is
+  outside the runtime envelope when its owner is a superuser or `BYPASSRLS` principal
+  with outbox read authority. PostgreSQL otherwise applies that view owner's
+  permissions and RLS policies to the underlying relation, so a safe outer view can
+  hide a privileged inner view and expose cross-tenant rows even when the runtime
+  caller itself is `NOBYPASSRLS`; reject the complete reachable path before tenant
+  binding or outbox data SQL. Caller-readable materialized views are a distinct
+  copied-data authority graph: PostgreSQL returns their stored rows directly rather
+  than applying the defining query and source-table RLS at read time. Admission must
+  therefore include materialized relations reached directly by the runtime or
+  indirectly through ordinary views and follow each reachable materialized view's
+  stored definition through nested view/materialized-view dependencies. If that
+  provenance reaches the lifecycle outbox, reject the runtime credential regardless
+  of the materialized-view owner, current copied contents, or most recent refresh
+  authority; catalog shape cannot prove that a copied outbox projection remains
+  tenant-local. Foreign tables are a third opaque authority boundary. PostgreSQL
+  foreign-data wrappers resolve remote access through foreign servers and user
+  mappings, so local RLS, local role attributes, and local relation ownership cannot
+  prove the remote principal or remote row-security semantics. If the runtime can
+  select a user-schema foreign table directly, an ordinary view's effective principal
+  can reach one, a callable definer owner can reach one, or a runtime-readable
+  materialized view has a foreign table anywhere in its stored definition provenance,
+  reject the credential before tenant binding or outbox data SQL. PostgreSQL
+  inheritance and declarative partitioning also allow access through a named ordinary
+  or partitioned parent while a foreign descendant performs the remote read; parent
+  access does not require a separate caller `SELECT` grant on the child. Admission
+  must therefore build a cycle-safe foreign-ancestor closure through
+  `pg_catalog.pg_inherits` and reject a selectable parent, definer-owner-selectable
+  parent, view-mediated parent, or materialized provenance node whenever that relation
+  has a foreign descendant. Missing caller/child ACLs, partition bounds, parent names,
+  or local parent RLS are not durable evidence of remote authorization. A materialized
+  copy remains opaque after the source privilege is revoked because its stored rows no
+  longer require a remote read. Do not parse or allowlist mutable FDW/user-mapping
+  options, current copied contents, routine body text, tenant literals in definition
+  text, or last-refresh authority as a substitute for remote authorization evidence;
+  workloads that need foreign-data access must use a separate role and connection from
+  the lifecycle-outbox runtime credential and every callable definer owner it can
+  enter. PostgreSQL permits a role administrator to grant the administered role to a
+  new principal even when the administrator's own membership is `INHERIT FALSE, SET
+  FALSE`; the new principal can then use the granted role's selectable path after the
+  definer returns. `SECURITY DEFINER` similarly executes with its owner's privileges,
+  so a safe outer owner does not make a privileged nested definer safe. Direct runtime
+  `CREATEDB` and `CREATEROLE` are database/role administration capabilities outside an
+  application identity; callable `CREATEROLE` is rejected because it is executable
+  within the definer boundary, while `CREATEDB` remains covered when membership
+  administration can grant that authority onward for later invoker-context use.
+  `REPLICATION` is separate cluster-level connection and replication-slot authority
+  and must not be co-located with a tenant application identity either directly or
+  through an executable definer; `MAINTAIN` is relation-wide operational authority
+  permitting PostgreSQL maintenance and `LOCK TABLE`, not tenant application DML;
+  `SELECT`/`INSERT` grant options, DML-bearing role administration, executable
+  privileged definer authority, view-mediated RLS-bypass authority, materialized
+  outbox/foreign-data copies, and reachable foreign data are authorization/data-copy
+  capabilities rather than application DML; `TRUNCATE` is outside RLS; tenant-local
+  `DELETE` or `UPDATE` violates the append-only durable-intent invariant; and
+  `REFERENCES`/`TRIGGER` can install relation behavior outside the package DML contract.
+  Inert membership alone is not a bypass. Re-prove live enabled/forced RLS, the sole
+  canonical tenant policy identity/command/role scope, parser-normalized `USING`/
+  `WITH CHECK` predicates and allowed catalog dependencies, the absence of any
+  non-internal trigger or rewrite rule attached to the canonical outbox, the exact
+  live `pg_catalog.pg_constraint` set, and the live outbox index-program boundary.
+  For each canonical CHECK, runtime admission must compare parser/deparser-normalized
+  semantic authority from `pg_catalog.pg_get_expr(...)`; a same-name CHECK carrying a
+  different semantic predicate is constraint drift and must fail closed before tenant
+  binding or outbox data SQL. CHECK dependency identity is part of that authority:
+  deparse equality is necessary but not sufficient. Runtime admission must inspect
+  `pg_catalog.pg_depend` and reject any whole-object normal dependency of an admitted
+  CHECK before tenant binding or outbox data SQL. A user-schema operator or function
+  that resolves under caller `search_path` and renders the same unqualified token is
+  not canonical object identity merely because `pg_get_expr(...)` is same-deparse.
+  Runtime constraint authority is exactly the canonical nondeferrable primary key on
+  `context_outbox_uuid`, the nondeferrable `(tenant_scope, evidence_id)` replay UNIQUE,
+  and the three validated, inheritable canonical CHECK constraints; any added FK,
+  EXCLUDE, CHECK, PK, UNIQUE, deferrability/validation drift, key-column drift, or
+  missing canonical constraint fails closed before tenant binding or outbox data SQL.
+  The index boundary allows no expression or partial index, requires the default
+  `pg_catalog` operator class for each exact key type/access method, and allows no
+  standalone UNIQUE arbiter outside those canonical PK/UNIQUE constraints. Runtime
+  admission must also re-authenticate every omitted-column default through
+  `pg_catalog.pg_attrdef` joined to `pg_catalog.pg_attribute`, deparsing each expression
+  with `pg_catalog.pg_get_expr(...)`. Deparse equality is necessary but not sufficient
+  default authority: admission must also authenticate each admitted default's
+  dependency identity through `pg_catalog.pg_depend` and reject any normal dependency
+  attached to that default before tenant binding or outbox data SQL. Exactly three
+  defaults are allowed: `tenant_scope = 'standalone'::text`, `context_outbox_uuid =
+  gen_random_uuid()`, and `created_at = now()`. A missing or additional default,
+  renamed default-bearing column, or semantically substituted expression fails closed
+  before tenant binding or outbox data SQL; a migration success record does not confer
+  continuing default-expression authority. The complete effective/session-selectable
+  role, definer, reachable-view, reachable-materialized-copy, and reachable-foreign-data
+  authority envelopes must also pass before tenant binding or outbox data SQL. A
+  migration success record is point-in-time evidence and does not authorize later
+  same-name policy, ACL, membership, routine, view, materialized view, foreign
+  relation/mapping, role-authority, trigger, rewrite-rule, constraint-set,
+  default-expression, or index-program/uniqueness drift. The normal runtime role needs
+  only non-grantable `SELECT` and `INSERT` on the outbox. Replay serialization must use
+  transaction-scoped advisory locking on the validated tenant/event identity rather
+  than `SELECT ... FOR UPDATE`, so serialization never requires ambient row-mutation
+  authority. Do not authenticate runtime connections as a database creator, role
+  administrator, replication identity, relation maintainer, DML delegator, privileged
+  definer gateway, privileged-view/materialized-copy/foreign-data gateway, or other
+  administrator and rely on `SET ROLE` or `SET SESSION AUTHORIZATION` as a downgrade;
+  administrative, replication, maintenance, grant-capable, membership-delegating,
+  executable-privileged, view-mediated-RLS-bypass, materialized-copy, foreign-data,
+  and owner-capable login sessions are outside the application isolation guarantee.
+- The write path must close both the admission-to-write DDL race and qualified-name
+  rebinding. `enqueue_in_transaction()` must acquire `LOCK TABLE ONLY
+  public.llm_context_lifecycle_outbox IN ROW EXCLUSIVE MODE` before live authority
+  admission and retain it through the caller transaction, including the durable
+  `INSERT`. A concurrent `CREATE TRIGGER` is one concrete table-program DDL specimen
+  that this ordering must keep behind the retained relation-object fence. The lock
+  protects the admitted relation object from conflicting table-program/relation DDL,
+  but it does not by itself authenticate an independently mutable schema/name binding.
+  `_require_rls_application_role()` must return the exact validated lifecycle-outbox
+  `pg_class.oid`; the write must carry that admitted OID into the same data-modifying
+  CTE that can perform the `INSERT`, resolve the live qualified name with
+  `pg_catalog.to_regclass(...)`, and execute the write only when the live OID equals
+  the admitted OID. A standalone identity recheck followed by a separate `INSERT` is
+  another TOCTOU interval. Do not substitute a package advisory lock, caller
+  `search_path`, schema qualification alone, or `ACCESS EXCLUSIVE`. The normal
+  application role still needs only the existing non-grantable `SELECT` and `INSERT`
+  privileges. Lock acquisition/wait and the live OID proof are part of the complete
+  buyer-path latency measurement, not removable security overhead.
+- The read path must close both admission-to-read relation-object and namespace-name
+  races. `load_in_transaction()` must acquire `LOCK TABLE ONLY
+  public.llm_context_lifecycle_outbox IN ACCESS SHARE MODE` before live authority
+  admission and retain it through tenant binding, optional tenant/event advisory
+  serialization, and the consuming `SELECT`. `ACCESS SHARE` protects the admitted
+  relation object against conflicting relation DDL, but it does not authenticate the
+  independently mutable `public` schema/name binding. `_require_rls_application_role()`
+  must return the exact validated lifecycle-outbox `pg_class.oid`, and the consuming
+  read itself must resolve the live qualified name with `pg_catalog.to_regclass(...)`,
+  require that live OID to equal the admitted OID, and accept a durable row only when
+  its `tableoid` is the admitted OID. Keep the identity comparison in the statement
+  that can return evidence; a standalone pre-read recheck only creates another TOCTOU
+  interval. Do not widen ordinary reads to `ROW EXCLUSIVE` or `ACCESS EXCLUSIVE`, and
+  do not treat schema qualification, caller `search_path`, or the package advisory
+  lock as object identity. Treat lock acquisition/wait and the live OID proof as part
+  of complete buyer-path latency evidence.
 - Migrations must restore forced RLS within the same atomic SQL statement that
   relaxes owner enforcement, preserve legacy rows under `standalone`, remain
   idempotent, and keep the packaged and Docker initialization schemas

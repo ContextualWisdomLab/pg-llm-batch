@@ -5,6 +5,11 @@
 Public API:
     TokenCounter, BatchAccumulator      -- pg_tiktoken token counting
     PostgresBatchOrchestrator           -- assemble and persist JSONL payloads
+    BatchInferencePort                  -- provider-neutral batch lifecycle seam
+    ContextContractReleasePin           -- immutable Context contract identity
+    resolve_context_contract_release_manifest -- bounded release evidence resolver
+    ContextLifecycleEvidenceSeed        -- privacy-minimized Context ACL input
+    PostgresContextLifecycleOutboxStore -- durable tenant publication intent
     BatchAPIClient                      -- submit, poll, and retrieve
     StreamingBatchAPIClient             -- bounded incremental result records
     BatchResultRecord                   -- immutable streamed result/error record
@@ -22,6 +27,7 @@ from .batch_api_client import (
     GatewayCredentials,
     config_credentials_provider,
 )
+from .batch_inference_port import BatchInferencePort
 from .checkpoint_store import (
     CheckpointConflictError,
     PostgresBatchResultCheckpointStore,
@@ -29,6 +35,31 @@ from .checkpoint_store import (
     validate_checkpoint_consumer_name,
 )
 from .config import PostgresConfigStore, SecretStore, get_config_store
+from .context_contract_manifest import (
+    ContextContractReleaseManifestError,
+    resolve_context_contract_release_manifest,
+)
+from .context_contract_release import (
+    ContextContractReleaseApproval,
+    ContextContractReleasePin,
+    ContextContractReleasePinError,
+    ContextContractReleaseTransitionVerification,
+    ContextContractReleaseVerification,
+    require_context_contract_release_ready,
+    require_context_contract_release_transition_ready,
+)
+from .context_lifecycle_evidence import (
+    ContextLifecycleEvidenceError,
+    ContextLifecycleEvidenceSeed,
+    require_context_lifecycle_replay_identity,
+    require_context_lifecycle_scope_continuity,
+    validate_context_lifecycle_evidence_seed,
+)
+from .context_lifecycle_outbox import (
+    ContextLifecycleOutboxConflictError,
+    PostgresContextLifecycleOutboxStore,
+    apply_context_lifecycle_outbox_schema,
+)
 from .db import (
     DEFAULT_TENANT_SCOPE,
     get_remote_batch_state,
@@ -57,6 +88,24 @@ from .token_counter import BatchAccumulator, TokenCounter
 __version__ = "0.1.0"
 
 __all__ = [
+    "BatchInferencePort",
+    "ContextContractReleaseApproval",
+    "ContextContractReleaseManifestError",
+    "ContextContractReleasePin",
+    "ContextContractReleasePinError",
+    "ContextContractReleaseTransitionVerification",
+    "ContextContractReleaseVerification",
+    "require_context_contract_release_ready",
+    "require_context_contract_release_transition_ready",
+    "resolve_context_contract_release_manifest",
+    "ContextLifecycleEvidenceError",
+    "ContextLifecycleEvidenceSeed",
+    "validate_context_lifecycle_evidence_seed",
+    "require_context_lifecycle_replay_identity",
+    "require_context_lifecycle_scope_continuity",
+    "ContextLifecycleOutboxConflictError",
+    "PostgresContextLifecycleOutboxStore",
+    "apply_context_lifecycle_outbox_schema",
     "BatchAPIClient",
     "StreamingBatchAPIClient",
     "BatchResultRecord",

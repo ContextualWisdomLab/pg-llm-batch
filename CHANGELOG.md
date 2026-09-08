@@ -18,6 +18,295 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Lifecycle-outbox runtime admission now rejects callable non-system-schema
+  `SECURITY DEFINER` routines whose owner can use membership `ADMIN OPTION` to
+  grant a role that directly, or through an all-`SET TRUE` path, exposes the
+  same operator/relation authority forbidden to the runtime identity. The real
+  PostgreSQL specimen keeps the function owner `NOCREATEROLE` with no direct
+  destructive outbox privilege, gives it `ADMIN OPTION` over an `INHERIT FALSE,
+  SET FALSE` bridge, proves the function can grant that bridge to an ordinary
+  caller, and proves the caller can then `SET ROLE` through the bridge to an
+  outbox `TRUNCATE` role after the definer returns. Admission follows the latent
+  administration graph even after the test revokes the newly granted caller
+  membership; ACL/membership repair remains operator-owned.
+- Lifecycle-outbox runtime admission now rejects callable non-system-schema
+  `SECURITY DEFINER` routines whose owner has PostgreSQL `REPLICATION`. Direct
+  runtime identities already exclude replication authority; this closes the
+  indirect executable path where an ordinary `NOREPLICATION` login can invoke
+  owner-privileged SQL that creates a physical replication slot. The wired
+  PostgreSQL smoke proves `pg_create_physical_replication_slot` executes through
+  the definer, verifies the caller itself remains `NOREPLICATION`, and then
+  requires package admission to fail closed before tenant binding or outbox data
+  SQL. This is cluster replication/operator separation, not a claim that
+  `REPLICATION` automatically bypasses RLS.
+- Lifecycle-outbox runtime admission now rejects callable non-system-schema
+  `SECURITY DEFINER` routines whose owner has PostgreSQL `CREATEROLE`. Direct
+  runtime identities already excluded role administration; this closes the
+  indirect executable path where an otherwise ordinary `NOCREATEROLE` login can
+  invoke owner-privileged code that creates cluster roles. A wired PostgreSQL
+  smoke proves that role creation actually executes through the definer and then
+  requires package admission to fail closed before tenant binding or outbox data
+  SQL. This is operator/runtime least-authority separation, not a claim that
+  `CREATEROLE` automatically bypasses RLS.
+- Lifecycle-outbox runtime role admission now rejects PostgreSQL `CREATEDB` and
+  `CREATEROLE` authority across the effective/session-selectable/administerable
+  role closure. The application connection still needs only outbox `SELECT` and
+  `INSERT`; database creation and role administration remain separate operator
+  capabilities. The PostgreSQL session-authority smoke gives otherwise-minimal
+  runtime logins real `CREATEDB`/`CREATEROLE`, proves those administrative
+  operations execute, and requires package admission to fail closed before
+  tenant binding or outbox data SQL. This is a least-privilege separation, not a
+  claim that either attribute automatically bypasses RLS.
+- Lifecycle-outbox runtime role admission now rejects PostgreSQL `REPLICATION`
+  authority across the effective/session-selectable/administerable role closure.
+  The application connection needs only outbox `SELECT` and `INSERT`; replication
+  mode and replication-slot authority remain a separate operator boundary.
+  A PostgreSQL smoke uses a `LOGIN NOSUPERUSER NOBYPASSRLS REPLICATION` role
+  with only outbox `SELECT, INSERT` to require fail-closed package admission.
+  This separation is not described as an automatic RLS bypass: the repair is a
+  least-privilege and cluster-authority boundary.
+- Lifecycle-outbox runtime admission now re-proves the live canonical tenant
+  policy rather than treating successful migration history plus enabled/forced
+  RLS flags as continuing authority. The existing single catalog round trip
+  requires exactly one all-command permissive `PUBLIC` policy under the
+  canonical name, exact parser-normalized tenant `USING`/`WITH CHECK`
+  predicates, and the reviewed function/operator dependency boundary before
+  tenant binding or durable-row SQL. A PostgreSQL smoke keeps both RLS flags
+  enabled, replaces the canonical policy under the same name with
+  `USING (true) WITH CHECK (true)`, proves the least-privilege runtime role can
+  then see both tenants through raw SQL, and requires package admission to fail
+  closed instead of trusting the policy name.
+- Lifecycle-outbox runtime role admission now evaluates the connection's full
+  effective/session-selectable authority envelope instead of trusting only a
+  safe-looking `CURRENT_USER`. PostgreSQL evaluates later `SET ROLE` permission
+  against `SESSION_USER`, so admission covers `CURRENT_USER`, `SESSION_USER`,
+  every role the session can select, and every role it can make selectable
+  through membership administration. Any superuser/BYPASSRLS, outbox owner,
+  exercisable/administerable owner authority, or outbox
+  `TRUNCATE`/`DELETE`/`UPDATE`/`REFERENCES`/`TRIGGER` authority in that closure
+  fails before tenant binding or data SQL. A new PostgreSQL smoke proves a
+  non-superuser login can select a safe runtime role while retaining `SET ROLE`
+  access to the outbox owner, and requires the package to reject that connection;
+  a least-privilege login whose only selectable runtime role is safe remains the
+  positive control. Admin-originated sessions hidden with
+  `SET SESSION AUTHORIZATION` are outside the supported runtime deployment
+  boundary rather than being treated as downgraded application identities.
+- Lifecycle-outbox runtime role admission now rejects outbox `TRUNCATE`,
+  `DELETE`, table/column `UPDATE`, table/column `REFERENCES`, and `TRIGGER`
+  authority in addition to the forced-RLS, superuser/BYPASSRLS, and
+  owner-separation checks. `TRUNCATE` is whole-table authority outside
+  row-security filtering. `DELETE` and `UPDATE` remain tenant-filtered by RLS,
+  but a tenant role that can erase or rewrite committed lifecycle intent can
+  destroy append-only replay/conflict evidence without crossing the RLS tenant
+  boundary. `REFERENCES` and `TRIGGER` can establish relation behavior outside
+  the package DML contract. Runtime replay serialization no longer depends on
+  `SELECT ... FOR UPDATE` and therefore no longer requires ambient `UPDATE`:
+  serialized reads acquire a deterministic transaction-scoped advisory lock on
+  the validated tenant/event identity and then issue an ordinary tenant-qualified
+  `SELECT`. A wired PostgreSQL smoke proves tenant-local column UPDATE is real
+  mutation authority and requires production admission to reject it, while the
+  positive control performs a real enqueue with only `SELECT` and `INSERT`.
+- Lifecycle-outbox runtime verifies the live relation-level RLS/owner boundary
+  before binding tenant state or touching durable outbox rows. Application data
+  access requires enabled and forced RLS, separation from the table owner, and
+  no exercisable owner-role authority through inherited `USAGE`, `SET ROLE`, or
+  membership administration; inert membership alone is not rejected.
+  Missing/malformed catalog evidence fails closed. Installation and migration
+  remain separate operator authority. Real PostgreSQL acceptance proves
+  ordinary-role tenant isolation, raw `BYPASSRLS` visibility, and that a normal
+  table owner can disable `FORCE ROW LEVEL SECURITY` and see both tenant rows.
+  Runtime admission applies these constraints across the effective/session role
+  closure while retaining one catalog round trip.
+- Lifecycle-outbox final row-admission now verifies the retained
+  `tenant_scope DEFAULT 'standalone'` expression in addition to the database-owned
+  UUID and created-at defaults. Package writes still validate and supply tenant
+  scope explicitly; the standalone default remains direct/operator SQL
+  compatibility schema rather than authorization authority. Migration 0009 now
+  re-reads `pg_attrdef` and fails closed if restore/operator DDL replaces that
+  constant with executable or otherwise different semantics. A wired PostgreSQL
+  smoke replaces the tenant default with a volatile function, proves an insert
+  that omits the column executes that function, requires final admission to
+  reject the drift, then restores the canonical default and requires clean
+  re-admission. Migration 0008 remains the convergence owner; package and Docker
+  migration 0009 remain byte-identical.
+- Lifecycle-outbox final row-admission now independently re-proves the complete
+  canonical column catalog after migration 0008 convergence. Migration 0009
+  requires exactly 14 live columns with the reviewed PostgreSQL types,
+  type-default collations, `NOT NULL` and default-presence state, no
+  generated/identity authority, and no dropped-column tombstones. A wired real
+  PostgreSQL smoke drops `NOT NULL` from `evidence_id`, proves that CHECK
+  `UNKNOWN` plus default UNIQUE null semantics admit two NULL replay identities,
+  then requires final admission to fail closed until the invalid rows and
+  column state are explicitly reconciled. Migration 0009 does not repair drift;
+  package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox final row-admission now independently re-verifies the two
+  column defaults executed because runtime INSERTs omit `context_outbox_uuid`
+  and `created_at`. Migration 0009 requires exact PostgreSQL-core
+  `gen_random_uuid()` and `now()` defaults through `pg_attribute`/`pg_attrdef`
+  and fails closed on restore/operator drift without repairing it. A wired
+  PostgreSQL smoke replaces `created_at` with a volatile operator function,
+  proves that the default can reject an otherwise canonical insert, then
+  requires final admission to reject that catalog state and clean reapplication
+  to succeed after explicit restoration. Migration 0008 remains the convergence
+  owner; package and Docker migration 0009 remain byte-identical.
+- Lifecycle-outbox final row-admission now independently rejects user triggers
+  and query-rewrite rules attached after migration 0008 had already converged.
+  Migration 0009 re-reads `pg_trigger` and `pg_rewrite`, permits only
+  PostgreSQL-internal constraint triggers, and fails closed rather than deleting
+  unknown operator programs. The wired PostgreSQL smoke proves a `BEFORE INSERT`
+  trigger can reject an otherwise canonical event and an `INSTEAD NOTHING` rule
+  can suppress one, then requires final admission to reject each catalog state.
+  Migration 0008 remains the convergence owner; package and Docker migration
+  0009 remain byte-identical.
+- Lifecycle-outbox final row-admission now independently re-verifies row-level
+  security after migration 0008 convergence. Migration 0009 requires RLS to
+  remain enabled and forced, requires exactly one canonical all-command
+  permissive `PUBLIC` policy, and requires exact `USING`/`WITH CHECK` tenant
+  predicates plus the reviewed function/operator dependency boundary. A wired
+  PostgreSQL smoke proves that same-name `USING (true) WITH CHECK (true)` drift
+  and `DISABLE ROW LEVEL SECURITY` both expose cross-tenant rows to a
+  `NOSUPERUSER NOBYPASSRLS` probe and require the final gate to fail closed.
+  Migration 0009 does not repair drift; migration 0008 remains the convergence
+  owner. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox final row-admission no longer treats canonical CHECK names
+  as semantic identity. Migration 0009 independently derives same-runtime
+  parser-normalized payload, valid-time, and system-time CHECK expressions and
+  requires exact `pg_get_expr` equality, so restore/operator drift cannot keep
+  a stricter or otherwise different predicate authoritative under a canonical
+  name after migration 0008 was previously applied. A wired PostgreSQL smoke
+  proves same-name predicate drift can reject an otherwise canonical event and
+  requires the final gate to fail closed. Package and Docker migration SQL
+  remain byte-identical.
+- Lifecycle-outbox row-admission now treats index operator-class support
+  functions as executable write authority even for a plain nonunique column
+  index. Migration 0009 requires every direct index key to use the default
+  `pg_catalog` operator class for its exact table-column type and the index
+  relation's access method, while still permitting PostgreSQL-core simple
+  indexes such as a nonunique hash index. The wired PostgreSQL smoke proves a
+  custom btree comparator can reject an otherwise canonical event and requires
+  migration failure for that catalog state. Unknown index programs are not
+  auto-dropped; package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox structural admission now rejects unreviewed user triggers
+  and query-rewrite rules attached to the canonical table before later
+  CHECK/RLS/UNIQUE/index convergence. PostgreSQL-internal triggers remain
+  admissible; unknown user programs are not auto-dropped because ownership and
+  side effects require operator reconciliation. The wired PostgreSQL smoke
+  installs a no-op trigger and a no-op `DO ALSO` rule and requires the fixed
+  structural-schema failure for each. Package and Docker migration SQL remain
+  byte-identical.
+- Lifecycle-outbox structural admission now rejects positive-numbered dropped
+  PostgreSQL column tombstones instead of treating the 14 remaining live
+  columns as equivalent to a never-extended canonical table. The wired
+  PostgreSQL smoke adds and drops an undeclared column, requires the migration
+  to keep failing after `DROP COLUMN`, then performs an explicit test-only
+  rebuild before later specimens. Production migration does not auto-rewrite
+  or reclaim dropped-column state. Package and Docker migration SQL remain
+  byte-identical.
+- Lifecycle-outbox replay-arbiter convergence now repeats the exact
+  `pg_constraint` admission predicate after UNIQUE repair and fails closed if
+  the validated nondeferrable `(tenant_scope, evidence_id)` arbiter is no
+  longer canonical before migration success. The wired PostgreSQL smoke uses a
+  test-only event trigger to rename the newly added constraint after
+  `ALTER TABLE`, requires migration rollback, then requires clean canonical
+  reapplication. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox operational-index convergence now repeats the exact catalog
+  admission predicate after repair and fails closed before migration success if
+  the installed index is not the reviewed public B-tree over
+  `(tenant_scope, created_at)`. The regression contract also requires the
+  admission and post-repair predicates to remain byte-identical so collation,
+  operator-class, direction, null-order, validity, and relation checks cannot
+  drift independently. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox surrogate UUID creation now converges to PostgreSQL core
+  `pg_catalog.gen_random_uuid()` instead of retaining mutable
+  `public.uuid_generate_v4()` compatibility-function authority. Fresh installs
+  use the core default directly; existing structurally admissible tables repair
+  only the column-default metadata and post-verify it without rewriting stored
+  UUIDs. A wired PostgreSQL container smoke restores the predecessor public
+  helper default, reapplies migration, requires core authority, and repeats the
+  migration to prove converged idempotence. Package and Docker migration SQL
+  remain byte-identical.
+- Lifecycle-outbox migration now requires the canonical persistence object to
+  remain an ordinary logged table in `public`. A structurally identical
+  `UNLOGGED` relation fails closed before constraint, RLS, or index convergence
+  instead of being admitted as durable publication intent. The migration does
+  not silently convert it back to logged persistence because crash-recovery,
+  standby-replication, and storage-rewrite consequences require operator
+  reconciliation. The wired PostgreSQL smoke converts the outbox to UNLOGGED,
+  requires the structural mismatch, restores logged persistence, and then
+  requires successful reapplication. Package and Docker migration SQL remain
+  byte-identical.
+- Lifecycle-outbox migration now treats per-column PostgreSQL collation as part
+  of the canonical durable row shape. Required columns must retain their
+  expected type-level `typcollation`; an explicit drift such as
+  `tenant_scope text COLLATE "C"` fails closed before constraint, RLS-policy, or
+  index convergence instead of silently changing tenant/evidence comparison
+  semantics. The migration does not auto-rewrite a drifted collation because
+  data and index consequences require operator reconciliation. Package and
+  Docker migration SQL remain byte-identical.
+- Lifecycle-outbox runtime no longer inherits or mutates caller-controlled
+  PostgreSQL `search_path`: tenant binding calls `pg_catalog.set_config`
+  explicitly and reads/writes use `public.llm_context_lifecycle_outbox`.
+  Forward migration and destructive rollback retain their own reviewed
+  `pg_catalog, public, pg_temp` transaction-local path inside atomic `DO`
+  statements, preventing ambient or temporary same-name object redirection
+  without changing unrelated caller transaction SQL.
+- Lifecycle-outbox stores no longer expose the admitted PostgreSQL DSN through
+  a public property. The exact target remains package-internal connection
+  authority so DSNs containing credentials are not available to routine store
+  logging, serialization, or diagnostics.
+- Lifecycle-outbox migration RLS no longer treats the canonical policy name as
+  sufficient tenant authority. Canonical v2 binds equality and
+  `current_setting` through `pg_catalog`, verifies command/permissive/PUBLIC
+  role and both stored expression trees through `pg_policy`/`pg_get_expr`,
+  repairs a same-name policy only when those semantics drift, rejects unknown
+  policy names instead of silently widening or deleting them, and verifies the
+  stored canonical policy again before retiring v1/legacy names. A current v2
+  remains untouched on ordinary idempotent reapplication. Canonical-v2
+  admission and post-repair verification now also inspect normal `pg_depend`
+  function/operator dependencies and reject tracked object authority other than
+  built-in `pg_catalog.current_setting(text, boolean)` and text equality. The
+  dependency rule is deliberately negative because PostgreSQL may omit rows for
+  pinned system objects; it supplements the hardened `search_path` and
+  decompiled-expression checks rather than treating catalog text as provenance.
+- Lifecycle-outbox canonical payload and UTC timestamp checks no longer treat a
+  same name plus mutable constraint comment as executable migration authority.
+  Migration 0008 creates session-local temporary probe CHECKs from the reviewed
+  definitions, asks the running PostgreSQL version to decompile their expression
+  trees with `pg_get_expr`, and admits each durable canonical CHECK only when its
+  kind, validation/inheritance state, parsed expression, and review stamp all
+  agree. Same-name/same-stamp predicate drift is rebuilt and post-verified while
+  already-current durable CHECKs avoid replacement DDL. The wired PostgreSQL
+  smoke replaces payload canonical v1 with `CHECK (true)`, copies the expected
+  stamp, reapplies migration, and requires the canonical grammar to reject an
+  invalid event. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox migration now converges the payload grammar/integrity checks
+  after `CREATE TABLE IF NOT EXISTS`, so an existing restored or manually
+  repaired table cannot silently skip the tenant/event/evidence identifier,
+  digest, or truth-status constraints just because the relation already exists.
+  After canonical payload v1 is established and post-verified, migration retires
+  exactly the ten known package-owned predecessor CHECK names so a stale
+  stricter legacy predicate cannot remain a second grammar authority. Unknown
+  CHECK names are preserved rather than silently deleted. The PostgreSQL smoke
+  restores a stricter legacy event-type predecessor, reapplies migration, and
+  requires it to disappear. Package and Docker migration SQL remain byte-identical.
+- Lifecycle-outbox migration now converges the nondeferrable
+  `(tenant_scope, evidence_id)` UNIQUE constraint required by runtime
+  `ON CONFLICT` replay even when the relation already exists. Missing,
+  wrong-kind, deferrable, or wrong-column same-name constraints are repaired
+  once; duplicate durable identities fail migration for operator reconciliation
+  instead of being silently deleted or merged. Packaged and Docker migration
+  SQL remain byte-identical.
+- Lifecycle-outbox migration no longer treats the operational
+  `idx_llm_context_lifecycle_outbox_tenant_created` name or key column numbers as
+  sufficient index identity. It admits only a public, valid/ready/live,
+  nonunique two-key B-tree over exactly `(tenant_scope, created_at)` with no
+  expression or predicate, tenant-key collation equal to the canonical column,
+  default B-tree operator classes for `text` and `timestamptz`, and default
+  ascending/null-order option bits. Same-target drift in key order, collation,
+  operator class, direction, or NULL ordering is rebuilt once; an unrelated
+  same-name relation fails closed. PostgreSQL container smokes cover both wrong
+  key order and same-column semantic drift. Packaged and Docker migration SQL
+  remain byte-identical.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
