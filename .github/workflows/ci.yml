@@ -226,6 +226,65 @@ jobs:
         run: uv pip check --python /tmp/pg8000-candidate-py312/bin/python
       - name: Verify pg8000 candidate Python 3.14 environment
         run: uv pip check --python /tmp/pg8000-candidate-py314/bin/python
+      - name: Prepare bounded SBOM evidence directory
+        run: mkdir -p release-evidence
+      - name: Generate production runtime SBOM
+        uses: step-security/sbom-action@a2040c89fdf602b1abf5d2f46ac2c83bc6b341b7 # main 2026-09-07
+        with:
+          path: /tmp/pg8000-candidate-py314
+          format: cyclonedx-json
+          output-file: release-evidence/production-runtime.cdx.json
+          syft-version: v1.51.1
+          dependency-snapshot: false
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Verify production runtime SBOM policy
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import re
+          from pathlib import Path
+
+          sbom_path = Path("release-evidence/production-runtime.cdx.json")
+          payload = json.loads(sbom_path.read_text(encoding="utf-8"))
+          components = payload.get("components")
+          if not isinstance(components, list):
+              raise SystemExit("production runtime SBOM lacks components")
+
+          names: set[str] = set()
+          gpl_family = re.compile(r"(?:^|[^a-z])(agpl|lgpl|gpl)(?:[^a-z]|$)")
+          for component in components:
+              if not isinstance(component, dict):
+                  raise SystemExit("production runtime SBOM component is invalid")
+              name = component.get("name")
+              if isinstance(name, str):
+                  component_name = name.replace("_", "-").casefold()
+                  names.add(component_name)
+                  if component_name == "psycopg" or component_name == "psycopg-binary":
+                      raise SystemExit("Psycopg must not enter the production runtime SBOM")
+              license_evidence = json.dumps(
+                  component.get("licenses", []),
+                  sort_keys=True,
+              ).casefold()
+              if (
+                  gpl_family.search(license_evidence) is not None
+                  or "gnu general public license" in license_evidence
+                  or "gnu lesser general public license" in license_evidence
+                  or "gnu affero general public license" in license_evidence
+              ):
+                  raise SystemExit("GPL-family runtime dependency is disallowed")
+
+          if "pg-llm-batch" not in names or "pg8000" not in names:
+              raise SystemExit("production runtime SBOM lacks required runtime components")
+          PY
+      - name: Preserve production runtime SBOM
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-sbom-${{ github.event.pull_request.head.sha || github.sha }}
+          path: release-evidence/production-runtime.cdx.json
+          if-no-files-found: error
+          retention-days: 14
       - name: Start candidate PostgreSQL runtime
         shell: bash
         run: |
