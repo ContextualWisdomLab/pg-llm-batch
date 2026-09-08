@@ -200,7 +200,10 @@ def test_service_file_preserves_primary_failure_when_close_also_fails(
     monkeypatch.setattr(candidate_service_file.os, "close", fail_close)
 
     with pytest.raises(Pg8000CandidateInvalidConninfoError):
-        candidate_service_file._read_bounded_utf8(Path("unused-service.conf"))
+        candidate_service_file._read_bounded_utf8(
+            Path("unused-service.conf"),
+            (1, 1),
+        )
 
 
 def test_psycopg_adapter_covers_tuple_rows_and_default_connect_timeout(
