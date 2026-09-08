@@ -148,6 +148,17 @@ jobs:
               uv sync --locked --no-dev --no-install-project \
               --python "$environment/bin/python"
           done
+      - name: Build exact pg-llm-batch wheel for candidate parity
+        shell: bash
+        run: |
+          mkdir -p /tmp/pg-llm-batch-candidate-wheel
+          uv build --wheel --no-sources --out-dir /tmp/pg-llm-batch-candidate-wheel
+          mapfile -t product_wheels < <(
+            find /tmp/pg-llm-batch-candidate-wheel -maxdepth 1 -type f \
+              -name 'pg_llm_batch-*.whl' -print
+          )
+          test "${#product_wheels[@]}" -eq 1
+          echo "PG_LLM_BATCH_CANDIDATE_WHEEL=${product_wheels[0]}" >> "$GITHUB_ENV"
       - name: Download exact pg8000 candidate dependency closure
         run: >-
           python -m pip download --no-deps --only-binary=:all:
@@ -199,6 +210,16 @@ jobs:
               /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl \
               /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
           done
+      - name: Install exact pg-llm-batch wheel into candidate environments
+        shell: bash
+        run: |
+          test -f "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+          uv pip install --python "/tmp/pg8000-candidate-py310/bin/python" --no-deps \
+            "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+          uv pip install --python "/tmp/pg8000-candidate-py312/bin/python" --no-deps \
+            "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+          uv pip install --python "/tmp/pg8000-candidate-py314/bin/python" --no-deps \
+            "$PG_LLM_BATCH_CANDIDATE_WHEEL"
       - name: Verify pg8000 candidate Python 3.10 environment
         run: uv pip check --python /tmp/pg8000-candidate-py310/bin/python
       - name: Verify pg8000 candidate Python 3.12 environment
@@ -253,11 +274,11 @@ jobs:
           docker logs "$PG8000_CANDIDATE_CONTAINER"
           exit 1
       - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.10
-        run: PYTHONPATH=. /tmp/pg8000-candidate-py310/bin/python tests/smoke_pg8000_candidate_postgres.py
+        run: cd "$RUNNER_TEMP" && /tmp/pg8000-candidate-py310/bin/python "$GITHUB_WORKSPACE/tests/smoke_pg8000_candidate_postgres.py"
       - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.12
-        run: PYTHONPATH=. /tmp/pg8000-candidate-py312/bin/python tests/smoke_pg8000_candidate_postgres.py
+        run: cd "$RUNNER_TEMP" && /tmp/pg8000-candidate-py312/bin/python "$GITHUB_WORKSPACE/tests/smoke_pg8000_candidate_postgres.py"
       - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.14
-        run: PYTHONPATH=. /tmp/pg8000-candidate-py314/bin/python tests/smoke_pg8000_candidate_postgres.py
+        run: cd "$RUNNER_TEMP" && /tmp/pg8000-candidate-py314/bin/python "$GITHUB_WORKSPACE/tests/smoke_pg8000_candidate_postgres.py"
       - name: Tear down candidate PostgreSQL runtime
         if: ${{ always() }}
         shell: bash
