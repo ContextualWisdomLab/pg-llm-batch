@@ -160,9 +160,14 @@ jobs:
         run: |
           candidate_password="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
           echo "::add-mask::$candidate_password"
-          password_file="$(mktemp)"
+          password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-password.XXXXXX")"
           printf '%s' "$candidate_password" > "$password_file"
           chmod 600 "$password_file"
+          postgres_runtime_uid="$(docker run --rm --entrypoint id pg-llm-batch-postgres:ci -u)"
+          test -n "$postgres_runtime_uid"
+          sudo chown "$postgres_runtime_uid" "$password_file"
+          test "$(stat -c '%a' "$password_file")" = "600"
+          test "$(stat -c '%u' "$password_file")" = "$postgres_runtime_uid"
           container="pg-llm-batch-pg8000-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           echo "PG8000_CANDIDATE_PASSWORD_FILE=$password_file" >> "$GITHUB_ENV"
           echo "PG8000_CANDIDATE_CONTAINER=$container" >> "$GITHUB_ENV"
@@ -201,5 +206,5 @@ jobs:
             docker rm --force "$PG8000_CANDIDATE_CONTAINER" >/dev/null 2>&1 || true
           fi
           if [ -n "${PG8000_CANDIDATE_PASSWORD_FILE:-}" ]; then
-            rm -f "$PG8000_CANDIDATE_PASSWORD_FILE"
+            sudo rm -f "$PG8000_CANDIDATE_PASSWORD_FILE"
           fi
