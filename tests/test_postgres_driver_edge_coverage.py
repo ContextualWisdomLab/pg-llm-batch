@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from types import ModuleType
-from typing import Any
 
 import pytest
 from psycopg import ProgrammingError
