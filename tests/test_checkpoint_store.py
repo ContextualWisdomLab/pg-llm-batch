@@ -193,10 +193,10 @@ class FakeDatabase:
 
 @pytest.fixture
 def database(monkeypatch: pytest.MonkeyPatch) -> FakeDatabase:
-    """Install one deterministic psycopg replacement for each test."""
+    """Install one deterministic retained driver selector for each test."""
     fake_database = FakeDatabase()
-    monkeypatch.setattr(checkpoint_store, "psycopg", FakePsycopg(fake_database))
-    monkeypatch.setattr(checkpoint_store, "_require_psycopg", lambda: None)
+    driver = FakePsycopg(fake_database)
+    monkeypatch.setattr(checkpoint_store, "retained_postgres_driver", lambda: driver)
     return fake_database
 
 
