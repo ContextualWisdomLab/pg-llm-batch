@@ -1,3 +1,5 @@
+"""Candidate distribution-name evidence tests for PostgreSQL driver admission."""
+
 from __future__ import annotations
 
 import pytest
