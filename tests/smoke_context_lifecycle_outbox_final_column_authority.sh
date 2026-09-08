@@ -2,6 +2,7 @@
 set -euo pipefail
 
 image="pg-llm-batch-postgres:ci"
+component_image="pg-llm-batch:ci"
 container="pg-llm-batch-outbox-final-column-authority-${GITHUB_RUN_ID:-local}-$$"
 migration="/docker-entrypoint-initdb.d/06_context_lifecycle_outbox_row_admission_authority.sql"
 
@@ -37,6 +38,11 @@ fi
 # PostgreSQL CHECK constraints accept UNKNOWN, and UNIQUE permits multiple NULL keys, so
 # evidence_id=NULL can otherwise bypass the canonical payload/replay-identity contract.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE ROLE cwl_llm_batch_outbox_final_column_runtime
+    LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
+GRANT USAGE ON SCHEMA public TO cwl_llm_batch_outbox_final_column_runtime;
+GRANT SELECT, INSERT ON public.llm_context_lifecycle_outbox
+    TO cwl_llm_batch_outbox_final_column_runtime;
 ALTER TABLE public.llm_context_lifecycle_outbox
     ALTER COLUMN evidence_id DROP NOT NULL;
 
@@ -74,6 +80,34 @@ if [[ "${null_rows}" != "2" ]]; then
   echo "NOT NULL drift did not reproduce replay-identity admission failure" >&2
   exit 1
 fi
+
+# Migration 0009 already rejects this drift, but continuing runtime admission must not
+# treat that earlier point-in-time verdict as transferable authority. The ordinary
+# application role below has only the package's non-grantable SELECT/INSERT envelope.
+docker run --rm -i --network "container:${container}" "${component_image}" python - <<'PY'
+import psycopg
+
+from pg_llm_batch.context_lifecycle_outbox import PostgresContextLifecycleOutboxStore
+from pg_llm_batch.exceptions import ConfigError
+
+store = PostgresContextLifecycleOutboxStore(
+    "postgresql://cwl_llm_batch_outbox_final_column_runtime@127.0.0.1/postgres",
+    tenant_scope="standalone",
+    tenant_scope_sha256="0" * 64,
+)
+with psycopg.connect(
+    "postgresql://cwl_llm_batch_outbox_final_column_runtime@127.0.0.1/postgres"
+) as connection:
+    with connection.cursor() as cursor:
+        try:
+            store.load_in_transaction(cursor, "runtime-column-authority-red")
+        except ConfigError:
+            pass
+        else:
+            raise SystemExit(
+                "runtime admission trusted migration history after live column nullability drift"
+            )
+PY
 
 if docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
   -f "${migration}" >/tmp/pg-llm-batch-outbox-final-column.out 2>&1; then
