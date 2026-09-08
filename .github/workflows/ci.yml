@@ -160,6 +160,8 @@ jobs:
         run: bash tests/smoke_context_lifecycle_outbox_runtime_program_authority.sh
       - name: Run lifecycle-outbox admission-to-write race authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_admission_to_write_race_authority.sh
+      - name: Run lifecycle-outbox admission-to-read race authority smoke
+        run: bash tests/smoke_context_lifecycle_outbox_admission_to_read_race_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER replication-authority smoke
         run: bash tests/smoke_context_lifecycle_outbox_security_definer_replication_authority.sh
       - name: Run lifecycle-outbox SECURITY DEFINER admin-delegation smoke
