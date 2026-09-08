@@ -175,7 +175,9 @@ def test_candidate_license_gate_runs_before_candidate_install() -> None:
         encoding="utf-8"
     )
     verification_step = "- name: Verify pg8000 candidate dependency licenses"
-    install_step = "- name: Install exact candidate closure into the CI environment"
+    install_step = (
+        "- name: Install exact candidate closure into release Python environments"
+    )
 
     assert verification_step in workflow
     assert "python tools/verify_candidate_wheel_licenses.py /tmp/pg8000-candidate" in workflow

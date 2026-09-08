@@ -114,16 +114,51 @@ jobs:
         run: bash tests/smoke_postgres_container_logging.sh
       - name: Run legacy SQL cleanup integration smoke
         run: bash tests/smoke_legacy_sql_cleanup.sh
+      - name: Set up Python 3.10 for candidate parity
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.10"
+      - name: Create Python 3.10 candidate environment
+        run: python -m venv /tmp/pg8000-candidate-py310
+      - name: Set up Python 3.12 for candidate parity
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Create Python 3.12 candidate environment
+        run: python -m venv /tmp/pg8000-candidate-py312
       - name: Set up Python 3.14 for candidate parity
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14"
+      - name: Create Python 3.14 candidate environment
+        run: python -m venv /tmp/pg8000-candidate-py314
       - name: Set up uv for candidate parity
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           prune-cache: true
       - name: Install locked project dependencies
-        run: uv sync --locked
+        shell: bash
+        run: |
+          uv sync --locked
+          for environment in \
+            /tmp/pg8000-candidate-py310 \
+            /tmp/pg8000-candidate-py312 \
+            /tmp/pg8000-candidate-py314; do
+            UV_PROJECT_ENVIRONMENT="$environment" \
+              uv sync --locked --no-dev --no-install-project \
+              --python "$environment/bin/python"
+          done
+      - name: Build exact pg-llm-batch wheel for candidate parity
+        shell: bash
+        run: |
+          mkdir -p /tmp/pg-llm-batch-candidate-wheel
+          uv build --wheel --no-sources --out-dir /tmp/pg-llm-batch-candidate-wheel
+          mapfile -t product_wheels < <(
+            find /tmp/pg-llm-batch-candidate-wheel -maxdepth 1 -type f \
+              -name 'pg_llm_batch-*.whl' -print
+          )
+          test "${#product_wheels[@]}" -eq 1
+          echo "PG_LLM_BATCH_CANDIDATE_WHEEL=${product_wheels[0]}" >> "$GITHUB_ENV"
       - name: Download exact pg8000 candidate dependency closure
         run: >-
           python -m pip download --no-deps --only-binary=:all:
@@ -143,18 +178,54 @@ jobs:
           db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67  /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl
           4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274  /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
           EOF
+      - name: Download exact pg8000 candidate source distribution
+        shell: bash
+        run: |
+          mkdir -p /tmp/pg8000-candidate-source
+          curl --fail --location --proto '=https' --tlsv1.2 \
+            --output /tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz \
+            https://files.pythonhosted.org/packages/c8/9a/077ab21e700051e03d8c5232b6bcb9a1a4d4b6242c9a0226df2cfa306414/pg8000-1.31.5.tar.gz
+      - name: Verify pg8000 candidate source digest
+        run: >-
+          echo "46ebb03be52b7a77c03c725c79da2ca281d6e8f59577ca66b17c9009618cae78  /tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz"
+          | sha256sum --check --strict
+      - name: Verify pg8000 candidate source-wheel parity
+        run: >-
+          python tools/verify_candidate_source_wheel_parity.py
+          /tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz
+          /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl
       - name: Verify pg8000 candidate dependency licenses
         run: python tools/verify_candidate_wheel_licenses.py /tmp/pg8000-candidate
-      - name: Install exact candidate closure into the CI environment
-        run: >-
-          uv pip install --python .venv/bin/python --no-deps
-          /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl
-          /tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl
-          /tmp/pg8000-candidate/scramp-1.4.17-py3-none-any.whl
-          /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl
-          /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
-      - name: Verify candidate environment dependency consistency
-        run: uv pip check --python .venv/bin/python
+      - name: Install exact candidate closure into release Python environments
+        shell: bash
+        run: |
+          for interpreter in \
+            /tmp/pg8000-candidate-py310/bin/python \
+            /tmp/pg8000-candidate-py312/bin/python \
+            /tmp/pg8000-candidate-py314/bin/python; do
+            uv pip install --python "$interpreter" --no-deps \
+              /tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl \
+              /tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl \
+              /tmp/pg8000-candidate/scramp-1.4.17-py3-none-any.whl \
+              /tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl \
+              /tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl
+          done
+      - name: Install exact pg-llm-batch wheel into candidate environments
+        shell: bash
+        run: |
+          test -f "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+          uv pip install --python "/tmp/pg8000-candidate-py310/bin/python" --no-deps \
+            "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+          uv pip install --python "/tmp/pg8000-candidate-py312/bin/python" --no-deps \
+            "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+          uv pip install --python "/tmp/pg8000-candidate-py314/bin/python" --no-deps \
+            "$PG_LLM_BATCH_CANDIDATE_WHEEL"
+      - name: Verify pg8000 candidate Python 3.10 environment
+        run: uv pip check --python /tmp/pg8000-candidate-py310/bin/python
+      - name: Verify pg8000 candidate Python 3.12 environment
+        run: uv pip check --python /tmp/pg8000-candidate-py312/bin/python
+      - name: Verify pg8000 candidate Python 3.14 environment
+        run: uv pip check --python /tmp/pg8000-candidate-py314/bin/python
       - name: Start candidate PostgreSQL runtime
         shell: bash
         run: |
@@ -202,8 +273,12 @@ jobs:
           done
           docker logs "$PG8000_CANDIDATE_CONTAINER"
           exit 1
-      - name: Run real pg8000 candidate PostgreSQL smoke
-        run: uv run --no-sync python tests/smoke_pg8000_candidate_postgres.py
+      - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.10
+        run: cd "$RUNNER_TEMP" && /tmp/pg8000-candidate-py310/bin/python "$GITHUB_WORKSPACE/tests/smoke_pg8000_candidate_postgres.py"
+      - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.12
+        run: cd "$RUNNER_TEMP" && /tmp/pg8000-candidate-py312/bin/python "$GITHUB_WORKSPACE/tests/smoke_pg8000_candidate_postgres.py"
+      - name: Run real pg8000 candidate PostgreSQL smoke on Python 3.14
+        run: cd "$RUNNER_TEMP" && /tmp/pg8000-candidate-py314/bin/python "$GITHUB_WORKSPACE/tests/smoke_pg8000_candidate_postgres.py"
       - name: Tear down candidate PostgreSQL runtime
         if: ${{ always() }}
         shell: bash
