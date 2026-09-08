@@ -180,6 +180,28 @@ def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> Non
     assert '"pg8000' not in project.casefold()
 
 
+def test_ci_pg8000_candidate_secret_is_readable_only_by_exact_runtime_identity() -> None:
+    """Bind the 0600 password file to the UID that executes the built DB image."""
+    workflow = _read(".github/workflows/ci.yml")
+    dockerfile = _read("docker/postgres/Dockerfile")
+
+    assert "USER postgres" in dockerfile
+    assert 'mktemp "${RUNNER_TEMP:?}/pg8000-password.XXXXXX"' in workflow
+    assert 'chmod 600 "$password_file"' in workflow
+    assert (
+        'postgres_runtime_uid="$(docker run --rm --entrypoint id '
+        'pg-llm-batch-postgres:ci -u)"'
+    ) in workflow
+    assert 'sudo chown "$postgres_runtime_uid" "$password_file"' in workflow
+    assert 'test "$(stat -c \'%a\' "$password_file")" = "600"' in workflow
+    assert (
+        'test "$(stat -c \'%u\' "$password_file")" = "$postgres_runtime_uid"'
+        in workflow
+    )
+    assert "POSTGRES_HOST_AUTH_METHOD=trust" not in workflow
+    assert "chmod 644" not in workflow
+
+
 def test_ci_pg8000_candidate_health_matches_selected_runtime_capabilities() -> None:
     """Candidate parity must not wait for an extension disabled by its image."""
     workflow = _read(".github/workflows/ci.yml")
