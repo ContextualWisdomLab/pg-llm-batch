@@ -1,13 +1,12 @@
 """Production construction boundary for the admitted pg8000 PostgreSQL driver.
 
 The underlying pg8000 semantics were proved incrementally behind candidate-only
-adapters before production selection. This module adds the missing construction
-boundary: it accepts only the exact admitted distribution, verifies that the
-importable package resolves to that distribution before executing it, imports
-its DB-API module lazily, and optionally composes the existing explicit
-service-file resolver. It does not change the repository's default runtime
-selector or manifest; those remain a separate atomic promotion with lock/SBOM
-evidence.
+adapters before production selection. This module accepts only the exact admitted
+distribution, verifies that the importable package resolves to that distribution
+before executing it, imports its DB-API module lazily, and optionally composes
+the explicit service-file resolver. The centralized runtime selector constructs
+this adapter; release authority still requires the matching manifest, lock,
+package, SBOM, provenance, and protected-head acceptance evidence.
 """
 
 from __future__ import annotations
