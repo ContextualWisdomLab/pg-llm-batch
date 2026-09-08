@@ -53,3 +53,17 @@ def test_component_image_preserves_minimal_runtime_packages() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert re.search(r"apt-get install[^\n]*\bcurl\b", dockerfile)
+
+
+def test_component_image_removes_python_314_packaging_toolchain() -> None:
+    """The Python 3.14 runtime must remove its inherited packaging toolchain."""
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    runtime_stage = dockerfile.split("FROM python:3.14-slim@", maxsplit=2)[-1]
+
+    assert "/usr/local/bin/pip3.11" not in runtime_stage
+    assert "/usr/local/lib/python3.11/site-packages/" not in runtime_stage
+    assert "/usr/local/bin/pip3.14" in runtime_stage
+    assert "/usr/local/lib/python3.14/site-packages/pip*" in runtime_stage
+    assert "/usr/local/lib/python3.14/site-packages/setuptools*" in runtime_stage
+    assert "/usr/local/lib/python3.14/site-packages/wheel*" in runtime_stage
+    assert "! command -v pip3.14" in runtime_stage
