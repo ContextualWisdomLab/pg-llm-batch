@@ -20,9 +20,15 @@
   boundary: when a selectable principal has schema `USAGE` and routine `EXECUTE`,
   inspect that invoker routine's `proconfig` directly and reject any function-local
   `pg_llm_batch.tenant_scope` setting before tenant binding or outbox data I/O.
-  Keep this separate from `SECURITY DEFINER` recursion because an invoker routine
-  retains the caller/selectable principal while a definer routine changes to its
-  owner principal.
+  Keep the direct selectable-principal scan separate from `SECURITY DEFINER`
+  owner traversal because an invoker routine retains the current execution
+  principal while a definer routine changes it to the routine owner. Once a
+  callable definer has changed execution to a discovered owner, that owner is
+  therefore the current principal for any non-system-schema `SECURITY INVOKER`
+  routine it can execute. Admission must scan such invokers through the owner's
+  schema `USAGE` plus routine `EXECUTE` and reject a tenant-scope `proconfig`
+  override before accepting that definer path. This still follows PostgreSQL's
+  invoker principal; it does not substitute the invoker routine's owner.
 - Keep row-level security enabled and forced. Runtime admission must reject
   `SUPERUSER`/`CREATEDB`/`CREATEROLE`/`REPLICATION`/`BYPASSRLS`,
   owner/destructive/programming/maintenance authority reachable from
