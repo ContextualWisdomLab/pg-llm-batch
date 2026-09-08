@@ -138,3 +138,5 @@ assert cursor.attack_blocked, "runtime did not retain read-schema authority thro
 assert not cursor.attack_committed, "hostile relation replacement committed after admission"
 assert loaded is None, "runtime read from a post-admission replacement relation"
 PY
+
+bash "$(dirname "$0")/smoke_context_lifecycle_outbox_admission_to_schema_rename_race_authority.sh"
