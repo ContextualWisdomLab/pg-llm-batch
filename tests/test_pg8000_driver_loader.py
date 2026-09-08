@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError
-from types import ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
@@ -16,6 +17,18 @@ from pg_llm_batch.pg8000_driver_adapter import (
 )
 
 
+_ADMITTED_PACKAGE_ROOT = Path("/opt/admitted/site-packages/pg8000")
+
+
+class _AdmittedDistribution:
+    """Expose the package path belonging to the reviewed distribution fixture."""
+
+    def locate_file(self, path: str) -> Path:
+        """Resolve the package directory without importing candidate code."""
+        assert str(path) == "pg8000"
+        return _ADMITTED_PACKAGE_ROOT
+
+
 def _dbapi_module() -> ModuleType:
     module = ModuleType("pg8000.dbapi")
     module.apilevel = "2.0"
@@ -25,14 +38,34 @@ def _dbapi_module() -> ModuleType:
     return module
 
 
-def test_loader_accepts_only_exact_admitted_distribution(monkeypatch) -> None:
-    imported: list[str] = []
-    module = _dbapi_module()
+def _install_admitted_distribution_metadata(monkeypatch) -> None:
+    """Model one exact installed distribution and its matching import origin."""
     monkeypatch.setattr(
         pg8000_driver_adapter,
         "distribution_version",
         lambda package: PG8000_ADMITTED_VERSION,
     )
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "distribution",
+        lambda package: _AdmittedDistribution(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "find_spec",
+        lambda name: SimpleNamespace(
+            origin=str(_ADMITTED_PACKAGE_ROOT / "__init__.py"),
+            submodule_search_locations=[str(_ADMITTED_PACKAGE_ROOT)],
+        ),
+        raising=False,
+    )
+
+
+def test_loader_accepts_only_exact_admitted_distribution(monkeypatch) -> None:
+    imported: list[str] = []
+    module = _dbapi_module()
+    _install_admitted_distribution_metadata(monkeypatch)
     monkeypatch.setattr(
         pg8000_driver_adapter,
         "import_module",
@@ -43,6 +76,32 @@ def test_loader_accepts_only_exact_admitted_distribution(monkeypatch) -> None:
 
     assert isinstance(driver, Pg8000DriverAdapter)
     assert imported == ["pg8000.dbapi"]
+
+
+def test_loader_rejects_shadow_package_before_import(monkeypatch) -> None:
+    """A matching distribution version must not authorize shadow package bytes."""
+    _install_admitted_distribution_metadata(monkeypatch)
+    shadow_root = Path("/tmp/untrusted-site-packages/pg8000")
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "find_spec",
+        lambda name: SimpleNamespace(
+            origin=str(shadow_root / "__init__.py"),
+            submodule_search_locations=[str(shadow_root)],
+        ),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "import_module",
+        lambda name: pytest.fail("shadow package code must not execute"),
+    )
+
+    with pytest.raises(
+        Pg8000DriverUnavailableError,
+        match="^PostgreSQL driver origin is not admitted$",
+    ):
+        load_pg8000_driver()
 
 
 def test_loader_rejects_unadmitted_version_before_import(monkeypatch) -> None:
@@ -87,11 +146,7 @@ def test_loader_normalizes_missing_distribution_without_import(monkeypatch) -> N
 
 
 def test_loader_normalizes_missing_pg8000_module(monkeypatch) -> None:
-    monkeypatch.setattr(
-        pg8000_driver_adapter,
-        "distribution_version",
-        lambda package: PG8000_ADMITTED_VERSION,
-    )
+    _install_admitted_distribution_metadata(monkeypatch)
 
     def missing_module(name: str) -> ModuleType:
         raise ModuleNotFoundError("pg8000 missing", name="pg8000.dbapi")
@@ -106,11 +161,7 @@ def test_loader_normalizes_missing_pg8000_module(monkeypatch) -> None:
 
 
 def test_loader_preserves_unrelated_import_failure(monkeypatch) -> None:
-    monkeypatch.setattr(
-        pg8000_driver_adapter,
-        "distribution_version",
-        lambda package: PG8000_ADMITTED_VERSION,
-    )
+    _install_admitted_distribution_metadata(monkeypatch)
 
     def broken_dependency(name: str) -> ModuleType:
         raise ModuleNotFoundError("dependency missing", name="scramp")
@@ -128,11 +179,7 @@ def test_loader_composes_only_explicit_service_file(monkeypatch, tmp_path) -> No
         "[runtime]\nuser=service_user\nhost=db.internal\nport=5433\ndbname=batch\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr(
-        pg8000_driver_adapter,
-        "distribution_version",
-        lambda package: PG8000_ADMITTED_VERSION,
-    )
+    _install_admitted_distribution_metadata(monkeypatch)
     monkeypatch.setattr(pg8000_driver_adapter, "import_module", lambda name: module)
 
     driver = load_pg8000_driver(service_file=service_file)
