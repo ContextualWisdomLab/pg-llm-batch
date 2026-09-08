@@ -22,7 +22,10 @@ def test_final_row_admission_reproves_complete_column_catalog_identity() -> None
     docker_sql = docker_path.read_text(encoding="utf-8")
 
     assert package_sql == docker_sql
-    assert "AS expected(attname, atttypid, attnotnull, atthasdef)" in package_sql
+    assert (
+        "AS expected(attname, atttypid, atttypmod, attnotnull, atthasdef)"
+        in package_sql
+    )
     for column_name in (
         "context_outbox_uuid",
         "tenant_scope",
@@ -40,6 +43,8 @@ def test_final_row_admission_reproves_complete_column_catalog_identity() -> None
         "created_at",
     ):
         assert f"('{column_name}'," in package_sql
+    assert "actual.atttypid IS DISTINCT FROM expected.atttypid" in package_sql
+    assert "actual.atttypmod IS DISTINCT FROM expected.atttypmod" in package_sql
     assert "actual.attcollation IS DISTINCT FROM" in package_sql
     assert "actual.attnotnull IS DISTINCT FROM expected.attnotnull" in package_sql
     assert "actual.atthasdef IS DISTINCT FROM expected.atthasdef" in package_sql
