@@ -116,15 +116,16 @@ def test_candidate_source_wheel_parity_runs_before_candidate_install() -> None:
     source_digest_step = "- name: Verify pg8000 candidate source digest"
     parity_step = "- name: Verify pg8000 candidate source-wheel parity"
     install_step = "- name: Install exact candidate closure into release Python environments"
+    verifier_command = "python tools/verify_candidate_source_wheel_parity.py"
+    source_path = "/tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz"
+    wheel_path = "/tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl"
 
     assert source_download_step in workflow
     assert source_digest_step in workflow
     assert parity_step in workflow
-    assert (
-        "python tools/verify_candidate_source_wheel_parity.py "
-        "/tmp/pg8000-candidate-source/pg8000-1.31.5.tar.gz "
-        "/tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl"
-    ) in workflow
+    assert verifier_command in workflow
+    assert source_path in workflow
+    assert wheel_path in workflow
     assert workflow.index(source_download_step) < workflow.index(source_digest_step)
     assert workflow.index(source_digest_step) < workflow.index(parity_step)
     assert workflow.index(parity_step) < workflow.index(install_step)
