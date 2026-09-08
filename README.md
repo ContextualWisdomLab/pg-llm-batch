@@ -32,7 +32,8 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
        durable lifecycle + tenant/RLS + reconciliation evidence
 ```
 
-Provider-facing polling and retrieval stay outside PostgreSQL. The former bundled `pg_cron` + `pgsql-http` provider retriever is retired; automatic reconciliation is a separate product capability rather than a second database-side network authority.
+Provider-facing polling and retrieval stay outside PostgreSQL. The former bundled `pg_cron` + `pgsql-http` provider retriever is
+retired; automatic reconciliation is a separate product capability rather than a second database-side network authority.
 
 | Piece | Module |
 | --- | --- |
@@ -129,7 +130,7 @@ python -m pg_llm_batch wait     --endpoint default --batch-id <batch_id> --poll-
 python -m pg_llm_batch retrieve --endpoint default --batch-id <batch_id>
 ```
 
-`count-tokens` accepts strict UTF-8 only through the explicit stdin source and enforces its bounded input contract before configuration-store or PostgreSQL acquisition. Prompt text is not accepted through an argv option and rejected content is not reflected into parser/runtime diagnostics.
+`count-tokens` accepts at most 1 MiB of strict UTF-8 only through the explicit stdin source and enforces that bound before configuration-store or PostgreSQL acquisition. Prompt text is not accepted through an argv option and rejected content is not reflected into parser/runtime diagnostics.
 
 Programmatic preparation remains available:
 
@@ -199,7 +200,7 @@ See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for migra
 
 The repository contains bounded backup, restore, catalog, replay, and recovery-evidence primitives. Each primitive proves only its documented slice; none by itself establishes end-to-end PITR, RPO/RTO, HA/DR, CSAP, SOC 2, or a deployment certification.
 
-For a caller-owned logical archive, `restore_postgres_logical_backup()` uses an isolated libpq-service execution boundary for `pg_restore`. That subprocess contract is distinct from package-created pg8000 connections and retains its own restricted libpq environment. See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md).
+For a caller-owned logical archive, use `restore_postgres_logical_backup()` only against an isolated libpq service after you can assert `source_superusers_trusted=True`. The service name is not an authorization boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited. The executor runs `pg_restore --single-transaction --exit-on-error`. Custom-format restore seeks through the archive, so success is not required to leave the descriptor at end-of-file. If metadata changes after `pg_restore` exits zero, treat the target as unsafe and do not retry into the same service. This subprocess contract is distinct from package-created pg8000 connections. See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md).
 
 ## Embedding boundary
 
@@ -234,7 +235,7 @@ The credentials provider is an anti-corruption seam: callers may use the package
 
 Files/Batches control-plane JSON uses an independent decoded-byte budget before strict UTF-8 and JSON-object parsing. Provider result/error files are streamed in bounded chunks and checked against `max_download_bytes` before JSONL parsing. Adapters that cannot provide the required bounded stream contract fail closed.
 
-Idempotent provider `GET` operations may retry reviewed transient HTTP/transport failures within bounded attempts and backoff. Upload, batch creation, and cancellation `POST` operations are not retried automatically. TLS handshake/certificate and peer-identity failures are not treated as ordinary transient retries.
+Idempotent provider `GET` operations use up to three total attempts by default for transient `408`, `425`, `429`, `502`, `503`, and `504` responses and for retryable aiohttp transport failures. TLS handshake and certificate failures are never retried automatically; they fail after the first attempt because repeating a request cannot repair peer identity or TLS policy. Certificate fingerprint mismatches are never retried automatically for the same peer-identity reason. A bounded RFC `Retry-After` delta or HTTP-date is honored. Upload, batch creation, and cancellation `POST` operations are not retried automatically.
 
 ## Observability
 
