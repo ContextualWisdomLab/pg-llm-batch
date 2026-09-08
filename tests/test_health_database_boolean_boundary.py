@@ -42,26 +42,28 @@ class _Connection:
 
 
 class _Psycopg:
-    """Return one deterministic fake PostgreSQL connection."""
+    """Return one deterministic fake PostgreSQL connection through the driver port."""
 
     def __init__(self, rows):
         self._rows = rows
 
-    def connect(self, _dsn, *, connect_timeout):
-        assert connect_timeout == 5
+    def connect(self, _dsn, *, connect_timeout_seconds=None):
+        assert connect_timeout_seconds == 5
         return _Connection(self._rows)
 
 
-def test_database_readiness_boolean_is_not_truth_coerced(monkeypatch):
+def test_database_readiness_boolean_is_not_truth_coerced():
     """Malformed database readiness cannot become a true local or HTTP signal."""
     rows = [
         ("database", "false", "malformed database boolean"),
         ("pg_tiktoken", True, "installed"),
         ("com_config", True, "ready"),
     ]
-    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
 
-    report = health.check_health("postgresql://example")
+    report = health.check_health(
+        "postgresql://example",
+        postgres_driver=_Psycopg(rows),
+    )
 
     assert report["ready"] is False
     database = next(
@@ -74,7 +76,7 @@ def test_database_readiness_boolean_is_not_truth_coerced(monkeypatch):
     assert health.public_health_report(report)["ready"] is False
 
 
-def test_local_health_rejects_duplicate_required_components(monkeypatch):
+def test_local_health_rejects_duplicate_required_components():
     """Duplicate required database rows cannot make local readiness healthy."""
     rows = [
         ("database", True, "connected"),
@@ -82,9 +84,11 @@ def test_local_health_rejects_duplicate_required_components(monkeypatch):
         ("pg_tiktoken", True, "installed"),
         ("com_config", True, "ready"),
     ]
-    monkeypatch.setattr(health, "psycopg", _Psycopg(rows))
 
-    report = health.check_health("postgresql://example")
+    report = health.check_health(
+        "postgresql://example",
+        postgres_driver=_Psycopg(rows),
+    )
 
     assert report["ready"] is False
     assert [
