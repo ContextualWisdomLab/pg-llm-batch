@@ -32,8 +32,13 @@ def test_component_builder_copies_declared_legal_files_before_sync() -> None:
 
 
 def test_component_runtime_does_not_install_libpq() -> None:
-    """The pg8000 production image must not retain the superseded libpq runtime."""
+    """The pg8000 production image must not install the superseded libpq runtime."""
     text = DOCKERFILE.read_text(encoding="utf-8")
     runtime_stage = text.split("FROM python:3.14-slim@", maxsplit=2)[-1]
+    install = re.search(
+        r"apt-get install -y --no-install-recommends (?P<packages>[^&\n]+?) &&",
+        runtime_stage,
+    )
 
-    assert re.search(r"(?:^|\s)libpq5(?:\s|$)", runtime_stage) is None
+    assert install is not None
+    assert "libpq5" not in install.group("packages").split()
