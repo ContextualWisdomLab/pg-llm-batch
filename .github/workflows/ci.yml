@@ -181,7 +181,7 @@ jobs:
               pg_isready -U pgllm -d pgllm >/dev/null 2>&1; then
               ready="$(docker exec "$PG8000_CANDIDATE_CONTAINER" \
                 psql -U pgllm -d pgllm -tAc \
-                "SELECT bool_and(is_ready) FROM pg_llm_batch_health_check() WHERE component IN ('database','pg_tiktoken','com_config')" \
+                "SELECT bool_and(is_ready) FROM pg_llm_batch_health_check() WHERE component IN ('database','com_config')" \
                 2>/dev/null || true)"
               if [ "$ready" = "t" ]; then
                 exit 0
