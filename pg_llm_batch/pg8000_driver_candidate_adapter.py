@@ -101,14 +101,18 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
         query: str,
         params: object | None = None,
     ) -> Pg8000CandidateCursorAdapter:
-        """Forward package-authored SQL and bound parameters without interpolation.
+        """Execute package-authored SQL with pg8000-compatible parameter semantics.
 
         pg8000's DB-API interface defaults to ``format`` parameter style, which
-        matches the existing ``%s`` package SQL. This candidate method forwards
-        both objects unchanged so later real-driver tests can detect any semantic
-        mismatch rather than hiding it in an adapter rewrite.
+        matches the existing ``%s`` package SQL. Explicit parameter containers
+        are forwarded unchanged. The port-level ``None`` sentinel means that the
+        statement has no parameters, so the adapter omits pg8000's second
+        ``execute`` argument instead of passing ``None`` as an argument container.
         """
-        self._cursor.execute(query, params)
+        if params is None:
+            self._cursor.execute(query)
+        else:
+            self._cursor.execute(query, params)
         return self
 
     def executemany(
