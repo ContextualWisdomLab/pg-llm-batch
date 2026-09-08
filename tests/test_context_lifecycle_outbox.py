@@ -81,7 +81,7 @@ class FakeCursor:
         parameters = params or ()
         self.database.calls.append((normalized, parameters))
         if normalized.startswith("SELECT admitted_role.rolsuper"):
-            self.result = (False, False)
+            self.result = (False, False, self.database.relation_oid)
             return
         if normalized.startswith("SELECT pg_catalog.set_config"):
             self.result = (parameters[0],)
@@ -89,27 +89,47 @@ class FakeCursor:
         if normalized.startswith("SELECT pg_catalog.pg_advisory_xact_lock"):
             self.result = (None,)
             return
-        if normalized.startswith("SELECT evidence_id"):
-            self.result = self.database.rows.get(parameters)
+        if normalized.startswith("SELECT live_relation.oid"):
+            identity_matches = self.database.next_identity_match()
+            if not identity_matches:
+                self.result = (False, *(None for _ in range(11)))
+                return
+            durable = self.database.rows.get((parameters[-2], parameters[-1]))
+            if type(durable) is tuple:
+                self.result = (True, *durable)
+            elif type(durable) is list:
+                self.result = [True, *durable]
+            elif durable is None:
+                self.result = (True, *(None for _ in range(11)))
+            else:
+                self.result = durable
             return
-        if normalized.startswith("INSERT INTO public.llm_context_lifecycle_outbox"):
+        if normalized.startswith("WITH live_relation AS ("):
+            identity_matches = self.database.next_identity_match()
             tenant = parameters[0]
-            seed_values = parameters[1:]
+            seed_values = parameters[1:12]
             key = (tenant, seed_values[0])
+            if not identity_matches:
+                self.result = (False, None)
+                return
+            if self.database.insert_result_override is not None:
+                self.result = self.database.insert_result_override
+                self.database.insert_result_override = None
+                return
             if self.database.insert_conflict_without_row:
                 self.database.insert_conflict_without_row = False
-                self.result = None
+                self.result = (True, None)
                 return
             if self.database.insert_race_row is not None:
                 self.database.rows[key] = self.database.insert_race_row
                 self.database.insert_race_row = None
-                self.result = None
+                self.result = (True, None)
                 return
             if key in self.database.rows:
-                self.result = None
+                self.result = (True, None)
                 return
             self.database.rows[key] = seed_values
-            self.result = (seed_values[0],)
+            self.result = (True, seed_values[0])
             return
         if not parameters:
             self.result = None
@@ -164,8 +184,17 @@ class FakeDatabase:
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
         self.dsns: list[str] = []
         self.commits = 0
+        self.relation_oid = 4242
+        self.identity_match_results: list[bool] = []
         self.insert_race_row: tuple[Any, ...] | None = None
         self.insert_conflict_without_row = False
+        self.insert_result_override: Any = None
+
+    def next_identity_match(self) -> bool:
+        """Return one scripted namespace identity verdict, then the safe default."""
+        if self.identity_match_results:
+            return self.identity_match_results.pop(0)
+        return True
 
 
 @pytest.fixture
@@ -271,7 +300,7 @@ def test_enqueue_is_idempotent_for_exact_replay(database: FakeDatabase) -> None:
     statements = [sql for sql, _ in database.calls]
     assert (
         sum(
-            sql.startswith("INSERT INTO public.llm_context_lifecycle_outbox")
+            sql.startswith("WITH live_relation AS (") and "INSERT INTO" in sql
             for sql in statements
         )
         == 1
@@ -327,6 +356,36 @@ def test_enqueue_rejects_disappearing_insert_conflict(database: FakeDatabase) ->
         bound_store.enqueue(evidence())
 
 
+def test_enqueue_rejects_namespace_rebinding_at_insert(database: FakeDatabase) -> None:
+    """The write statement must retain the OID admitted by the preceding safe load."""
+    database.identity_match_results = [True, False]
+    with pytest.raises(ConfigError, match="relation identity changed"):
+        store().enqueue(evidence())
+    assert database.rows == {}
+
+
+@pytest.mark.parametrize(
+    "insert_result",
+    (object(), (True,), (True, 7), (True, "wrong-event")),
+)
+def test_enqueue_rejects_malformed_identity_guarded_insert_result(
+    database: FakeDatabase,
+    insert_result: Any,
+) -> None:
+    """Driver result drift cannot counterfeit a successful identity-guarded insert."""
+    database.insert_result_override = insert_result
+    with pytest.raises(RuntimeError, match="insert"):
+        store().enqueue(evidence())
+
+
+def test_enqueue_accepts_list_identity_guarded_insert_result(
+    database: FakeDatabase,
+) -> None:
+    """An exact list row from an alternate cursor row factory is snapshotted safely."""
+    database.insert_result_override = [True, "event-1"]
+    assert store().enqueue(evidence()) == evidence()
+
+
 def test_load_is_tenant_qualified_and_revalidates_rows(database: FakeDatabase) -> None:
     """Durable rows are isolated by local tenant scope and validated on read."""
     bound_store = store(tenant_scope="tenant-a")
@@ -336,9 +395,25 @@ def test_load_is_tenant_qualified_and_revalidates_rows(database: FakeDatabase) -
     select_params = [
         params
         for sql, params in database.calls
-        if sql.startswith("SELECT evidence_id")
+        if sql.startswith("SELECT live_relation.oid")
     ]
-    assert ("tenant-a", seed.evidence_id) in select_params
+    assert any(params[-2:] == ("tenant-a", seed.evidence_id) for params in select_params)
+
+
+def test_load_rejects_namespace_rebinding_before_accepting_row(
+    database: FakeDatabase,
+) -> None:
+    """A qualified name that no longer resolves to the admitted OID fails closed."""
+    database.identity_match_results = [False]
+    with pytest.raises(ConfigError, match="relation identity changed"):
+        store().load("event-1")
+
+
+def test_load_accepts_list_identity_result(database: FakeDatabase) -> None:
+    """An exact list backend row is snapshotted before durable evidence validation."""
+    seed = evidence()
+    database.rows[("standalone", seed.evidence_id)] = list(evidence_row(seed))
+    assert store().load(seed.evidence_id) == seed
 
 
 def test_load_rejects_durable_tenant_binding_mismatch(database: FakeDatabase) -> None:
