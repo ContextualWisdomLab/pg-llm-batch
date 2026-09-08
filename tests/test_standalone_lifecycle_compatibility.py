@@ -5,8 +5,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pytest
-
 from pg_llm_batch import db
 
 
@@ -27,6 +25,10 @@ class _Cursor:
     def execute(self, sql: str, params: Any = None) -> None:
         """Record one statement and its bound values."""
         self.driver.executions.append((sql, params))
+
+    def row_count(self) -> int:
+        """Report one affected lifecycle row for the successful fake write."""
+        return 1
 
 
 class _Connection:
@@ -53,7 +55,7 @@ class _Connection:
 
 
 class _Psycopg:
-    """Minimal psycopg replacement for standalone return-shape verification."""
+    """Minimal driver port for standalone return-shape verification."""
 
     def __init__(self) -> None:
         self.executions: list[tuple[str, Any]] = []
@@ -63,12 +65,9 @@ class _Psycopg:
         return _Connection(self)
 
 
-def test_standalone_persistence_keeps_the_pre_tenant_return_shape(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_standalone_persistence_keeps_the_pre_tenant_return_shape() -> None:
     """Adding tenant isolation must not add a new key to the legacy helper result."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     snapshot = db.persist_remote_batch_state(
         "postgresql://compatibility",
@@ -79,6 +78,7 @@ def test_standalone_persistence_keeps_the_pre_tenant_return_shape(
             "request_counts": {"total": 1, "completed": 0, "failed": 0},
         },
         1,
+        postgres_driver=driver,
     )
 
     assert "tenant_scope" not in snapshot
@@ -90,12 +90,9 @@ def test_standalone_persistence_keeps_the_pre_tenant_return_shape(
     )
 
 
-def test_explicit_tenant_persistence_exposes_the_tenant_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_explicit_tenant_persistence_exposes_the_tenant_identity() -> None:
     """The new tenant-aware helper returns its explicit trusted scope."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     snapshot = db.persist_tenant_remote_batch_state(
         "postgresql://compatibility",
@@ -107,6 +104,7 @@ def test_explicit_tenant_persistence_exposes_the_tenant_identity(
             "request_counts": {"total": 1, "completed": 0, "failed": 0},
         },
         2,
+        postgres_driver=driver,
     )
 
     assert snapshot["tenant_scope"] == "tenant-a"
