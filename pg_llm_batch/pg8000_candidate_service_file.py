@@ -31,6 +31,7 @@ from .pg8000_candidate_driver_port import Pg8000CandidateInvalidConninfoError
 
 
 _MAX_SERVICE_FILE_BYTES = 64 * 1024
+_LIBPQ_ASCII_LINE_WHITESPACE = " \t\r\v\f"
 
 
 def _invalid_service_file(*, unsupported: bool = False) -> Pg8000CandidateInvalidConninfoError:
@@ -315,10 +316,10 @@ class Pg8000CandidateServiceFileResolver:
         target_active = False
         parameters: dict[str, str] = {}
 
-        for raw_line in text.splitlines():
-            if _has_disallowed_control(raw_line):
+        for raw_line in text.split("\n"):
+            stripped = raw_line.strip(_LIBPQ_ASCII_LINE_WHITESPACE)
+            if _has_disallowed_control(stripped):
                 raise _invalid_service_file()
-            stripped = raw_line.strip()
             if not stripped or stripped.startswith("#"):
                 continue
 
