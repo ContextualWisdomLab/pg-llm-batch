@@ -2,11 +2,12 @@
 
 The underlying pg8000 semantics were proved incrementally behind candidate-only
 adapters before production selection. This module accepts only the exact admitted
-distribution, verifies that the importable package resolves to that distribution
-before executing it, imports its DB-API module lazily, and optionally composes
-the explicit service-file resolver. The centralized runtime selector constructs
-this adapter; release authority still requires the matching manifest, lock,
-package, SBOM, provenance, and protected-head acceptance evidence.
+distribution, verifies that the importable package resolves to that distribution,
+imports its DB-API module lazily, verifies that the returned module is rooted in
+the same admitted distribution, and optionally composes the explicit service-file
+resolver. The centralized runtime selector constructs this adapter; release
+authority still requires the matching manifest, lock, package, SBOM, provenance,
+and protected-head acceptance evidence.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from importlib import import_module
 from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from importlib.util import find_spec
 from pathlib import Path
+from types import ModuleType
 
 from .pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
 from .pg8000_candidate_service_file import Pg8000CandidateServiceFileResolver
@@ -42,8 +44,8 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     """
 
 
-def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> None:
-    """Reject import-path shadowing against the same admitted metadata snapshot."""
+def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> Path:
+    """Reject package-path shadowing and return the admitted package root."""
     expected_root = Path(installed_distribution.locate_file("pg8000")).resolve()
     package_spec = find_spec("pg8000")
     if (
@@ -66,17 +68,37 @@ def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> Non
         raise Pg8000DriverUnavailableError(
             "PostgreSQL driver origin is not admitted"
         )
+    return expected_root
+
+
+def _require_admitted_pg8000_dbapi_origin(
+    dbapi_module: ModuleType,
+    expected_root: Path,
+) -> None:
+    """Reject a returned DB-API module outside the admitted distribution root."""
+    module_file = vars(dbapi_module).get("__file__")
+    if type(module_file) is not str:
+        raise Pg8000DriverUnavailableError(
+            "PostgreSQL driver origin is not admitted"
+        )
+    if Path(module_file).resolve() != expected_root / "dbapi.py":
+        raise Pg8000DriverUnavailableError(
+            "PostgreSQL driver origin is not admitted"
+        )
 
 
 def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPort:
     """Construct only the exact admitted pg8000 artifact behind the canonical port.
 
     One installed-distribution metadata snapshot supplies both version admission
-    and the package root used for import-origin admission. This prevents separate
-    metadata lookups from authorizing different installed-distribution states
-    before pg8000 code executes. Service-file support is opt-in through one
-    caller-selected path; ambient ``PGSERVICEFILE`` discovery remains outside the
-    admitted contract.
+    and the package root used for import-origin admission. The package root is
+    checked before import, and the DB-API module returned by Python's import
+    machinery must then report a source path under that same admitted root before
+    it receives connection authority. This rejects a stale or preloaded
+    ``pg8000.dbapi`` module from a different filesystem location while avoiding a
+    second distribution-metadata lookup. Service-file support is opt-in through
+    one caller-selected path; ambient ``PGSERVICEFILE`` discovery remains outside
+    the admitted contract.
 
     Args:
         service_file: Optional explicit ``pg_service.conf`` path. When omitted,
@@ -86,8 +108,9 @@ def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPor
         A canonical PostgreSQL driver port backed by exact pg8000 1.31.5.
 
     Raises:
-        Pg8000DriverUnavailableError: If pg8000 is absent, its version or import
-            origin is not admitted, or its DB-API module is absent.
+        Pg8000DriverUnavailableError: If pg8000 is absent, its version, package
+            origin, or returned DB-API module origin is not admitted, or its
+            DB-API module is absent.
         ModuleNotFoundError: If importing pg8000 exposes an unrelated missing
             dependency, preserving the packaging defect for root-cause repair.
     """
@@ -101,7 +124,7 @@ def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPor
             "PostgreSQL driver version is not admitted"
         )
 
-    _require_admitted_pg8000_origin(installed_distribution)
+    expected_root = _require_admitted_pg8000_origin(installed_distribution)
 
     try:
         dbapi_module = import_module("pg8000.dbapi")
@@ -109,6 +132,8 @@ def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPor
         if exc.name not in {"pg8000", "pg8000.dbapi"}:
             raise
         raise Pg8000DriverUnavailableError("PostgreSQL driver is unavailable") from None
+
+    _require_admitted_pg8000_dbapi_origin(dbapi_module, expected_root)
 
     service_resolver = (
         None
