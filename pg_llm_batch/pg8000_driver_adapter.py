@@ -12,11 +12,7 @@ package, SBOM, provenance, and protected-head acceptance evidence.
 from __future__ import annotations
 
 from importlib import import_module
-from importlib.metadata import (
-    PackageNotFoundError,
-    distribution,
-    version as distribution_version,
-)
+from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from importlib.util import find_spec
 from pathlib import Path
 
@@ -46,13 +42,8 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     """
 
 
-def _require_admitted_pg8000_origin() -> None:
-    """Reject import-path shadowing before any pg8000 package code executes."""
-    try:
-        installed_distribution = distribution("pg8000")
-    except PackageNotFoundError:
-        raise Pg8000DriverUnavailableError("PostgreSQL driver is unavailable") from None
-
+def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> None:
+    """Reject import-path shadowing against the same admitted metadata snapshot."""
     expected_root = Path(installed_distribution.locate_file("pg8000")).resolve()
     package_spec = find_spec("pg8000")
     if (
@@ -80,11 +71,12 @@ def _require_admitted_pg8000_origin() -> None:
 def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPort:
     """Construct only the exact admitted pg8000 artifact behind the canonical port.
 
-    Distribution identity and import origin are checked before package code is
-    executed so an unreviewed version or a shadow package cannot become database
-    client authority. Service-file support is opt-in through one caller-selected
-    path; ambient ``PGSERVICEFILE`` discovery remains outside the admitted
-    contract.
+    One installed-distribution metadata snapshot supplies both version admission
+    and the package root used for import-origin admission. This prevents separate
+    metadata lookups from authorizing different installed-distribution states
+    before pg8000 code executes. Service-file support is opt-in through one
+    caller-selected path; ambient ``PGSERVICEFILE`` discovery remains outside the
+    admitted contract.
 
     Args:
         service_file: Optional explicit ``pg_service.conf`` path. When omitted,
@@ -100,16 +92,16 @@ def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPor
             dependency, preserving the packaging defect for root-cause repair.
     """
     try:
-        installed_version = distribution_version("pg8000")
+        installed_distribution = distribution("pg8000")
     except PackageNotFoundError:
         raise Pg8000DriverUnavailableError("PostgreSQL driver is unavailable") from None
 
-    if installed_version != PG8000_ADMITTED_VERSION:
+    if installed_distribution.version != PG8000_ADMITTED_VERSION:
         raise Pg8000DriverUnavailableError(
             "PostgreSQL driver version is not admitted"
         )
 
-    _require_admitted_pg8000_origin()
+    _require_admitted_pg8000_origin(installed_distribution)
 
     try:
         dbapi_module = import_module("pg8000.dbapi")
