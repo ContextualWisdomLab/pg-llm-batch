@@ -12,6 +12,28 @@ from pg_llm_batch.pg8000_candidate_driver_port import (
 from pg_llm_batch.pg8000_candidate_service_file import Pg8000CandidateServiceFileResolver
 
 
+def test_service_file_accepts_last_libpq_sized_newline_terminated_line(
+    tmp_path: Path,
+) -> None:
+    """Accept the final newline-terminated byte length below libpq's rejection point."""
+    service_file = tmp_path / "pg_service.conf"
+    host_value = "a" * 1016
+    host_line = f"host={host_value}"
+    assert len((host_line + "\n").encode("utf-8")) == 1022
+    service_file.write_text(
+        "[analytics]\n"
+        f"{host_line}\n"
+        "port=5432\n"
+        "dbname=batch\n"
+        "user=batch\n",
+        encoding="utf-8",
+    )
+
+    resolver = Pg8000CandidateServiceFileResolver(service_file)
+
+    assert resolver("analytics")["host"] == host_value
+
+
 def test_service_file_rejects_line_at_libpq_fgets_buffer_limit(tmp_path: Path) -> None:
     """Reject a newline-terminated line once libpq's 1024-byte buffer would reject it."""
     service_file = tmp_path / "pg_service.conf"
@@ -28,6 +50,26 @@ def test_service_file_rejects_line_at_libpq_fgets_buffer_limit(tmp_path: Path) -
 
     with pytest.raises(Pg8000CandidateInvalidConninfoError):
         Pg8000CandidateServiceFileResolver(service_file)
+
+
+def test_service_file_accepts_last_libpq_sized_unterminated_line(tmp_path: Path) -> None:
+    """Accept a final unterminated line whose byte length remains below 1023."""
+    service_file = tmp_path / "pg_service.conf"
+    host_value = "a" * 1017
+    host_line = f"host={host_value}"
+    assert len(host_line.encode("utf-8")) == 1022
+    service_file.write_text(
+        "[analytics]\n"
+        "port=5432\n"
+        "dbname=batch\n"
+        "user=batch\n"
+        f"{host_line}",
+        encoding="utf-8",
+    )
+
+    resolver = Pg8000CandidateServiceFileResolver(service_file)
+
+    assert resolver("analytics")["host"] == host_value
 
 
 def test_service_file_rejects_unterminated_line_at_libpq_fgets_buffer_limit(
