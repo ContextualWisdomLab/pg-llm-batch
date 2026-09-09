@@ -218,9 +218,9 @@ file and directory synchronization makes the durability decision observable.
 This supports repeatable incident reconstruction and future SLSA v1.2 provenance
 without mixing pull-request validation with release authority. Top-level
 permissions remain read-only, credentials are not persisted, action sources are
-immutable, and package publication remains a separate privileged decision.
+immutably pinned, and the evidence payload is bounded.
 
-## References (APA 7th edition)
+## References (APA 7)
 
 Astral. (n.d.). *The uv build backend*. uv documentation. Retrieved August 6,
 2026, from https://docs.astral.sh/uv/concepts/build-backend/
@@ -231,6 +231,10 @@ https://docs.github.com/en/actions/security-for-github-actions/using-artifact-at
 
 MITRE. (2026). *CWE-367: Time-of-check time-of-use (TOCTOU) race condition*
 (Version 4.20). https://cwe.mitre.org/data/definitions/367.html
+
+Python Packaging Authority. (n.d.). *Binary distribution format*.
+Python Packaging User Guide. Retrieved August 6, 2026, from
+https://packaging.python.org/en/latest/specifications/binary-distribution-format/
 
 Python Packaging Authority. (n.d.). *Source distribution format*.
 Python Packaging User Guide. Retrieved August 6, 2026, from
