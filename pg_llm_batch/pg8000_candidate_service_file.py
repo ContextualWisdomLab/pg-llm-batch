@@ -350,7 +350,6 @@ class Pg8000CandidateServiceFileResolver:
                 raise _invalid_service_file()
             key, value = stripped.split("=", 1)
             key = key.strip()
-            value = value.strip()
             if (
                 not key
                 or _has_disallowed_control(key)
