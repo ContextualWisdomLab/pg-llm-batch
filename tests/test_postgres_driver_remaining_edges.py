@@ -203,6 +203,7 @@ def test_service_file_preserves_primary_failure_when_close_also_fails(
         candidate_service_file._read_bounded_utf8(
             Path("unused-service.conf"),
             (1, 1),
+            (2, 2),
         )
 
 
