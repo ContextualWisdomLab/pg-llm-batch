@@ -1,4 +1,4 @@
-"""Candidate-only pg8000 implementation of the PostgreSQL driver port.
+"""Production-selected pg8000 implementation of the PostgreSQL driver port.
 
 The commercial migration needs a connection factory, not only cursor wrappers.
 pg8000 1.31.5 accepts explicit DB-API connection keyword arguments but does not
