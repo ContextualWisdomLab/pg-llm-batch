@@ -39,6 +39,7 @@ class _MismatchedDistribution(_AdmittedDistribution):
 
 def _dbapi_module() -> ModuleType:
     module = ModuleType("pg8000.dbapi")
+    module.__file__ = str(_ADMITTED_PACKAGE_ROOT / "dbapi.py")
     module.apilevel = "2.0"
     module.paramstyle = "format"
     module.threadsafety = 1
@@ -127,6 +128,20 @@ def test_loader_rejects_shadow_package_before_import(monkeypatch) -> None:
         "import_module",
         lambda name: pytest.fail("shadow package code must not execute"),
     )
+
+    with pytest.raises(
+        Pg8000DriverUnavailableError,
+        match="^PostgreSQL driver origin is not admitted$",
+    ):
+        load_pg8000_driver()
+
+
+def test_loader_rejects_imported_dbapi_outside_admitted_distribution(monkeypatch) -> None:
+    """The module actually handed to the adapter must come from the admitted root."""
+    _install_admitted_distribution_metadata(monkeypatch)
+    module = _dbapi_module()
+    module.__file__ = "/tmp/untrusted-site-packages/pg8000/dbapi.py"
+    monkeypatch.setattr(pg8000_driver_adapter, "import_module", lambda name: module)
 
     with pytest.raises(
         Pg8000DriverUnavailableError,
