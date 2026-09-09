@@ -48,7 +48,7 @@ def _resolve_origin_path(value: str | Path) -> Path:
     """Resolve one origin path without exposing filesystem lookup diagnostics."""
     try:
         return Path(value).resolve()
-    except (OSError, RuntimeError, ValueError):
+    except (OSError, RuntimeError, TypeError, ValueError):
         raise Pg8000DriverUnavailableError(
             "PostgreSQL driver origin is not admitted"
         ) from None
@@ -57,7 +57,7 @@ def _resolve_origin_path(value: str | Path) -> Path:
 def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> Path:
     """Reject package-path shadowing and return the admitted package root."""
     expected_root = _resolve_origin_path(
-        Path(installed_distribution.locate_file("pg8000"))
+        installed_distribution.locate_file("pg8000")
     )
     package_spec = find_spec("pg8000")
     if (
