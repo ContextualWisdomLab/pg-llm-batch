@@ -31,6 +31,7 @@ from .pg8000_candidate_driver_port import Pg8000CandidateInvalidConninfoError
 
 
 _MAX_SERVICE_FILE_BYTES = 64 * 1024
+_LIBPQ_SERVICE_LINE_BUFFER_BYTES = 1024
 _LIBPQ_ASCII_LINE_WHITESPACE = " \t\r\v\f"
 
 
@@ -82,6 +83,17 @@ def _service_file_snapshot(observed: os.stat_result) -> tuple[int, int, int, int
 def _service_file_digest(text: str) -> bytes:
     """Return a non-reversible construction-to-resolution content identity."""
     return hashlib.sha256(text.encode("utf-8")).digest()
+
+
+def _validate_service_line_lengths(payload: bytes) -> None:
+    """Reject logical lines that libpq's fixed service-file buffer cannot accept."""
+    maximum_fgets_bytes = _LIBPQ_SERVICE_LINE_BUFFER_BYTES - 1
+    lines = payload.split(b"\n")
+    for line in lines[:-1]:
+        if len(line) + 1 >= maximum_fgets_bytes:
+            raise _invalid_service_file()
+    if len(lines[-1]) >= maximum_fgets_bytes:
+        raise _invalid_service_file()
 
 
 def _close_descriptor(descriptor: int, *, preserve_primary_error: bool) -> None:
@@ -234,6 +246,7 @@ def _read_bounded_utf8_at(
 
     if len(payload) > _MAX_SERVICE_FILE_BYTES:
         raise _invalid_service_file()
+    _validate_service_line_lengths(payload)
     try:
         text = payload.decode("utf-8", errors="strict")
     except UnicodeDecodeError:
