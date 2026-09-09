@@ -329,7 +329,7 @@ class Pg8000CandidateServiceFileResolver:
                     or stripped.count("]") != 1
                 ):
                     raise _invalid_service_file()
-                section_name = stripped[1:-1].strip()
+                section_name = stripped[1:-1]
                 if (
                     not section_name
                     or _has_disallowed_control(section_name)
