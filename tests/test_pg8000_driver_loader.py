@@ -29,6 +29,12 @@ class _AdmittedDistribution:
         return _ADMITTED_PACKAGE_ROOT
 
 
+class _MismatchedDistribution(_AdmittedDistribution):
+    """Expose origin metadata from a distribution with an unadmitted version."""
+
+    version = "1.31.4"
+
+
 def _dbapi_module() -> ModuleType:
     module = ModuleType("pg8000.dbapi")
     module.apilevel = "2.0"
@@ -76,6 +82,28 @@ def test_loader_accepts_only_exact_admitted_distribution(monkeypatch) -> None:
 
     assert isinstance(driver, Pg8000DriverAdapter)
     assert imported == ["pg8000.dbapi"]
+
+
+def test_loader_rejects_split_version_and_origin_metadata_before_import(monkeypatch) -> None:
+    """Version and import-origin admission must describe the same distribution snapshot."""
+    _install_admitted_distribution_metadata(monkeypatch)
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "distribution",
+        lambda package: _MismatchedDistribution(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        pg8000_driver_adapter,
+        "import_module",
+        lambda name: pytest.fail("mismatched distribution code must not execute"),
+    )
+
+    with pytest.raises(
+        Pg8000DriverUnavailableError,
+        match="^PostgreSQL driver version is not admitted$",
+    ):
+        load_pg8000_driver()
 
 
 def test_loader_rejects_shadow_package_before_import(monkeypatch) -> None:
