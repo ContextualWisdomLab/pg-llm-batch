@@ -26,7 +26,7 @@ PR #233 is the earliest protected-integration prerequisite. Its repository-local
 
 PR #323 owns issue #322's active migration. The branch pins production `pg8000==1.31.5`, keeps Psycopg only as optional test/development verification, and selects the admitted implementation through `PostgresDriverPort` / `retained_postgres_driver()`.
 
-`load_pg8000_driver()` admits only the exact pg8000 version, checks installed-distribution identity and import origin before package code executes, and optionally composes one caller-selected service file. Unsupported multi-host/socket/query/LDAP/ambient-service semantics remain fail closed rather than being approximated.
+`load_pg8000_driver()` now obtains one installed `Distribution` metadata snapshot, requires that object's version to equal the admitted pg8000 version, and reuses the same object to derive the expected package root before package code executes. It then verifies the import origin and only then imports the DB-API module. This prevents separate version and origin metadata lookups from authorizing different installed-distribution states. Optional service-file support remains explicitly caller-selected; unsupported multi-host/socket/query/LDAP/ambient-service semantics remain fail closed rather than being approximated.
 
 The branch preserves realistic PostgreSQL acceptance for parameter binding, no-parameter DB-API execution, row normalization and exact/unknown row counts, transaction/context ownership, cleanup precedence, terminal connection state, thread-affine use, tenant/RLS/session behavior, UUID/timestamp and JSONB adaptation, SQLSTATE classification, checkpoint/recovery, schema/restore behavior, package-installed execution, and supported-Python runtime smokes.
 
@@ -38,29 +38,33 @@ PR #321 owns only `README.md` and `docs/index.md` relative to #323. Its exact he
 
 ## Runtime-graph RED and causal repair
 
-The selector and manifest were promoted before the committed lock converged. Exact `8972ec9a1f1e94ad40b5490be88e5e53d1dd200b` therefore demonstrated that frozen/default installation could still install Psycopg while the production selector required pg8000. `e1045b6ed74e848cd99a50b02b42fe731fcc8b9b` regenerated the lock and proved the default graph contains pg8000 and excludes Psycopg.
+The selector and manifest were promoted before the committed lock converged. Exact `8972ec9a1f1e94ad40b5490be88e5e53d1dd200b` demonstrated that frozen/default installation could still install Psycopg while the production selector required pg8000. `e1045b6ed74e848cd99a50b02b42fe731fcc8b9b` regenerated the lock and proved the default graph contains pg8000 and excludes Psycopg.
 
 A later production-promotion RED at `3e0103fcf0a94327828b62137666f52fa12b6561` exposed three post-cutover defects: CLI confidentiality had become coupled to the narrower concrete-driver grammar, a workflow contract still asserted the pre-promotion dependency state, and packaged restore smoke imported removed Psycopg. Minimal repair `2afd5be12847b51c8d476c59f5b328c697069780` separated argv-secret classification from concrete-driver connectability, updated the dependency contract, and routed restore acceptance through `retained_postgres_driver()`.
+
+## Installed-driver metadata authority RED and repair
+
+The production loader previously performed version admission with `distribution_version("pg8000")` and then performed import-root admission from a separate `distribution("pg8000")` lookup. Each lookup was individually reasonable, but together they left an unnecessary split-authority window: an admitted version result could be combined with a different installed-distribution metadata object before package import.
+
+Test-first `0e056c160c2cf6b5e769a7aaaa9a12883a10e9af` made the version lookup report admitted `1.31.5` while the distribution object used for origin authority reported unadmitted `1.31.4`, and required package import to remain blocked. Exact CI `34303889337`, Python 3.12 job `102316430972`, produced the real RED: `test_loader_rejects_split_version_and_origin_metadata_before_import` reached the forbidden import path; the job ended `1 failed, 1662 passed, 5 deselected`.
+
+Test-contract descendant `c405859f67e4c21974c18f735971e07d5d009487` expresses admitted and mismatched versions on the same distribution fixture. Minimal production repair `e497dfc8630de86563c9bcb9b9bd33acb99a9685` removes the independent version lookup: one `Distribution` object now supplies both `.version` admission and the expected package root used by import-origin admission. Candidate code still executes only after both checks pass.
+
+This closes the split metadata-snapshot authority defect. It does not claim that arbitrary runtime filesystem mutation is impossible, and it does not replace the immutable package/SBOM/provenance/reproducibility evidence required for release.
 
 ## Explicit service-file authority RED and repair
 
 The explicit `pg_service.conf` capability is caller-selected and bounded. It does not perform ambient `PGSERVICEFILE`, user/system service-file, LDAP, or filesystem search discovery. Five independent authority defects have been repaired.
 
-First, final-component symlink/path substitution during a read could redirect the selected file. `63ef822c2b48cf4ff2d9dddcf8641ba0ca652ff3` added regular non-symlink selection, descriptor authentication, bounded reads, before/after metadata stability, strict UTF-8/NUL rejection, and generic non-content-bearing diagnostics. The new error-normalization branches were then covered to restore the 100% production gate.
+First, final-component symlink/path substitution during a read could redirect the selected file. `63ef822c2b48cf4ff2d9dddcf8641ba0ca652ff3` added regular non-symlink selection, descriptor authentication, bounded reads, before/after metadata stability, strict UTF-8/NUL rejection, and generic non-content-bearing diagnostics.
 
-Second, retaining a relative path allowed a later `chdir()` to change the selector. Test-first `3efb40078efeb64ea28bebaf28b2795265c04d1f` produced a real CI RED; `2077809188cbc0f0dd8bb7f2f11af859b4ad15ed` binds a relative selection to its construction-time absolute path.
+Second, retaining a relative path allowed a later `chdir()` to change the selector. Test-first `3efb40078efeb64ea28bebaf28b2795265c04d1f` produced a real CI RED; `2077809188cbc0f0dd8bb7f2f11af859b4ad15ed` binds relative selection to its construction-time absolute path.
 
-Third, absolute binding still left the selected parent pathname replaceable. Test-first `a7bb3ea76ad9747b83f517d518b2ddf22fdd7e92` reproduced parent replacement. `3dc5dad088ff8732d9e3b9a715f2f6e7e467e862` retains the construction-time parent `(st_dev, st_ino)`, authenticates the reopened directory descriptor, and performs final-component operations relative to that descriptor.
+Third, absolute binding still left the selected parent pathname replaceable. Test-first `a7bb3ea76ad9747b83f517d518b2ddf22fdd7e92` reproduced parent replacement; `3dc5dad088ff8732d9e3b9a715f2f6e7e467e862` retains the construction-time parent identity and authenticates the reopened directory descriptor before final-component operations.
 
-Fourth, parent identity plus per-read final identity still did not retain the selected regular-file identity across resolver construction and later resolution. A same-parent atomic replacement could therefore point the same filename at a new regular inode while each later `lstat()`/`open()`/`fstat()` sequence remained internally consistent. Test-first `491e9dc9349a816e37e015c8752e81b973c1ab95` reproduced this behavior: completed coverage job `102297319938` failed `test_candidate_service_file_rejects_selected_inode_replacement` because no `Pg8000CandidateInvalidConninfoError` was raised (`1 failed, 1660 passed, 5 deselected`). The overall CI run was subsequently cancelled by the immediate descendant, so the already-completed failing job is the RED evidence rather than the cancelled workflow conclusion.
+Fourth, parent identity plus per-read final identity did not retain the selected regular-file identity across resolver construction and later resolution. Test-first `491e9dc9349a816e37e015c8752e81b973c1ab95` reproduced same-parent atomic replacement. Repair `71922a5ed1231049e235e165490f514fd53c9f6a` captures the selected final regular-file `(st_dev, st_ino)` at construction and requires the same identity before and after later opens.
 
-Minimal source repair `71922a5ed1231049e235e165490f514fd53c9f6a` captures the selected final regular-file `(st_dev, st_ino)` at resolver construction, after authenticating the retained parent. Every later resolution must match that retained selected-file identity both before open and on the opened descriptor. Replacing the pathname with a different regular file therefore requires constructing a new resolver rather than silently changing retained database connection authority.
-
-That required production signature exposed one stale private-helper test in CI `34297602591`: `test_service_file_preserves_primary_failure_when_close_also_fails` called `_read_bounded_utf8()` without the new selected-identity argument. Ordinary descendant `57d1abb9570fbb8605dd6abfe0ed537cf297216d` updates only that test call; the production identity remains mandatory. Exact `57d1abb...` reacquired CI `34297749787` and Release Acceptance `34297749879`, both terminal success.
-
-Fifth, retaining the selected inode still allowed the bytes of that same inode to change between resolver construction and a later resolution. In-place truncate/rewrite retains `(st_dev, st_ino)`, and the existing before/after metadata snapshot only proves stability during one read, not continuity with the originally selected connection authority. Test-first `2217ab106f26162f6f10d9ecb6937817463bdc80` rewrites the selected service file in place, independently proves the inode is unchanged, and requires resolution to fail closed. CI `34301705483` produced the real RED: the Python 3.13 unit job reached `test_candidate_service_file_rejects_same_inode_content_replacement` and failed because no `Pg8000CandidateInvalidConninfoError` was raised (`1 failed, 1661 passed, 5 deselected`).
-
-Minimal source repair `023a8d138584c38bdaa717a68b7f2f79286a9497` snapshots a SHA-256 digest of the already bounded, strictly decoded selected bytes at resolver construction. Every later resolution first reauthenticates the retained parent and selected regular-file inode through the existing descriptor-relative boundary, rereads the bounded bytes, and then requires the construction-time digest to match before parsing a service stanza. Changing the selected file's content therefore requires constructing a new resolver; plaintext content is not retained as the authority marker and diagnostics remain content-free. Exact repair CI `34301852272` and Release Acceptance `34301852270` are both terminal success.
+Fifth, retaining the selected inode still allowed same-inode truncate/rewrite after resolver construction. Test-first `2217ab106f26162f6f10d9ecb6937817463bdc80` proved the inode remained unchanged while connection parameters changed and produced a real CI RED. Repair `023a8d138584c38bdaa717a68b7f2f79286a9497` retains a SHA-256 digest of the bounded, strictly decoded construction-time bytes and requires that digest to match after later descriptor-authenticated reads before service parsing. Plaintext content is not retained as the marker and diagnostics remain content-free.
 
 These filesystem/content-capability controls prove selector authority, not remote TLS/CA/hostname policy. Issue #123 remains separate.
 
@@ -68,9 +72,7 @@ These filesystem/content-capability controls prove selector authority, not remot
 
 Issue #322 requires the final default graph, package, and SBOM to exclude disallowed GPL/LGPL/AGPL-family dependencies. The branch generates CycloneDX evidence from the production-like no-dev environment after installing the exact package and hash-verified pg8000 closure, fails closed if pg-llm-batch or pg8000 is absent, if Psycopg appears, or if GPL/LGPL/AGPL-family license evidence appears, and preserves the validated SBOM as evidence.
 
-The first production workflow configuration used a bare Syft version and produced a real HTTP-404 CI RED before Syft executed. Primary inspection of the pinned action showed that its installer URL uses the supplied value as a git ref and expects the v-prefixed release tag. The contract was corrected first, then `bc774185a4ba3fcbebe924aa1051154c3a713339` changed the production value to `v1.51.1`. Exact repair CI completed SBOM generation, policy validation, artifact preservation, PostgreSQL startup/health, and pg8000 smokes.
-
-This is Draft evidence only until bound to an immutable protected release.
+The first production workflow configuration used a bare Syft version and produced a real HTTP-404 CI RED before Syft executed. Inspection of the pinned action showed its installer expected the v-prefixed release tag; `bc774185a4ba3fcbebe924aa1051154c3a713339` corrected the production value to `v1.51.1`. This remains Draft evidence until bound to an immutable protected release.
 
 ## Component-runtime minimization
 
@@ -80,7 +82,7 @@ The image had also moved to Python 3.14 while cleanup still targeted Python 3.11
 
 ## Transport-security boundary
 
-Issue #322 does not close issue #123. Successful pg8000 connections, explicit service-file path/parent/inode/content authority, production SBOM policy, no-`libpq5`, and no-runtime-pip evidence do not prove mandatory verified remote TLS or authenticated server identity.
+Issue #322 does not close issue #123. Successful pg8000 connections, installed-distribution admission, explicit service-file path/parent/inode/content authority, production SBOM policy, no-`libpq5`, and no-runtime-pip evidence do not prove mandatory verified remote TLS or authenticated server identity.
 
 Issue #123 remains canonical for package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA plus matching hostname, wrong-CA and hostname-mismatch rejection, plaintext/downgrade refusal, server SSL refusal, restart/recovery, bounded diagnostics, and caller-owned connection non-interference.
 
@@ -89,6 +91,7 @@ Issue #123 remains canonical for package-created remote TCP connections, deliber
 | Gap | Current state | Required next evidence |
 | --- | --- | --- |
 | Commercial PostgreSQL runtime dependency | P0 / active Draft | Preserve the pg8000 default graph through normal prerequisite integration, obtain one unchanged final #323 head, merge normally, then bind immutable protected-release evidence. |
+| Installed-driver metadata authority | Repaired on #323 | Preserve one-snapshot version + import-root admission through final package and protected release. |
 | Explicit service-file authority | Repaired on #323 | Preserve construction-time absolute path, parent identity, selected regular-file identity, selected-content digest, descriptor-relative I/O, bounded parsing, and generic diagnostics through final integration/release. |
 | Production runtime SBOM | Active / Draft evidence | Carry validated CycloneDX evidence through protected integration and bind it to the immutable released artifact. |
 | PostgreSQL transport encryption / server identity | P0 security / #123 | Complete realistic TLS-enabled PostgreSQL acceptance, identity verification, downgrade refusal, recovery, and caller-owned policy. |
@@ -107,6 +110,7 @@ Completion requires all of the following on the final production graph and immut
 - tenant authority and transaction-local `set_config` behavior remain correct under forced RLS and restricted roles;
 - JSON/JSONB, UUID, timestamp, row, row-count, and relevant PostgreSQL error semantics remain compatible;
 - DSN parsing/rendering preserves supported URI, keyword, and explicit-service-selector contracts without credential leakage into argv or logs;
+- installed pg8000 version and expected import root are admitted from the same installed-distribution metadata snapshot before candidate code executes;
 - explicit service-file capability cannot be redirected by final symlink/path substitution, later CWD changes, replacement of the selected parent directory, replacement of the construction-selected regular-file inode, or in-place mutation of the construction-selected file content;
 - concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests through the production selector;
 - the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
@@ -131,6 +135,8 @@ Queued, pending, skipped-required, `action_required`, cancelled, absent, predece
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: SSL support*. https://www.postgresql.org/docs/18/libpq-ssl.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: The connection service file*. https://www.postgresql.org/docs/18/libpq-pgservice.html
+
+Python Software Foundation. (2026). *Python 3.14.7 documentation: importlib.metadata — Accessing package metadata*. https://docs.python.org/3.14/library/importlib.metadata.html
 
 Python Software Foundation. (2026). *Python 3.14.7 documentation: hashlib — Secure hashes and message digests*. https://docs.python.org/3.14/library/hashlib.html
 
