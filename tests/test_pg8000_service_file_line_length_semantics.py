@@ -26,10 +26,8 @@ def test_service_file_rejects_line_at_libpq_fgets_buffer_limit(tmp_path: Path) -
         encoding="utf-8",
     )
 
-    resolver = Pg8000CandidateServiceFileResolver(service_file)
-
     with pytest.raises(Pg8000CandidateInvalidConninfoError):
-        resolver("analytics")
+        Pg8000CandidateServiceFileResolver(service_file)
 
 
 def test_service_file_rejects_unterminated_line_at_libpq_fgets_buffer_limit(
@@ -48,7 +46,5 @@ def test_service_file_rejects_unterminated_line_at_libpq_fgets_buffer_limit(
         encoding="utf-8",
     )
 
-    resolver = Pg8000CandidateServiceFileResolver(service_file)
-
     with pytest.raises(Pg8000CandidateInvalidConninfoError):
-        resolver("analytics")
+        Pg8000CandidateServiceFileResolver(service_file)
