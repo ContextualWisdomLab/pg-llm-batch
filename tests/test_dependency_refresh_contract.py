@@ -31,6 +31,11 @@ def test_container_build_inputs_use_reviewed_immutable_digests() -> None:
     """Both deployable build graphs use the consolidated immutable digests."""
     component = Path("Dockerfile").read_text(encoding="utf-8")
     postgres = Path("docker/postgres/Dockerfile").read_text(encoding="utf-8")
+    assert (
+        "FROM ghcr.io/astral-sh/uv:0.12.12@"
+        "sha256:73d2665b478d8fa2de1cf105c6841f8e9cb6b09e568fc7700440c09f8fcd7ac4 AS uv"
+        in component
+    )
     assert component.count("sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6") == 2
     assert (
         "FROM rust:1.98-slim-bookworm@"
