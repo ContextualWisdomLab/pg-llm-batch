@@ -9,7 +9,9 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
 _CI_WORKFLOW = _ROOT / ".github" / "workflows" / "ci.yml"
-_REQUIRES_PYTHON_RE = re.compile(r">=(?P<major>\d+)\.(?P<minor>\d+)\Z")
+_REQUIRES_PYTHON_RE = re.compile(
+    r">=(?P<major>\d+)\.(?P<minor>\d+)\Z"
+)
 _REQUIRES_PYTHON_SETTING_RE = re.compile(
     r'^requires-python\s*=\s*"(?P<specifier>[^"]+)"\s*$', re.MULTILINE
 )
