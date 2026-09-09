@@ -150,6 +150,20 @@ def test_loader_rejects_imported_dbapi_outside_admitted_distribution(monkeypatch
         load_pg8000_driver()
 
 
+def test_loader_rejects_imported_dbapi_without_origin_metadata(monkeypatch) -> None:
+    """Missing module-file metadata cannot satisfy installed-artifact authority."""
+    _install_admitted_distribution_metadata(monkeypatch)
+    module = _dbapi_module()
+    del module.__file__
+    monkeypatch.setattr(pg8000_driver_adapter, "import_module", lambda name: module)
+
+    with pytest.raises(
+        Pg8000DriverUnavailableError,
+        match="^PostgreSQL driver origin is not admitted$",
+    ):
+        load_pg8000_driver()
+
+
 def test_loader_rejects_missing_package_spec_before_import(monkeypatch) -> None:
     """Missing import authority must fail closed before candidate code executes."""
     _install_admitted_distribution_metadata(monkeypatch)
