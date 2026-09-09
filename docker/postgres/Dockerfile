@@ -51,7 +51,7 @@ COPY init/03_result_stream_checkpoints.sql /docker-entrypoint-initdb.d/04_result
 
 # Compose selects this target. Every executable input is immutable and an
 # enabled tokenizer build is fail-closed, leaving the failing command visible.
-FROM rust:1.97-slim-bookworm@sha256:99e09cb2284e2ddbb73a995deee3e91783fd04d177602ccf6eab326d778ee777 AS rust-toolchain
+FROM rust:1.98-slim-bookworm@sha256:1469a27c125cb5a3aebfa4f4e4665d935b02fb72cc093b2c974b3d740e43f157 AS rust-toolchain
 
 FROM postgres-base AS with-tiktoken
 
