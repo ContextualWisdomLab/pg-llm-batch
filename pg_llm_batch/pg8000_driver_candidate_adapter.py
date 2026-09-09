@@ -1,14 +1,12 @@
-"""Candidate-only pg8000 DB-API adapters for commercial migration evidence.
+"""Reusable pg8000 DB-API adapters retained from commercial migration proof.
 
-This module intentionally stops short of a production ``PostgresDriverPort``.
-pg8000 1.31.5 documents the DB-API cursor, transaction, autocommit, parameter
-binding, module-only connection thread sharing, and ``-1`` unknown-row-count
-behavior needed by part of the current port, but pg-llm-batch has not yet proved
-its full conninfo/service-selector, JSONB adaptation, PostgreSQL
-error-classification, Python 3.14, RLS, transport failure recovery, package,
-SBOM, and provenance contract on one exact artifact. Keeping this adapter
-candidate-only lets those portable semantics be exercised without making an
-unreleased or unverified runtime dependency canonical.
+These lower-level cursor and connection primitives were introduced while pg8000
+was still a candidate and are now reused by the production ``Pg8000DriverAdapter``.
+The ``Candidate`` class names remain for compatibility with the verified migration
+lineage; they no longer imply that pg8000 is absent from the production dependency
+graph. Production package/distribution/module-origin admission and connection
+construction are owned by ``pg8000_driver_adapter`` and the runtime selector.
+This module deliberately does not open connections or acquire selector authority.
 """
 
 from __future__ import annotations
@@ -20,12 +18,12 @@ from .postgres_driver_port import PostgresConnectionPort, PostgresCursorPort
 
 
 class Pg8000CandidateAdapterError(RuntimeError):
-    """Report a candidate-boundary mismatch without exposing database content.
+    """Report an adapter-boundary mismatch without exposing database content.
 
-    A mismatch means the candidate cannot yet be promoted through the shared
-    PostgreSQL port. The error is deliberately separate from pg8000's database
-    exceptions so callers cannot mistake missing adapter evidence for a server
-    or application failure.
+    A mismatch means the admitted pg8000 DB-API surface cannot satisfy the shared
+    PostgreSQL port contract. The error is deliberately separate from pg8000's
+    database exceptions so callers cannot mistake adapter-contract failure for a
+    server or application failure.
     """
 
 
@@ -33,8 +31,8 @@ def validate_pg8000_dbapi_module(dbapi_module: object) -> None:
     """Fail closed unless imported pg8000 DB-API metadata matches package use.
 
     pg8000 exposes ``paramstyle`` as mutable module state. pg-llm-batch's current
-    SQL uses DB-API ``format`` placeholders, so a future production candidate
-    factory must run this guard immediately after importing the exact admitted
+    SQL uses DB-API ``format`` placeholders, so the production construction
+    boundary runs this guard immediately after importing the exact admitted
     pg8000 artifact and before creating adapters or executing SQL. The documented
     ``threadsafety == 1`` value is also part of this boundary: code may share the
     module across threads but must not infer that one connection is shareable.
@@ -44,7 +42,7 @@ def validate_pg8000_dbapi_module(dbapi_module: object) -> None:
 
     Raises:
         Pg8000CandidateAdapterError: If DB-API level, parameter style, or thread
-            sharing semantics differ from the exact reviewed candidate contract.
+            sharing semantics differ from the exact admitted driver contract.
     """
     if type(dbapi_module) is not ModuleType:
         raise Pg8000CandidateAdapterError("PostgreSQL driver module identity is invalid")
@@ -68,13 +66,13 @@ def validate_pg8000_dbapi_module(dbapi_module: object) -> None:
 
 
 class Pg8000CandidateCursorAdapter(PostgresCursorPort):
-    """Exercise pg8000 DB-API cursor semantics behind the canonical cursor port.
+    """Provide pg8000 DB-API cursor semantics behind the canonical cursor port.
 
-    The raw cursor remains dependency-injected because this candidate slice must
-    not add pg8000 to the production dependency graph before the exact artifact
-    passes license, security, Python, PostgreSQL, and recovery admission. Query
-    text and bound parameters are forwarded unchanged; materialized list rows are
-    normalized to the tuple representation already used by pg-llm-batch.
+    The raw cursor remains dependency-injected because connection construction and
+    artifact admission belong to the production driver boundary, not this portable
+    primitive. Query text and bound parameters are forwarded unchanged;
+    materialized list rows are normalized to the tuple representation already used
+    by pg-llm-batch.
     """
 
     def __init__(self, cursor: Any) -> None:
@@ -146,9 +144,9 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
 
         ``bool`` is rejected even though it subclasses ``int`` because an
         accidental truth value must not become a one-row resource budget. The
-        adapter also verifies that the concrete DB-API candidate honors that
-        budget; over-delivery is a candidate-contract failure rather than extra
-        data the application may silently materialize.
+        adapter also verifies that the concrete DB-API driver honors that budget;
+        over-delivery is a driver-contract failure rather than extra data the
+        application may silently materialize.
         """
         if type(size) is not int or size <= 0:
             raise Pg8000CandidateAdapterError("PostgreSQL driver fetch size is invalid")
@@ -225,15 +223,15 @@ class Pg8000CandidateCursorAdapter(PostgresCursorPort):
 
 
 class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
-    """Exercise portable pg8000 DB-API connection semantics on one raw connection.
+    """Provide portable pg8000 DB-API connection semantics on one raw connection.
 
-    This adapter proves only the connection/cursor portion of the migration port.
-    It never opens a connection itself and therefore cannot bypass the still-open
-    DSN/conninfo/service-selector admission problem. All operations stay on the
-    injected raw connection so transaction-local RLS state cannot migrate to an
-    implicit second session. The candidate's DB-API thread level does not permit
-    callers to infer that this retained connection is safe to share across threads;
-    that package-level concurrency boundary remains a separate admission gate.
+    This adapter owns only the connection/cursor portion of the production port.
+    It never opens a connection itself, so it cannot bypass DSN/conninfo/service
+    selector admission owned by the production construction boundary. All
+    operations stay on the injected raw connection so transaction-local RLS state
+    cannot migrate to an implicit second session. pg8000's DB-API thread level
+    does not permit callers to infer that this retained connection is safe to
+    share across threads.
     """
 
     def __init__(self, connection: Any) -> None:
@@ -242,11 +240,11 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         self._closed = False
 
     def cursor(self) -> Pg8000CandidateCursorAdapter:
-        """Create a candidate cursor on this exact retained database connection.
+        """Create a cursor on this exact retained database connection.
 
-        No second connection or hidden pool is introduced. Later PostgreSQL
-        acceptance must prove the real driver preserves the same session for
-        tenant-local ``set_config`` and lifecycle SQL.
+        No second connection or hidden pool is introduced. Keeping all cursor
+        work on the retained session preserves tenant-local ``set_config`` and
+        lifecycle SQL authority.
         """
         return Pg8000CandidateCursorAdapter(self._connection.cursor())
 
@@ -351,7 +349,7 @@ class Pg8000CandidateConnectionAdapter(PostgresConnectionPort):
         pg8000's public DB-API contract documents ``commit``, ``rollback``, and
         ``close`` but does not require a connection context-manager extension.
         Owning the package policy here removes that undocumented dependency while
-        retaining the transaction semantics required by candidate admission. A
+        retaining the transaction semantics required by production admission. A
         commit or rollback failure remains primary over both an application error
         and later cleanup failure. If rollback succeeds, the application error
         remains primary over a later close failure. A close-only failure still
