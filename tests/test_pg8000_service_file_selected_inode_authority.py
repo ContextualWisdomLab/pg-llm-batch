@@ -40,3 +40,22 @@ def test_candidate_service_file_rejects_selected_inode_replacement(
         match="PostgreSQL connection selector is invalid",
     ):
         resolver("analytics")
+
+
+def test_candidate_service_file_rejects_same_inode_content_replacement(
+    tmp_path: Path,
+) -> None:
+    """Do not let in-place edits change connection authority after construction."""
+    service_file = tmp_path / "pg_service.conf"
+    _write_service_file(service_file, host="selected.example")
+    selected_identity = (service_file.stat().st_dev, service_file.stat().st_ino)
+    resolver = Pg8000CandidateServiceFileResolver(service_file)
+
+    _write_service_file(service_file, host="redirected.example")
+    assert (service_file.stat().st_dev, service_file.stat().st_ino) == selected_identity
+
+    with pytest.raises(
+        Pg8000CandidateInvalidConninfoError,
+        match="PostgreSQL connection selector is invalid",
+    ):
+        resolver("analytics")
