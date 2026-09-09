@@ -44,7 +44,7 @@ A later production-promotion RED at `3e0103fcf0a94327828b62137666f52fa12b6561` e
 
 ## Explicit service-file authority RED and repair
 
-The explicit `pg_service.conf` capability is caller-selected and bounded. It does not perform ambient `PGSERVICEFILE`, user/system service-file, LDAP, or filesystem search discovery. Four independent authority defects have been repaired.
+The explicit `pg_service.conf` capability is caller-selected and bounded. It does not perform ambient `PGSERVICEFILE`, user/system service-file, LDAP, or filesystem search discovery. Five independent authority defects have been repaired.
 
 First, final-component symlink/path substitution during a read could redirect the selected file. `63ef822c2b48cf4ff2d9dddcf8641ba0ca652ff3` added regular non-symlink selection, descriptor authentication, bounded reads, before/after metadata stability, strict UTF-8/NUL rejection, and generic non-content-bearing diagnostics. The new error-normalization branches were then covered to restore the 100% production gate.
 
@@ -56,9 +56,13 @@ Fourth, parent identity plus per-read final identity still did not retain the se
 
 Minimal source repair `71922a5ed1231049e235e165490f514fd53c9f6a` captures the selected final regular-file `(st_dev, st_ino)` at resolver construction, after authenticating the retained parent. Every later resolution must match that retained selected-file identity both before open and on the opened descriptor. Replacing the pathname with a different regular file therefore requires constructing a new resolver rather than silently changing retained database connection authority.
 
-That required production signature exposed one stale private-helper test in CI `34297602591`: `test_service_file_preserves_primary_failure_when_close_also_fails` called `_read_bounded_utf8()` without the new selected-identity argument. Ordinary descendant `57d1abb9570fbb8605dd6abfe0ed537cf297216d` updates only that test call; the production identity remains mandatory. Exact `57d1abb...` reacquired CI `34297749787` and Release Acceptance `34297749879`, both terminal success, before this documentation descendant.
+That required production signature exposed one stale private-helper test in CI `34297602591`: `test_service_file_preserves_primary_failure_when_close_also_fails` called `_read_bounded_utf8()` without the new selected-identity argument. Ordinary descendant `57d1abb9570fbb8605dd6abfe0ed537cf297216d` updates only that test call; the production identity remains mandatory. Exact `57d1abb...` reacquired CI `34297749787` and Release Acceptance `34297749879`, both terminal success.
 
-These filesystem controls prove selector authority, not remote TLS/CA/hostname policy. Issue #123 remains separate.
+Fifth, retaining the selected inode still allowed the bytes of that same inode to change between resolver construction and a later resolution. In-place truncate/rewrite retains `(st_dev, st_ino)`, and the existing before/after metadata snapshot only proves stability during one read, not continuity with the originally selected connection authority. Test-first `2217ab106f26162f6f10d9ecb6937817463bdc80` rewrites the selected service file in place, independently proves the inode is unchanged, and requires resolution to fail closed. CI `34301705483` produced the real RED: the Python 3.13 unit job reached `test_candidate_service_file_rejects_same_inode_content_replacement` and failed because no `Pg8000CandidateInvalidConninfoError` was raised (`1 failed, 1661 passed, 5 deselected`).
+
+Minimal source repair `023a8d138584c38bdaa717a68b7f2f79286a9497` snapshots a SHA-256 digest of the already bounded, strictly decoded selected bytes at resolver construction. Every later resolution first reauthenticates the retained parent and selected regular-file inode through the existing descriptor-relative boundary, rereads the bounded bytes, and then requires the construction-time digest to match before parsing a service stanza. Changing the selected file's content therefore requires constructing a new resolver; plaintext content is not retained as the authority marker and diagnostics remain content-free. Exact repair CI `34301852272` and Release Acceptance `34301852270` are both terminal success.
+
+These filesystem/content-capability controls prove selector authority, not remote TLS/CA/hostname policy. Issue #123 remains separate.
 
 ## Production SBOM RED and causal repair
 
@@ -76,7 +80,7 @@ The image had also moved to Python 3.14 while cleanup still targeted Python 3.11
 
 ## Transport-security boundary
 
-Issue #322 does not close issue #123. Successful pg8000 connections, explicit service-file inode/parent/path authority, production SBOM policy, no-`libpq5`, and no-runtime-pip evidence do not prove mandatory verified remote TLS or authenticated server identity.
+Issue #322 does not close issue #123. Successful pg8000 connections, explicit service-file path/parent/inode/content authority, production SBOM policy, no-`libpq5`, and no-runtime-pip evidence do not prove mandatory verified remote TLS or authenticated server identity.
 
 Issue #123 remains canonical for package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA plus matching hostname, wrong-CA and hostname-mismatch rejection, plaintext/downgrade refusal, server SSL refusal, restart/recovery, bounded diagnostics, and caller-owned connection non-interference.
 
@@ -85,7 +89,7 @@ Issue #123 remains canonical for package-created remote TCP connections, deliber
 | Gap | Current state | Required next evidence |
 | --- | --- | --- |
 | Commercial PostgreSQL runtime dependency | P0 / active Draft | Preserve the pg8000 default graph through normal prerequisite integration, obtain one unchanged final #323 head, merge normally, then bind immutable protected-release evidence. |
-| Explicit service-file authority | Repaired on #323 | Preserve construction-time absolute path, parent identity, selected regular-file identity, descriptor-relative I/O, bounded parsing, and generic diagnostics through final integration/release. |
+| Explicit service-file authority | Repaired on #323 | Preserve construction-time absolute path, parent identity, selected regular-file identity, selected-content digest, descriptor-relative I/O, bounded parsing, and generic diagnostics through final integration/release. |
 | Production runtime SBOM | Active / Draft evidence | Carry validated CycloneDX evidence through protected integration and bind it to the immutable released artifact. |
 | PostgreSQL transport encryption / server identity | P0 security / #123 | Complete realistic TLS-enabled PostgreSQL acceptance, identity verification, downgrade refusal, recovery, and caller-owned policy. |
 | Component-image dependency surface | Repaired on #323 | Preserve no-`libpq5`, no-runtime-pip, admitted-driver construction, health, and container/PostgreSQL acceptance through protected release. |
@@ -103,7 +107,7 @@ Completion requires all of the following on the final production graph and immut
 - tenant authority and transaction-local `set_config` behavior remain correct under forced RLS and restricted roles;
 - JSON/JSONB, UUID, timestamp, row, row-count, and relevant PostgreSQL error semantics remain compatible;
 - DSN parsing/rendering preserves supported URI, keyword, and explicit-service-selector contracts without credential leakage into argv or logs;
-- explicit service-file capability cannot be redirected by final symlink/path substitution, later CWD changes, replacement of the selected parent directory, or replacement of the construction-selected regular-file inode;
+- explicit service-file capability cannot be redirected by final symlink/path substitution, later CWD changes, replacement of the selected parent directory, replacement of the construction-selected regular-file inode, or in-place mutation of the construction-selected file content;
 - concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests through the production selector;
 - the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
 - the component image retains neither superseded `libpq5` nor inherited Python packaging executables and can construct the admitted pg8000 selector from its final no-dev environment;
@@ -127,6 +131,8 @@ Queued, pending, skipped-required, `action_required`, cancelled, absent, predece
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: SSL support*. https://www.postgresql.org/docs/18/libpq-ssl.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: The connection service file*. https://www.postgresql.org/docs/18/libpq-pgservice.html
+
+Python Software Foundation. (2026). *Python 3.14.7 documentation: hashlib — Secure hashes and message digests*. https://docs.python.org/3.14/library/hashlib.html
 
 Python Software Foundation. (2026). *Python 3.14.7 documentation: os — Miscellaneous operating system interfaces*. https://docs.python.org/3.14/library/os.html
 

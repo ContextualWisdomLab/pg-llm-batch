@@ -8,9 +8,10 @@ Psycopg. This candidate resolver therefore reads exactly one caller-selected
 file, applies a finite byte budget, and returns only the exact target stanza.
 Relative caller paths are bound to the working directory that existed when the
 resolver was constructed. The selected parent-directory and final regular-file
-identities are retained as well, and each read is anchored to a descriptor for
-that exact directory, so later working-directory, parent-path, or regular-file
-replacement cannot redirect database connection authority.
+identities plus a digest of the selected bytes are retained as well, and each
+read is anchored to a descriptor for that exact directory, so later
+working-directory, parent-path, regular-file replacement, or same-inode content
+mutation cannot redirect database connection authority.
 
 The parser intentionally does not implement libpq LDAP lookup or ambient
 ``PGSERVICEFILE``/user/system search precedence. Those capabilities require
@@ -21,6 +22,7 @@ connection parameters remain fail closed at the driver boundary.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import stat
 from pathlib import Path
@@ -74,6 +76,11 @@ def _service_file_snapshot(observed: os.stat_result) -> tuple[int, int, int, int
         observed.st_mtime_ns,
         observed.st_ctime_ns,
     )
+
+
+def _service_file_digest(text: str) -> bytes:
+    """Return a non-reversible construction-to-resolution content identity."""
+    return hashlib.sha256(text.encode("utf-8")).digest()
 
 
 def _close_descriptor(descriptor: int, *, preserve_primary_error: bool) -> None:
@@ -264,20 +271,20 @@ class Pg8000CandidateServiceFileResolver:
 
     ``service_file`` is selected by the caller and retained as a concrete path;
     relative paths are converted to absolute paths at construction, before any
-    later working-directory change can alter their referent. The parent directory
-    and selected regular-file identities are also captured at construction.
-    Resolution reopens and authenticates that exact directory, requires the final
-    component to remain the selected inode, then performs metadata/open operations
-    relative to the retained directory descriptor. Replacing the pathname with a
-    different regular file therefore requires constructing a new resolver. This
-    object never discovers user/system files and never reads environment variables.
-    Duplicate section/key authority and malformed target lines fail closed.
-    Non-target stanza contents are not promoted into the selected connection
-    parameters.
+    later working-directory change can alter their referent. The parent directory,
+    selected regular-file identity, and a SHA-256 digest of the selected bytes are
+    captured at construction. Resolution reopens and authenticates that exact
+    directory, requires the final component to remain the selected inode, and
+    requires its validated bytes to retain the construction-time digest. Replacing
+    the pathname or editing the selected inode therefore requires constructing a
+    new resolver. This object never discovers user/system files and never reads
+    environment variables. Duplicate section/key authority and malformed target
+    lines fail closed. Non-target stanza contents are not promoted into the
+    selected connection parameters.
     """
 
     def __init__(self, service_file: Path) -> None:
-        """Retain caller-selected path, parent identity, and final-file identity."""
+        """Retain caller-selected path, filesystem identities, and content digest."""
         if not isinstance(service_file, Path):
             raise _invalid_service_file()
         self._service_file = service_file.absolute()
@@ -286,15 +293,23 @@ class Pg8000CandidateServiceFileResolver:
             self._service_file,
             self._parent_identity,
         )
+        initial_text = _read_bounded_utf8(
+            self._service_file,
+            self._parent_identity,
+            self._selected_identity,
+        )
+        self._selected_digest = _service_file_digest(initial_text)
 
     def __call__(self, service_name: str) -> dict[str, str]:
-        """Return the exact target stanza or fail without reflecting file content."""
+        """Return the exact retained target stanza or fail without reflecting content."""
         target = _validate_service_name(service_name)
         text = _read_bounded_utf8(
             self._service_file,
             self._parent_identity,
             self._selected_identity,
         )
+        if _service_file_digest(text) != self._selected_digest:
+            raise _invalid_service_file()
         sections: set[str] = set()
         target_found = False
         target_active = False
