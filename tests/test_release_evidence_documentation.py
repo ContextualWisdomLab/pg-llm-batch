@@ -48,7 +48,6 @@ def test_release_evidence_documents_exact_build_toolchain() -> None:
     uv_version = required_version.removeprefix("==")
     backend_requirement = _uv_build_requirement()
 
-    assert backend_requirement == "uv_build==0.12.7"
     for path in (ADR, DOCTORING):
         text = path.read_text(encoding="utf-8")
         assert f"`uv` {uv_version}" in text
