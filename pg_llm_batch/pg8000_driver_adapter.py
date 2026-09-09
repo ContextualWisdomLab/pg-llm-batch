@@ -44,9 +44,21 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     """
 
 
+def _resolve_origin_path(value: str | Path) -> Path:
+    """Resolve one origin path without exposing filesystem lookup diagnostics."""
+    try:
+        return Path(value).resolve()
+    except (OSError, RuntimeError, ValueError):
+        raise Pg8000DriverUnavailableError(
+            "PostgreSQL driver origin is not admitted"
+        ) from None
+
+
 def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> Path:
     """Reject package-path shadowing and return the admitted package root."""
-    expected_root = Path(installed_distribution.locate_file("pg8000")).resolve()
+    expected_root = _resolve_origin_path(
+        Path(installed_distribution.locate_file("pg8000"))
+    )
     package_spec = find_spec("pg8000")
     if (
         package_spec is None
@@ -57,9 +69,10 @@ def _require_admitted_pg8000_origin(installed_distribution: Distribution) -> Pat
             "PostgreSQL driver origin is not admitted"
         )
 
-    observed_origin = Path(package_spec.origin).resolve()
+    observed_origin = _resolve_origin_path(package_spec.origin)
     observed_roots = tuple(
-        Path(location).resolve() for location in package_spec.submodule_search_locations
+        _resolve_origin_path(location)
+        for location in package_spec.submodule_search_locations
     )
     if (
         observed_origin != expected_root / "__init__.py"
@@ -81,7 +94,7 @@ def _require_admitted_pg8000_dbapi_origin(
         raise Pg8000DriverUnavailableError(
             "PostgreSQL driver origin is not admitted"
         )
-    if Path(module_file).resolve() != expected_root / "dbapi.py":
+    if _resolve_origin_path(module_file) != expected_root / "dbapi.py":
         raise Pg8000DriverUnavailableError(
             "PostgreSQL driver origin is not admitted"
         )
@@ -94,11 +107,12 @@ def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPor
     and the package root used for import-origin admission. The package root is
     checked before import, and the DB-API module returned by Python's import
     machinery must then report a source path under that same admitted root before
-    it receives connection authority. This rejects a stale or preloaded
-    ``pg8000.dbapi`` module from a different filesystem location while avoiding a
-    second distribution-metadata lookup. Service-file support is opt-in through
-    one caller-selected path; ambient ``PGSERVICEFILE`` discovery remains outside
-    the admitted contract.
+    it receives connection authority. Filesystem resolution failures remain
+    inside the same content-free origin-admission boundary. This rejects a stale
+    or preloaded ``pg8000.dbapi`` module from a different filesystem location
+    while avoiding a second distribution-metadata lookup. Service-file support
+    is opt-in through one caller-selected path; ambient ``PGSERVICEFILE``
+    discovery remains outside the admitted contract.
 
     Args:
         service_file: Optional explicit ``pg_service.conf`` path. When omitted,
