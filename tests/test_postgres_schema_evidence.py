@@ -76,29 +76,57 @@ class _BoundedOversizeStream(BytesIO):
 class _CloseFailure(BytesIO):
     """Expose one deterministic lower-layer close failure for cleanup tests."""
 
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self._close_failed = False
+
     def close(self) -> None:
-        raise OSError("sensitive schema close diagnostic")
+        if not self._close_failed:
+            self._close_failed = True
+            raise OSError("sensitive schema close diagnostic")
+        super().close()
 
 
 class _StateCloseFailure(BytesIO):
     """Model an ordinary stream-state close failure outside the OSError family."""
 
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self._close_failed = False
+
     def close(self) -> None:
-        raise ValueError("sensitive stream state diagnostic")
+        if not self._close_failed:
+            self._close_failed = True
+            raise ValueError("sensitive stream state diagnostic")
+        super().close()
 
 
 class _ReadAndCloseFailure(_ReadFailure):
     """Fail both reading and cleanup so the primary bounded error can be asserted."""
 
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self._close_failed = False
+
     def close(self) -> None:
-        raise OSError("sensitive schema close diagnostic")
+        if not self._close_failed:
+            self._close_failed = True
+            raise OSError("sensitive schema close diagnostic")
+        super().close()
 
 
 class _ReadAndStateCloseFailure(_ReadFailure):
     """Fail reading plus non-OSError cleanup to prove primary-error preservation."""
 
+    def __init__(self, payload: bytes) -> None:
+        super().__init__(payload)
+        self._close_failed = False
+
     def close(self) -> None:
-        raise ValueError("sensitive stream state diagnostic")
+        if not self._close_failed:
+            self._close_failed = True
+            raise ValueError("sensitive stream state diagnostic")
+        super().close()
 
 
 def test_inspector_matches_packaged_schema_identity() -> None:
