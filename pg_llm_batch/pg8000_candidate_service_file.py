@@ -349,9 +349,9 @@ class Pg8000CandidateServiceFileResolver:
             if "=" not in stripped:
                 raise _invalid_service_file()
             key, value = stripped.split("=", 1)
-            key = key.strip()
             if (
                 not key
+                or key != key.strip()
                 or _has_disallowed_control(key)
                 or _has_disallowed_control(value)
                 or key in parameters
