@@ -26,7 +26,7 @@ PR #233 is the earliest protected-integration prerequisite. Its repository-local
 
 PR #323 owns issue #322's active migration. The branch pins production `pg8000==1.31.5`, keeps Psycopg only as optional test/development verification, and selects the admitted implementation through `PostgresDriverPort` / `retained_postgres_driver()`.
 
-`load_pg8000_driver()` now obtains one installed `Distribution` metadata snapshot, requires that object's version to equal the admitted pg8000 version, and reuses the same object to derive the expected package root before package code executes. It then verifies the import origin and only then imports the DB-API module. This prevents separate version and origin metadata lookups from authorizing different installed-distribution states. Optional service-file support remains explicitly caller-selected; unsupported multi-host/socket/query/LDAP/ambient-service semantics remain fail closed rather than being approximated.
+`load_pg8000_driver()` obtains one installed `Distribution` metadata snapshot, requires that object's version to equal the admitted pg8000 version, and reuses the same object to derive the expected package root. The top-level package spec must resolve exactly to that admitted root before import. After Python resolves `pg8000.dbapi`, the loader also requires the returned module's `__file__` to resolve to that same root's `dbapi.py` before the module receives adapter or connection authority. This prevents separate version/origin metadata snapshots and stale or preloaded module-cache entries from silently transferring connection authority to different package bytes. Optional service-file support remains explicitly caller-selected; unsupported multi-host/socket/query/LDAP/ambient-service semantics remain fail closed rather than being approximated.
 
 The branch preserves realistic PostgreSQL acceptance for parameter binding, no-parameter DB-API execution, row normalization and exact/unknown row counts, transaction/context ownership, cleanup precedence, terminal connection state, thread-affine use, tenant/RLS/session behavior, UUID/timestamp and JSONB adaptation, SQLSTATE classification, checkpoint/recovery, schema/restore behavior, package-installed execution, and supported-Python runtime smokes.
 
@@ -48,9 +48,19 @@ The production loader previously performed version admission with `distribution_
 
 Test-first `0e056c160c2cf6b5e769a7aaaa9a12883a10e9af` made the version lookup report admitted `1.31.5` while the distribution object used for origin authority reported unadmitted `1.31.4`, and required package import to remain blocked. Exact CI `34303889337`, Python 3.12 job `102316430972`, produced the real RED: `test_loader_rejects_split_version_and_origin_metadata_before_import` reached the forbidden import path; the job ended `1 failed, 1662 passed, 5 deselected`.
 
-Test-contract descendant `c405859f67e4c21974c18f735971e07d5d009487` expresses admitted and mismatched versions on the same distribution fixture. Minimal production repair `e497dfc8630de86563c9bcb9b9bd33acb99a9685` removes the independent version lookup: one `Distribution` object now supplies both `.version` admission and the expected package root used by import-origin admission. Candidate code still executes only after both checks pass.
+Test-contract descendant `c405859f67e4c21974c18f735971e07d5d009487` expresses admitted and mismatched versions on the same distribution fixture. Minimal production repair `e497dfc8630de86563c9bcb9b9bd33acb99a9685` removes the independent version lookup: one `Distribution` object now supplies both `.version` admission and the expected package root used by import-origin admission.
 
 This closes the split metadata-snapshot authority defect. It does not claim that arbitrary runtime filesystem mutation is impossible, and it does not replace the immutable package/SBOM/provenance/reproducibility evidence required for release.
+
+## Imported DB-API module authority RED and repair
+
+Python's import system checks the module cache before asking finders to resolve a module. The loader therefore had a second authority gap after the one-snapshot metadata repair: the admitted top-level `pg8000` package spec could point at the expected installed distribution while `import_module("pg8000.dbapi")` returned a stale or preloaded module object from another filesystem location.
+
+Test-first descendants `e0eaa3c6296936f1f7e49bcd266a1d19346f9907` and `3cb4eba577fb069a6d7d2b5b28eb520fd623eabb` require both a DB-API module outside the admitted root and a returned module without usable `__file__` metadata to fail closed. Their hosted workflows were cancelled by ordinary descendant publication before completing and are not counted as hosted RED evidence. A focused executable reproduction against the then-current loader semantics admitted both the shadow module and the missing-origin module, establishing the causal behavior without treating cancelled workflow state as GREEN or RED.
+
+Minimal production repair `b5620ec54ca2ffa84b118cf546610aae63775381` reuses the expected package root derived from the already admitted `Distribution`, checks the top-level package spec before import, and then validates that the actual returned `pg8000.dbapi.__file__` resolves exactly to `<admitted-root>/dbapi.py` before handing the module to `Pg8000DriverAdapter`. Missing or mismatched returned-module origin fails closed with the existing content-free driver-origin diagnostic. This does not claim defense against arbitrary hostile mutation inside the trusted Python process; it binds normal installed-artifact and module-cache authority at the production loader boundary.
+
+Exact hosted CI and Release Acceptance must be reacquired on the final descendant carrying this repair before it is treated as GREEN integration evidence.
 
 ## Explicit service-file authority RED and repair
 
@@ -82,7 +92,7 @@ The image had also moved to Python 3.14 while cleanup still targeted Python 3.11
 
 ## Transport-security boundary
 
-Issue #322 does not close issue #123. Successful pg8000 connections, installed-distribution admission, explicit service-file path/parent/inode/content authority, production SBOM policy, no-`libpq5`, and no-runtime-pip evidence do not prove mandatory verified remote TLS or authenticated server identity.
+Issue #322 does not close issue #123. Successful pg8000 connections, installed-distribution and returned-module admission, explicit service-file path/parent/inode/content authority, production SBOM policy, no-`libpq5`, and no-runtime-pip evidence do not prove mandatory verified remote TLS or authenticated server identity.
 
 Issue #123 remains canonical for package-created remote TCP connections, deliberate local/embedding-host exceptions, trusted CA plus matching hostname, wrong-CA and hostname-mismatch rejection, plaintext/downgrade refusal, server SSL refusal, restart/recovery, bounded diagnostics, and caller-owned connection non-interference.
 
@@ -91,7 +101,7 @@ Issue #123 remains canonical for package-created remote TCP connections, deliber
 | Gap | Current state | Required next evidence |
 | --- | --- | --- |
 | Commercial PostgreSQL runtime dependency | P0 / active Draft | Preserve the pg8000 default graph through normal prerequisite integration, obtain one unchanged final #323 head, merge normally, then bind immutable protected-release evidence. |
-| Installed-driver metadata authority | Repaired on #323 | Preserve one-snapshot version + import-root admission through final package and protected release. |
+| Installed-driver + imported-module authority | Repaired on #323 / exact hosted revalidation required | Preserve one-snapshot version/package-root admission plus returned DB-API module-origin binding through final package, exact-head CI, and protected release. |
 | Explicit service-file authority | Repaired on #323 | Preserve construction-time absolute path, parent identity, selected regular-file identity, selected-content digest, descriptor-relative I/O, bounded parsing, and generic diagnostics through final integration/release. |
 | Production runtime SBOM | Active / Draft evidence | Carry validated CycloneDX evidence through protected integration and bind it to the immutable released artifact. |
 | PostgreSQL transport encryption / server identity | P0 security / #123 | Complete realistic TLS-enabled PostgreSQL acceptance, identity verification, downgrade refusal, recovery, and caller-owned policy. |
@@ -110,7 +120,7 @@ Completion requires all of the following on the final production graph and immut
 - tenant authority and transaction-local `set_config` behavior remain correct under forced RLS and restricted roles;
 - JSON/JSONB, UUID, timestamp, row, row-count, and relevant PostgreSQL error semantics remain compatible;
 - DSN parsing/rendering preserves supported URI, keyword, and explicit-service-selector contracts without credential leakage into argv or logs;
-- installed pg8000 version and expected import root are admitted from the same installed-distribution metadata snapshot before candidate code executes;
+- installed pg8000 version and expected package root are admitted from the same installed-distribution metadata snapshot before import, and the actual returned `pg8000.dbapi` module origin matches that same admitted root before connection authority is granted;
 - explicit service-file capability cannot be redirected by final symlink/path substitution, later CWD changes, replacement of the selected parent directory, replacement of the construction-selected regular-file inode, or in-place mutation of the construction-selected file content;
 - concurrency, idempotency, checkpoint, schema application, logical restore, health, and finite-connect behavior pass realistic PostgreSQL tests through the production selector;
 - the committed default runtime graph and built artifacts contain no disallowed GPL/LGPL/AGPL-family package;
@@ -135,6 +145,8 @@ Queued, pending, skipped-required, `action_required`, cancelled, absent, predece
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: SSL support*. https://www.postgresql.org/docs/18/libpq-ssl.html
 
 PostgreSQL Global Development Group. (2026). *PostgreSQL 18 documentation: The connection service file*. https://www.postgresql.org/docs/18/libpq-pgservice.html
+
+Python Software Foundation. (2026). *Python 3.14.7 documentation: The import system — The module cache*. https://docs.python.org/3.14/reference/import.html#the-module-cache
 
 Python Software Foundation. (2026). *Python 3.14.7 documentation: importlib.metadata — Accessing package metadata*. https://docs.python.org/3.14/library/importlib.metadata.html
 
