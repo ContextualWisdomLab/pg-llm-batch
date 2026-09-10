@@ -87,7 +87,6 @@ def test_schema_readiness_requires_select_insert_and_update_privileges() -> None
     assert "'update'" in catalog_sql
 
 
-pytestmark_live = pytest.mark.integration
 DSN = os.environ.get("PG_LLM_BATCH_TEST_DSN")
 skip_no_db = pytest.mark.skipif(
     not DSN, reason="PG_LLM_BATCH_TEST_DSN not set; skipping live-DB integration"
@@ -142,5 +141,8 @@ def test_live_config_store_rejects_roles_missing_required_write_privilege(
     finally:
         with psycopg.connect(DSN) as admin:
             with admin.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("DROP OWNED BY {}").format(sql.Identifier(role_name))
+                )
                 cursor.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(role_name)))
             admin.commit()
