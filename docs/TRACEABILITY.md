@@ -2,93 +2,90 @@
 
 ## Purpose and authority
 
-This map ties canonical PRD/TRD requirements to durable protected-main implementation, tests, ADRs, and operator evidence. It intentionally avoids workflow-run IDs, exact commit SHAs, generated merge commits, and transient review/check state. Rows marked **ACTIVE-PR** or **PARTIAL** are not shipped implementation claims.
+This map ties canonical PRD/TRD requirements to durable protected-main implementation, tests, ADRs, and operator evidence. It avoids workflow-run IDs, exact SHAs, generated merge commits, and transient review/check state. **ACTIVE-PR** and **PARTIAL** rows are not shipped claims.
 
 ## Product-to-technical traceability
 
-| Requirement | Status | Primary protected-main implementation authority | Durable verification/documentation authority | Known gap or active overlay |
+| Requirement | Status | Protected-main authority | Durable evidence | Residual boundary / active overlay |
 | --- | --- | --- | --- | --- |
-| FR-1 deterministic bounded batch preparation | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/orchestrator.py`, `pg_llm_batch/token_counter.py`, package schema | preparation/token tests; `docs/idempotent-preparation.md`; `docs/schema-integrity.md` | No gap claimed by the canonical product contract. |
-| FR-2 validated bounded provider interaction | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/batch_api_client.py` | provider URL/resource/retry/response-budget tests; `docs/batch-endpoints.md`; `docs/resource-identifiers.md`; ADR 0015 | Provider-specific widening requires a separately reviewed contract. |
-| FR-3 standalone + tenant-qualified durable lifecycle | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/durable_client.py`, `pg_llm_batch/db.py`, schema/RLS objects | tenant lifecycle/integration tests; `ARCHITECTURE.md`; `docs/remote-batch-lifecycle.md`; ADR 0002 | Arbitrary SQL, superuser, and BYPASSRLS remain outside the isolation guarantee. |
-| FR-4 scheduler-independent bounded reconciliation | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/reconciliation.py` | reconciliation tests and protected-main release gates | Durable candidate discovery remains ACTIVE-PR; autonomous worker semantics remain PARTIAL. |
-| FR-4 durable reconciliation candidate discovery | ACTIVE-PR | existing lifecycle/read primitives only | active discovery branch evidence | Candidate selection must remain tenant-qualified, bounded, deterministic, and database-authoritative before integration. |
-| FR-4 tenant-qualified cross-process single-flight | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/reconciliation_single_flight.py` | focused single-flight exact-type/traceback tests; merged #191 is historical integration evidence | Protected behavior is a transient PostgreSQL session advisory lock only. It is not a scheduler, durable lease, result-application transaction, terminal-work-retirement mechanism, or distributed exactly-once guarantee. |
-| FR-4 durable result application + checkpoint coupling | PARTIAL | `pg_llm_batch/result_streaming.py`, `pg_llm_batch/checkpoint_store.py` provide streaming/checkpoint primitives | ADR 0006; ADR 0007; checkpoint/result-streaming tests; `docs/result-streaming.md` | #194 remains ACTIVE-PR same-transaction local work; protected main still does not claim end-to-end or distributed exactly-once application. |
-| FR-5 package persistence integrity | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/db.py`, `pg_llm_batch/schema.sql`, Docker schema mirror | schema-integrity, payload, lifecycle, checkpoint migration tests | Existing-volume legacy-extension retirement remains separately active. |
-| FR-5 bounded PostgreSQL recovery evidence primitives | IMPLEMENTED-ON-PROTECTED-MAIN | `postgres_recovery_receipt.py`, `postgres_backup_evidence.py`, `postgres_schema_evidence.py` | focused receipt/artifact/schema evidence tests; merged #205/#206/#207 are historical integration evidence | Evidence identifies bounded bytes/metadata; it does not prove backup execution, restorability, live-schema parity, target isolation, PITR, or RPO/RTO/HA/DR. |
-| FR-5 executable PostgreSQL logical backup | ACTIVE-PR | no protected-main `pg_dump` executor | #208 branch evidence only | A backup candidate exists but protected main must not be described as creating a restorable backup. |
-| FR-5 executable PostgreSQL logical restore | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/postgres_logical_restore.py` | logical-restore tests and integrated restore-seek ADR/docs; merged #212 is historical integration evidence; closed #209 is predecessor defect evidence | The bounded direct executor accepts custom-format random-access seek behavior and verifies archive metadata instead of final EOF. It does not provide `pg_dump`, authenticated target isolation, post-restore catalog/application readiness, PITR, or RPO/RTO/HA/DR. |
-| FR-5 recovery evidence binding and live re-verification | ACTIVE-PR | protected main exposes the underlying receipt/schema/artifact evidence primitives only | active binding/reinspection branch evidence | Bind-time composition and later re-inspection are not provenance, restore proof, or target isolation. |
-| FR-5 post-restore catalog/application acceptance | ACTIVE-PR | protected schema/recovery/restore primitives only | active catalog work plus #296 application-readiness candidate | Same-name decoys, key order, constraints, language/function identity, current-role privileges, and live PostgreSQL behavior must fail closed before this can become shipped acceptance. |
-| FR-5 permanent live PostgreSQL integration acceptance | ACTIVE-PR | protected main has existing CI but not the #341 permanent integration lane | #341 branch executes `pytest -m integration`; #296 is its active child | Branch-level GREEN does not make the workflow or #296 specimen protected-main truth. |
-| FR-5 physical/WAL/PITR recovery | ACTIVE-PR / PARTIAL | bounded protected evidence only | active physical/WAL/PITR branch tests and ADR evidence | Intent/evidence does not prove `pg_basebackup`, WAL archive/replay, promotion, or achieved recovery objectives. |
-| FR-5 restore-target isolation | PARTIAL | no authenticated target-isolation proof exists on protected main | current recovery acceptance requirements | Distinct service/configuration labels are not proof that two names resolve to different clusters. |
-| FR-5 end-to-end PostgreSQL recovery readiness | PARTIAL | bounded evidence primitives plus bounded logical restore executor | issue-level recovery acceptance plus protected recovery tests | No protected isolated restore drill yet proves schema/RLS/constraint/extension parity, migration compatibility, external key/config custody, physical/WAL/PITR recovery, or measured RPO/RTO/HA/DR. |
-| FR-5 legacy `http` / `pg_cron` retirement on existing volumes | ACTIVE-PR | protected main does not yet contain the complete retirement migration contract | active migration/smoke/operator evidence | Keep separate from already-shipped tenant lifecycle migration. |
-| FR-6 PostgreSQL-backed configuration/secrets | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/config.py`, schema | config/secret/bootstrap tests | Protected main supports optional Fernet and explicit compatibility mode. `SecretStore(require_encryption=False)` can persist `is_encrypted = FALSE`; this is not a mandatory encryption-at-rest claim. |
-| FR-6 production secret-at-rest policy lifecycle | PARTIAL | callers can opt into `require_encryption=True` with usable Fernet configuration | config/secret/bootstrap tests; #210 active stricter runtime/operator-contract work | Historical compatibility-row migration, key rotation/recovery, external custody, and a mandatory default are not protected guarantees. |
-| FR-7 bounded diagnostics/readiness | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/health.py`, bounded error surfaces | health/confidentiality tests and architecture requirements | Broader generic rejected-value confidentiality remains active work. |
-| FR-7 generic validation rejected-value confidentiality | ACTIVE-PR | protected `ValidationError` compatibility baseline | active privacy/compatibility branch evidence | Intended safe-default redaction remains unshipped until exact source/governance evidence integrates. |
-| FR-7 opt-in OpenTelemetry | IMPLEMENTED-ON-PROTECTED-MAIN / packaging PARTIAL | `pg_llm_batch/observability.py` | observability tests | First-class locked installation extra remains ACTIVE-PR. |
-| FR-8 standalone + modular MSA deployment | IMPLEMENTED-ON-PROTECTED-MAIN | package/CLI/container composition; injectable host seams | `README.md`, `ARCHITECTURE.md`, package/container tests | CWL host repositories are optional integrations, not package runtime dependencies. |
-| Exact owned 100% statement/branch coverage | IMPLEMENTED-ON-PROTECTED-MAIN governance contract | repository CI configuration and owned production code | coverage gate/tests | Must be re-proven on every changed exact head; predecessor evidence never transfers. |
-| Python 3.10/3.12/3.14 validation | IMPLEMENTED-ON-PROTECTED-MAIN governance contract | package metadata/workflow matrix | exact-head repository CI | Queued/skipped/infrastructure-failed jobs are not proof. |
-| Reproducible release evidence | IMPLEMENTED-ON-PROTECTED-MAIN | `pg_llm_batch/release_evidence.py` and release workflows | ADR 0003; ADR 0004; release-evidence/artifact-identity tests | Publication itself occurs only from a fully accepted integrated protected head. |
-| SBOM/provenance/artifact identity | IMPLEMENTED-ON-PROTECTED-MAIN governance contract | release workflows/evidence helpers | release acceptance and artifact verification tests | Repository evidence does not imply external certification. |
-| SOC 2 / CSAP evidence readiness | PARTIAL | security, tenancy, logging, release and governance controls | PRD/TRD/security tests/ADRs | Evidence readiness only; no certification is claimed. |
+| FR-1 bounded batch preparation | IMPLEMENTED-ON-PROTECTED-MAIN | `orchestrator.py`, `token_counter.py`, package schema | preparation/token/schema tests | No additional shipped claim inferred. |
+| FR-2 bounded provider interaction | IMPLEMENTED-ON-PROTECTED-MAIN | `batch_api_client.py` | endpoint/resource/retry/response-budget tests; ADR 0015 | Provider-specific widening requires review. |
+| FR-3 durable lifecycle and tenancy | IMPLEMENTED-ON-PROTECTED-MAIN | `durable_client.py`, `db.py`, schema/RLS | tenant lifecycle/live PostgreSQL tests; ADR 0002 | Arbitrary SQL, `SUPERUSER`, and `BYPASSRLS` remain outside tenant isolation. |
+| FR-4 bounded reconciliation | IMPLEMENTED-ON-PROTECTED-MAIN | `reconciliation.py` | reconciliation tests | Durable candidate discovery remains ACTIVE-PR. |
+| FR-4 tenant-qualified cross-process single-flight | IMPLEMENTED-ON-PROTECTED-MAIN | `reconciliation_single_flight.py` | focused exact-type/lock/traceback tests; merged #191 is historical integration evidence | Session advisory lock only: not scheduler, durable lease, result application, terminal retirement, or distributed exactly-once. |
+| FR-4 durable result application | PARTIAL | `result_streaming.py`, `checkpoint_store.py` primitives | ADR 0006/0007 and tests | #194 remains active; no end-to-end exactly-once claim. |
+| FR-5 persistence integrity | IMPLEMENTED-ON-PROTECTED-MAIN | `db.py`, `schema.sql`, Docker schema mirror | schema/payload/lifecycle/checkpoint tests | Existing-volume legacy-extension retirement remains active. |
+| FR-5 bounded recovery evidence | IMPLEMENTED-ON-PROTECTED-MAIN | `postgres_recovery_receipt.py`, `postgres_backup_evidence.py`, `postgres_schema_evidence.py` | focused evidence tests; merged #205/#206/#207 are historical integration evidence | Identity/integrity only; not backup execution, provenance, restorability, live parity, PITR, or RPO/RTO. |
+| FR-5 executable PostgreSQL logical backup | ACTIVE-PR | no protected `pg_dump` executor | #208 branch evidence | Protected main must not be described as creating a restorable backup. |
+| FR-5 executable PostgreSQL logical restore | IMPLEMENTED-ON-PROTECTED-MAIN | `postgres_logical_restore.py` | logical-restore regressions; ADR 0016; merged #212 historical integration evidence; #209 predecessor defect evidence | Custom-format seek + metadata verification is protected. No backup, target-authentication, application-readiness, PITR, or RPO/RTO guarantee. |
+| FR-5 restore-target cluster identity verification | IMPLEMENTED-ON-PROTECTED-MAIN | `postgres_restore_target.py` | focused service-name/system-identifier tests; ADR 0022; merged #228 historical integration evidence | Requires distinct exact service names and caller-owned `pg_control_system().system_identifier` values. It does not open/authenticate connections, accept DSNs, execute restore, or prove catalog/application/PITR/RPO-RTO readiness. |
+| FR-5 recovery evidence binding/reinspection | ACTIVE-PR | underlying protected evidence primitives only | active binding/reinspection branches | Composition/reinspection is not provenance or restore proof. |
+| FR-5 post-restore catalog/application acceptance | ACTIVE-PR | protected schema/recovery/restore/target primitives only | active catalog work and #296 application-readiness branch | Exact catalog/function/privilege/live behavior must integrate before becoming shipped acceptance. |
+| FR-5 permanent live PostgreSQL integration lane | ACTIVE-PR | current protected CI does not yet contain #341 lane | #341 branch executes the complete integration marker; #296 is its tested child | Branch GREEN is not protected-main workflow authority. |
+| FR-5 physical/WAL/PITR recovery | ACTIVE-PR / PARTIAL | bounded protected evidence only | active physical/WAL/PITR branch evidence | Does not prove basebackup, WAL replay, promotion, or achieved objectives. |
+| FR-5 end-to-end recovery readiness | PARTIAL | evidence primitives + logical restore + target cluster-identity verifier | protected focused tests plus active acceptance work | Still missing integrated backup execution, connection provenance/authorization, application/catalog parity, migration/key custody, physical/WAL/PITR, and measured RPO/RTO/HA/DR. |
+| FR-6 PostgreSQL-backed config/secrets | IMPLEMENTED-ON-PROTECTED-MAIN | `config.py`, schema | config/secret/bootstrap tests | Optional Fernet + base64 compatibility are protected; mandatory policy is not. |
+| FR-6 production secret-at-rest lifecycle | PARTIAL | opt-in `require_encryption=True` path | config/secret tests; #210 active work | Compatibility-row migration, rotation/recovery, external key custody, and mandatory default remain unshipped. |
+| FR-7 bounded diagnostics/readiness | IMPLEMENTED-ON-PROTECTED-MAIN | `health.py`, bounded error surfaces | health/confidentiality tests | Broader rejected-value confidentiality remains active work. |
+| FR-7 opt-in telemetry | IMPLEMENTED-ON-PROTECTED-MAIN / packaging PARTIAL | `observability.py` | observability tests | First-class locked installation extra remains ACTIVE-PR. |
+| FR-8 standalone + modular embedding | IMPLEMENTED-ON-PROTECTED-MAIN | package/CLI/container seams | package/container/docs tests | CWL hosts are optional integrations. |
+| Exact owned production coverage/docstrings | IMPLEMENTED-ON-PROTECTED-MAIN governance contract | repository CI | exact-head coverage/docstring gates | Re-prove on every changed head. |
+| Python 3.10/3.12/3.14 | IMPLEMENTED-ON-PROTECTED-MAIN governance contract | package/workflow matrix | exact-head CI | Queued/skipped/infrastructure failure is not proof. |
+| Reproducible release + SBOM/provenance | IMPLEMENTED-ON-PROTECTED-MAIN governance contract | release-evidence code/workflows | release acceptance/artifact tests | Publication is authoritative only from an accepted protected head. |
+| SOC 2 / CSAP evidence readiness | PARTIAL | tenancy/security/logging/release controls | PRD/TRD/security/ADR evidence | No external certification claim. |
 
 ## Security and privacy traceability
 
-| Control objective | Protected-main authority | Verification evidence | Residual boundary |
+| Control objective | Protected-main authority | Verification | Residual boundary |
 | --- | --- | --- | --- |
-| Trusted tenant selection | `AGENTS.md`, `ARCHITECTURE.md`, tenant validation in DB/durable-client paths | tenant-scope/RLS tests | Host authentication/authorization remains external. |
-| RLS defense in depth | tenant-qualified schema and transaction-local scope binding | live PostgreSQL isolation/migration tests | Superuser/BYPASSRLS/arbitrary SQL are administrative bypasses. |
-| Provider destination validation | `batch_api_client.py` | endpoint/URL tests | Host/network infrastructure TLS policy is external. |
-| Bounded provider input | provider client + result streaming | response/download/JSONL/resource-budget tests | Provider authenticity is not established by payload validation. |
-| Reconciliation exclusion | `reconciliation_single_flight.py` | exact-type, lock/release and traceback regressions | Session lifetime is not a durable lease; scheduler and terminal retirement remain separate. |
-| Secret/config boundary | `config.py`, bootstrap contract | config/secret/bootstrap tests | Optional Fernet plus compatibility mode are protected behavior; mandatory encryption, compatibility-row migration, rotation/recovery, and external key custody are not. |
-| Diagnostic confidentiality | health/error/logging contracts | traceback/health/redaction tests | Generic rejected-value confidentiality remains incomplete on protected main. |
-| Checkpoint concurrency/integrity | `checkpoint_store.py` | CAS/concurrency/RLS/rollback tests | PostgreSQL atomicity does not extend to external systems. |
-| Recovery evidence confidentiality/integrity | recovery receipt/artifact/schema modules | focused recovery evidence regressions | Evidence does not authenticate an operator, prove target isolation, or prove restore semantics. |
-| Logical restore execution | `postgres_logical_restore.py` | custom-format seek, metadata, environment and transactional regressions | Command execution does not prove target identity, application readiness, PITR, or achieved RPO/RTO. |
-| Release artifact integrity | `release_evidence.py` + release contracts | descriptor/dirfd/reproducibility tests | Publication credentials and external registry availability remain operational dependencies. |
+| Trusted tenant selection | tenant validation + host-boundary docs | tenant/RLS tests | Host authentication/authorization remains external. |
+| RLS defense in depth | forced RLS + transaction-local scope | live PostgreSQL isolation/migration tests | Administrative SQL identities bypass the guarantee. |
+| Provider destination/input bounds | `batch_api_client.py` | URL/resource/response/download tests | Payload validation does not prove provider authenticity. |
+| Reconciliation exclusion | `reconciliation_single_flight.py` | lock/release/exact-type/traceback tests | Session lifetime is not durable leasing. |
+| Secret/config boundary | `config.py` | config/secret/bootstrap tests | Optional Fernet does not imply mandatory encryption, rotation, or custody. |
+| Diagnostic confidentiality | health/error/logging contracts | health/redaction/traceback tests | Broader generic validation hardening remains active. |
+| Checkpoint integrity | `checkpoint_store.py` | CAS/concurrency/RLS/rollback tests | PostgreSQL atomicity does not span external systems. |
+| Recovery evidence integrity | receipt/artifact/schema modules | focused evidence tests | No operator authentication, target authority, or restorability proof. |
+| Logical restore execution | `postgres_logical_restore.py` | seek/metadata/environment/transaction tests | Command success is not application/PITR/RPO-RTO proof. |
+| Restore-target cluster separation | `postgres_restore_target.py` | exact service-name/system-identifier tests | Caller supplies identities from already-opened connections; the package does not authenticate connection provenance or authorize restore. |
+| Release artifact integrity | release-evidence contracts | reproducibility/artifact identity | Publication credentials/registry availability remain operational dependencies. |
 
 ## Data and persistence traceability
 
-| Data family | Durable identity / authority | Principal protected-main documents | Recovery / non-guarantee |
+| Data family | Durable identity / authority | Principal docs | Non-guarantee |
 | --- | --- | --- | --- |
-| Tenant lifecycle state | `(tenant_scope, endpoint_alias, remote_batch_id)` | `ARCHITECTURE.md`, ADR 0002, `docs/remote-batch-lifecycle.md` | Tenant scope must come from trusted host authorization; direct SQL bypass is out of scope. |
-| Result checkpoints | `(tenant_scope, checkpoint_consumer_name, endpoint_alias, remote_batch_id)` | ADR 0006, ADR 0007, `docs/result-streaming.md` | Prefix checkpoint is not provider authentication or whole-stream immutability; cross-system exactly-once is not claimed. |
-| Package JSONL/payload state | package-owned schema identities and virtual payload references | PRD/TRD, schema-integrity and payload docs/tests | Persisted package data is canonical, not a disposable cache. |
-| Configuration/secrets | `com_config`, `com_secrets` | PRD/TRD and config tests | Compatibility mode can persist `is_encrypted = FALSE`; optional Fernet support is not a mandatory policy. Migration, key rotation/recovery, and external custody remain separate. |
-| PostgreSQL recovery evidence | bounded receipt metadata plus backup/schema SHA-256 and byte-size evidence | protected recovery evidence modules/tests; canonical PRD/TRD | Evidence does not persist a backup, execute backup, prove isolated target parity, or establish PITR/RPO/RTO/HA/DR. |
-| Release evidence | descriptor/artifact identity contracts | ADR 0003, ADR 0004 | Evidence proves reviewed artifact identity, not organizational certification. |
+| Tenant lifecycle | `(tenant_scope, endpoint_alias, remote_batch_id)` | ADR 0002; lifecycle docs | Host must select tenant authority. |
+| Result checkpoint | `(tenant_scope, checkpoint_consumer_name, endpoint_alias, remote_batch_id)` | ADR 0006/0007 | Prefix evidence is not provider authentication or exactly-once. |
+| Package payload state | package schema identities | PRD/TRD/schema docs | Canonical persisted business state, not disposable cache. |
+| Configuration/secrets | `com_config`, `com_secrets` | PRD/TRD/config tests | Compatibility mode can persist `is_encrypted = FALSE`; optional Fernet is not mandatory policy. |
+| Recovery evidence | bounded receipt/hash/size values | recovery modules/tests | Does not persist backups or establish restore/PITR/RPO-RTO. |
+| Restore-target identity evidence | exact service names + caller-owned `system_identifier` values | ADR 0022; target module/tests | Difference proves bounded name/cluster separation only, not connection provenance, authorization, or application readiness. |
+| Release evidence | descriptor/artifact identity | ADR 0003/0004 | Does not establish organizational certification. |
 
 ## Active overlay register
 
-The following open pull requests are represented only as overlays. Their existence does not make their behavior protected-main truth, and this register intentionally avoids volatile Draft/Ready/check-state labels:
+The following open PRs are overlays only; their existence does not make behavior protected-main truth:
 
-- **#175** — OpenTelemetry packaging extra; dependency-lock/materialization and final package evidence remain outside protected-main truth.
-- **#184** — existing-volume legacy PostgreSQL extension retirement; migration/operator behavior remains active until merged.
-- **#190** — durable reconciliation candidate discovery; not protected-main truth.
-- **#194** — atomic local result-effect/checkpoint application; same-transaction behavior remains active and is not end-to-end exactly-once proof.
-- **#202** — compatibility-aware rejected-value confidentiality hardening; current candidate evidence does not transfer into shipped behavior.
-- **#208** — bounded logical PostgreSQL backup executor using `pg_dump`; active source only and not evidence that protected main can create a restorable backup.
-- **#210** — configuration/secrets runtime/operator contract successor; least-privilege readiness and stricter policy work remain unshipped until normal integration.
-- **#215** — recovery receipt evidence-binding candidate; object composition must not be mistaken for inspection provenance.
-- **#219** — physical/WAL/PITR recovery-profile candidate; records caller-owned intent/objectives but does not prove recovery execution.
-- **#221** — recovery-receipt live re-inspection candidate; integrity agreement remains time-bound and does not prove restore success or target isolation.
-- **#222** — read-only workflow-registry audit candidate; governance tooling remains an overlay until normal integration.
-- **#223** — live PostgreSQL restore-catalog acceptance candidate; catalog/index semantics remain unshipped.
-- **#229** — current canonical documentation landing vehicle. It repairs stale capability classification without taking ownership of root `ARCHITECTURE.md`, `CHANGELOG.md`, or product-gap-baseline paths.
-- **#296** — isolated restore application-readiness candidate; branch evidence proves bounded catalog/language/privilege checks but not end-to-end recovery readiness.
-- **#341** — permanent live PostgreSQL integration-lane candidate; current branch evidence executes the full integration marker and carries #296 as a tested child, but the workflow is not protected-main authority until normal integration.
+- **#175** — first-class OpenTelemetry packaging extra.
+- **#184** — existing-volume legacy PostgreSQL extension retirement.
+- **#190** — durable reconciliation candidate discovery.
+- **#194** — atomic local result-effect/checkpoint application.
+- **#202** — generic rejected-value confidentiality hardening.
+- **#208** — bounded logical PostgreSQL backup executor using `pg_dump`.
+- **#210** — stricter configuration/secrets runtime/operator contract.
+- **#215** — recovery receipt evidence binding.
+- **#219** — physical/WAL/PITR recovery profile.
+- **#221** — recovery receipt live reinspection.
+- **#222** — read-only workflow-registry audit.
+- **#223** — live PostgreSQL restore-catalog acceptance.
+- **#229** — current canonical documentation landing vehicle; it does not own root `ARCHITECTURE.md`, `CHANGELOG.md`, or the product-gap baseline.
+- **#296** — isolated restore application-readiness candidate.
+- **#341** — permanent live PostgreSQL integration-lane candidate.
 
-Merged #191 and #212 are protected-main history, not active overlays. Closed documentation predecessors #214 and #226 are superseded historical lineage; they explain why this overlay avoids transient PR-state instructions but are not current authority. Closed recovery predecessors including #209 remain historical defect evidence only where they explain a current safety invariant.
+Merged #191, #212, and #228 are protected-main history rather than active overlays. Closed #225 is superseded restore-target predecessor lineage; closed #209 remains defect evidence for the invalid EOF restore postcondition. Closed documentation predecessors #214 and #226 are superseded historical lineage only.
 
-This register is descriptive, not a substitute for refetching GitHub. Before changing a status, verify the PR still exists, its current contributor head, live protected-main ancestry, reviews/threads, exact-head gates, and resulting protected integration.
+This register is descriptive, not a substitute for refetching live GitHub state.
 
 ## Change-control rule
 
-When a capability merges, update the PRD/TRD status and this traceability map only after reading the new protected-main tree. When a capability is abandoned or superseded, retain historical context only where it explains a live constraint. New requirements must identify an intended implementation authority and deterministic verification authority before they can be called acquisition-ready.
+After a capability merges, change canonical status only after reading the resulting protected tree. After abandonment or supersession, retain predecessor context only where it explains a current constraint. New requirements need an intended implementation authority and deterministic verification authority before they are acquisition-ready.
