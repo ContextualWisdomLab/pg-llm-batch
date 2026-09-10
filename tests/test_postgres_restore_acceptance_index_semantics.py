@@ -125,19 +125,62 @@ def test_catalog_sql_matches_packaged_lifecycle_index_shapes() -> None:
     sql = postgres_restore_acceptance._CATALOG_SQL
 
     assert "UNIQUE (tenant_scope, endpoint_alias, remote_batch_id)" in schema
-    assert "CREATE INDEX IF NOT EXISTS idx_llm_remote_batch_jobs_tenant_status_observed" in schema
+    assert (
+        "CREATE INDEX IF NOT EXISTS "
+        "idx_llm_remote_batch_jobs_tenant_status_observed"
+    ) in schema
     assert "tenant_scope,\n        batch_status,\n        last_observed_at" in schema
-    assert "pg_catalog.pg_get_indexdef(c.oid, 1, TRUE) = 'tenant_scope'" in sql
-    assert "pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'endpoint_alias'" in sql
-    assert "pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'remote_batch_id'" in sql
-    assert "pg_catalog.pg_get_indexdef(c.oid, 2, TRUE) = 'batch_status'" in sql
-    assert "pg_catalog.pg_get_indexdef(c.oid, 3, TRUE) = 'last_observed_at'" in sql
+    for ordinal, column_name in (
+        (1, "tenant_scope"),
+        (2, "endpoint_alias"),
+        (3, "remote_batch_id"),
+        (2, "batch_status"),
+        (3, "last_observed_at"),
+    ):
+        assert f"pg_catalog.pg_get_indexdef(c.oid, {ordinal}, TRUE)" in sql
+        assert f"OPERATOR(pg_catalog.=) '{column_name}'" in sql
     assert "NOT idx.indisunique" in sql
     assert "idx.indisunique" in sql
-    assert "constraint_row.contype = 'u'" in sql
+    assert "constraint_row.contype::pg_catalog.text" in sql
     assert "NOT constraint_row.condeferrable" in sql
-    assert "access_method.amname = 'btree'" in sql
-    assert "idx.indoption = '0 0 0'::pg_catalog.int2vector" in sql
+    assert "access_method.amname::pg_catalog.text" in sql
+    assert "idx.indoption OPERATOR(pg_catalog.=)" in sql
+    assert "'0 0 0'::pg_catalog.int2vector" in sql
+
+
+def test_catalog_query_authenticates_tenant_policy_semantics() -> None:
+    """Bind restore acceptance to exact policy text and trusted object identity."""
+    sql = postgres_restore_acceptance._CATALOG_SQL
+
+    required_fragments = (
+        "pg_catalog.pg_policy",
+        "policy_row.polcmd::pg_catalog.text OPERATOR(pg_catalog.=) '*'",
+        "policy_row.polpermissive IS TRUE",
+        "policy_row.polroles OPERATOR(pg_catalog.=) ARRAY[0::pg_catalog.oid]",
+        "plc_llm_remote_batch_jobs_tenant_scope",
+        "plc_llm_result_stream_checkpoints_tenant_scope",
+        "pg_catalog.pg_get_expr",
+        "pg_catalog.replace(",
+        "pg_catalog.regexp_replace(",
+        "pg_llm_batch.tenant_scope",
+        "pg_catalog.pg_depend AS unexpected_dependency",
+        "'pg_catalog.pg_policy'::pg_catalog.regclass",
+        "'pg_catalog.pg_proc'::pg_catalog.regclass",
+        "'pg_catalog.current_setting(pg_catalog.text,pg_catalog.bool)'::pg_catalog.regprocedure",
+        "'pg_catalog.pg_operator'::pg_catalog.regclass",
+        "'pg_catalog.=(pg_catalog.text,pg_catalog.text)'::pg_catalog.regoperator",
+        "unexpected_dependency.deptype::pg_catalog.text OPERATOR(pg_catalog.=) 'n'",
+        "unexpected_dependency.refobjid OPERATOR(pg_catalog.<>)",
+        "extra_policy.polrelid OPERATOR(pg_catalog.=) c.oid",
+        "extra_policy.oid OPERATOR(pg_catalog.<>) policy_row.oid",
+        "pg_catalog.current_schema()",
+    )
+    for fragment in required_fragments:
+        assert fragment in sql
+
+    assert "AND EXISTS (\n                  SELECT 1\n                  FROM pg_catalog.pg_depend" not in sql
+    assert "policy_row.polrelid = c.oid" not in sql
+    assert "extra_policy.oid <> policy_row.oid" not in sql
 
 
 def test_container_logging_smoke_runs_restore_catalog_index_decoys() -> None:
