@@ -4,7 +4,7 @@
 
 `PG_LLM_BATCH_DSN` and `PG_LLM_BATCH_SECRET_KEY` are bootstrap transports used only when a caller omits the corresponding explicit value. The prior implementation selected both with Python boolean truthiness (`explicit or environment_value`). That conflated omission with explicit false-valued input and could silently transfer database-target or decryption authority to ambient process state.
 
-For the required Postgres DSN, an explicitly empty or whitespace-only value must not be replaced by `PG_LLM_BATCH_DSN` or passed down to libpq defaults. Non-string explicit values must also fail at the package boundary rather than reaching unrelated lower-layer behavior. For the optional Fernet bootstrap key, an explicit empty string is a deliberate statement that no key was supplied for this invocation and must not inherit an ambient key.
+For the required Postgres DSN, an explicitly empty or whitespace-only value must not be replaced by `PG_LLM_BATCH_DSN` or passed down to libpq defaults. Non-string explicit values must also fail at the package boundary rather than reaching unrelated lower-layer behavior. For the Fernet bootstrap key, an explicit empty string is a deliberate statement that no key was supplied for this invocation and must not inherit an ambient key. The resolver may still return `None` or that empty string; `SecretStore` construction then fails closed. Omitting the key is not a supported unencrypted persistence mode.
 
 A separate CLI confidentiality boundary applies before bootstrap resolution. PostgreSQL connection information can carry passwords, password-file locations, TLS private-key material, TLS key passwords, and OAuth client secrets. Accepting those values through `--dsn` copies credential material or credential-bearing locations into process invocation state, where operating-system process inspection and shell history can expose them. The CLI therefore needs to retain explicit database targeting without making credential-bearing conninfo a normal argv transport.
 
@@ -18,7 +18,7 @@ A separate CLI confidentiality boundary applies before bootstrap resolution. Pos
 - invalid explicit values fail with bounded `ConfigError` before environment fallback or libpq target selection; and
 - valid nonblank DSNs are returned unchanged rather than normalized or rewritten.
 
-`resolve_secret_key()` uses the same source-precedence rule while preserving its optional-value semantics:
+`resolve_secret_key()` uses the same source-precedence rule while preserving omitted-value resolution:
 
 - the environment is consulted only when the explicit argument is `None`;
 - an explicitly supplied Fernet key must be an exact `str`;

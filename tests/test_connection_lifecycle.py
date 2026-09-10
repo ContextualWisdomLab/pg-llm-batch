@@ -193,6 +193,8 @@ def test_secret_store_constructor_closes_connection_after_setup_failure(
     monkeypatch: Any,
 ) -> None:
     """A failed secret-store setup must release the connection it already acquired."""
+    from cryptography.fernet import Fernet
+
     connection = _InitializationConnection()
     monkeypatch.setattr(
         config_module,
@@ -206,7 +208,10 @@ def test_secret_store_constructor_closes_connection_after_setup_failure(
     monkeypatch.setattr(SecretStore, "_ensure_table", fail_table_setup)
 
     with pytest.raises(RuntimeError, match="secret setup failed"):
-        SecretStore("postgresql://example")
+        SecretStore(
+            "postgresql://example",
+            fernet_key=Fernet.generate_key().decode(),
+        )
 
     assert connection.closed is True
 

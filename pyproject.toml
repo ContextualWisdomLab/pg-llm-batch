@@ -15,6 +15,7 @@ keywords = ["postgres", "llm", "batch", "pg_tiktoken", "tokenization"]
 dependencies = [
     "psycopg[binary]>=3.1",
     "aiohttp>=3.14.3",
+    "cryptography>=50.0.0",
 ]
 
 [project.optional-dependencies]
@@ -28,8 +29,8 @@ test = [
 
 # PEP 735 dependency groups. `uv run` installs the `dev` group by default, so the
 # central coverage-evidence job (`uv run --with coverage --with pytest coverage
-# run -m pytest tests`) gets pytest-asyncio (async client tests) and cryptography
-# (Fernet secret-store test) without needing an explicit `--extra test`.
+# run -m pytest tests`) gets pytest-asyncio (async client tests). Cryptography is
+# already a core runtime dependency for SecretStore.
 [dependency-groups]
 dev = [
     "pytest>=7.4",

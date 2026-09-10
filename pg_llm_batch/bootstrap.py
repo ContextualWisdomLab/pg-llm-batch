@@ -6,7 +6,7 @@ This is the ONLY module permitted to read process environment variables, and
 only for the two bootstrap secrets needed to *reach* the config/secret stores:
 
 * ``PG_LLM_BATCH_DSN`` — the Postgres DSN (connection string).
-* ``PG_LLM_BATCH_SECRET_KEY`` — optional Fernet key to decrypt ``com_secrets``.
+* ``PG_LLM_BATCH_SECRET_KEY`` — Fernet key required to construct ``SecretStore``.
 
 Everything else (gateway URL, API key, endpoint alias, token limits, ...) is
 read from the database KV stores, never from the environment.
@@ -56,11 +56,14 @@ def resolve_dsn(explicit: Optional[str] = None) -> str:
 
 
 def resolve_secret_key(explicit: Optional[str] = None) -> Optional[str]:
-    """Resolve the optional Fernet key without replacing explicit empty input.
+    """Resolve the Fernet key without replacing explicit empty input.
 
-    An explicit value wins even when it is the empty string, which deliberately
-    prevents ambient environment state from silently acquiring decryption
-    authority. Non-string explicit values fail before environment fallback.
+    The resolver may return ``None`` or an empty string when no key was
+    supplied. ``SecretStore`` then fails closed. Omitting the key is not a
+    supported unencrypted persistence mode. An explicit value wins even when
+    it is the empty string, which deliberately prevents ambient environment
+    state from silently acquiring decryption authority. Non-string explicit
+    values fail before environment fallback.
     """
     if explicit is not None:
         return _require_exact_string(explicit, label="Explicit Fernet key")
