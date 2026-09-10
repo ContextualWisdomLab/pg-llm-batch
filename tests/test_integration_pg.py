@@ -273,11 +273,10 @@ def test_live_rls_separates_identical_provider_ids_by_tenant(dsn: str) -> None:
         with admin.cursor() as cursor:
             cursor.execute(
                 sql.SQL(
-                    "CREATE ROLE {} LOGIN PASSWORD %s "
+                    "CREATE ROLE {} LOGIN PASSWORD {} "
                     "NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT "
                     "NOREPLICATION NOBYPASSRLS"
-                ).format(sql.Identifier(role_name)),
-                (password,),
+                ).format(sql.Identifier(role_name), sql.Literal(password))
             )
             cursor.execute(
                 sql.SQL(
