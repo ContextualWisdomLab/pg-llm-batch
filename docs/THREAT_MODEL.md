@@ -14,14 +14,15 @@ The methodology follows data-centric threat modeling and NIST risk assessment: i
 4. Treat recovery receipt/hash evidence as identity/integrity metadata, not restorability.
 5. Treat Fernet as optional protected-main behavior. Compatibility mode can persist `is_encrypted = FALSE`; production encryption policy, migration, rotation/recovery, and external key custody remain separate responsibilities.
 6. Before logical restore, obtain live and restore `system_identifier` values from caller-opened connections and use the protected restore-target verifier. Do not treat that comparison as authentication of the connections or as post-restore application readiness.
+7. Use the explicit `standalone` scope for a single-tenant operator; do not reinterpret it as anonymous public tenancy.
 
 ## Assets
 
 | Asset | Location | Buyer relevance |
 | --- | --- | --- |
 | Authorized prompts, JSONL, provider results | package payload/request tables and provider files | Business meaning; silent transformation invalidates accounting/replay. |
-| Durable lifecycle identity | `(tenant_scope, endpoint_alias, remote_batch_id)` | Cross-tenant lifecycle isolation. |
-| Result checkpoints | tenant + consumer + provider identity | Resumable prefix evidence; not whole-stream authenticity. |
+| Durable lifecycle identity | `llm_remote_batch_jobs`, keyed by `(tenant_scope, endpoint_alias, remote_batch_id)` | Cross-tenant lifecycle isolation. |
+| Result checkpoints | `llm_result_stream_checkpoints`, keyed by tenant + consumer + provider identity | Resumable prefix evidence; not whole-stream authenticity. |
 | Standalone config/secrets | `com_config`, `com_secrets` | Optional Fernet plus explicit base64 compatibility mode. |
 | Provider credentials | host credential provider or standalone store | Never tenant-selected authority or telemetry content. |
 | Recovery evidence | receipts/hashes/schema evidence | Content-free identity/integrity, not restore success. |
@@ -66,7 +67,7 @@ The restore-target verifier has a similarly bounded trust model. `postgres_resto
 
 ## Explicit non-guarantees
 
-- No SOC 2, CSAP, ISO/IEC 27001, or other certification is claimed.
+- This document does not claim SOC 2, CSAP, ISO/IEC 27001, or another certification.
 - RLS does not replace authentication, authorization, or SQL-injection prevention.
 - Optional Fernet and redacted diagnostics do not prove all persisted secrets are encrypted or that key lifecycle/custody is solved.
 - A receipt/hash does not prove backup provenance or restorability.
