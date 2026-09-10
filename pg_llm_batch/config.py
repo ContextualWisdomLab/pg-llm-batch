@@ -184,7 +184,11 @@ def _schema_is_compatible(
                        attr.attname,
                        pg_catalog.format_type(attr.atttypid, attr.atttypmod),
                        pg_catalog.has_schema_privilege(cls.relnamespace, 'USAGE'),
-                       pg_catalog.has_table_privilege(cls.oid, 'SELECT')
+                       (
+                           pg_catalog.has_table_privilege(cls.oid, 'SELECT')
+                           AND pg_catalog.has_table_privilege(cls.oid, 'INSERT')
+                           AND pg_catalog.has_table_privilege(cls.oid, 'UPDATE')
+                       )
                 FROM pg_catalog.pg_class AS cls
                 JOIN pg_catalog.pg_attribute AS attr
                   ON attr.attrelid = cls.oid
