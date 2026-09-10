@@ -86,6 +86,25 @@ def test_product_contract_records_integrated_single_flight_without_lease_claim()
         assert "distributed exactly-once" in lowered
 
 
+def test_product_contract_records_integrated_restore_target_identity_boundary() -> None:
+    """Merged #228 proves bounded name-plus-cluster separation, not end-to-end restore safety."""
+    prd = _read(REPOSITORY_ROOT / "docs" / "product" / "PRD.md")
+    trd = _read(REPOSITORY_ROOT / "docs" / "product" / "TRD.md")
+    fitness = _read(REPOSITORY_ROOT / "docs" / "DOCUMENTATION_FITNESS.md")
+    traceability = _read(REPOSITORY_ROOT / "docs" / "TRACEABILITY.md")
+    adr_index = _read(REPOSITORY_ROOT / "docs" / "adr" / "README.md")
+
+    assert "| PostgreSQL restore-target cluster identity verification | IMPLEMENTED-ON-PROTECTED-MAIN |" in prd
+    assert "`postgres_restore_target.py`" in trd
+    assert "merged #228" in fitness
+    assert "| FR-5 restore-target cluster identity verification | IMPLEMENTED-ON-PROTECTED-MAIN |" in traceability
+    assert "[0022](0022-postgres-restore-target-isolation.md)" in adr_index
+    for document in (prd, trd, fitness, traceability, adr_index):
+        lowered = document.lower()
+        assert "system_identifier" in document
+        assert "rpo/rto" in lowered or "rpo" in lowered
+
+
 def test_secret_policy_docs_match_optional_fernet_compatibility_default() -> None:
     """Canonical secret prose must not turn optional Fernet into a shipped mandate."""
     parameter = inspect.signature(SecretStore).parameters["require_encryption"]
@@ -103,7 +122,7 @@ def test_secret_policy_docs_match_optional_fernet_compatibility_default() -> Non
 
 
 def test_active_overlay_register_excludes_merged_or_closed_recovery_predecessors() -> None:
-    """The active register must not retain merged #191/#212 or closed #225 as live work."""
+    """The active register must not retain merged #191/#212/#228 or closed #225 as live work."""
     traceability = _read(REPOSITORY_ROOT / "docs" / "TRACEABILITY.md")
     active_numbers = {
         int(match.group("number")) for match in _ACTIVE_OVERLAY_ENTRY.finditer(traceability)
@@ -111,6 +130,7 @@ def test_active_overlay_register_excludes_merged_or_closed_recovery_predecessors
     assert 191 not in active_numbers
     assert 212 not in active_numbers
     assert 225 not in active_numbers
+    assert 228 not in active_numbers
     assert 296 in active_numbers
     assert 341 in active_numbers
 
