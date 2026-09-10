@@ -121,16 +121,38 @@ class PostgresPhysicalRecoveryProfile:
             )
 
     def as_dict(self) -> dict[str, object]:
-        """Return the stable machine-readable physical recovery profile schema."""
+        """Return the stable schema from one revalidated profile snapshot."""
+        try:
+            postgres_major = self.postgres_major
+            backup_method = self.backup_method
+            recovery_target_kind = self.recovery_target_kind
+            wal_archive_required = self.wal_archive_required
+            isolated_target_prepared = self.isolated_target_prepared
+            rpo_seconds = self.rpo_seconds
+            rto_seconds = self.rto_seconds
+        except AttributeError:
+            raise PostgresPhysicalRecoveryError(
+                "invalid PostgreSQL physical recovery profile"
+            ) from None
+
+        PostgresPhysicalRecoveryProfile(
+            postgres_major=postgres_major,
+            backup_method=backup_method,
+            recovery_target_kind=recovery_target_kind,
+            wal_archive_required=wal_archive_required,
+            isolated_target_prepared=isolated_target_prepared,
+            rpo_seconds=rpo_seconds,
+            rto_seconds=rto_seconds,
+        )
         return {
             "schema_version": 1,
-            "postgres_major": self.postgres_major,
-            "backup_method": self.backup_method,
-            "recovery_target_kind": self.recovery_target_kind,
-            "wal_archive_required": self.wal_archive_required,
-            "isolated_target_prepared": self.isolated_target_prepared,
-            "rpo_seconds": self.rpo_seconds,
-            "rto_seconds": self.rto_seconds,
+            "postgres_major": postgres_major,
+            "backup_method": backup_method,
+            "recovery_target_kind": recovery_target_kind,
+            "wal_archive_required": wal_archive_required,
+            "isolated_target_prepared": isolated_target_prepared,
+            "rpo_seconds": rpo_seconds,
+            "rto_seconds": rto_seconds,
             "package_capability_claim": False,
         }
 
