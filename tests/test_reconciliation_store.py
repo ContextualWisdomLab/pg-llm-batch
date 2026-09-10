@@ -24,7 +24,7 @@ class RecordingCursor:
     """Minimal cursor double recording tenant binding and candidate query calls."""
 
     def __init__(self, rows: list[Any]) -> None:
-        """Store rows returned by ``fetchall`` and initialize an empty call log."""
+        """Store rows returned by ``fetchmany`` and initialize an empty call log."""
         self.rows = rows
         self.calls: list[tuple[str, tuple[Any, ...]]] = []
 
@@ -32,9 +32,9 @@ class RecordingCursor:
         """Record one parameterized SQL execution."""
         self.calls.append((sql, params))
 
-    def fetchall(self) -> list[Any]:
-        """Return the configured candidate rows."""
-        return list(self.rows)
+    def fetchmany(self, size: int) -> list[Any]:
+        """Return at most the requested number of configured candidate rows."""
+        return list(self.rows[:size])
 
 
 class _HostileTenantScope(str):

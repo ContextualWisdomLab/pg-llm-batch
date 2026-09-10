@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+import pg_llm_batch.reconciliation_store as reconciliation_store
 from pg_llm_batch.exceptions import PgLlmBatchError
 from pg_llm_batch.reconciliation_store import (
     load_reconciliation_candidates_in_transaction,
@@ -19,7 +20,7 @@ _EXPECTED_CODE = "RECONCILIATION_STORE_ERROR"
 
 
 class _ExplodingRows:
-    """Raise secret-bearing lower-layer evidence only when row iteration starts."""
+    """Expose secret-bearing behavior if an invalid result container is iterated."""
 
     def __iter__(self):
         raise RuntimeError(f"{_SECRET} iterate")
@@ -38,10 +39,10 @@ class _FailingCursor:
         if self.fail_on == phase:
             raise RuntimeError(f"{_SECRET} {phase}")
 
-    def fetchall(self) -> Any:
+    def fetchmany(self, _size: int) -> Any:
         if self.fail_on == "fetch":
             raise RuntimeError(f"{_SECRET} fetch")
-        if self.fail_on == "iterate":
+        if self.fail_on == "container":
             return _ExplodingRows()
         return [("gateway-a", "batch-1")]
 
@@ -51,7 +52,7 @@ def _rendered(error: BaseException) -> str:
     return "".join(traceback.format_exception(type(error), error, error.__traceback__))
 
 
-@pytest.mark.parametrize("fail_on", ["tenant", "query", "fetch", "iterate"])
+@pytest.mark.parametrize("fail_on", ["tenant", "query", "fetch", "container"])
 def test_store_operational_failures_are_bounded_and_redacted(fail_on: str) -> None:
     """Database operational detail must not escape the package error boundary."""
     cursor = _FailingCursor(fail_on=fail_on)
@@ -69,7 +70,32 @@ def test_store_operational_failures_are_bounded_and_redacted(fail_on: str) -> No
     assert _SECRET not in _rendered(caught.value)
 
 
-def test_store_does_not_swallow_process_control_baseexceptions() -> None:
+def test_store_row_conversion_failure_is_bounded_and_redacted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unexpected internal row-conversion failures must remain content-free."""
+
+    def _explode(_row: Any) -> Any:
+        raise RuntimeError(f"{_SECRET} convert")
+
+    monkeypatch.setattr(reconciliation_store, "_candidate_from_persisted_row", _explode)
+
+    with pytest.raises(PgLlmBatchError) as caught:
+        load_reconciliation_candidates_in_transaction(
+            _FailingCursor(fail_on="none"),
+            "tenant-a",
+            max_candidates=1,
+        )
+
+    assert str(caught.value) == f"[{_EXPECTED_CODE}] {_EXPECTED_MESSAGE}"
+    assert caught.value.error_code == _EXPECTED_CODE
+    assert caught.value.details == {}
+    assert _SECRET not in _rendered(caught.value)
+
+
+def test_store_does_not_swallow_process_control_baseexceptions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Process-control exceptions must remain outside both store error wrappers."""
 
     class InterruptingCursor:
@@ -83,20 +109,14 @@ def test_store_does_not_swallow_process_control_baseexceptions() -> None:
             max_candidates=1,
         )
 
-    class _InterruptingRows:
-        def __iter__(self):
-            raise KeyboardInterrupt()
+    def _interrupt_row(_row: Any) -> Any:
+        raise KeyboardInterrupt()
 
-    class _InterruptingRowCursor:
-        def execute(self, _sql: str, _params: tuple[Any, ...]) -> None:
-            return None
-
-        def fetchall(self) -> Any:
-            return _InterruptingRows()
+    monkeypatch.setattr(reconciliation_store, "_candidate_from_persisted_row", _interrupt_row)
 
     with pytest.raises(KeyboardInterrupt):
         load_reconciliation_candidates_in_transaction(
-            _InterruptingRowCursor(),
+            _FailingCursor(fail_on="none"),
             "tenant-a",
             max_candidates=1,
         )
