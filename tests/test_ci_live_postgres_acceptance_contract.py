@@ -19,20 +19,25 @@ def test_ci_runs_the_real_integration_marker_on_exact_pr_heads() -> None:
     """Permanent CI must execute the live PostgreSQL integration suite."""
     workflow = _workflow()
 
+    assert "Build pg_tiktoken PostgreSQL integration image" in workflow
+    assert "--target with-tiktoken" in workflow
     assert "Run live PostgreSQL integration suite" in workflow
     assert 'uv run pytest -q -m integration' in workflow
     assert "PG_LLM_BATCH_TEST_DSN" in workflow
-    assert "docker compose up -d --no-build postgres" in workflow
+    assert "docker run --detach" in workflow
     assert "docker inspect --format='{{json .State.Health.Status}}'" in workflow
 
 
 def test_ci_live_fixture_uses_ephemeral_credential_authority_and_cleanup() -> None:
-    """Live acceptance must not commit a reusable database password."""
+    """Live acceptance must keep database credentials ephemeral and off argv."""
     workflow = _workflow()
 
     assert "openssl rand -hex" in workflow
-    assert "PG_LLM_BATCH_POSTGRES_PASSWORD=" in workflow
+    assert "::add-mask::" in workflow
+    assert "--env-file" in workflow
+    assert "POSTGRES_PASSWORD=" in workflow
     assert "postgresql://pgllm:pgllm@" not in workflow
+    assert "--env POSTGRES_PASSWORD=" not in workflow
     assert "Tear down live PostgreSQL integration fixture" in workflow
     assert "if: always()" in workflow
-    assert "docker compose down -v --remove-orphans" in workflow
+    assert "docker rm --force pg-llm-batch-postgres-integration" in workflow
