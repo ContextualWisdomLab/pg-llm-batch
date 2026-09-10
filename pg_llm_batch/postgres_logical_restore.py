@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fcntl
 import os
 import re
 import stat
@@ -82,6 +83,66 @@ def _archive_metadata(status: object) -> tuple[object, ...]:
     )
 
 
+def _duplicate_archive_descriptor(input_descriptor: int) -> int:
+    """Snapshot caller archive authority before inspection or package reopening."""
+    try:
+        return os.dup(input_descriptor)
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+
+
+def _validate_snapshot_descriptor(input_descriptor: int) -> None:
+    """Require snapshot regularity, readability, and a zero shared-file offset."""
+    try:
+        status = os.fstat(input_descriptor)
+    except (OSError, ValueError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+    if not stat.S_ISREG(status.st_mode):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive must be a private regular file"
+        )
+    try:
+        access_mode = fcntl.fcntl(input_descriptor, fcntl.F_GETFL) & os.O_ACCMODE
+        offset = os.lseek(input_descriptor, 0, os.SEEK_CUR)
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be inspected"
+        ) from None
+    if access_mode not in (os.O_RDONLY, os.O_RDWR):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive descriptor must be readable"
+        )
+    if offset != 0:
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive must start at offset zero"
+        )
+
+
+def _open_independent_archive(input_descriptor: int) -> int:
+    """Reopen retained archive authority with an independent package read offset."""
+    try:
+        return os.open(
+            f"/proc/self/fd/{input_descriptor}",
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0),
+        )
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore archive could not be isolated"
+        ) from None
+
+
+def _close_retained_archive_descriptor(input_descriptor: int) -> None:
+    """Best-effort close package-owned archive authority without masking evidence."""
+    try:
+        os.close(input_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
 def _inspect_initial_archive(
     input_descriptor: int,
     maximum_archive_size_bytes: int,
@@ -134,6 +195,51 @@ def _libpq_environment(connect_timeout_seconds: int) -> dict[str, str]:
     return environment
 
 
+def _close_retained_executable_descriptor(executable_descriptor: int) -> None:
+    """Best-effort close package-owned pg_restore executable authority."""
+    try:
+        os.close(executable_descriptor)
+    except (OSError, ValueError):
+        pass
+
+
+def _open_retained_pg_restore_executable(pg_restore_executable: str) -> int:
+    """Retain one root-owned non-set-id regular pg_restore executable inode."""
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    try:
+        executable_descriptor = os.open(pg_restore_executable, flags)
+    except (OSError, ValueError, OverflowError):
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore executable unavailable"
+        ) from None
+
+    try:
+        status = os.fstat(executable_descriptor)
+    except (OSError, ValueError):
+        _close_retained_executable_descriptor(executable_descriptor)
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore executable could not be inspected"
+        ) from None
+
+    mode = status.st_mode
+    if (
+        not stat.S_ISREG(mode)
+        or status.st_uid != 0
+        or mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH) == 0
+        or mode & (stat.S_IWGRP | stat.S_IWOTH | stat.S_ISUID | stat.S_ISGID) != 0
+    ):
+        _close_retained_executable_descriptor(executable_descriptor)
+        raise PostgresLogicalRestoreError(
+            "PostgreSQL logical restore executable is unsafe"
+        )
+    return executable_descriptor
+
+
 def _run_pg_restore(
     *,
     service_name: str,
@@ -142,7 +248,7 @@ def _run_pg_restore(
     timeout_seconds: int,
     connect_timeout_seconds: int,
 ) -> None:
-    """Run one shell-free, single-transaction pg_restore with bounded diagnostics."""
+    """Run one shell-free pg_restore through retained executable inode authority."""
     arguments = [
         pg_restore_executable,
         "--single-transaction",
@@ -150,36 +256,44 @@ def _run_pg_restore(
         f"--dbname=service={service_name}",
     ]
     environment = _libpq_environment(connect_timeout_seconds)
+    executable_descriptor = _open_retained_pg_restore_executable(pg_restore_executable)
     try:
-        completed = subprocess.run(
-            arguments,
-            stdin=input_descriptor,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout_seconds,
-            check=False,
-            close_fds=True,
-            env=environment,
-        )
-    except FileNotFoundError:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore executable unavailable"
-        ) from None
-    except subprocess.TimeoutExpired:
-        raise PostgresLogicalRestoreError("PostgreSQL logical restore timed out") from None
-    except Exception:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore execution failed"
-        ) from None
+        try:
+            completed = subprocess.run(
+                arguments,
+                executable=f"/proc/self/fd/{executable_descriptor}",
+                pass_fds=(executable_descriptor,),
+                stdin=input_descriptor,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=timeout_seconds,
+                check=False,
+                close_fds=True,
+                env=environment,
+            )
+        except FileNotFoundError:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore executable unavailable"
+            ) from None
+        except subprocess.TimeoutExpired:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore timed out"
+            ) from None
+        except Exception:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore execution failed"
+            ) from None
 
-    if type(completed) is not subprocess.CompletedProcess:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore execution failed"
-        )
-    if completed.returncode != 0:
-        raise PostgresLogicalRestoreError(
-            "PostgreSQL logical restore command failed"
-        )
+        if type(completed) is not subprocess.CompletedProcess:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore execution failed"
+            )
+        if completed.returncode != 0:
+            raise PostgresLogicalRestoreError(
+                "PostgreSQL logical restore command failed"
+            )
+    finally:
+        _close_retained_executable_descriptor(executable_descriptor)
 
 
 def _verify_archive_unchanged(
@@ -212,28 +326,45 @@ def restore_postgres_logical_backup(
     connect_timeout_seconds: int = 15,
     maximum_archive_size_bytes: int = _DEFAULT_MAXIMUM_ARCHIVE_SIZE_BYTES,
 ) -> PostgresLogicalRestoreResult:
-    """Restore one bounded custom archive through a caller-owned file descriptor.
+    """Restore one bounded custom archive through isolated caller file authority.
 
     The caller must explicitly assert that the archive originates from trusted source
     superusers. This assertion is a caller-owned precondition, not package proof that
     archive definitions, ownership, or privileges are safe. The caller also selects
     the target libpq service and is responsible for making that service an isolated
     recovery target; the service name is not an authorization or proof-of-isolation
-    boundary. The package does not receive an archive path, place credentials in
-    process arguments, or reflect archive/database content in diagnostics. Only
-    ``PGPASSWORD``, ``PGPASSFILE``, and ``PGSERVICEFILE`` may be inherited, so ambient
-    host/database/options/SSL-mode variables cannot silently redirect or weaken the
-    target session. The validated non-secret service selector is supplied through
-    ``--dbname=service=...`` so ``pg_restore`` performs a direct database restore
-    rather than merely rendering SQL. The command runs with one transaction and exits
-    on the first SQL error, so timeout or execution failure does not intentionally
-    commit a partial package restore. Descriptor identity and observable archive
-    metadata are revalidated after the restore to reject in-place mutation detected
-    during execution. Custom-format ``pg_restore`` seeks to the table of contents
-    and data blocks, so a successful restore is not required to leave the
-    descriptor at end-of-file. A post-restore metadata mismatch means the SQL
-    transaction may already have committed; callers must treat that error as
-    unsafe rather than as proof that no restore occurred.
+    boundary. The package first duplicates the caller descriptor so later numeric-FD
+    replacement cannot substitute another archive. That snapshot must itself carry
+    readable authority and be positioned at byte zero; package code does not widen a
+    write-only caller capability. The snapshot is retained through execution and
+    reopened through ``/proc/self/fd`` so ``pg_restore`` receives an independent
+    package-owned open file description and read offset. That independent descriptor
+    must pass the private, one-link, bounded regular-file inspection before child
+    execution. Seeking or replacing the caller descriptor after the snapshot therefore
+    cannot redirect the child or move its archive read position. The retained snapshot
+    is reverified after execution against the inspected child-archive metadata so the
+    original snapshotted authority, rather than only the reopened stream, remains the
+    post-restore integrity boundary. The caller keeps ownership of the original
+    descriptor; package cleanup closes only package-owned descriptors. Before child
+    execution, the selected absolute ``pg_restore`` path is opened no-follow and
+    non-blocking, then accepted only as a root-owned regular executable with no
+    group/other write or set-id authority. The child executes that retained inode via
+    ``/proc/self/fd`` while preserving the caller pathname only as ``argv[0]``; replacing
+    the path after retention cannot substitute different executable bytes. The package
+    does not receive an archive path, place credentials in process arguments, or
+    reflect archive/database content in diagnostics. Only ``PGPASSWORD``, ``PGPASSFILE``,
+    and ``PGSERVICEFILE`` may be inherited, so ambient host/database/options/SSL-mode
+    variables cannot silently redirect or weaken the target session. The validated
+    non-secret service selector is supplied through ``--dbname=service=...`` so
+    ``pg_restore`` performs a direct database restore rather than merely rendering
+    SQL. The command runs with one transaction and exits on the first SQL error, so
+    timeout or execution failure does not intentionally commit a partial package
+    restore. Descriptor identity and observable archive metadata are revalidated after
+    the restore to reject in-place mutation detected during execution. Custom-format
+    ``pg_restore`` seeks to the table of contents and data blocks, so a successful
+    restore is not required to leave the descriptor at end-of-file. A post-restore
+    metadata mismatch means the SQL transaction may already have committed; callers
+    must treat that error as unsafe rather than as proof that no restore occurred.
     """
     if not _parameters_are_valid(
         service_name,
@@ -252,17 +383,29 @@ def restore_postgres_logical_backup(
             "PostgreSQL logical restore requires trusted source superusers"
         )
 
-    initial_status = _inspect_initial_archive(
-        input_descriptor,
-        maximum_archive_size_bytes,
-    )
-    _run_pg_restore(
-        service_name=service_name,
-        input_descriptor=input_descriptor,
-        pg_restore_executable=pg_restore_executable,
-        timeout_seconds=timeout_seconds,
-        connect_timeout_seconds=connect_timeout_seconds,
-    )
-    return PostgresLogicalRestoreResult(
-        size_bytes=_verify_archive_unchanged(input_descriptor, initial_status)
-    )
+    snapshot_descriptor = _duplicate_archive_descriptor(input_descriptor)
+    try:
+        _validate_snapshot_descriptor(snapshot_descriptor)
+        retained_descriptor = _open_independent_archive(snapshot_descriptor)
+        try:
+            initial_status = _inspect_initial_archive(
+                retained_descriptor,
+                maximum_archive_size_bytes,
+            )
+            _run_pg_restore(
+                service_name=service_name,
+                input_descriptor=retained_descriptor,
+                pg_restore_executable=pg_restore_executable,
+                timeout_seconds=timeout_seconds,
+                connect_timeout_seconds=connect_timeout_seconds,
+            )
+            return PostgresLogicalRestoreResult(
+                size_bytes=_verify_archive_unchanged(
+                    snapshot_descriptor,
+                    initial_status,
+                )
+            )
+        finally:
+            _close_retained_archive_descriptor(retained_descriptor)
+    finally:
+        _close_retained_archive_descriptor(snapshot_descriptor)

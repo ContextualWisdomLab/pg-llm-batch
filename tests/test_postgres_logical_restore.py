@@ -18,6 +18,21 @@ from pg_llm_batch.postgres_logical_restore import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _stub_retained_executable_for_mocked_child(monkeypatch):
+    """Keep mocked child tests independent of host PostgreSQL client packages."""
+    real_open = os.open
+
+    def open_inert_descriptor(_pg_restore_executable):
+        return real_open(os.devnull, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+
+    monkeypatch.setattr(
+        logical_restore,
+        "_open_retained_pg_restore_executable",
+        open_inert_descriptor,
+    )
+
+
 def _open_private_archive(tmp_path, payload=b"PGDMP-archive"):
     path = tmp_path / "backup.dump"
     descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
@@ -100,7 +115,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
             "--exit-on-error",
             "--dbname=service=isolated_restore",
         ]
-        assert observed["kwargs"]["stdin"] == descriptor
+        assert observed["kwargs"]["stdin"] != descriptor
         assert observed["kwargs"]["stdout"] is subprocess.DEVNULL
         assert observed["kwargs"]["stderr"] is subprocess.DEVNULL
         assert observed["kwargs"]["timeout"] == 41
@@ -114,7 +129,7 @@ def test_restore_uses_shell_free_bounded_content_free_contract(tmp_path, monkeyp
         }
         assert str(path) not in " ".join(observed["argv"])
         assert "credential-value" not in " ".join(observed["argv"])
-        assert os.lseek(descriptor, 0, os.SEEK_CUR) == size
+        assert os.lseek(descriptor, 0, os.SEEK_CUR) == 0
     finally:
         os.close(descriptor)
 
@@ -425,12 +440,15 @@ def test_restore_accepts_custom_format_seek_position(tmp_path, monkeypatch):
 def test_restore_normalizes_final_inspection_failure(tmp_path, monkeypatch):
     _path, descriptor, _size = _open_private_archive(tmp_path)
     real_fstat = os.fstat
+    retained_descriptor = None
     target_seen = False
 
     def flaky_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal retained_descriptor, target_seen
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
+        if retained_descriptor is None:
+            retained_descriptor = target_descriptor
+        if target_descriptor != retained_descriptor:
             return status
         if not target_seen:
             target_seen = True
@@ -465,12 +483,15 @@ def test_restore_rejects_archive_mutation_during_execution(
 ):
     _path, descriptor, _size = _open_private_archive(tmp_path)
     real_fstat = os.fstat
+    retained_descriptor = None
     target_seen = False
 
     def changed_fstat(target_descriptor):
-        nonlocal target_seen
+        nonlocal retained_descriptor, target_seen
         status = real_fstat(target_descriptor)
-        if target_descriptor != descriptor:
+        if retained_descriptor is None:
+            retained_descriptor = target_descriptor
+        if target_descriptor != retained_descriptor:
             return status
         if not target_seen:
             target_seen = True
