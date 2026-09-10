@@ -2,198 +2,80 @@
 
 ## Document authority
 
-This TRD defines technical invariants for `pg-llm-batch`. It distinguishes protected-main behavior from work that is only present in an active pull request. The repository's live code, schema, tests, ruleset, and exact-head evidence remain stronger authority than historical branches, stale PR prose, predecessor checks, or generated merge commits.
-
-Status vocabulary is shared with the PRD: **IMPLEMENTED-ON-PROTECTED-MAIN**, **ACTIVE-PR**, **PARTIAL**, **PLANNED**, and **SUPERSEDED**.
+This TRD defines technical invariants for `pg-llm-batch`. Protected default-branch code, schema, tests, and accepted decisions are stronger authority than historical branches, stale PR prose, predecessor checks, exact SHAs, generated merge commits, or run IDs. Status vocabulary is shared with the PRD: **IMPLEMENTED-ON-PROTECTED-MAIN**, **ACTIVE-PR**, **PARTIAL**, **PLANNED**, and **SUPERSEDED**.
 
 ## System boundary
 
-`pg-llm-batch` is a Python package plus PostgreSQL schema and container assets. It may run standalone or be embedded by another service. The package owns batch preparation, package persistence, validated provider Batch API access, durable lifecycle projection, resumable checkpoint storage, bounded reconciliation primitives, tenant-qualified transient reconciliation single-flight, a bounded direct logical-restore executor, and bounded content-free PostgreSQL recovery-evidence primitives. It does not own host authentication, business authorization, ingress/WAF, infrastructure TLS policy, external secret-manager choice, global OpenTelemetry configuration, backup-storage infrastructure, WAL/archive infrastructure, or a cross-system distributed transaction.
+`pg-llm-batch` is a Python package plus PostgreSQL schema and container assets. It can run standalone or be embedded. It owns bounded batch preparation, PostgreSQL persistence, validated provider Batch API access, durable lifecycle/checkpoint state, tenant/RLS controls, bounded reconciliation, tenant-qualified transient single-flight, bounded recovery evidence, bounded logical restore, and bounded restore-target cluster-identity comparison. It does not own host authentication/business authorization, infrastructure TLS, external secret-manager choice, global telemetry policy, backup/WAL infrastructure, connection provenance, or cross-system distributed transactions.
 
 ## Component contract
 
 | Component | Protected-main responsibility | Prohibited authority |
 | --- | --- | --- |
-| `token_counter.py` | resolve reviewed tokenizer metadata and call `pg_tiktoken` for token accounting | provider credentials, tenant authorization, provider I/O |
-| `orchestrator.py` | select queued requests, partition under limits, persist package payload/file/line/request assignments | provider protocol and retry policy |
-| `batch_api_client.py` | validate provider destination and remote identifiers; upload/create/poll/wait/cancel/retrieve under finite budgets | tenant authentication, scheduler ownership |
-| `durable_client.py` | compose provider operations with durable lifecycle ordering/persistence; preserve `DurableBatchAPIClient` source compatibility, its four-argument `LifecycleRecorder(postgres_dsn, endpoint_alias, provider_batch, observation_order)` seam, and default `standalone` database scope; provide a distinct tenant-qualified recorder seam | authenticating or authorizing host tenants, deriving tenant authority from provider data |
-| `db.py` | schema application and parameterized persistence/read helpers, including tenant-qualified lifecycle context, conflict identity, and exact-row lookup | database-side provider networking, authenticating tenant callers |
-| `checkpoint_store.py` | tenant-qualified PostgreSQL checkpoint/CAS operations and conflict semantics | distributed exactly-once claims |
-| `reconciliation.py` | finite host-selected polling/retrieval pass using the existing validated client surface | candidate discovery and scheduling |
-| `reconciliation_single_flight.py` | tenant-qualified transient PostgreSQL session advisory-lock exclusion for one bounded reconciliation identity | durable lease, scheduler, result-application transaction, terminal-work retirement, distributed exactly-once |
-| `postgres_recovery_receipt.py` | encode/decode one deterministic bounded content-free PostgreSQL recovery evidence receipt | proving backup success/restorability, authenticating operators, carrying DSNs/credentials/business content |
-| `postgres_backup_evidence.py` | derive SHA-256 and byte-size evidence from one private regular backup artifact through descriptor-pinned no-follow traversal and finite work | executing `pg_dump`/`pg_restore`, persisting backup bytes, proving restore semantics |
-| `postgres_schema_evidence.py` | derive SHA-256 and byte-size evidence from the exact distributed `pg_llm_batch/schema.sql` resource under a finite package-owned budget | executing SQL, proving live-cluster parity or migration currency |
-| `postgres_logical_restore.py` | execute the bounded reviewed custom-format `pg_restore` path using caller-owned source trust, constrained libpq environment, transactional failure handling, and archive metadata verification | creating backups, authenticating target isolation, proving post-restore catalog/application readiness, PITR, RPO/RTO/HA/DR |
-| `config.py` | PostgreSQL-backed configuration and secret storage with optional Fernet plus an explicit compatibility mode | claiming mandatory encryption, historical-row migration, key rotation/recovery, external key custody, or prescribing an embedding host's external secret manager |
-| `observability.py` | opt-in bounded traces/metrics around reviewed operations | configuring global SDK/exporter/resource policy |
-| `health.py` | readiness aggregation and redacted public health response | general-purpose web serving or arbitrary diagnostic reflection |
-| `cli.py` | standalone operator composition and bounded input surfaces | higher-level workflow orchestration |
-
-The protected-main validation authority for the `durable_client.py` compatibility row is `pg_llm_batch/durable_client.py`, `tests/test_tenant_durable_client.py`, and `tests/test_tenant_lifecycle_persistence.py`: the tests prove construction-time tenant rejection before downstream effects, exact four-argument standalone recorder invocation, explicit `standalone` persistence/read delegation, and tenant-qualified lifecycle persistence/read identities.
-
-The protected-main validation authority for recovery evidence is the three recovery-evidence modules plus their focused test suites. Historical merged PRs #205, #206, and #207 are integration evidence, not runtime authority. The bounded logical-restore executor integrated through #212 is a separate execution capability with narrower authority than end-to-end recovery readiness. `docs/TRACEABILITY.md` remains the canonical status map for the distinction between integrated evidence/restore primitives and active backup, target-authentication, and application-readiness candidates.
+| `token_counter.py` | reviewed PostgreSQL tokenizer boundary | provider credentials, tenant authorization, provider I/O |
+| `orchestrator.py` | deterministic bounded preparation and package persistence | provider protocol/retry policy |
+| `batch_api_client.py` | validated bounded provider upload/create/poll/wait/cancel/retrieve | tenant authentication, scheduler ownership |
+| `durable_client.py` | standalone and tenant-qualified lifecycle composition | authenticating/authorizing host tenants |
+| `db.py` | schema application and parameterized durable reads/writes/RLS context | database-side provider networking |
+| `checkpoint_store.py` | tenant-qualified checkpoint/CAS operations | distributed exactly-once claims |
+| `reconciliation.py` | finite host-selected reconciliation | discovery and scheduling |
+| `reconciliation_single_flight.py` | transient tenant-qualified PostgreSQL session advisory-lock exclusion | durable lease, scheduler, result application, terminal retirement, distributed exactly-once |
+| `postgres_recovery_receipt.py` | deterministic bounded content-free receipt | backup/restore execution or operator authentication |
+| `postgres_backup_evidence.py` | descriptor-pinned finite artifact hash/size evidence | backup execution or restorability proof |
+| `postgres_schema_evidence.py` | finite packaged-schema hash/size evidence | SQL execution or live-cluster parity proof |
+| `postgres_logical_restore.py` | bounded custom-format direct restore with caller-owned source trust, constrained libpq environment, transactional failure handling, and archive metadata verification | backup creation, target authentication, application readiness, PITR/RPO-RTO |
+| `postgres_restore_target.py` | require distinct exact service names and distinct caller-owned PostgreSQL `system_identifier` values before a host treats targets as separate | opening connections, accepting DSNs/passwords, authenticating identity collection, executing restore, application/catalog/PITR/RPO-RTO proof |
+| `config.py` | PostgreSQL-backed config/secret storage with optional Fernet and explicit compatibility mode | mandatory encryption, compatibility-row migration, rotation/recovery, external key custody |
+| `observability.py` | opt-in bounded telemetry | global SDK/exporter/resource policy |
+| `health.py` | redacted readiness aggregation | arbitrary diagnostic reflection |
+| `cli.py` | standalone operator composition | higher-level workflow orchestration |
 
 ## Runtime architecture
 
-### Batch preparation
+### Batch preparation and provider I/O
 
-1. Resolve a supported package batch identity.
-2. Read eligible unassigned requests from PostgreSQL.
-3. Count model tokens through the reviewed PostgreSQL tokenizer boundary.
-4. Partition requests in memory under explicit batch token, byte, record, and provider limits.
-5. Under one package preparation transaction, persist virtual payloads, batch-file rows, JSONL line rows, request assignments, and aggregate totals in deterministic order.
-6. On failure before commit, roll back the package preparation transaction rather than exposing a partially committed preparation from that invocation.
+Preparation resolves a supported package identity, reads eligible requests, counts tokens through `pg_tiktoken`, partitions under finite token/byte/record/provider limits, and commits package payload/file/line/request assignments atomically. Package payloads remain PostgreSQL-backed rather than package-owned local files.
 
-Package-generated provider payloads are represented by `memory://<file_id>` references and are reconstructed from PostgreSQL rather than written to a package-owned local payload file.
-
-### Provider I/O
-
-Provider gateway URLs and endpoint aliases are configuration inputs but are untrusted until validated by the applicable package boundary. Production gateway destinations require HTTPS; only explicitly reviewed loopback development HTTP destinations are accepted. Userinfo, query, fragment, whitespace, malformed port, or other forbidden URL forms must fail before credentials are used.
-
-Control-plane responses are consumed through a finite decoded-byte budget and strict UTF-8/JSON parsing. Provider output/error files are streamed in finite chunks with an independent decoded-byte ceiling before JSONL parsing. The client must fail closed when an adapter cannot provide the bounded streaming interface required by the operation.
-
-Automatic provider retry is limited to reviewed idempotent GET operations and the exact default status set `{408, 425, 429, 502, 503, 504}`. TLS handshake, certificate, and fingerprint failures are not automatically retried. Upload/create/cancel POST operations remain single-attempt unless a separately reviewed provider-specific contract is introduced.
+Provider URLs and identifiers are untrusted until validated. Production destinations require the reviewed secure URL policy. Control responses and result/error files are consumed under finite decoded-byte budgets. Automatic retry stays limited to reviewed idempotent GET semantics; side-effecting POSTs remain single-attempt unless a separately reviewed provider contract changes that rule.
 
 ### Durable lifecycle tenancy
 
-Standalone lifecycle data uses the exact `standalone` tenant scope. `DurableBatchAPIClient` preserves its original four-argument lifecycle-recorder interface `(postgres_dsn, endpoint_alias, provider_batch, observation_order)`; its default persistence path and `get_remote_batch_state(...)` compatibility helper resolve through the explicit `standalone` scope. Tenant-aware hosts instead use `TenantDurableBatchAPIClient` with a distinct tenant-qualified recorder seam so tenant identity cannot be silently dropped.
+Standalone lifecycle state uses the explicit `standalone` scope and preserves the four-argument `DurableBatchAPIClient` recorder seam. Tenant-aware clients validate trusted host-selected `tenant_scope` before reservation, credential resolution, provider I/O, or lifecycle SQL. Durable tenant identity is `(tenant_scope, endpoint_alias, remote_batch_id)` and package reads/writes bind that scope using parameterized transaction-local `set_config` under forced RLS. `tenant_scope` is routing context, not authentication. `SUPERUSER`, `BYPASSRLS`, and arbitrary SQL are administrative escape hatches outside the tenant guarantee.
 
-A tenant-aware client validates the trusted host-selected `tenant_scope` synchronously during construction, before any observation reservation, credential-provider lookup, provider I/O, or lifecycle database I/O can occur. Provider metadata, request payloads, model output, transport headers, endpoint aliases, provider resource identifiers, and credential data never choose tenant authority. Credential resolution remains a separate deployment/host concern: ordering tenant validation before it does not make the credential store tenant-keyed.
+### Checkpoints and reconciliation
 
-The durable lifecycle identity is:
+Checkpoint storage is tenant-qualified and compare-and-swap based. PostgreSQL transactionality does not extend to provider/network effects.
 
-```text
-(tenant_scope, endpoint_alias, remote_batch_id)
-```
+`reconcile_batch_candidates(...)` performs one finite host-selected reconciliation pass. Protected main also contains the tenant-qualified session advisory single-flight integrated through #191. That lock is session-lifetime transient state, not a scheduler, durable lease, result-application transaction, terminal-work-retirement authority, or distributed exactly-once mechanism. Durable discovery remains active work.
 
-Every tenant-aware lifecycle persistence conflict target and exact-row lookup includes the full identity. The protected schema's lifecycle operational status index begins with `tenant_scope`, and package reads/writes bind the validated scope with parameterized transaction-local `set_config`. The schema enables and forces PostgreSQL row-level security for tenant-qualified lifecycle state. Production application roles must be `NOSUPERUSER NOBYPASSRLS`. A role that can execute arbitrary SQL can choose arbitrary custom setting values; therefore generic arbitrary SQL access is explicitly outside the package isolation guarantee.
+### PostgreSQL recovery
 
-These invariants are deterministically verified on protected main: `tests/test_tenant_durable_client.py` proves malformed scope fails before reservation or credentials and proves the unchanged four-argument standalone recorder seam; `tests/test_tenant_lifecycle_persistence.py` proves malformed scope fails before database access, the upsert conflict target is `(tenant_scope, endpoint_alias, remote_batch_id)`, exact reads bind the same full identity, and standalone helpers delegate to `standalone`; `pg_llm_batch/schema.sql` supplies the tenant-qualified unique constraint, forced RLS policy, and `idx_llm_remote_batch_jobs_tenant_status_observed` index. `docs/remote-batch-lifecycle.md`, ADR 0002, and `docs/doctoring/tenant-scoped-lifecycle.md` document the same migration, direct-SQL/RLS, role, and rollback boundaries.
+Protected main contains bounded receipt, backup-artifact, and packaged-schema evidence primitives. These do not execute backup/restore, establish provenance, prove live schema, or establish PITR/RPO/RTO/HA/DR.
 
-### Durable result checkpoints
+Direct `pg_restore` execution is **IMPLEMENTED-ON-PROTECTED-MAIN** through merged #212. The executor accepts PostgreSQL custom-format random-access seek semantics and verifies archive metadata rather than requiring final descriptor EOF. Closed #209 remains historical defect evidence for the invalid EOF postcondition. The executor retains caller-owned source-superuser trust, constrained libpq environment, and single-transaction failure semantics; it does not provide `pg_dump`, target identity authentication, application/catalog readiness, WAL/PITR, or recovery-objective proof.
 
-Protected main contains tenant-qualified durable result checkpoint storage with compare-and-swap/conflict semantics. The checkpoint store can participate in a caller-owned PostgreSQL transaction where the caller's durable result application is in the same database transaction. The mere existence of this store does not prove exactly-once application across provider/network/database boundaries.
+Restore-target cluster identity verification is also **IMPLEMENTED-ON-PROTECTED-MAIN** through merged #228. `postgres_restore_target.py` accepts exact live/restore libpq service names and exact `PostgresRestoreTargetIdentity` values; both names and both `pg_control_system().system_identifier` values must differ. Callers collect the identifiers from connections they already opened. The package does not open a connection, read `pg_service.conf`, accept a DSN/password/host/port, authenticate the collector or connection provenance, execute `pg_restore`, or prove post-restore schema/application readiness. Thus the seam rejects same-cluster aliases but is not end-to-end restore authorization.
 
-Checkpoint counters, offsets, and identities must validate before mutation. Conflicting writes fail explicitly rather than silently overwriting a newer checkpoint. Rollback/recovery tests and schema parity are part of the storage contract.
+Logical `pg_dump` remains active work. #296 remains an unshipped application-readiness candidate, and #341 remains the active owner of a permanent hosted live-PostgreSQL integration lane. Their branch-level evidence does not become protected-main truth until integration.
 
-### Reconciliation
+## Persistence, security, and privacy
 
-Protected main supplies a scheduler-independent `reconcile_batch_candidates(...)` primitive. A host supplies candidate identities and a finite `max_jobs` budget. The primitive validates candidates, bounds scanning/work, polls through the validated provider client, retrieves completed jobs through that same client, and returns payload-free finite outcome/error categories.
+Package-owned persisted payload/state is canonical and validated before downstream effects when correctness depends on it. New database objects use descriptive snake_case naming where applicable, parameterized SQL, synchronized schema copies, explicit durable identities, and documented migration/rollback boundaries.
 
-The host still owns candidate discovery, tenant authorization, and scheduling. Durable candidate discovery remains an **ACTIVE-PR** surface. The tenant-qualified session advisory single-flight is protected-main behavior: it provides transient, session-lifetime exclusion for one bounded reconciliation identity and releases with session/process loss. It is not a durable lease, scheduler, result-application transaction, terminal-work-retirement mechanism, or distributed exactly-once guarantee. Package-owned autonomous scheduling, crash/restart completion semantics, terminal-work retirement after durable result application, and an end-to-end exactly-once worker remain **PARTIAL** or **PLANNED** capabilities.
+Standalone config and secrets are PostgreSQL-backed. Fernet is optional on protected main. `SecretStore(require_encryption=False)` permits base64-obfuscated compatibility rows with `is_encrypted = FALSE`; callers may explicitly require Fernet. Mandatory encrypted-at-rest policy, migration of historical compatibility rows, key rotation/recovery, and external key custody are separate capabilities.
 
-### PostgreSQL recovery evidence and logical restore
+Authorized prompts, requests, JSONL, and provider results are not silently masked or truncated merely because they may contain PII. Such transformation changes token counts, replay, provider semantics, and business meaning. Host authentication/authorization, tenant selection, least-privilege identities, transport/storage controls, retention/deletion policy, and redacted operational evidence are the confidentiality boundaries. Any content transformation requires an explicit host/business policy with provenance and acceptance tests.
 
-Protected main supplies three deliberately non-executing recovery-evidence primitives.
+Errors, logs, telemetry, readiness, and review evidence omit DSNs, credentials, prompt/provider content, arbitrary SQL, untrusted identifiers, and dynamic lower-layer text where it is unnecessary. RLS remains defense in depth rather than authentication or SQL-injection prevention.
 
-1. `PostgresRecoveryReceipt` binds exact built-in primitive metadata for package version, source commit, PostgreSQL major, packaged-schema SHA-256, reviewed backup-method vocabulary (`logical`, `physical`, or `pitr`), backup artifact SHA-256/size, and bounded timestamps. Its JSON representation is deterministic and size-bounded, rejects duplicate/unknown fields and hostile subclasses, and maps ordinary malformed input/decoder failures to fixed content-free diagnostics.
-2. `inspect_postgres_backup_artifact(...)` traverses path components through pinned directory descriptors with no-follow semantics, rejects `..`, symlinked parents/final components, non-regular/empty/oversized files and unsafe link counts/permissions as defined by the implementation contract, hashes under an explicit finite maximum-size work budget, bounds each read request by remaining budget, compares descriptor identity/metadata before and after hashing, and treats cleanup failures as bounded evidence without masking an already-selected primary error.
-3. `inspect_postgres_schema()` streams the exact distributed `pg_llm_batch/schema.sql` resource through SHA-256 under a finite package-owned work budget and returns only SHA-256 plus byte size. Missing, unreadable, empty, oversized, malformed-chunk, hostile-subclass, or cleanup-failing resources fail closed through fixed content-free diagnostics.
+## Concurrency, testing, and release
 
-These evidence primitives do not execute SQL or database mutation. They do not prove a backup command succeeded, prove backup provenance beyond caller-controlled receipt fields, prove restorability, prove a live database matches the packaged schema, provide target isolation, manage keys/secrets, manage physical/WAL/PITR infrastructure, or establish RPO/RTO/HA/DR/compliance. Those are separate acceptance domains.
+Batch preparation and durable writes use PostgreSQL transactionality appropriate to their aggregate boundary. Session advisory locking is transient and must not be promoted to durable leasing. Recovery file inspection remains finite and fail-closed under mutation; a successful hash is evidence for the revalidated descriptor identity, not a lock on external storage.
 
-Logical `pg_dump` execution in #208 remains **ACTIVE-PR**. Direct `pg_restore` execution is **IMPLEMENTED-ON-PROTECTED-MAIN** through merged #212. The integrated executor deliberately accepts PostgreSQL custom-format random-access seek positions and verifies archive metadata instead of requiring final descriptor EOF. Closed predecessor #209 remains historical defect evidence because its EOF-consumption postcondition could report failure after `--single-transaction` had already committed. The integrated executor keeps caller-owned source-superuser trust, a constrained libpq environment, single-transaction failure semantics, and metadata-fingerprint checks explicit; it does not provide `pg_dump`, authenticate that the target is a different cluster, prove post-restore catalog/application readiness, manage external keys or WAL, or establish PITR/RPO/RTO/HA/DR.
+Every defect follows realistic RED → minimum causal fix → exact-head GREEN. Repository evidence includes Python 3.10/3.12/3.14, exact owned production statement/branch coverage, public docstrings, lint/static checks, PostgreSQL integration for SQL/RLS/migration/concurrency behavior, package/container validation, migration rollback where applicable, security/SAST, locked packaging, release acceptance, SBOM/provenance, and artifact identity. Queued, skipped, cancelled, absent, stale, predecessor, synthetic-only, or infrastructure-failed evidence is not success.
 
-Active recovery work still includes executable logical backup, evidence binding, live receipt re-inspection, post-restore catalog/application acceptance, a caller-owned physical/WAL/PITR profile, and authenticated restore-target isolation. #296 is an active application-readiness candidate stacked behind the permanent live-PostgreSQL CI lane in #341; neither branch is protected-main truth. Those are capability families beyond the integrated restore executor, not evidence that end-to-end recovery is shipped. Distinct service-name labels are not authenticated cluster isolation.
-
-## Persistence requirements
-
-### Naming and schema ownership
-
-New package-owned database objects use descriptive two-or-more-word `snake_case` names where applicable. SQL is parameterized; identifiers are not constructed from unvalidated user/provider text. Packaged schema and Docker initialization copies that represent the same contract must remain synchronized by regression tests.
-
-### Migration behavior
-
-Migrations must have an explicit compatibility and rollback boundary. Tenant migrations preserve legacy data under `standalone`, avoid a committed intermediate RLS-bypass state, restore forced RLS atomically, and remain idempotent where documented. Existing-volume retirement of legacy `http` / `pg_cron` authority is **ACTIVE-PR** and may not be described as shipped merely because fresh initialization no longer depends on SQL-side provider networking.
-
-### Data integrity
-
-Package-owned persisted virtual JSONL is canonical state, not a best-effort cache. Malformed shape, line count, framing, duplicate JSON members, non-finite numeric forms, or invalid record type fail closed through bounded package errors. Local payload integrity validation occurs before provider credentials/provider I/O where the provider effect relies on that payload.
-
-Durable provider/resource identifiers and tenant identities are validated before they become persistence or authorization inputs. Database/query failures must not be silently reclassified as an authoritative no-row result when correctness depends on distinguishing those cases.
-
-Recovery evidence is identity/integrity metadata, not a second persistence authority. The package does not own backup storage, replica lifecycle, object-store retention, WAL archives, encryption-at-rest infrastructure, or backup deletion merely because it can hash an operator-selected artifact. Operators/deployments must keep those responsibilities explicit.
-
-## Security and privacy requirements
-
-### Secrets
-
-Standalone provider configuration and secret storage are PostgreSQL-backed. Fernet is optional on protected main. With `SecretStore(require_encryption=False)`, the compatibility path can persist base64-obfuscated rows with `is_encrypted = FALSE`; callers that require Fernet must explicitly select `require_encryption=True` and provide usable key material. Mandatory encryption, migration of historical compatibility rows, key rotation/recovery, and external key custody are not protected-main guarantees. Environment variables are limited to explicitly documented bootstrap transport such as the database DSN and optional Fernet key. CLI secret entry uses no-echo prompting or bounded standard input rather than plaintext process arguments. Embedding hosts may supply another credential provider through the supported seam.
-
-Recovery evidence must not carry DSNs, passwords, Fernet keys, prompts/results, ciphertext, arbitrary SQL, provider payloads, paths where not required by the callable interface, dynamic exception names, or reflected lower-layer diagnostics. A backup/restore executor must isolate credentials from process arguments and ambient environment according to its reviewed contract.
-
-### Authorized content fidelity
-
-The package does not gain authority to mask, tokenize away, truncate for privacy, or otherwise alter an authorized prompt, request, JSONL record, or provider result merely because the content may contain PII. Silent transformation would change token counts, provider semantics, persisted evidence, replay behavior, and downstream business meaning. Serialization, token accounting, persistence, upload, and retrieval paths implemented on protected main therefore preserve authorized business content unless an explicit reviewed feature contract says otherwise. The same content-fidelity invariant constrains any result-application path that exists, but end-to-end result application remains **PARTIAL** under FR-4 and `docs/TRACEABILITY.md`; PR #194 is an **ACTIVE-PR** transaction-seam candidate, not protected-main proof of a completed result-application capability.
-
-Confidentiality for content-bearing data is enforced through boundary controls rather than a blanket masking default: the embedding host authenticates and authorizes the caller and selects tenant scope; package/database/service identities remain least-privilege; and transport uses the reviewed secure destination policy. Protected main does not define a universal business-data retention duration or a general destructive deletion workflow. The embedding host owns business purpose, retention period, deletion authorization/trigger, and evidence that its policy was executed; the deployment owner separately owns PostgreSQL backup/replica, log/telemetry, and infrastructure retention/deletion controls; provider-side retention/deletion remains a provider/account-policy responsibility unless an explicit reviewed package adapter contract implements and verifies it. Package-owned errors, logs, telemetry, readiness, CI/review evidence, and other operational surfaces omit content-bearing values. A host that intentionally transforms content must do so through an explicit business-policy boundary with provenance and acceptance tests. Redacted operational evidence must never be represented as proof that persisted or provider-bound business content was masked or deleted.
-
-### Diagnostic confidentiality
-
-Errors, logs, telemetry, check evidence, and public readiness must avoid DSNs, credentials, prompts, provider bodies, arbitrary SQL/provider exception text, unvalidated identifiers, and dynamic exception-class names where those values are not required for operation. Failure categories intended for public/operational evidence use bounded vocabularies.
-
-### Tenant boundary
-
-RLS augments a trusted host authorization boundary; it is not itself authentication, a credential, or SQL-injection prevention. Administrative database identities are outside the ordinary tenant guarantee. Pooling code must not leak transaction-local tenant context between logical operations.
-
-### Provider boundary
-
-Provider URLs, statuses, IDs, headers, JSON, JSONL, retry guidance, and metadata are untrusted external input. Validation occurs before the downstream effect that relies on that value. Model/provider output never grants tenant, endpoint, credential, or filesystem authority.
-
-### Recovery authority boundary
-
-A backup artifact, receipt, service selector, schema hash, or backup method string is not authorization to read, write, restore, or replace a database. Authentication, authorization, target isolation, backup custody, key custody, destructive-operation approval, and recovery-objective ownership remain external unless an integrated contract explicitly supplies and verifies them. The protected logical-restore executor does not convert a service selector or archive into authenticated target-isolation authority. Recovery evidence must never be used to infer those authorities.
-
-## Observability requirements
-
-OpenTelemetry support is opt-in. Base installations must not require OpenTelemetry packages solely to use normal batch functionality. Operation names, outcomes, and error categories are finite. Telemetry attributes exclude endpoint aliases, provider URLs, resource identifiers, credentials, metadata, prompts, and provider response bodies.
-
-A first-class packaging extra for OpenTelemetry is **ACTIVE-PR** until its exact generated dependency lock is committed normally, temporary materialization machinery is removed, and final package/install/release gates succeed.
-
-## Health and operability
-
-Readiness covers the required PostgreSQL/tokenizer/configuration boundary and returns redacted public evidence. A failing dependency must not cause arbitrary lower-layer text to be reflected to a caller. Docker/container health and package health semantics must remain aligned.
-
-Operational migrations require backup/preflight/acceptance/recovery documentation before release. A recovery instruction must preserve package and operator-owned state; destructive `CASCADE`, hidden history rewrite, or deletion of unknown operator objects is not an acceptable shortcut.
-
-A recovery drill must distinguish artifact identity and successful command execution from restore acceptance. End-to-end acceptance must address exact schema/package identity, required schema/RLS/constraint/extension behavior, migration compatibility, authenticated target isolation, credential/key availability, and rollback/recovery behavior. Physical/WAL/PITR drills additionally require their own timeline/target and infrastructure acceptance criteria. No repository evidence should claim universal RPO/RTO/HA/DR without an explicit measured deployment objective.
-
-## Concurrency requirements
-
-Batch preparation uses database coordination/transactionality appropriate to its package-owned state. Durable lifecycle writes use explicit ordering/conflict semantics. The protected reconciliation single-flight seam is tenant-qualified, non-blocking, exception-safe, and session-scoped. Process/session loss releases it. Session advisory locking must never be promoted into a durable lease, scheduler, result-application transaction, terminal-work-retirement authority, or distributed exactly-once claim.
-
-Recovery-evidence file inspection must remain finite and fail closed under concurrent mutation. A successful hash/size result is valid only for the descriptor identity/metadata contract that was revalidated by the implementation; it is not a lock or lease over external backup infrastructure.
-
-## Testing requirements
-
-Every source defect follows realistic RED → narrow fix → GREEN → focused/full validation. Required repository evidence includes:
-
-- Python 3.10, 3.12, and 3.14 where configured;
-- exact 100% owned production statement and branch coverage;
-- public docstring coverage;
-- lint/static checks;
-- realistic PostgreSQL integration for SQL/RLS/migration/concurrency behavior;
-- package and container installation/health validation;
-- migration idempotency and rollback/recovery coverage where applicable;
-- recovery-evidence tests for exact primitive types, duplicate/unknown metadata, finite work, descriptor/path boundaries, concurrent mutation, cleanup failure, and content-free diagnostics;
-- logical-restore tests for custom-format seek semantics, archive metadata verification, constrained environment, and transactional failure boundaries;
-- confidentiality regressions that inspect full exception/traceback surfaces when relevant;
-- security scanning and SAST;
-- dependency-lock and packaging reproducibility;
-- release acceptance, artifact identity, SBOM, and provenance evidence required by the live repository contract.
-
-Queued, pending, skipped, cancelled, absent, neutral, stale, predecessor-head, synthetic-merge-only, status-only, infrastructure-failed, or rate-limited evidence is not exact-head success.
-
-## Release requirements
-
-A release may originate only from the exact integrated protected head after all live required quality, security, review, migration, rollback/recovery, operational, packaging, provenance, and release-acceptance gates are terminal-success. Versioning and CHANGELOG updates are followed by publication and artifact verification. Repository control evidence may support SOC 2 / CSAP readiness but must not be represented as certification.
-
-The presence of recovery-evidence primitives or the bounded logical-restore executor does not make a release end-to-end recovery-ready for a deployment. A release or operator contract that claims isolated restore/PITR/RPO/RTO/HA/DR readiness must cite the exact integrated drill/acceptance evidence for that deployment objective rather than extrapolating from hash/receipt or command-execution modules.
+A release originates only from an exact integrated protected head after all then-required quality, security, review, migration/recovery, packaging, provenance, and release gates pass. Version/CHANGELOG/package/tag/publication do not become authoritative until publication and artifact verification complete. Recovery evidence, logical restore execution, or `system_identifier` comparison alone does not make a release end-to-end recovery-ready.
 
 ## Documentation requirements
 
-Canonical product/technical/architecture/ADR/UML/ERD/security/operability/release/data-governance/traceability documents must distinguish shipped protected-main state from active or planned work. Durable documents should describe contracts rather than transient check-run IDs or exact commit SHAs. When an active capability merges, the canonical graph is updated in the same governance model rather than relying on stale PR body claims.
-
-Protected logical-restore authority must keep caller-owned source trust, target-isolation limits, allowed libpq environment, transactional failure behavior, archive metadata verification, and post-restore acceptance gaps explicit. Any future change that broadens those authorities requires coordinated permanent operator/architecture/ADR/doctoring/CHANGELOG coverage through the appropriate live documentation owners.
+Canonical PRD/TRD/architecture/ADR/UML/ERD/security/operability/release/data-governance/traceability surfaces distinguish protected-main state from active work and avoid exact SHAs/run IDs. ADR 0016 records bounded restore-seek semantics. ADR 0022 records bounded restore-target name+cluster-identity separation. Broader direct-SQL, target-authentication, application-readiness, PITR, or recovery-objective changes require coordinated permanent documentation through their current owners.
