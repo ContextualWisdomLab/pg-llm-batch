@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import zipfile
+from dataclasses import replace
 from importlib import resources
 from io import BytesIO
 
@@ -12,8 +13,10 @@ import pytest
 
 import pg_llm_batch.postgres_schema_evidence as schema_evidence
 from pg_llm_batch.postgres_schema_evidence import (
+    PostgresSchemaEvidence,
     PostgresSchemaEvidenceError,
     inspect_postgres_schema,
+    postgres_schema_evidence_was_inspected,
 )
 
 
@@ -111,6 +114,13 @@ def test_inspector_matches_packaged_schema_identity() -> None:
         "size_bytes": len(payload),
     }
     assert payload.decode("utf-8") not in repr(evidence)
+    assert "_inspection_mark" not in evidence.as_dict()
+    assert postgres_schema_evidence_was_inspected(evidence) is True
+    assert postgres_schema_evidence_was_inspected(
+        PostgresSchemaEvidence(evidence.sha256, evidence.size_bytes)
+    ) is False
+    assert postgres_schema_evidence_was_inspected(object()) is False
+    assert postgres_schema_evidence_was_inspected(replace(evidence)) is False
 
 
 def test_inspector_normalizes_resource_open_failure(

@@ -55,6 +55,21 @@ Rollback to the former two-column key is unsafe until an operator proves that no
 The packaged schema and Docker initialization schema are maintained as exact
 mirrors and must be reapplied successfully more than once.
 
+## Logical restore execution
+
+`restore_postgres_logical_backup()` is a bounded direct-SQL restore seam. The
+caller must pass exact-boolean `source_superusers_trusted=True` and select an
+isolated libpq service; the service name is not an authorization or
+proof-of-isolation boundary. Only `PGPASSWORD`, `PGPASSFILE`, and
+`PGSERVICEFILE` may be inherited. The child runs
+`pg_restore --single-transaction --exit-on-error --dbname=service=...`.
+
+Custom-format `pg_restore` seeks to the table of contents and data blocks, so a
+successful restore is not required to leave the descriptor at end-of-file.
+Post-restore metadata mismatch is fail-closed and must be treated as unsafe
+because the SQL transaction may already have committed. This seam does not
+complete isolated schema/RLS/PITR acceptance.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context

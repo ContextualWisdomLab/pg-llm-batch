@@ -208,6 +208,17 @@ authorized tenant scope see no lifecycle rows after RLS is enabled.
 See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
 migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
 
+For a caller-owned logical archive, use `restore_postgres_logical_backup()` only
+against an isolated libpq service after you can assert
+`source_superusers_trusted=True`. The service name is not an authorization
+boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited.
+The executor runs `pg_restore --single-transaction --exit-on-error`.
+Custom-format restore seeks through the archive, so success is not required to
+leave the descriptor at end-of-file. If metadata changes after `pg_restore`
+exits zero, treat the target as unsafe and do not retry into the same service.
+See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md)
+for the operator steps.
+
 ## Embed as a git submodule
 
 ```bash

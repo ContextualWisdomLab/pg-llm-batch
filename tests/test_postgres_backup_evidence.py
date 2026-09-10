@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,8 +13,10 @@ import pytest
 
 import pg_llm_batch.postgres_backup_evidence as backup_evidence
 from pg_llm_batch.postgres_backup_evidence import (
+    PostgresBackupArtifactEvidence,
     PostgresBackupEvidenceError,
     inspect_postgres_backup_artifact,
+    postgres_backup_artifact_evidence_was_inspected,
 )
 
 
@@ -33,6 +36,13 @@ def test_inspector_returns_content_free_deterministic_identity(tmp_path: Path) -
     }
     assert str(artifact) not in repr(evidence)
     assert payload.decode("utf-8", errors="ignore") not in repr(evidence)
+    assert "_inspection_mark" not in evidence.as_dict()
+    assert postgres_backup_artifact_evidence_was_inspected(evidence) is True
+    assert postgres_backup_artifact_evidence_was_inspected(
+        PostgresBackupArtifactEvidence(evidence.sha256, evidence.size_bytes)
+    ) is False
+    assert postgres_backup_artifact_evidence_was_inspected(object()) is False
+    assert postgres_backup_artifact_evidence_was_inspected(replace(evidence)) is False
 
 
 @pytest.mark.parametrize("invalid_path", ["", "x" * 4097, Path("backup.dump")])
