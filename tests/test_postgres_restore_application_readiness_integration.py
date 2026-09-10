@@ -58,8 +58,14 @@ def test_live_restore_application_readiness_accepts_packaged_schema() -> None:
         SECURITY DEFINER
         AS $$ SELECT 'database'::TEXT, TRUE, 'reachable'::TEXT $$
         """,
+        """
+        CREATE FUNCTION pg_llm_batch_health_check()
+        RETURNS TABLE(component TEXT, is_ready BOOLEAN, detail TEXT)
+        LANGUAGE SQL
+        AS $$ SELECT 'database'::TEXT, TRUE, 'reachable'::TEXT $$
+        """,
     ],
-    ids=("wrong-result-contract", "security-definer"),
+    ids=("wrong-result-contract", "security-definer", "wrong-language-exact-shape"),
 )
 @skip_no_db
 def test_live_restore_application_readiness_rejects_health_impostors(
