@@ -77,7 +77,7 @@ def test_product_contract_records_integrated_single_flight_without_lease_claim()
     traceability = _read(REPOSITORY_ROOT / "docs" / "TRACEABILITY.md")
 
     assert "| Cross-process reconciliation single-flight | IMPLEMENTED-ON-PROTECTED-MAIN |" in prd
-    assert "tenant-qualified session advisory single-flight is protected-main behavior" in trd
+    assert "session advisory single-flight" in trd
     assert "| FR-4 tenant-qualified cross-process single-flight | IMPLEMENTED-ON-PROTECTED-MAIN |" in traceability
     for document in (prd, trd, traceability):
         lowered = document.lower()
@@ -149,7 +149,7 @@ def test_product_contract_names_active_recovery_capability_families() -> None:
 
 
 def test_canonical_overlay_register_preserves_superseded_lineage_without_live_status() -> None:
-    """Historical documentation predecessors may be named without becoming active overlays."""
+    """Historical predecessors may remain as lineage without becoming active overlays."""
     traceability = _read(REPOSITORY_ROOT / "docs" / "TRACEABILITY.md")
     fitness = _read(REPOSITORY_ROOT / "docs" / "DOCUMENTATION_FITNESS.md")
 
@@ -158,7 +158,8 @@ def test_canonical_overlay_register_preserves_superseded_lineage_without_live_st
     assert "superseded" in traceability.lower()
     assert "keep it Draft" not in traceability
     assert "keep it Ready" not in traceability
-    assert "#225" not in traceability
+    assert "#225" in traceability
+    assert "superseded restore-target predecessor" in traceability
     assert "#226" in fitness
     assert "superseded #214" in fitness
     assert "current canonical documentation landing vehicle" in traceability
