@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import stat
 from dataclasses import dataclass, field
 from weakref import ReferenceType, ref
@@ -14,6 +15,7 @@ _HASH_CHUNK_BYTES = 1024 * 1024
 _MAX_SIGNED_BIGINT = (1 << 63) - 1
 _DEFAULT_MAX_INSPECTION_BYTES = 64 * 1024 * 1024 * 1024
 _MAX_PATH_CHARACTERS = 4096
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _SECURE_FILE_FLAGS_AVAILABLE = (
     all(hasattr(os, flag) for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK"))
     and os.open in getattr(os, "supports_dir_fd", frozenset())
@@ -42,6 +44,16 @@ class PostgresBackupEvidenceError(ValueError):
     """Report a fail-closed PostgreSQL backup artifact evidence violation."""
 
 
+def _backup_evidence_snapshot_is_valid(sha256: object, size_bytes: object) -> bool:
+    """Return whether one captured backup-evidence snapshot is bounded and exact."""
+    return (
+        type(sha256) is str
+        and _SHA256_RE.fullmatch(sha256) is not None
+        and type(size_bytes) is int
+        and 1 <= size_bytes <= _MAX_SIGNED_BIGINT
+    )
+
+
 @dataclass(frozen=True)
 class PostgresBackupArtifactEvidence:
     """Represent content-free integrity evidence for one pinned backup artifact."""
@@ -51,8 +63,20 @@ class PostgresBackupArtifactEvidence:
     _inspection_mark: object = field(default=None, repr=False, compare=False)
 
     def as_dict(self) -> dict[str, object]:
-        """Return the stable machine-readable backup artifact evidence schema."""
-        return {"sha256": self.sha256, "size_bytes": self.size_bytes}
+        """Return the stable schema from one revalidated evidence snapshot."""
+        try:
+            sha256 = self.sha256
+            size_bytes = self.size_bytes
+        except AttributeError:
+            raise PostgresBackupEvidenceError(
+                "invalid PostgreSQL backup artifact evidence"
+            ) from None
+
+        if not _backup_evidence_snapshot_is_valid(sha256, size_bytes):
+            raise PostgresBackupEvidenceError(
+                "invalid PostgreSQL backup artifact evidence"
+            )
+        return {"sha256": sha256, "size_bytes": size_bytes}
 
 
 def _record_inspected_backup_evidence(evidence: PostgresBackupArtifactEvidence) -> None:
