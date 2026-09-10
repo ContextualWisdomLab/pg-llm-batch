@@ -8,7 +8,6 @@ from typing import Any
 
 import pytest
 
-from pg_llm_batch import orchestrator as orchestrator_module
 from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.orchestrator import PostgresBatchOrchestrator
 
@@ -33,7 +32,6 @@ class _StringifiableUuid:
     ],
 )
 def test_non_string_batch_key_fails_before_database_io(
-    monkeypatch: pytest.MonkeyPatch,
     invalid_key: object,
 ) -> None:
     """Only exact strings may choose UUID/path authority before PostgreSQL access."""
@@ -43,12 +41,11 @@ def test_non_string_batch_key_fails_before_database_io(
         database_calls.append("connect")
         raise AssertionError("database I/O must not occur for a non-string selector")
 
-    monkeypatch.setattr(
-        orchestrator_module,
-        "psycopg",
-        SimpleNamespace(connect=forbidden_connect),
+    driver = SimpleNamespace(connect=forbidden_connect)
+    orchestrator = PostgresBatchOrchestrator(
+        "postgresql://example",
+        postgres_driver=driver,
     )
-    orchestrator = PostgresBatchOrchestrator("postgresql://example")
 
     with pytest.raises(ValidationError) as caught:
         orchestrator._resolve_batch_uuid(invalid_key)  # type: ignore[arg-type]
@@ -58,20 +55,17 @@ def test_non_string_batch_key_fails_before_database_io(
     assert database_calls == []
 
 
-def test_valid_uuid_string_preserves_exact_selector_without_database_io(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_valid_uuid_string_preserves_exact_selector_without_database_io() -> None:
     """A valid exact UUID string must remain the direct authoritative selector."""
     database_calls: list[str] = []
-    monkeypatch.setattr(
-        orchestrator_module,
-        "psycopg",
-        SimpleNamespace(
-            connect=lambda _dsn: database_calls.append("connect")
-            or (_ for _ in ()).throw(AssertionError("unexpected database lookup"))
-        ),
+    driver = SimpleNamespace(
+        connect=lambda _dsn: database_calls.append("connect")
+        or (_ for _ in ()).throw(AssertionError("unexpected database lookup"))
     )
-    orchestrator = PostgresBatchOrchestrator("postgresql://example")
+    orchestrator = PostgresBatchOrchestrator(
+        "postgresql://example",
+        postgres_driver=driver,
+    )
     batch_key = "00000000-0000-0000-0000-000000000123"
 
     assert orchestrator._resolve_batch_uuid(batch_key) == batch_key
@@ -120,19 +114,14 @@ class _LookupConnection:
         return _LookupCursor(self.lookup_values)
 
 
-def test_exact_non_uuid_string_is_used_as_path_key_without_rewriting(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_exact_non_uuid_string_is_used_as_path_key_without_rewriting() -> None:
     """An exact non-UUID string must retain byte-for-byte path-key identity."""
     lookup_values: list[str] = []
-    monkeypatch.setattr(
-        orchestrator_module,
-        "psycopg",
-        SimpleNamespace(
-            connect=lambda _dsn: _LookupConnection(lookup_values),
-        ),
+    driver = SimpleNamespace(connect=lambda _dsn: _LookupConnection(lookup_values))
+    orchestrator = PostgresBatchOrchestrator(
+        "postgresql://example",
+        postgres_driver=driver,
     )
-    orchestrator = PostgresBatchOrchestrator("postgresql://example")
     batch_key = "memory://batch/Case-Sensitive-Key"
 
     assert orchestrator._resolve_batch_uuid(batch_key) == (

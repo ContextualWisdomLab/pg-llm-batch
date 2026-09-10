@@ -10,14 +10,14 @@ from typing import Any, Optional
 
 from .db import (
     DEFAULT_TENANT_SCOPE,
-    _require_psycopg,
     _set_transaction_tenant_scope,
-    psycopg,
     validate_endpoint_alias,
     validate_remote_resource_id,
     validate_tenant_scope,
 )
 from .exceptions import ConfigError, PgLlmBatchError, ValidationError
+from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import retained_postgres_driver
 from .result_streaming import BatchResultCheckpoint
 
 MIGRATION_PATH = (
@@ -83,6 +83,21 @@ def _validated_postgres_dsn(value: Any) -> str:
             "A Postgres DSN must be provided explicitly for checkpoint persistence"
         )
     return value
+
+
+def _connect_postgres(
+    postgres_dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+) -> Any:
+    """Connect through the selected PostgreSQL driver boundary.
+
+    Explicitly injected migration drivers remain available for parity and
+    degraded-mode tests. Without an injection, the centralized runtime selector
+    supplies the retained implementation so checkpoint persistence no longer
+    imports or constructs Psycopg directly.
+    """
+    selected_driver = postgres_driver or retained_postgres_driver()
+    return selected_driver.connect(postgres_dsn)
 
 
 def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
@@ -171,13 +186,14 @@ def _checkpoint_values(checkpoint: BatchResultCheckpoint) -> tuple[Any, ...]:
 def apply_result_checkpoint_schema(
     postgres_dsn: str,
     migration_path: Optional[str] = None,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> None:
     """Apply the idempotent durable result-checkpoint migration."""
     dsn = _validated_postgres_dsn(postgres_dsn)
-    _require_psycopg()
     path = Path(migration_path) if migration_path else MIGRATION_PATH
     sql = path.read_text(encoding="utf-8")
-    with psycopg.connect(dsn) as conn:
+    with _connect_postgres(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
         conn.commit()
@@ -191,9 +207,11 @@ class PostgresBatchResultCheckpointStore:
         postgres_dsn: str,
         *,
         tenant_scope: str = DEFAULT_TENANT_SCOPE,
+        postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Bind one explicit database and trusted local tenant scope to the store."""
+        """Bind one explicit database, tenant scope, and optional driver port."""
         self.postgres_dsn = _validated_postgres_dsn(postgres_dsn)
+        self._postgres_driver = postgres_driver
         try:
             self.tenant_scope = validate_tenant_scope(tenant_scope)
         except ValidationError as exc:
@@ -210,8 +228,7 @@ class PostgresBatchResultCheckpointStore:
         endpoint_alias: str,
     ) -> Optional[BatchResultCheckpoint]:
         """Load the current checkpoint in one package-owned transaction."""
-        _require_psycopg()
-        with psycopg.connect(self.postgres_dsn) as conn:
+        with _connect_postgres(self.postgres_dsn, self._postgres_driver) as conn:
             with conn.cursor() as cur:
                 return self.load_in_transaction(
                     cur,
@@ -257,8 +274,7 @@ class PostgresBatchResultCheckpointStore:
         expected_previous: Optional[BatchResultCheckpoint] = None,
     ) -> BatchResultCheckpoint:
         """Create or advance a checkpoint in one package-owned transaction."""
-        _require_psycopg()
-        with psycopg.connect(self.postgres_dsn) as conn:
+        with _connect_postgres(self.postgres_dsn, self._postgres_driver) as conn:
             with conn.cursor() as cur:
                 saved = self.save_in_transaction(
                     cur,

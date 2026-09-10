@@ -14,16 +14,23 @@ from pg_llm_batch.exceptions import ValidationError
 from pg_llm_batch.orchestrator import BatchPayload, PostgresBatchOrchestrator
 from pg_llm_batch.token_counter import TokenCounter
 from tests.conftest import FakePsycopg
+from tests.fake_postgres_driver_port import FakePsycopgDriverPort
 
 
 @pytest.fixture()
 def fake_pg(monkeypatch):
+    """Route assembly tests through one shared driver-port fake."""
     fake = FakePsycopg()
-    monkeypatch.setattr(tc_mod, "psycopg", fake)
-    monkeypatch.setattr(tc_mod, "UndefinedFunction", fake.errors.UndefinedFunction)
-    monkeypatch.setattr(db_mod, "psycopg", fake)
-    monkeypatch.setattr(orch_mod, "psycopg", fake)
-    monkeypatch.setattr(db_mod, "get_model_metadata", lambda dsn, model: None)
+    driver = FakePsycopgDriverPort(fake)
+    fake.driver = driver
+    monkeypatch.setattr(tc_mod, "retained_postgres_driver", lambda: driver)
+    monkeypatch.setattr(db_mod, "retained_postgres_driver", lambda: driver)
+    monkeypatch.setattr(orch_mod, "retained_postgres_driver", lambda: driver)
+    monkeypatch.setattr(
+        db_mod,
+        "get_model_metadata",
+        lambda dsn, model, *, postgres_driver=None: None,
+    )
     return fake
 
 
@@ -78,12 +85,9 @@ def test_assemble_payloads_splits_on_token_limit(fake_pg):
     assert all(p["record_count"] == 1 for p in payloads)
 
 
-def test_orchestrator_requires_dsn_and_driver(monkeypatch, fake_pg):
-    with pytest.raises(RuntimeError, match="DSN and psycopg"):
+def test_orchestrator_requires_dsn(fake_pg):
+    with pytest.raises(RuntimeError, match="Postgres DSN"):
         PostgresBatchOrchestrator("")
-    monkeypatch.setattr(orch_mod, "psycopg", None)
-    with pytest.raises(RuntimeError, match="DSN and psycopg"):
-        PostgresBatchOrchestrator("postgresql://x")
 
 
 def test_resolve_batch_uuid_direct_and_lookup(monkeypatch, fake_pg):
@@ -175,8 +179,9 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     config = Config()
 
     class Counter:
-        def __init__(self, dsn, config):
+        def __init__(self, dsn, config, *, postgres_driver=None):
             assert (dsn, config) == ("postgresql://x", globals_config)
+            assert postgres_driver is fake_pg.driver
             self.effective_limit = 100
 
         def close(self):
@@ -185,7 +190,11 @@ def test_prepare_batches_applies_stricter_runtime_limit(monkeypatch, fake_pg):
     globals_config = config
     orch = PostgresBatchOrchestrator("postgresql://x")
     monkeypatch.setattr(fake_pg, "connect", lambda _dsn: Connection())
-    monkeypatch.setattr(orch_mod, "PostgresConfigStore", lambda _dsn: globals_config)
+    monkeypatch.setattr(
+        orch_mod,
+        "PostgresConfigStore",
+        lambda _dsn, *, postgres_driver=None: globals_config,
+    )
     monkeypatch.setattr(orch_mod, "TokenCounter", Counter)
     monkeypatch.setattr(orch, "_resolve_batch_uuid", lambda _key: "resolved")
     monkeypatch.setattr(
@@ -219,7 +228,9 @@ def test_assemble_payloads_handles_empty_model_switch_and_null_user(fake_pg, mon
     monkeypatch.setattr(
         db_mod,
         "get_model_metadata",
-        lambda _dsn, model: {"mode": "embedding"} if model == "embed" else None,
+        lambda _dsn, model, *, postgres_driver=None: (
+            {"mode": "embedding"} if model == "embed" else None
+        ),
     )
     rows = [
         ("r1", "ignored system", "vector", "embed"),
@@ -315,7 +326,7 @@ def _persistence_connection(existing_rows=None, has_unassigned=False):
 def test_persist_payloads_separates_ready_and_overflow(monkeypatch, fake_pg):
     connection, executions, many = _persistence_connection()
     monkeypatch.setattr(fake_pg, "connect", lambda _dsn: connection)
-    monkeypatch.setattr(orch_mod, "Jsonb", lambda value: ("jsonb", value))
+    monkeypatch.setattr(fake_pg.driver, "jsonb", lambda value: ("jsonb", value))
     counter = TokenCounter("postgresql://x")
     counter.azure_max_files_per_job = 1
     batch_uuid = "11111111-1111-1111-1111-111111111111"

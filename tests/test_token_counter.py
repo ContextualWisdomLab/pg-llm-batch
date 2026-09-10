@@ -3,22 +3,27 @@
 
 from __future__ import annotations
 
+from threading import RLock
+
 import pytest
 
-from pg_llm_batch import token_counter as tc_mod
 from pg_llm_batch import db as db_mod
+from pg_llm_batch import token_counter as tc_mod
 from pg_llm_batch.exceptions import TokenLimitExceededError, ValidationError
 from pg_llm_batch.models import BatchRequest
+from pg_llm_batch.postgres_driver_runtime import PostgresDriverUnavailableError
 from pg_llm_batch.token_counter import BatchAccumulator, TokenCounter
 from tests.conftest import FakePsycopg
+from tests.fake_postgres_driver_port import FakePsycopgDriverPort
 
 
 @pytest.fixture()
 def fake_pg(monkeypatch):
+    """Bind the legacy in-memory SQL fake through the production driver port."""
     fake = FakePsycopg()
-    monkeypatch.setattr(tc_mod, "psycopg", fake)
-    monkeypatch.setattr(tc_mod, "UndefinedFunction", fake.errors.UndefinedFunction)
-    monkeypatch.setattr(db_mod, "psycopg", fake)
+    driver = FakePsycopgDriverPort(fake)
+    monkeypatch.setattr(tc_mod, "retained_postgres_driver", lambda: driver)
+    monkeypatch.setattr(db_mod, "retained_postgres_driver", lambda: driver)
     return fake
 
 
@@ -45,7 +50,10 @@ def test_db_tokenizer_lookup_prefers_mapping(fake_pg, monkeypatch):
     monkeypatch.setattr(
         tc_mod,
         "get_model_metadata",
-        lambda dsn, model: {"mode": "chat", "tokenizer_model": "o200k_base"},
+        lambda dsn, model, *, postgres_driver=None: {
+            "mode": "chat",
+            "tokenizer_model": "o200k_base",
+        },
     )
     counter = TokenCounter("postgresql://x")
     assert counter.get_tiktoken_name("some-deployment") == "o200k_base"
@@ -79,7 +87,7 @@ def test_split_oversized_batch(fake_pg):
     requests = [
         BatchRequest(user_prompt="a b", model="m"),  # 2
         BatchRequest(user_prompt="c d", model="m"),  # 2 -> new batch
-        BatchRequest(user_prompt="e", model="m"),    # 1 -> fits with prev
+        BatchRequest(user_prompt="e", model="m"),  # 1 -> fits with prev
     ]
     batches = counter.split_oversized_batch(requests)
     assert len(batches) == 2
@@ -185,12 +193,12 @@ def test_count_tokens_fails_closed_when_extension_disappears(fake_pg, monkeypatc
         counter.count_tokens("hello", "gpt-4o")
     assert counter._pg_available is False
 
-    monkeypatch.setattr(tc_mod, "psycopg", None)
-    unavailable = TokenCounter("postgresql://x")
-    with pytest.raises(RuntimeError, match="requires pg_tiktoken"):
-        unavailable.count_tokens("hello", "gpt-4o")
-    with pytest.raises(RuntimeError, match="integration is unavailable"):
-        unavailable._count_tokens_postgres("hello", "gpt-4o")
+    def unavailable_driver():
+        raise PostgresDriverUnavailableError("Retained PostgreSQL driver is unavailable")
+
+    monkeypatch.setattr(tc_mod, "retained_postgres_driver", unavailable_driver)
+    with pytest.raises(PostgresDriverUnavailableError, match="driver is unavailable"):
+        TokenCounter("postgresql://x")
 
 
 def test_pg_tiktoken_probe_failure_closes_connection(monkeypatch):
@@ -202,7 +210,8 @@ def test_pg_tiktoken_probe_failure_closes_connection(monkeypatch):
 
     counter = object.__new__(TokenCounter)
     counter._pg_conn = Connection()
-    monkeypatch.setattr(tc_mod, "psycopg", object())
+    counter._pg_connection_lock = RLock()
+    counter._postgres_driver = object()
     monkeypatch.setattr(
         counter,
         "_get_pg_conn",
@@ -210,12 +219,6 @@ def test_pg_tiktoken_probe_failure_closes_connection(monkeypatch):
     )
     assert counter._ensure_pg_tiktoken() is False
     assert counter._pg_conn is None
-    monkeypatch.setattr(tc_mod, "psycopg", None)
-    assert counter._ensure_pg_tiktoken() is False
-
-    monkeypatch.setattr(tc_mod, "psycopg", object())
-    counter._pg_conn = None
-    assert counter._ensure_pg_tiktoken() is False
 
 
 def test_postgres_count_falls_back_to_encode(fake_pg):
@@ -240,10 +243,11 @@ def test_postgres_count_falls_back_to_encode(fake_pg):
     cursor = Cursor()
 
     class Connection:
-        closed = False
-
         def cursor(self):
             return cursor
+
+        def is_closed(self):
+            return False
 
     counter = TokenCounter("postgresql://x")
     counter._pg_conn = Connection()
@@ -270,13 +274,14 @@ def test_postgres_count_handles_empty_driver_rows(fake_pg):
             return None
 
     class Connection:
-        closed = False
-
         def __init__(self, cursor):
             self._cursor = cursor
 
         def cursor(self):
             return self._cursor
+
+        def is_closed(self):
+            return False
 
     counter = TokenCounter("postgresql://x")
     counter._pg_conn = Connection(Cursor(fallback=False))

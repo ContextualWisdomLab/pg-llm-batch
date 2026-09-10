@@ -16,20 +16,16 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from io import StringIO
+from threading import RLock
 from typing import Any, Dict, List, Optional, Tuple
 
 from .db import get_model_metadata
 from .exceptions import TokenLimitExceededError, ValidationError
 from .models import BatchRequest
+from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import retained_postgres_driver
 
 logger = logging.getLogger(__name__)
-
-try:  # pragma: no cover - optional dependency
-    import psycopg  # type: ignore
-    from psycopg.errors import UndefinedFunction  # type: ignore
-except ImportError:  # pragma: no cover
-    psycopg = None  # type: ignore
-    UndefinedFunction = Exception  # type: ignore
 
 
 @dataclass(frozen=True)
@@ -57,8 +53,15 @@ class TokenCounter:
         *,
         config: Optional[Any] = None,
         buffer_percentage: Optional[int] = None,
+        postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Initialize PostgreSQL token counting and configured batch limits."""
+        """Initialize token counting through the centralized PostgreSQL driver boundary.
+
+        Explicitly injected drivers remain authoritative for candidate and test
+        paths. Ordinary runtime construction acquires the retained implementation
+        from :mod:`postgres_driver_runtime`, so this bounded context no longer
+        owns a second concrete Psycopg import or connection fallback.
+        """
         if not postgres_dsn:
             raise ValidationError(
                 field="postgres_dsn",
@@ -67,7 +70,11 @@ class TokenCounter:
             )
         self.postgres_dsn = postgres_dsn
         self.config = config
-        self._pg_conn: Optional["psycopg.Connection"] = None
+        self._postgres_driver = (
+            postgres_driver if postgres_driver is not None else retained_postgres_driver()
+        )
+        self._pg_conn: Optional[Any] = None
+        self._pg_connection_lock = RLock()
         self._pg_available: bool = False
         self._encoder_cache: Dict[str, _EncoderInfo] = {}
 
@@ -119,8 +126,7 @@ class TokenCounter:
             ),
         )
 
-        if psycopg is not None:
-            self._pg_available = self._ensure_pg_tiktoken()
+        self._pg_available = self._ensure_pg_tiktoken()
 
     @staticmethod
     def _require_positive_limit(field: str, value: Any) -> int:
@@ -159,17 +165,28 @@ class TokenCounter:
         return info
 
     def count_tokens(self, text: str, model: str) -> int:
-        """Count tokens through pg_tiktoken or fail when it is unavailable."""
+        """Count tokens while serializing use of the retained PostgreSQL session.
+
+        A replacement DB-API driver may permit module sharing without permitting
+        concurrent use of one connection. The counter intentionally retains one
+        autocommit session for repeated pg_tiktoken calls, so the lock protects
+        that exact session through execution, error classification, and cleanup
+        rather than assuming stronger driver thread semantics.
+        """
         if not text:
             return 0
-        if self._pg_available:
-            try:
-                return self._count_tokens_postgres(text, model)
-            except UndefinedFunction:
-                self._pg_available = False
-                logger.warning("pg_tiktoken extension/functions unavailable")
-            except Exception:  # pragma: no cover - runtime DB variance
-                logger.debug("PostgreSQL token counting failed")
+        with self._pg_connection_lock:
+            if self._pg_available:
+                try:
+                    return self._count_tokens_postgres(text, model)
+                except Exception as error:  # pragma: no cover - runtime DB variance
+                    if self._is_undefined_function(error):
+                        self._pg_available = False
+                        self.close()
+                        logger.warning("pg_tiktoken extension/functions unavailable")
+                    else:
+                        self.close()
+                        logger.debug("PostgreSQL token counting failed")
         raise RuntimeError(
             "Token counting requires pg_tiktoken. Enable the extension and pass a "
             "valid DSN."
@@ -262,15 +279,16 @@ class TokenCounter:
         return batches
 
     def close(self) -> None:
-        """Close and clear the cached PostgreSQL token-counting connection."""
-        conn = self._pg_conn
-        self._pg_conn = None
-        if conn is None:
-            return
-        try:
-            conn.close()
-        except Exception:
-            pass
+        """Close and clear the cached PostgreSQL token-counting connection safely."""
+        with self._pg_connection_lock:
+            conn = self._pg_conn
+            self._pg_conn = None
+            if conn is None:
+                return
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     def _resolve_config_value(self, category: str, key: str, default: Any) -> Any:
         """Read a config value from the KV store, returning the default on any failure."""
@@ -284,63 +302,72 @@ class TokenCounter:
 
     def _ensure_pg_tiktoken(self) -> bool:
         """Verify the pre-provisioned pg_tiktoken extension and functions read-only."""
-        if psycopg is None:
-            return False
-        try:
-            conn = self._get_pg_conn()
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    SELECT EXISTS (
-                               SELECT 1
-                               FROM pg_extension
-                               WHERE extname = %s
-                           ),
-                           to_regprocedure('tiktoken_count(text,text)') IS NOT NULL,
-                           to_regprocedure('tiktoken_encode(text,text)') IS NOT NULL
-                    """,
-                    ("pg_tiktoken",),
-                )
-                row = cur.fetchone()
-            return bool(row and row == (True, True, True))
-        except Exception:
-            self.close()
-            return False
+        with self._pg_connection_lock:
+            try:
+                conn = self._get_pg_conn()
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                                   SELECT 1
+                                   FROM pg_extension
+                                   WHERE extname = %s
+                               ),
+                               to_regprocedure('tiktoken_count(text,text)') IS NOT NULL,
+                               to_regprocedure('tiktoken_encode(text,text)') IS NOT NULL
+                        """,
+                        ("pg_tiktoken",),
+                    )
+                    row = cur.fetchone()
+                return bool(row and row == (True, True, True))
+            except Exception:
+                self.close()
+                return False
 
-    def _get_pg_conn(self) -> "psycopg.Connection":
-        """Return a cached autocommit PostgreSQL connection, reconnecting if closed."""
-        assert psycopg is not None
-        if self._pg_conn is None or self._pg_conn.closed:
-            self._pg_conn = psycopg.connect(self.postgres_dsn)
-            self._pg_conn.autocommit = True
-        return self._pg_conn
+    def _get_pg_conn(self) -> Any:
+        """Return a cached autocommit connection under the session reuse lock."""
+        with self._pg_connection_lock:
+            if self._pg_conn is not None and not self._pg_conn.is_closed():
+                return self._pg_conn
+            self._pg_conn = self._postgres_driver.connect(self.postgres_dsn)
+            self._pg_conn.set_autocommit(True)
+            return self._pg_conn
+
+    def _is_undefined_function(self, error: BaseException) -> bool:
+        """Classify undefined-function failures through the selected driver boundary."""
+        return self._postgres_driver.is_undefined_function(error)
 
     def _count_tokens_postgres(self, text: str, model: str) -> int:
-        """Count tokens for text via pg_tiktoken, falling back to tiktoken_encode."""
-        if psycopg is None:
-            raise RuntimeError("PostgreSQL integration is unavailable")
-        conn = self._get_pg_conn()
-        tiktoken_name = self.get_encoder(model).tokenizer_name
-        with conn.cursor() as cur:
-            try:
-                cur.execute("SELECT tiktoken_count(%s, %s)", (tiktoken_name, text))
-                row = cur.fetchone()
-                if row and row[0] is not None:
-                    return int(row[0])
-            except UndefinedFunction:
-                cur.execute(
-                    "SELECT COUNT(*) FROM tiktoken_encode(%s, %s)",
-                    (tiktoken_name, text),
-                )
-                row = cur.fetchone()
-                if row and row[0] is not None:
-                    return int(row[0])
-                raise
-        return 0
+        """Count tokens while retaining one non-concurrent PostgreSQL session."""
+        with self._pg_connection_lock:
+            conn = self._get_pg_conn()
+            tiktoken_name = self.get_encoder(model).tokenizer_name
+            with conn.cursor() as cur:
+                try:
+                    cur.execute("SELECT tiktoken_count(%s, %s)", (tiktoken_name, text))
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        return int(row[0])
+                except Exception as error:
+                    if not self._is_undefined_function(error):
+                        raise
+                    cur.execute(
+                        "SELECT COUNT(*) FROM tiktoken_encode(%s, %s)",
+                        (tiktoken_name, text),
+                    )
+                    row = cur.fetchone()
+                    if row and row[0] is not None:
+                        return int(row[0])
+                    raise
+            return 0
 
     def _get_tokenizer_from_db(self, model: str) -> Optional[str]:
         """Return the tokenizer model recorded in model metadata, or None if unset."""
-        metadata = get_model_metadata(self.postgres_dsn, model)
+        metadata = get_model_metadata(
+            self.postgres_dsn,
+            model,
+            postgres_driver=self._postgres_driver,
+        )
         if metadata and metadata.get("tokenizer_model"):
             return str(metadata["tokenizer_model"])
         return None

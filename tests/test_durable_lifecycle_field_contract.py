@@ -37,12 +37,10 @@ def _provider_batch(*, status: object, endpoint: object) -> dict[str, object]:
     ["future_state", "COMPLETED", "x" * 65, "completed\x00secret", 7],
 )
 def test_persistence_rejects_unsupported_status_before_database_io(
-    monkeypatch: pytest.MonkeyPatch,
     status: object,
 ) -> None:
     """Reject unsupported provider status evidence before PostgreSQL mutation."""
     driver = _NoDatabaseIO()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     with pytest.raises(
         ValueError,
@@ -54,6 +52,7 @@ def test_persistence_rejects_unsupported_status_before_database_io(
             _provider_batch(status=status, endpoint="/v1/responses"),
             1,
             observed_at=datetime(2026, 8, 13, tzinfo=timezone.utc),
+            postgres_driver=driver,
         )
 
     assert str(status) not in str(exc.value)
@@ -71,12 +70,10 @@ def test_persistence_rejects_unsupported_status_before_database_io(
     ],
 )
 def test_persistence_rejects_unsupported_endpoint_before_database_io(
-    monkeypatch: pytest.MonkeyPatch,
     endpoint: object,
 ) -> None:
     """Reject unsupported provider endpoint evidence before PostgreSQL mutation."""
     driver = _NoDatabaseIO()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     with pytest.raises(
         ValueError,
@@ -88,6 +85,7 @@ def test_persistence_rejects_unsupported_endpoint_before_database_io(
             _provider_batch(status="validating", endpoint=endpoint),
             1,
             observed_at=datetime(2026, 8, 13, tzinfo=timezone.utc),
+            postgres_driver=driver,
         )
 
     assert str(endpoint) not in str(exc.value)

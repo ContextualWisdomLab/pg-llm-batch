@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- PostgreSQL driver installed-root and returned DB-API module origin resolution
+  failures now stay inside the fixed content-free origin-admission diagnostic;
+  filesystem/path lookup details no longer escape as raw exceptions before an
+  unadmitted artifact is rejected.
 - Logical restore no longer treats a mid-archive descriptor offset as failure.
   Custom-format `pg_restore` seeks to the table of contents and data blocks, so
   a successful restore is not required to leave the descriptor at end-of-file.
