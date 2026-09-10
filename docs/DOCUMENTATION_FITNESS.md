@@ -33,10 +33,10 @@ Protected main contains the tenant lifecycle/RLS contract, bounded reconciliatio
 | Atomic durable result application | ACTIVE-PR / end-to-end PARTIAL | Checkpoint/stream primitives do not prove complete result application. | Keep external-effect limits explicit. |
 | Runtime config/schema provisioning and secret policy | ACTIVE-PR / protected compatibility baseline | Protected main permits optional Fernet and `is_encrypted = FALSE` compatibility rows; #210 is stricter active work. | Do not claim mandatory encryption, historical-row migration, rotation/recovery, or external custody. |
 | Canonical traceability | ACTIVE-PR | This overlay is the current canonical documentation landing vehicle; #226 and superseded #214 are historical predecessors. | Use stable implementation/test/doc authorities, not exact heads. |
-| Threat model | ACTIVE-PR | Assets, boundaries, mitigations, residual risk, and NIST evidence are documented without certification claims. | Keep residual risk synchronized with protected authority. |
-| Data governance | ACTIVE-PR | Data classes, owners, retention/deletion, content fidelity, and optional Fernet compatibility are explicit. | Do not turn evidence readiness into certification. |
-| UML/component/sequence views | ACTIVE-PR | Standalone/embedded and tenant-validation views exist. | Keep branch-only components off shipped diagrams. |
-| ERD / schema model | ACTIVE-PR | Packaged schema and migration-owned checkpoint identity are mapped. | SQL remains stronger authority. |
+| `docs/THREAT_MODEL.md` | ACTIVE-PR | Assets, boundaries, mitigations, residual risk, and NIST evidence are documented without certification claims. | Keep residual risk synchronized with protected authority. |
+| `docs/DATA_GOVERNANCE.md` | ACTIVE-PR | Data classes, owners, retention/deletion, content fidelity, and optional Fernet compatibility are explicit. | Do not turn evidence readiness into certification. |
+| `docs/uml/component-and-sequence.md` | ACTIVE-PR | Standalone/embedded and tenant-validation views exist. | Keep branch-only components off shipped diagrams. |
+| `docs/erd/package-owned-schema.md` | ACTIVE-PR | Packaged schema and migration-owned checkpoint identity are mapped. | SQL remains stronger authority. |
 | Release governance | PARTIAL | Release evidence exists; immutable publication requires the exact accepted protected head. | Tie version, CHANGELOG, package, SBOM, provenance, rollback, tag, and publication verification together through release ownership. |
 
 ## Non-negotiable documentation invariants
