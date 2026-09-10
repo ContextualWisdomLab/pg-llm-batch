@@ -8,6 +8,7 @@ import uuid
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 
 from pg_llm_batch import config as config_mod
 from pg_llm_batch.exceptions import ConfigError
@@ -95,8 +96,10 @@ skip_no_db = pytest.mark.skipif(
 
 @pytest.mark.integration
 @skip_no_db
+@pytest.mark.parametrize("store_kind", ["config", "secret"])
 @pytest.mark.parametrize("missing_privilege", ["INSERT", "UPDATE"])
-def test_live_config_store_rejects_roles_missing_required_write_privilege(
+def test_live_runtime_store_rejects_roles_missing_required_write_privilege(
+    store_kind: str,
     missing_privilege: str,
 ) -> None:
     """Real PostgreSQL roles missing either upsert privilege must fail at readiness."""
@@ -105,8 +108,9 @@ def test_live_config_store_rejects_roles_missing_required_write_privilege(
     from psycopg.conninfo import make_conninfo
 
     suffix = uuid.uuid4().hex[:12]
-    role_name = f"config_priv_test_{suffix}"
+    role_name = f"store_priv_test_{suffix}"
     password = uuid.uuid4().hex
+    table_name = "com_config" if store_kind == "config" else "com_secrets"
     retained_write_privilege = "UPDATE" if missing_privilege == "INSERT" else "INSERT"
     role_dsn = make_conninfo(DSN, user=role_name, password=password)
 
@@ -125,17 +129,29 @@ def test_live_config_store_rejects_roles_missing_required_write_privilege(
                 )
             )
             cursor.execute(
-                sql.SQL("GRANT SELECT, {} ON com_config TO {}").format(
+                sql.SQL("GRANT SELECT, {} ON {} TO {}").format(
                     sql.SQL(retained_write_privilege),
+                    sql.Identifier(table_name),
                     sql.Identifier(role_name),
                 )
             )
         admin.commit()
 
+    expected_message = (
+        "Configuration schema is unavailable or incompatible"
+        if store_kind == "config"
+        else "Secret schema is unavailable or incompatible"
+    )
     try:
         with pytest.raises(ConfigError) as caught:
-            config_mod.PostgresConfigStore(role_dsn)
-        assert caught.value.message == "Configuration schema is unavailable or incompatible"
+            if store_kind == "config":
+                config_mod.PostgresConfigStore(role_dsn)
+            else:
+                config_mod.SecretStore(
+                    role_dsn,
+                    fernet_key=Fernet.generate_key().decode("utf-8"),
+                )
+        assert caught.value.message == expected_message
         assert caught.value.__cause__ is None
         assert caught.value.__context__ is None
     finally:
