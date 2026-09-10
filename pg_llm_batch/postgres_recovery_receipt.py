@@ -49,6 +49,34 @@ def _bounded_nonnegative_integer(value: object) -> bool:
     return type(value) is int and 0 <= value <= _MAX_SIGNED_BIGINT
 
 
+def _receipt_metadata_is_valid(
+    package_version: object,
+    source_commit: object,
+    postgres_major: object,
+    schema_sha256: object,
+    backup_method: object,
+    backup_sha256: object,
+    backup_size_bytes: object,
+    started_at_epoch: object,
+    completed_at_epoch: object,
+) -> bool:
+    """Return whether one complete receipt snapshot satisfies the bounded schema."""
+    return (
+        _plain_text_matches(package_version, _VERSION_RE)
+        and _plain_text_matches(source_commit, _COMMIT_RE)
+        and type(postgres_major) is int
+        and 1 <= postgres_major <= 99
+        and _plain_text_matches(schema_sha256, _SHA256_RE)
+        and _plain_backup_method(backup_method)
+        and _plain_text_matches(backup_sha256, _SHA256_RE)
+        and _bounded_nonnegative_integer(backup_size_bytes)
+        and backup_size_bytes > 0
+        and _bounded_nonnegative_integer(started_at_epoch)
+        and _bounded_nonnegative_integer(completed_at_epoch)
+        and completed_at_epoch >= started_at_epoch
+    )
+
+
 def _reject_duplicate_object_pairs(
     pairs: list[tuple[str, object]],
 ) -> dict[str, object]:
@@ -79,38 +107,64 @@ class PostgresRecoveryReceipt:
 
     def __post_init__(self) -> None:
         """Fail closed when untrusted receipt metadata violates the bounded schema."""
-        valid = (
-            _plain_text_matches(self.package_version, _VERSION_RE)
-            and _plain_text_matches(self.source_commit, _COMMIT_RE)
-            and type(self.postgres_major) is int
-            and 1 <= self.postgres_major <= 99
-            and _plain_text_matches(self.schema_sha256, _SHA256_RE)
-            and _plain_backup_method(self.backup_method)
-            and _plain_text_matches(self.backup_sha256, _SHA256_RE)
-            and _bounded_nonnegative_integer(self.backup_size_bytes)
-            and self.backup_size_bytes > 0
-            and _bounded_nonnegative_integer(self.started_at_epoch)
-            and _bounded_nonnegative_integer(self.completed_at_epoch)
-            and self.completed_at_epoch >= self.started_at_epoch
-        )
-        if not valid:
+        if not _receipt_metadata_is_valid(
+            self.package_version,
+            self.source_commit,
+            self.postgres_major,
+            self.schema_sha256,
+            self.backup_method,
+            self.backup_sha256,
+            self.backup_size_bytes,
+            self.started_at_epoch,
+            self.completed_at_epoch,
+        ):
             raise PostgresRecoveryReceiptError(
                 "invalid PostgreSQL recovery receipt metadata"
             )
 
     def as_dict(self) -> dict[str, object]:
-        """Return the stable machine-readable receipt schema."""
+        """Return the stable machine-readable schema from one revalidated snapshot."""
+        try:
+            package_version = self.package_version
+            source_commit = self.source_commit
+            postgres_major = self.postgres_major
+            schema_sha256 = self.schema_sha256
+            backup_method = self.backup_method
+            backup_sha256 = self.backup_sha256
+            backup_size_bytes = self.backup_size_bytes
+            started_at_epoch = self.started_at_epoch
+            completed_at_epoch = self.completed_at_epoch
+        except AttributeError:
+            raise PostgresRecoveryReceiptError(
+                "invalid PostgreSQL recovery receipt metadata"
+            ) from None
+
+        if not _receipt_metadata_is_valid(
+            package_version,
+            source_commit,
+            postgres_major,
+            schema_sha256,
+            backup_method,
+            backup_sha256,
+            backup_size_bytes,
+            started_at_epoch,
+            completed_at_epoch,
+        ):
+            raise PostgresRecoveryReceiptError(
+                "invalid PostgreSQL recovery receipt metadata"
+            )
+
         return {
             "schema_version": 1,
-            "package_version": self.package_version,
-            "source_commit": self.source_commit,
-            "postgres_major": self.postgres_major,
-            "schema_sha256": self.schema_sha256,
-            "backup_method": self.backup_method,
-            "backup_sha256": self.backup_sha256,
-            "backup_size_bytes": self.backup_size_bytes,
-            "started_at_epoch": self.started_at_epoch,
-            "completed_at_epoch": self.completed_at_epoch,
+            "package_version": package_version,
+            "source_commit": source_commit,
+            "postgres_major": postgres_major,
+            "schema_sha256": schema_sha256,
+            "backup_method": backup_method,
+            "backup_sha256": backup_sha256,
+            "backup_size_bytes": backup_size_bytes,
+            "started_at_epoch": started_at_epoch,
+            "completed_at_epoch": completed_at_epoch,
         }
 
     def to_json(self) -> str:
