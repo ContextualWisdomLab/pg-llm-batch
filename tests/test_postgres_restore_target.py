@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import pg_llm_batch.postgres_restore_target as restore_target
 from pg_llm_batch.postgres_restore_target import (
     PostgresRestoreTargetError,
     PostgresRestoreTargetIdentity,
@@ -76,6 +77,45 @@ def test_aliased_service_names_for_the_same_cluster_fail_closed() -> None:
     assert "batch-restore-isolated" not in str(raised.value)
     assert "postgresql://" not in str(raised.value)
     assert str(LIVE_CLUSTER) not in str(raised.value)
+
+
+def test_identity_mutation_after_validation_cannot_authorize_live_cluster(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A post-validation caller mutation cannot change the isolation decision."""
+    live_identity = _identity(LIVE_CLUSTER)
+    restore_identity = _identity(LIVE_CLUSTER)
+    original_validator = restore_target._plain_system_identifier
+    validations = 0
+
+    def validate_then_mutate(value: object) -> bool:
+        nonlocal validations
+        valid = original_validator(value)
+        validations += 1
+        if validations == 2:
+            object.__setattr__(
+                restore_identity,
+                "system_identifier",
+                RESTORE_CLUSTER,
+            )
+        return valid
+
+    monkeypatch.setattr(
+        restore_target,
+        "_plain_system_identifier",
+        validate_then_mutate,
+    )
+
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^PostgreSQL restore target is not isolated from the live service$",
+    ):
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=live_identity,
+            restore_target_identity=restore_identity,
+        )
 
 
 @pytest.mark.parametrize(
@@ -220,6 +260,25 @@ def test_tampered_cluster_identity_fails_closed_before_comparison() -> None:
             restore_target_identity=_identity(RESTORE_CLUSTER),
         )
     assert "secret" not in str(raised.value)
+
+
+def test_deleted_cluster_identity_slot_fails_closed_before_comparison() -> None:
+    """A removed caller-owned identifier remains a package validation failure."""
+    damaged = _identity(RESTORE_CLUSTER)
+    object.__delattr__(damaged, "system_identifier")
+
+    with pytest.raises(
+        PostgresRestoreTargetError,
+        match="^invalid PostgreSQL restore target isolation inputs$",
+    ) as raised:
+        verify_postgres_restore_target_isolation(
+            live_service_name="batch-prod",
+            restore_service_name="batch-restore-isolated",
+            live_target_identity=_identity(LIVE_CLUSTER),
+            restore_target_identity=damaged,
+        )
+    assert "secret" not in str(raised.value)
+    assert str(RESTORE_CLUSTER) not in str(raised.value)
 
 
 def test_verifier_does_not_accept_dsn_tenant_or_credential_arguments() -> None:
