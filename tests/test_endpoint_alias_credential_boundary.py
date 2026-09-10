@@ -68,6 +68,21 @@ def test_config_provider_rejects_noncanonical_alias_before_store_access(
     assert secrets.calls == []
 
 
+def test_config_provider_rejects_non_string_alias_before_store_access() -> None:
+    """Reject non-string aliases before configuration or secret lookup."""
+    config = _ConfigStore()
+    secrets = _SecretStore()
+    provider = config_credentials_provider(config, secrets)
+    invalid_alias: Any = object()
+
+    with pytest.raises(ValidationError) as raised:
+        provider(invalid_alias)
+
+    assert raised.value.details["value"] == "<redacted>"
+    assert config.calls == []
+    assert secrets.calls == []
+
+
 async def test_batch_client_rejects_alias_before_custom_credential_resolution() -> None:
     """Invalid aliases must fail before an injected credential provider can observe them."""
     credential_calls: list[str] = []
