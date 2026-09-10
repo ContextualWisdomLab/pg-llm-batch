@@ -14,9 +14,11 @@ certification and not a claim that a deployment has a complete records program.
 2. Do not mask, tokenize away, or truncate authorized business payloads inside
    this package. If your policy requires transformation, do it in an explicit
    host boundary with provenance and acceptance tests.
-3. Keep Fernet or an external secret manager as a host/deployment choice.
-   Protected main can persist `com_secrets.is_encrypted = FALSE` in
-   compatibility mode.
+3. Treat Fernet as an optional host/deployment policy on protected main.
+   `SecretStore(require_encryption=False)` permits base64-obfuscated
+   compatibility rows with `com_secrets.is_encrypted = FALSE`; that mode is not
+   a mandatory encryption-at-rest guarantee. Historical-row migration, key
+   rotation/recovery, and external key custody remain separate responsibilities.
 4. Own backup copies, replica retention, log/telemetry retention, and
    destructive deletion yourself. The package will not invent a general purge.
 5. Use `standalone` for a single-tenant operator. Do not reuse that scope as an
@@ -30,7 +32,7 @@ certification and not a claim that a deployment has a complete records program.
 | Durable lifecycle projection | `llm_remote_batch_jobs` | Host-selected `tenant_scope` plus package recorder | Tenant-qualify identity, bind `set_config`, force RLS. |
 | Result checkpoints | `llm_result_stream_checkpoints` | Host-selected consumer name plus tenant | Store prefix evidence only. |
 | Standalone configuration | `com_config` | Operator | Key/value settings. Not tenant authorization. |
-| Standalone secrets | `com_secrets` | Operator / secret-manager host | Optional Fernet. Compatibility plaintext is not a production claim. |
+| Standalone secrets | `com_secrets` | Operator / secret-manager host | Optional Fernet or explicit compatibility mode. Compatibility rows are base64-obfuscated, not an encryption-at-rest claim. |
 | Provider credentials | Host credential provider | Deployment | Resolve after tenant validation. Never tenant-keyed by this package. |
 | Recovery evidence | Receipts, artifact hashes, schema hashes | Operator | Content-free identity. Not restorability. |
 | Operational diagnostics | Errors, logs, readiness, telemetry | Package | Omit payloads, DSNs, credentials, and dynamic exception text. |
