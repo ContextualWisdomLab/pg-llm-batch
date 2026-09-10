@@ -74,7 +74,7 @@ def test_ci_uses_setup_uv_without_an_explicit_latest_override() -> None:
     workflow = CI_WORKFLOW.read_text(encoding="utf-8")
     setup_uv_steps = _setup_uv_step_blocks(workflow)
 
-    assert len(setup_uv_steps) == 2, "unexpected setup-uv step count"
+    assert len(setup_uv_steps) == 3, "unexpected setup-uv step count"
     for step in setup_uv_steps:
         assert _SETUP_UV_VERSION_INPUT.search(step) is None, step
 

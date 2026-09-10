@@ -24,7 +24,9 @@ def test_ci_uses_reviewed_action_commits_and_explicit_cache_pruning() -> None:
         "astral-sh/setup-uv",
     ):
         _assert_action_uses_immutable_commits(workflow, action)
-    assert workflow.count("prune-cache: true") == 2
+    setup_uv_count = workflow.count("uses: astral-sh/setup-uv@")
+    assert setup_uv_count == 3
+    assert workflow.count("prune-cache: true") == setup_uv_count
 
 
 def test_container_build_inputs_use_reviewed_immutable_digests() -> None:
