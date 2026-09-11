@@ -44,7 +44,7 @@ class _Cursor:
     def execute(self, query: str) -> None:
         self.executed = query
 
-    def fetchall(self) -> object:
+    def fetchmany(self, _size: int) -> object:
         return self.rows
 
 
