@@ -222,3 +222,24 @@ def test_unrelated_pg8000_interface_error_remains_native() -> None:
 
     assert failure.value is native_failure
     assert len(calls) == 1
+
+
+def test_missing_interface_error_authority_does_not_reclassify_failure() -> None:
+    """Re-raise failures when the injected DB-API exposes no classifiable authority."""
+    calls: list[dict[str, object]] = []
+    module = _dbapi_module(calls)
+    del module.InterfaceError  # type: ignore[attr-defined]
+    native_failure = RuntimeError("connection setup failed")
+
+    def fail_connect(**kwargs: object) -> _RawConnection:
+        calls.append(dict(kwargs))
+        raise native_failure
+
+    module.connect = fail_connect  # type: ignore[attr-defined]
+    adapter = Pg8000DriverAdapter(module)
+
+    with pytest.raises(RuntimeError) as failure:
+        adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
+
+    assert failure.value is native_failure
+    assert len(calls) == 1
