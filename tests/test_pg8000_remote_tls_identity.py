@@ -92,9 +92,11 @@ def test_remote_tls_context_construction_failure_is_content_free(
     with pytest.raises(
         Pg8000DriverTlsPolicyError,
         match="^PostgreSQL TLS policy is unavailable$",
-    ):
+    ) as failure:
         adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
 
+    assert failure.value.__cause__ is None
+    assert failure.value.__context__ is None
     assert calls == []
 
 
@@ -178,6 +180,7 @@ def test_remote_tls_handshake_failure_is_content_free() -> None:
 
     assert str(failure.value) == "PostgreSQL TLS policy is unavailable"
     assert failure.value.__cause__ is None
+    assert failure.value.__context__ is None
     assert len(calls) == 1
 
 
@@ -201,6 +204,7 @@ def test_remote_server_ssl_refusal_is_content_free() -> None:
 
     assert str(failure.value) == "PostgreSQL TLS policy is unavailable"
     assert failure.value.__cause__ is None
+    assert failure.value.__context__ is None
     assert len(calls) == 1
 
 
