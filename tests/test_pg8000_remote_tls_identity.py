@@ -115,3 +115,18 @@ def test_remote_rejects_weakened_tls_context(
         adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
 
     assert calls == []
+
+
+def test_remote_tls_does_not_honor_ambient_key_logging(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    """Keep process-level SSLKEYLOGFILE from becoming a package TLS key sink."""
+    key_log_path = str(tmp_path / "postgres-tls.keys")  # type: ignore[operator]
+    monkeypatch.setenv("SSLKEYLOGFILE", key_log_path)
+
+    kwargs = _connect_kwargs("db.example.invalid")
+    context = kwargs["ssl_context"]
+
+    assert isinstance(context, ssl.SSLContext)
+    assert context.keylog_filename is None
