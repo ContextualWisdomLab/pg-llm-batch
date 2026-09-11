@@ -132,6 +132,7 @@ def test_active_overlay_register_excludes_merged_or_closed_recovery_predecessors
     assert 225 not in active_numbers
     assert 228 not in active_numbers
     assert 296 in active_numbers
+    assert 299 in active_numbers
     assert 341 in active_numbers
 
 
@@ -163,3 +164,20 @@ def test_canonical_overlay_register_preserves_superseded_lineage_without_live_st
     assert "#226" in fitness
     assert "superseded #214" in fitness
     assert "current canonical documentation landing vehicle" in traceability
+
+
+def test_recovery_target_configuration_overlay_stays_bounded_and_module_scoped() -> None:
+    """The #299 overlay must record fixed-query limits without inventing a public API."""
+    fitness = _read(REPOSITORY_ROOT / "docs" / "DOCUMENTATION_FITNESS.md")
+    traceability = _read(REPOSITORY_ROOT / "docs" / "TRACEABILITY.md")
+    package_init = _read(REPOSITORY_ROOT / "pg_llm_batch" / "__init__.py")
+
+    for document in (fitness, traceability):
+        assert "#299" in document
+        assert "eight PostgreSQL recovery-target settings" in document
+        assert "pg_is_in_recovery()" in document
+        assert "module-scoped" in document
+        assert "RPO/RTO" in document
+
+    assert "observe_postgres_recovery_target_configuration" not in package_init
+    assert "postgres_recovery_target_configuration_was_observed" not in package_init
