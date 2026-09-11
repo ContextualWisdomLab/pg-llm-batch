@@ -37,6 +37,7 @@ from .postgres_driver_port import PostgresDriverPort
 
 
 PG8000_ADMITTED_VERSION = "1.31.5"
+_PG8000_SSL_REFUSAL = "Server refuses SSL"
 
 
 class Pg8000DriverUnavailableError(RuntimeError):
@@ -93,6 +94,15 @@ def _verified_remote_ssl_context() -> SSLContext:
     return context
 
 
+def _is_pg8000_ssl_refusal(error: BaseException, interface_error: object) -> bool:
+    """Recognize only pg8000 1.31.5's pinned remote SSL-refusal exception shape."""
+    if not isinstance(interface_error, type) or not issubclass(
+        interface_error, BaseException
+    ):
+        return False
+    return type(error) is interface_error and error.args == (_PG8000_SSL_REFUSAL,)
+
+
 class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     """Expose proved pg8000 semantics with verified TLS for remote TCP targets.
 
@@ -101,8 +111,9 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     copying those contracts. Production construction adds one policy boundary:
     non-loopback TCP targets always receive a host-trust ``SSLContext`` with
     certificate and hostname verification and without ambient TLS key logging.
-    TLS handshake failures from that package-owned context are normalized at the
-    same content-free boundary. Explicit localhost/loopback selectors retain the
+    TLS handshake failures from that package-owned context, including pg8000's
+    exact server-refuses-SSL interface error, are normalized at the same
+    content-free boundary. Explicit localhost/loopback selectors retain the
     documented development exception. Embedding hosts that need a different
     connection policy retain the existing injected ``PostgresDriverPort`` seam
     instead of mutating package connection grammar.
@@ -117,6 +128,7 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
         """Bind the admitted module and inject remote TLS into its connect seam."""
         super().__init__(dbapi_module, service_resolver=service_resolver)
         raw_connect = self._connect
+        interface_error = vars(dbapi_module).get("InterfaceError")
 
         def secure_connect(**kwargs: Any) -> object:
             """Inject verified TLS and redact its remote handshake diagnostics."""
@@ -130,6 +142,12 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
                 raise Pg8000DriverTlsPolicyError(
                     "PostgreSQL TLS policy is unavailable"
                 ) from None
+            except Exception as error:
+                if _is_pg8000_ssl_refusal(error, interface_error):
+                    raise Pg8000DriverTlsPolicyError(
+                        "PostgreSQL TLS policy is unavailable"
+                    ) from None
+                raise
 
         self._connect = secure_connect
 
