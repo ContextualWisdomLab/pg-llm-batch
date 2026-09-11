@@ -145,3 +145,32 @@ def test_remote_tls_does_not_honor_ambient_key_logging(
     assert context.keylog_filename is None
     assert context.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN
     assert context.verify_flags & ssl.VERIFY_X509_STRICT
+
+
+def test_remote_tls_handshake_failure_is_content_free() -> None:
+    """Do not leak remote identity, credentials, or CA paths from TLS failures."""
+    calls: list[dict[str, object]] = []
+    module = _dbapi_module(calls)
+
+    def fail_connect(**kwargs: object) -> _RawConnection:
+        calls.append(dict(kwargs))
+        raise ssl.SSLCertVerificationError(
+            1,
+            "certificate verify failed for db.example.invalid; "
+            "password=secret; ca=/private/operator-ca.pem",
+        )
+
+    module.connect = fail_connect  # type: ignore[attr-defined]
+    adapter = Pg8000DriverAdapter(module)
+
+    with pytest.raises(
+        Pg8000DriverTlsPolicyError,
+        match="^PostgreSQL TLS policy is unavailable$",
+    ) as failure:
+        adapter.connect(
+            "user=pgllm password=secret host=db.example.invalid dbname=pgllm"
+        )
+
+    assert str(failure.value) == "PostgreSQL TLS policy is unavailable"
+    assert failure.value.__cause__ is None
+    assert len(calls) == 1
