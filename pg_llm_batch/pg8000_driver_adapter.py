@@ -98,6 +98,7 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
         raw_connect = self._connect
 
         def secure_connect(**kwargs: Any) -> object:
+            """Inject verified TLS for remote hosts before raw pg8000 access."""
             host = kwargs["host"]
             if not _is_explicit_loopback_host(host):
                 kwargs["ssl_context"] = _verified_remote_ssl_context()
