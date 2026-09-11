@@ -4,11 +4,15 @@
 from __future__ import annotations
 
 import ssl
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from pg_llm_batch.pg8000_driver_adapter import Pg8000DriverAdapter
+import pg_llm_batch.pg8000_driver_adapter as driver_module
+from pg_llm_batch.pg8000_driver_adapter import (
+    Pg8000DriverAdapter,
+    Pg8000DriverTlsPolicyError,
+)
 
 
 class _RawConnection:
@@ -65,3 +69,49 @@ def test_explicit_loopback_keeps_the_local_development_exception(host: str) -> N
 
     assert "ssl_context" not in kwargs
     assert kwargs["host"] == host
+
+
+def test_remote_tls_context_construction_failure_is_content_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail before raw driver access when the host trust context cannot be built."""
+    calls: list[dict[str, object]] = []
+    adapter = Pg8000DriverAdapter(_dbapi_module(calls))
+
+    def fail_context() -> ssl.SSLContext:
+        raise OSError("secret certificate store path")
+
+    monkeypatch.setattr(driver_module, "create_default_context", fail_context)
+
+    with pytest.raises(
+        Pg8000DriverTlsPolicyError,
+        match="^PostgreSQL TLS policy is unavailable$",
+    ):
+        adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
+
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    "context",
+    [
+        SimpleNamespace(check_hostname=False, verify_mode=ssl.CERT_REQUIRED),
+        SimpleNamespace(check_hostname=True, verify_mode=ssl.CERT_NONE),
+    ],
+)
+def test_remote_rejects_weakened_tls_context(
+    monkeypatch: pytest.MonkeyPatch,
+    context: SimpleNamespace,
+) -> None:
+    """Reject a TLS context if either peer-identity invariant is disabled."""
+    calls: list[dict[str, object]] = []
+    adapter = Pg8000DriverAdapter(_dbapi_module(calls))
+    monkeypatch.setattr(driver_module, "create_default_context", lambda: context)
+
+    with pytest.raises(
+        Pg8000DriverTlsPolicyError,
+        match="^PostgreSQL TLS policy is unavailable$",
+    ):
+        adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
+
+    assert calls == []
