@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import ssl
 from types import ModuleType, SimpleNamespace
 
@@ -81,7 +82,7 @@ def test_remote_tls_context_construction_failure_is_content_free(
     def fail_context() -> ssl.SSLContext:
         raise OSError("secret certificate store path")
 
-    monkeypatch.setattr(driver_module, "create_default_context", fail_context)
+    monkeypatch.setattr(driver_module, "_new_remote_ssl_context", fail_context)
 
     with pytest.raises(
         Pg8000DriverTlsPolicyError,
@@ -95,18 +96,31 @@ def test_remote_tls_context_construction_failure_is_content_free(
 @pytest.mark.parametrize(
     "context",
     [
-        SimpleNamespace(check_hostname=False, verify_mode=ssl.CERT_REQUIRED),
-        SimpleNamespace(check_hostname=True, verify_mode=ssl.CERT_NONE),
+        SimpleNamespace(
+            check_hostname=False,
+            verify_mode=ssl.CERT_REQUIRED,
+            keylog_filename=None,
+        ),
+        SimpleNamespace(
+            check_hostname=True,
+            verify_mode=ssl.CERT_NONE,
+            keylog_filename=None,
+        ),
+        SimpleNamespace(
+            check_hostname=True,
+            verify_mode=ssl.CERT_REQUIRED,
+            keylog_filename="tls.keys",
+        ),
     ],
 )
 def test_remote_rejects_weakened_tls_context(
     monkeypatch: pytest.MonkeyPatch,
     context: SimpleNamespace,
 ) -> None:
-    """Reject a TLS context if either peer-identity invariant is disabled."""
+    """Reject a TLS context if peer identity or key-log isolation is disabled."""
     calls: list[dict[str, object]] = []
     adapter = Pg8000DriverAdapter(_dbapi_module(calls))
-    monkeypatch.setattr(driver_module, "create_default_context", lambda: context)
+    monkeypatch.setattr(driver_module, "_new_remote_ssl_context", lambda: context)
 
     with pytest.raises(
         Pg8000DriverTlsPolicyError,
@@ -119,14 +133,15 @@ def test_remote_rejects_weakened_tls_context(
 
 def test_remote_tls_does_not_honor_ambient_key_logging(
     monkeypatch: pytest.MonkeyPatch,
-    tmp_path: object,
+    tmp_path: Path,
 ) -> None:
     """Keep process-level SSLKEYLOGFILE from becoming a package TLS key sink."""
-    key_log_path = str(tmp_path / "postgres-tls.keys")  # type: ignore[operator]
-    monkeypatch.setenv("SSLKEYLOGFILE", key_log_path)
+    monkeypatch.setenv("SSLKEYLOGFILE", str(tmp_path / "postgres-tls.keys"))
 
     kwargs = _connect_kwargs("db.example.invalid")
     context = kwargs["ssl_context"]
 
     assert isinstance(context, ssl.SSLContext)
     assert context.keylog_filename is None
+    assert context.verify_flags & ssl.VERIFY_X509_PARTIAL_CHAIN
+    assert context.verify_flags & ssl.VERIFY_X509_STRICT
