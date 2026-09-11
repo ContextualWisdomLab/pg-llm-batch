@@ -19,6 +19,7 @@ This map ties canonical PRD/TRD requirements to durable protected-main implement
 | FR-5 executable PostgreSQL logical backup | ACTIVE-PR | no protected `pg_dump` executor | #208 branch evidence | Protected main must not be described as creating a restorable backup. |
 | FR-5 executable PostgreSQL logical restore | IMPLEMENTED-ON-PROTECTED-MAIN | `postgres_logical_restore.py` | logical-restore regressions; ADR 0016; merged #212 historical integration evidence; #209 predecessor defect evidence | Custom-format seek + metadata verification is protected. No backup, target-authentication, application-readiness, PITR, or RPO/RTO guarantee. |
 | FR-5 restore-target cluster identity verification | IMPLEMENTED-ON-PROTECTED-MAIN | `postgres_restore_target.py` | focused service-name/system-identifier tests; ADR 0022; merged #228 historical integration evidence | Requires distinct exact service names and caller-owned `pg_control_system().system_identifier` values. It does not open/authenticate connections, accept DSNs, execute restore, or prove catalog/application/PITR/RPO-RTO readiness. |
+| FR-5 effective PITR target configuration observation | ACTIVE-PR | no protected recovery-target configuration observer | #299 fixed-query source/tests plus canonical documentation overlay | Exactly eight reviewed recovery-target settings plus `pg_is_in_recovery()` are observed from a caller-owned isolated target. The APIs remain module-scoped; no connection timeout is imposed; no WAL completeness, target attainment, promotion, application readiness, PITR success, or achieved RPO/RTO is proved. |
 | FR-5 recovery evidence binding/reinspection | ACTIVE-PR | underlying protected evidence primitives only | active binding/reinspection branches | Composition/reinspection is not provenance or restore proof. |
 | FR-5 post-restore catalog/application acceptance | ACTIVE-PR | protected schema/recovery/restore/target primitives only | active catalog work and #296 application-readiness branch | Exact catalog/function/privilege/live behavior must integrate before becoming shipped acceptance. |
 | FR-5 permanent live PostgreSQL integration lane | ACTIVE-PR | current protected CI does not yet contain #341 lane | #341 branch executes the complete integration marker; #296 is its tested child | Branch GREEN is not protected-main workflow authority. |
@@ -48,6 +49,7 @@ This map ties canonical PRD/TRD requirements to durable protected-main implement
 | Recovery evidence integrity | receipt/artifact/schema modules | focused evidence tests | No operator authentication, target authority, or restorability proof. |
 | Logical restore execution | `postgres_logical_restore.py` | seek/metadata/environment/transaction tests | Command success is not application/PITR/RPO-RTO proof. |
 | Restore-target cluster separation | `postgres_restore_target.py` | exact service-name/system-identifier tests | Caller supplies identities from already-opened connections; the package does not authenticate connection provenance or authorize restore. |
+| Recovery-target configuration observation | no protected-main implementation | #299 fixed-query branch tests and canonical docs | Caller owns connection/timeouts. Module-scoped branch APIs do not prove WAL completeness, exact stop semantics, promotion, application readiness, PITR success, or achieved RPO/RTO. |
 | Release artifact integrity | release-evidence contracts | reproducibility/artifact identity | Publication credentials/registry availability remain operational dependencies. |
 
 ## Data and persistence traceability
@@ -80,6 +82,7 @@ The following open PRs are overlays only; their existence does not make behavior
 - **#223** — live PostgreSQL restore-catalog acceptance.
 - **#229** — current canonical documentation landing vehicle; it does not own root `ARCHITECTURE.md`, `CHANGELOG.md`, or the product-gap baseline.
 - **#296** — isolated restore application-readiness candidate.
+- **#299** — effective recovery-target configuration observation on a caller-owned isolated target; functions remain module-scoped pending explicit public-surface decision.
 - **#341** — permanent live PostgreSQL integration-lane candidate.
 
 Merged #191, #212, and #228 are protected-main history rather than active overlays. Closed #225 is superseded restore-target predecessor lineage; closed #209 remains defect evidence for the invalid EOF restore postcondition. Closed documentation predecessors #214 and #226 are superseded historical lineage only.
