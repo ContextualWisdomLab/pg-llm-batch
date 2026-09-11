@@ -15,7 +15,7 @@ The same package is used for local development and embedding. Existing local Pos
 
 Python's TLS defaults create a second security consideration. `ssl.create_default_context()` enables TLS key logging when process environment variable `SSLKEYLOGFILE` is set. Default CA loading also follows the host OpenSSL/platform trust configuration; on OpenSSL-backed platforms, the default verify paths expose the process-level CA environment keys conventionally named `SSL_CERT_FILE` and `SSL_CERT_DIR`. A package-created database connection must not silently export TLS session keys, while host-level CA trust remains a deployment/platform concern rather than a DSN or package-secret concern.
 
-TLS verification failures are a third boundary. pg8000 passes its supplied `SSLContext` into `wrap_socket(..., server_hostname=host)`, so certificate and hostname verification failures can surface as Python `ssl.SSLError` subclasses whose rendered text contains the remote identity or other TLS details. Passing those raw exceptions through would contradict this repository's content-free production-diagnostic contract even though the connection itself failed securely.
+TLS verification failures are a third boundary. pg8000 passes its supplied `SSLContext` into `wrap_socket(..., server_hostname=host)`, so certificate and hostname verification failures can surface as Python `ssl.SSLError` subclasses whose rendered text contains the remote identity or other TLS details. pg8000 1.31.5 separately reports a server that refuses SSL as `dbapi.InterfaceError("Server refuses SSL")` even when an explicit `SSLContext` requires TLS. Passing either raw TLS failure shape through would contradict this repository's content-free production-diagnostic contract even though the connection itself failed securely.
 
 ## Constraints
 
@@ -26,7 +26,7 @@ TLS verification failures are a third boundary. pg8000 passes its supplied `SSLC
 - Do not honor `SSLKEYLOGFILE` as package-created PostgreSQL TLS key-export authority.
 - Keep the package's explicit injected-driver seam for embedding hosts that own a different connection policy.
 - Keep diagnostics content-free: TLS-policy construction and handshake failures must not expose certificate-store paths, hosts, DSNs, usernames, passwords, or platform details through package-authored diagnostics or acceptance output.
-- Preserve non-TLS database/authentication failures instead of converting every pg8000 connection failure into a TLS-policy error.
+- Preserve non-TLS database/authentication and unrelated DB-API interface failures instead of converting every pg8000 connection failure into a TLS-policy error.
 - Keep the deliberate local-development exception explicit and mechanically bounded to `localhost`, IPv4 loopback (`127.0.0.0/8`), and IPv6 loopback (`::1`).
 - Do not treat a unit-level SSL-context contract as proof of real certificate or PostgreSQL TLS behavior.
 
@@ -60,7 +60,7 @@ Selected. The adapter constructs `SSLContext(PROTOCOL_TLS_CLIENT)`, explicitly e
 
 ### Propagate raw TLS handshake exceptions from pg8000
 
-Rejected after review. Python certificate-verification diagnostics can embed the server identity and other TLS detail. The package owns the remote TLS context and therefore also owns the confidentiality boundary for failures produced by that context. Only `ssl.SSLError` from the non-loopback package-owned connection attempt is normalized; unrelated pg8000/database exceptions retain their existing semantics.
+Rejected after review. Python certificate-verification diagnostics can embed the server identity and other TLS detail. pg8000 1.31.5 also uses its DB-API `InterfaceError` with exact argument `"Server refuses SSL"` when the server rejects the SSLRequest. The package owns the remote TLS requirement and therefore owns the confidentiality boundary for both forms. Python `ssl.SSLError` and only that exact admitted pg8000 refusal shape are normalized; unrelated pg8000/database/interface exceptions retain their existing semantics.
 
 ## Decision
 
@@ -73,8 +73,9 @@ For a validated non-loopback host it:
 3. loads the platform/Python/OpenSSL default CA trust through `load_default_certs()`;
 4. verifies `check_hostname is True`, `verify_mode == ssl.CERT_REQUIRED`, and `keylog_filename is None`;
 5. supplies that exact context as pg8000's `ssl_context` argument;
-6. fails before raw driver access with `PostgreSQL TLS policy is unavailable` if the trust context cannot be constructed or any of those invariants is weakened; and
-7. converts Python `ssl.SSLError` raised by that remote connection attempt into the same fixed content-free TLS-policy error with exception chaining suppressed.
+6. fails before raw driver access with `PostgreSQL TLS policy is unavailable` if the trust context cannot be constructed or any of those invariants is weakened;
+7. converts Python `ssl.SSLError` raised by that remote connection attempt into the same fixed content-free TLS-policy error with exception chaining suppressed; and
+8. converts only the exact admitted pg8000 DB-API `InterfaceError("Server refuses SSL")` shape into that same fixed error, while re-raising every unrelated interface/database failure unchanged.
 
 For exact loopback identities (`localhost`, IPv4 loopback, IPv6 loopback), it does not inject `ssl_context`; this preserves the current bounded development exception. Private RFC1918/ULA addresses, Kubernetes/service DNS names, and other non-loopback hosts are remote for this policy and receive verified TLS. The loopback path also does not apply the remote TLS exception normalizer because the package does not own a TLS handshake on that deliberate development path.
 
@@ -88,10 +89,11 @@ The existing permanent pg8000 candidate PostgreSQL smoke is also the realistic a
 - an unrelated CA to fail verification;
 - a CA-trusted certificate with a mismatching IP subject alternative name to fail peer-identity verification;
 - the same remote selector to fail when PostgreSQL TLS is disabled, proving no plaintext downgrade;
+- every negative real-PostgreSQL TLS case to surface exactly `Pg8000DriverTlsPolicyError("PostgreSQL TLS policy is unavailable")` with no chained cause rather than an arbitrary pg8000/OpenSSL exception;
 - ambient `SSLKEYLOGFILE` not to become a key-log sink for the constructed production context; and
 - TLS failure rendering used by the acceptance harness not to contain the ephemeral database password.
 
-A focused unit contract additionally injects a secret-bearing `SSLCertVerificationError` at the exact raw-driver seam and requires the externally rendered package exception to be only `PostgreSQL TLS policy is unavailable`, with no chained cause. This makes the diagnostic-confidentiality invariant deterministic without weakening the real PostgreSQL matrix.
+Focused unit contracts additionally inject a secret-bearing `SSLCertVerificationError` and pg8000's pinned `InterfaceError("Server refuses SSL")` at the exact raw-driver seam and require the externally rendered package exception to be only `PostgreSQL TLS policy is unavailable`, with no chained cause. A separate regression requires an unrelated `InterfaceError` to remain native. Together these contracts make diagnostic confidentiality deterministic without weakening the real PostgreSQL matrix or collapsing unrelated driver semantics.
 
 The test PKI itself must remain RFC 5280-conforming. The ephemeral CA asserts critical `basicConstraints = CA:TRUE` and critical `keyUsage = keyCertSign,cRLSign`; leaf certificates assert critical `CA:FALSE`, TLS server key usage, `extendedKeyUsage = serverAuth`, subject/authority key identifiers, and the tested IP SAN. The harness does not disable `VERIFY_X509_STRICT` to make malformed test certificates pass.
 
@@ -105,13 +107,15 @@ The first realistic TLS acceptance head `dc6b1cc66065117fbd6a93acce8dcb0b94afcc5
 
 Review of exact `c61a91a36e76cd9b9127e1d9eb98aff776bfdf48` found a second policy-authority defect. Python 3.14 documents that `create_default_context()` honors `SSLKEYLOGFILE`, while the branch claimed that no ambient TLS environment authority existed. The existing real smoke also intentionally used the OpenSSL CA environment path, showing that CA trust and key export had been conflated in the ADR. Test-first `506fc36499ac191d6ea328e0bdf20e2df1e65d95` adds the regression that package-created remote TLS must not inherit ambient key logging. Descendants replace `create_default_context()` with an explicit client context, retain strict X.509 and host default CA loading, and reject any constructed context with key logging enabled.
 
-Fresh review then found the diagnostic half of the same trust boundary incomplete: `secure_connect()` supplied the verified context but returned `raw_connect(**kwargs)` without normalizing `ssl.SSLError`, even though this ADR already required handshake diagnostics to be content-free. Test-first `571ac5524c8f28106386f441ad269ab9eebf1f80` injects an `SSLCertVerificationError` containing a host, credential token, and CA path and requires the fixed package TLS-policy error instead. Its hosted workflows were only queued/in progress when the ordinary causal repair followed, so that generation is not claimed as terminal hosted RED evidence. The source-level RED is direct: the predecessor returned the raw connect call without an exception boundary, so the injected `SSLCertVerificationError` escaped unchanged. Ordinary child `4035b19fc19da4443995f95460889f9c5b8f9163` adds the narrow remote-only `SSLError` normalization while preserving non-TLS driver errors and loopback behavior.
+Fresh review then found the diagnostic half of the same trust boundary incomplete: `secure_connect()` supplied the verified context but returned `raw_connect(**kwargs)` without normalizing `ssl.SSLError`, even though this ADR already required handshake diagnostics to be content-free. Test-first `571ac5524c8f28106386f441ad269ab9eebf1f80` injects an `SSLCertVerificationError` containing a host, credential token, and CA path and requires the fixed package TLS-policy error instead. Its hosted workflows were only queued/in progress when the ordinary causal repair followed, so that generation is not claimed as terminal hosted RED evidence. The source-level RED is direct: the predecessor returned the raw connect call without an exception boundary, so the injected `SSLCertVerificationError` escaped unchanged. Ordinary child `4035b19fc19da4443995f95460889f9c5b8f9163` adds the remote-only `SSLError` normalization while preserving non-TLS driver errors and loopback behavior.
+
+A subsequent exact-surface review found that this exception boundary was still incomplete for the real no-downgrade path. pg8000 1.31.5 documents `InterfaceError` as the interface exception used when an SSL connection is attempted and the server refuses it, while the real PostgreSQL smoke accepted any exception for its negative TLS cases. Test-first `09a8e3151317b38362df89cb0b4eddcfe75cc9d0` pins the admitted `InterfaceError("Server refuses SSL")` shape and independently proves an unrelated `InterfaceError` must remain native. Its workflow generation did not materialize before the causal source descendant, so it is not claimed as hosted RED. The predecessor source deterministically caught only `ssl.SSLError`, so the injected pg8000 refusal escaped unchanged. Source repair `ec3676b43762509dcf4ef7693ef8f4e3dd1f297f` narrowly recognizes the exact admitted pg8000 exception type/argument pair and maps only that shape to the fixed package TLS-policy error. Real-smoke descendant `f93ac63e119d6dc23c9eed579a770ec5a656456d` then tightens every negative real-PostgreSQL TLS case to require that exact package error with no chained cause instead of treating an arbitrary exception as acceptance success.
 
 Earlier ADR-bearing validation also exposed repository contracts rather than TLS-policy defects: the ADR heading must use canonical `# ADR NNNN:` form, and every owned production nested callable must carry a docstring to preserve 100% docstring coverage. Those findings were repaired on ordinary descendants without weakening either gate.
 
 ## Consequences and follow-up
 
-Remote package-created pg8000 connections can no longer rely on pg8000's plaintext fallback once this branch is normally integrated. The trust anchor is the Python/platform/OpenSSL default CA store, hostname verification uses the validated host supplied to pg8000, strict X.509 validation is enabled consistently across supported Python versions, and process-level `SSLKEYLOGFILE` does not enable PostgreSQL TLS session-key export through this adapter. Certificate/hostname handshake failures from the package-owned remote TLS context also no longer expose raw Python/OpenSSL diagnostic detail to callers.
+Remote package-created pg8000 connections can no longer rely on pg8000's plaintext fallback once this branch is normally integrated. The trust anchor is the Python/platform/OpenSSL default CA store, hostname verification uses the validated host supplied to pg8000, strict X.509 validation is enabled consistently across supported Python versions, and process-level `SSLKEYLOGFILE` does not enable PostgreSQL TLS session-key export through this adapter. Certificate/hostname failures and the admitted pg8000 server-refuses-SSL negotiation failure from the package-owned remote TLS path no longer expose raw Python/OpenSSL/pg8000 diagnostic detail to callers. Unrelated DB-API interface failures retain their native semantics.
 
 Enterprise private CAs can participate through the deployment's default trust-store authority where the platform supports it. A future explicit caller-owned trust-policy capability is still appropriate when trust selection must vary per connection, tenant, or application boundary. That design must define authority, public certificate custody, precedence, cache/lifetime behavior, diagnostics, and interaction with service-file parsing rather than silently expanding DSN grammar.
 
