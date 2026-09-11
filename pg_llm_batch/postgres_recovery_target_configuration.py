@@ -227,7 +227,7 @@ def observe_postgres_recovery_target_configuration(
     try:
         with connection.cursor() as cursor:
             cursor.execute(_TARGET_CONFIGURATION_SQL)
-            rows = cursor.fetchall()
+            rows = cursor.fetchmany(len(_SETTING_NAMES) + 1)
     except Exception:
         raise PostgresRecoveryTargetConfigurationObservationError(
             "PostgreSQL recovery target configuration could not be inspected"
