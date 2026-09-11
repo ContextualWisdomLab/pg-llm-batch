@@ -17,7 +17,13 @@ from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from importlib.util import find_spec
 from ipaddress import ip_address
 from pathlib import Path
-from ssl import CERT_REQUIRED, SSLContext, create_default_context
+from ssl import (
+    CERT_REQUIRED,
+    PROTOCOL_TLS_CLIENT,
+    SSLContext,
+    VERIFY_X509_PARTIAL_CHAIN,
+    VERIFY_X509_STRICT,
+)
 from types import ModuleType
 from typing import Any
 
@@ -59,15 +65,27 @@ def _is_explicit_loopback_host(host: str) -> bool:
         return False
 
 
+def _new_remote_ssl_context() -> SSLContext:
+    """Create a strict client context without ambient TLS session-key logging."""
+    context = SSLContext(PROTOCOL_TLS_CLIENT)
+    context.verify_flags |= VERIFY_X509_PARTIAL_CHAIN | VERIFY_X509_STRICT
+    context.load_default_certs()
+    return context
+
+
 def _verified_remote_ssl_context() -> SSLContext:
-    """Construct one system-trust TLS context with hostname verification enabled."""
+    """Construct one host-trust TLS context with peer verification enabled."""
     try:
-        context = create_default_context()
+        context = _new_remote_ssl_context()
     except (OSError, ValueError):
         raise Pg8000DriverTlsPolicyError(
             "PostgreSQL TLS policy is unavailable"
         ) from None
-    if not context.check_hostname or context.verify_mode != CERT_REQUIRED:
+    if (
+        not context.check_hostname
+        or context.verify_mode != CERT_REQUIRED
+        or context.keylog_filename is not None
+    ):
         raise Pg8000DriverTlsPolicyError(
             "PostgreSQL TLS policy is unavailable"
         )
@@ -80,11 +98,12 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     The implementation inherits the already exercised cursor, connection,
     selector, JSONB, SQLSTATE, timeout, and thread-affinity behavior rather than
     copying those contracts. Production construction adds one policy boundary:
-    non-loopback TCP targets always receive a system-trust ``SSLContext`` with
-    certificate and hostname verification. Explicit localhost/loopback selectors
-    retain the documented development exception. Embedding hosts that need a
-    different connection policy retain the existing injected ``PostgresDriverPort``
-    seam instead of mutating package defaults through ambient configuration.
+    non-loopback TCP targets always receive a host-trust ``SSLContext`` with
+    certificate and hostname verification and without ambient TLS key logging.
+    Explicit localhost/loopback selectors retain the documented development
+    exception. Embedding hosts that need a different connection policy retain
+    the existing injected ``PostgresDriverPort`` seam instead of mutating
+    package connection grammar.
     """
 
     def __init__(
