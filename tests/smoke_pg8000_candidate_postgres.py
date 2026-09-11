@@ -29,7 +29,10 @@ from pg8000 import dbapi
 
 from pg_llm_batch.pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
 from pg_llm_batch.pg8000_candidate_service_file import Pg8000CandidateServiceFileResolver
-from pg_llm_batch.pg8000_driver_adapter import Pg8000DriverAdapter
+from pg_llm_batch.pg8000_driver_adapter import (
+    Pg8000DriverAdapter,
+    Pg8000DriverTlsPolicyError,
+)
 from pg_llm_batch.pg8000_driver_candidate_jsonb import adapt_pg8000_jsonb
 from pg_llm_batch.postgres_restore_acceptance import inspect_postgres_restore_catalog
 
@@ -357,17 +360,25 @@ def _remote_tls_driver(address: str, password: str) -> Pg8000DriverAdapter:
 
 
 def _assert_remote_tls_failure(driver: Pg8000DriverAdapter, password: str) -> None:
-    """Require fail-closed connection behavior without credential disclosure."""
+    """Require the exact content-free package TLS failure on real PostgreSQL."""
     try:
         connection = driver.connect(
             "service=tls-acceptance",
             connect_timeout_seconds=5,
         )
-    except Exception as error:
+    except Pg8000DriverTlsPolicyError as error:
+        if str(error) != "PostgreSQL TLS policy is unavailable":
+            raise AssertionError("remote TLS diagnostic contract changed") from None
+        if error.__cause__ is not None:
+            raise AssertionError("remote TLS failure retained a chained cause") from None
         rendered = f"{error!s}\n{error!r}"
         if password in rendered:
             raise AssertionError("TLS failure disclosed credential material") from None
         return
+    except Exception:
+        raise AssertionError(
+            "remote PostgreSQL TLS failure escaped package policy boundary"
+        ) from None
     connection.close()
     raise AssertionError("remote PostgreSQL TLS failure was accepted")
 
