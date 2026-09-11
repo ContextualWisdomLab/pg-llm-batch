@@ -1,4 +1,4 @@
-# ADR-0023: Authenticate remote PostgreSQL server identity in the pg8000 production adapter
+# ADR 0023: Authenticate remote PostgreSQL server identity in the pg8000 production adapter
 
 - Status: Proposed
 - Date: 2026-09-11
@@ -66,7 +66,7 @@ The test-first head `eee15706ffe214cd744667740fab75303a9835f8` added only the re
 
 Minimum production repair `77089494bed2ee4b81cda0d7bc46446f6cc81fc8` adds the production TLS policy without changing the abstract port. Exact candidate `7f6864cd4fb94ef9a0e76955b06babad990c8c00` additionally covers trust-context construction failure and rejects contexts with either hostname verification or `CERT_REQUIRED` disabled.
 
-At the time this ADR was proposed, Release Acceptance `34561425250` on exact `7f6864cd...` was terminal success and CI `34561425189` was still queued. Those workflow states are evidence snapshots, not release authority.
+At the time this ADR was proposed, Release Acceptance `34561425250` on exact `7f6864cd...` was terminal success. Later validation of the ADR-bearing head exposed two repository contracts rather than a TLS-policy defect: the ADR heading must use the canonical `# ADR NNNN:` form, and every owned production nested callable must carry a docstring to preserve 100% docstring coverage. Both are repaired on ordinary descendants and require fresh exact-head validation.
 
 ## Consequences and follow-up
 
