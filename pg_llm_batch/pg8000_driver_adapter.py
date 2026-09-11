@@ -15,10 +15,16 @@ from __future__ import annotations
 from importlib import import_module
 from importlib.metadata import Distribution, PackageNotFoundError, distribution
 from importlib.util import find_spec
+from ipaddress import ip_address
 from pathlib import Path
+from ssl import CERT_REQUIRED, SSLContext, create_default_context
 from types import ModuleType
+from typing import Any
 
-from .pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
+from .pg8000_candidate_driver_port import (
+    Pg8000CandidateDriverAdapter,
+    ServiceResolver,
+)
 from .pg8000_candidate_service_file import Pg8000CandidateServiceFileResolver
 from .postgres_driver_port import PostgresDriverPort
 
@@ -35,13 +41,69 @@ class Pg8000DriverUnavailableError(RuntimeError):
     """
 
 
-class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
-    """Expose the fully proved pg8000 port semantics under the production name.
+class Pg8000DriverTlsPolicyError(RuntimeError):
+    """Report that the package cannot construct its verified remote TLS policy.
 
-    The implementation deliberately inherits the already exercised cursor,
-    connection, selector, JSONB, SQLSTATE, and thread-affinity behavior instead
-    of copying that logic into a second concrete-driver authority.
+    The diagnostic is deliberately fixed and content-free. It does not expose
+    certificate-store paths, selectors, hosts, credentials, or platform details.
     """
+
+
+def _is_explicit_loopback_host(host: str) -> bool:
+    """Return whether a validated host is an explicit local-development target."""
+    if host.casefold() == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _verified_remote_ssl_context() -> SSLContext:
+    """Construct one system-trust TLS context with hostname verification enabled."""
+    try:
+        context = create_default_context()
+    except (OSError, ValueError):
+        raise Pg8000DriverTlsPolicyError(
+            "PostgreSQL TLS policy is unavailable"
+        ) from None
+    if not context.check_hostname or context.verify_mode != CERT_REQUIRED:
+        raise Pg8000DriverTlsPolicyError(
+            "PostgreSQL TLS policy is unavailable"
+        )
+    return context
+
+
+class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
+    """Expose proved pg8000 semantics with verified TLS for remote TCP targets.
+
+    The implementation inherits the already exercised cursor, connection,
+    selector, JSONB, SQLSTATE, timeout, and thread-affinity behavior rather than
+    copying those contracts. Production construction adds one policy boundary:
+    non-loopback TCP targets always receive a system-trust ``SSLContext`` with
+    certificate and hostname verification. Explicit localhost/loopback selectors
+    retain the documented development exception. Embedding hosts that need a
+    different connection policy retain the existing injected ``PostgresDriverPort``
+    seam instead of mutating package defaults through ambient configuration.
+    """
+
+    def __init__(
+        self,
+        dbapi_module: ModuleType,
+        *,
+        service_resolver: ServiceResolver | None = None,
+    ) -> None:
+        """Bind the admitted module and inject remote TLS into its connect seam."""
+        super().__init__(dbapi_module, service_resolver=service_resolver)
+        raw_connect = self._connect
+
+        def secure_connect(**kwargs: Any) -> object:
+            host = kwargs["host"]
+            if not _is_explicit_loopback_host(host):
+                kwargs["ssl_context"] = _verified_remote_ssl_context()
+            return raw_connect(**kwargs)
+
+        self._connect = secure_connect
 
 
 def _resolve_origin_path(value: str | Path) -> Path:
@@ -112,7 +174,8 @@ def load_pg8000_driver(*, service_file: Path | None = None) -> PostgresDriverPor
     or preloaded ``pg8000.dbapi`` module from a different filesystem location
     while avoiding a second distribution-metadata lookup. Service-file support
     is opt-in through one caller-selected path; ambient ``PGSERVICEFILE``
-    discovery remains outside the admitted contract.
+    discovery remains outside the admitted contract. Remote TCP selectors then
+    receive the verified TLS policy owned by ``Pg8000DriverAdapter``.
 
     Args:
         service_file: Optional explicit ``pg_service.conf`` path. When omitted,
