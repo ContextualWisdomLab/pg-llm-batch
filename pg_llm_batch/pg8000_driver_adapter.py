@@ -80,17 +80,18 @@ def _verified_remote_ssl_context() -> SSLContext:
     try:
         context = _new_remote_ssl_context()
     except (OSError, ValueError):
-        raise Pg8000DriverTlsPolicyError(
-            "PostgreSQL TLS policy is unavailable"
-        ) from None
+        context = None
     if (
-        not context.check_hostname
+        context is None
+        or not context.check_hostname
         or context.verify_mode != CERT_REQUIRED
         or context.keylog_filename is not None
     ):
+        # Raise after the handler so sensitive TLS details are not retained in
+        # the public exception object's implicit ``__context__`` reference.
         raise Pg8000DriverTlsPolicyError(
             "PostgreSQL TLS policy is unavailable"
-        )
+        ) from None
     return context
 
 
@@ -139,15 +140,15 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
             try:
                 return raw_connect(**kwargs)
             except SSLError:
-                raise Pg8000DriverTlsPolicyError(
-                    "PostgreSQL TLS policy is unavailable"
-                ) from None
+                pass
             except Exception as error:
-                if _is_pg8000_ssl_refusal(error, interface_error):
-                    raise Pg8000DriverTlsPolicyError(
-                        "PostgreSQL TLS policy is unavailable"
-                    ) from None
-                raise
+                if not _is_pg8000_ssl_refusal(error, interface_error):
+                    raise
+            # Leave the lower-layer handler before raising so the public error
+            # cannot retain certificate/peer detail through ``__context__``.
+            raise Pg8000DriverTlsPolicyError(
+                "PostgreSQL TLS policy is unavailable"
+            ) from None
 
         self._connect = secure_connect
 
