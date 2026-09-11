@@ -100,6 +100,30 @@ def test_remote_tls_context_construction_failure_is_content_free(
     assert calls == []
 
 
+def test_remote_tls_ssl_context_failure_is_content_free(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normalize OpenSSL failures while constructing the host trust context."""
+    calls: list[dict[str, object]] = []
+    adapter = Pg8000DriverAdapter(_dbapi_module(calls))
+
+    def fail_context() -> ssl.SSLContext:
+        raise ssl.SSLError("secret default CA loader detail")
+
+    monkeypatch.setattr(driver_module, "_new_remote_ssl_context", fail_context)
+
+    with pytest.raises(
+        Pg8000DriverTlsPolicyError,
+        match="^PostgreSQL TLS policy is unavailable$",
+    ) as failure:
+        adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
+
+    assert str(failure.value) == "PostgreSQL TLS policy is unavailable"
+    assert failure.value.__cause__ is None
+    assert failure.value.__context__ is None
+    assert calls == []
+
+
 @pytest.mark.parametrize(
     "context",
     [
