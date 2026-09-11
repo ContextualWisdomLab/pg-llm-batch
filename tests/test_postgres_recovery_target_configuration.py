@@ -58,7 +58,7 @@ class _Cursor:
         if self.execute_error is not None:
             raise self.execute_error
 
-    def fetchall(self) -> object:
+    def fetchmany(self, _size: int) -> object:
         if self.fetch_error is not None:
             raise self.fetch_error
         return self.rows
