@@ -128,6 +128,12 @@ def _generate_ca(directory: Path, stem: str) -> tuple[Path, Path]:
             "1",
             "-subj",
             f"/CN={stem}",
+            "-addext",
+            "basicConstraints=critical,CA:TRUE",
+            "-addext",
+            "keyUsage=critical,keyCertSign,cRLSign",
+            "-addext",
+            "subjectKeyIdentifier=hash",
             "-keyout",
             str(key_path),
             "-out",
@@ -152,7 +158,12 @@ def _generate_server_certificate(
     certificate_path = directory / f"{stem}.crt"
     extension_path = directory / f"{stem}.ext"
     extension_path.write_text(
-        f"subjectAltName=IP:{identity_ip}\nextendedKeyUsage=serverAuth\n",
+        "basicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        f"subjectAltName=IP:{identity_ip}\n"
+        "extendedKeyUsage=serverAuth\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid:always,issuer\n",
         encoding="utf-8",
     )
     _run_command(
