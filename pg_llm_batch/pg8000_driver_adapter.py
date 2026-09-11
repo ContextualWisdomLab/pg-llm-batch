@@ -79,7 +79,7 @@ def _verified_remote_ssl_context() -> SSLContext:
     """Construct one host-trust TLS context with peer verification enabled."""
     try:
         context = _new_remote_ssl_context()
-    except (OSError, ValueError):
+    except (OSError, SSLError, ValueError):
         context = None
     if (
         context is None
