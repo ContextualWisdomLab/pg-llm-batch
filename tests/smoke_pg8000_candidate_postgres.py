@@ -6,23 +6,30 @@ image without adding the candidate to the production dependency graph. The
 checks cover the candidate URI, keyword, and explicit service connection
 selectors, portable connection/cursor ACL, thread-affine connection use,
 transaction, parameter, JSONB, UUID/timestamp, affected-row, narrow PostgreSQL
-error classification, restore-catalog inspection, transport recovery, and
-transaction-local tenant semantics that must be proven before candidate
-promotion.
+error classification, restore-catalog inspection, transport recovery,
+transaction-local tenant semantics, and the production adapter's authenticated
+remote-TLS boundary that must be proven before candidate promotion.
 """
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from importlib import metadata
+from ipaddress import ip_address
 import os
 from pathlib import Path
+import subprocess
+from tempfile import TemporaryDirectory
+import time
+from typing import Iterator
 import uuid
 
 from pg8000 import dbapi
 
 from pg_llm_batch.pg8000_candidate_driver_port import Pg8000CandidateDriverAdapter
 from pg_llm_batch.pg8000_candidate_service_file import Pg8000CandidateServiceFileResolver
+from pg_llm_batch.pg8000_driver_adapter import Pg8000DriverAdapter
 from pg_llm_batch.pg8000_driver_candidate_jsonb import adapt_pg8000_jsonb
 from pg_llm_batch.postgres_restore_acceptance import inspect_postgres_restore_catalog
 
@@ -30,6 +37,7 @@ _EXPECTED_VERSION = "1.31.5"
 _EXPECTED_DATABASE = "pgllm"
 _EXPECTED_USER = "pgllm"
 _CREDENTIAL_FREE_DSN = "postgresql://pgllm@127.0.0.1:5432/pgllm"
+_TLS_DIRECTORY = "/tmp/pg-llm-batch-tls"
 
 
 def _candidate_driver() -> Pg8000CandidateDriverAdapter:
@@ -58,6 +66,379 @@ def _connection() -> object:
     parameters["password"] = _candidate_password()
     private_dsn = driver.make_conninfo(parameters)
     return driver.connect(private_dsn, connect_timeout_seconds=5)
+
+
+def _run_command(arguments: list[str], *, timeout_seconds: int = 30) -> str:
+    """Run one bounded local acceptance command with content-free failure output."""
+    try:
+        completed = subprocess.run(
+            arguments,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except (OSError, subprocess.SubprocessError):
+        raise AssertionError("remote TLS acceptance command failed") from None
+    return completed.stdout.strip()
+
+
+def _candidate_container() -> str:
+    """Return the CI-owned PostgreSQL container identity without guessing it."""
+    container = os.environ.get("PG8000_CANDIDATE_CONTAINER")
+    if not container:
+        raise AssertionError("candidate PostgreSQL container identity is unavailable")
+    return container
+
+
+def _candidate_container_ip(container: str) -> str:
+    """Resolve and validate the real non-loopback container address used for TLS."""
+    address = _run_command(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",
+            container,
+        ]
+    )
+    try:
+        parsed = ip_address(address)
+    except ValueError:
+        raise AssertionError("candidate PostgreSQL container address is invalid") from None
+    if parsed.is_loopback or parsed.is_unspecified:
+        raise AssertionError("candidate PostgreSQL container address is not remote")
+    return address
+
+
+def _generate_ca(directory: Path, stem: str) -> tuple[Path, Path]:
+    """Create one ephemeral CI-only certificate authority for TLS acceptance."""
+    key_path = directory / f"{stem}.key"
+    certificate_path = directory / f"{stem}.crt"
+    _run_command(
+        [
+            "openssl",
+            "req",
+            "-x509",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-days",
+            "1",
+            "-subj",
+            f"/CN={stem}",
+            "-keyout",
+            str(key_path),
+            "-out",
+            str(certificate_path),
+        ]
+    )
+    return key_path, certificate_path
+
+
+def _generate_server_certificate(
+    directory: Path,
+    *,
+    stem: str,
+    ca_key: Path,
+    ca_certificate: Path,
+    identity_ip: str,
+    serial: int,
+) -> tuple[Path, Path]:
+    """Create one ephemeral server certificate with an explicit IP SAN."""
+    key_path = directory / f"{stem}.key"
+    request_path = directory / f"{stem}.csr"
+    certificate_path = directory / f"{stem}.crt"
+    extension_path = directory / f"{stem}.ext"
+    extension_path.write_text(
+        f"subjectAltName=IP:{identity_ip}\nextendedKeyUsage=serverAuth\n",
+        encoding="utf-8",
+    )
+    _run_command(
+        [
+            "openssl",
+            "req",
+            "-newkey",
+            "rsa:2048",
+            "-nodes",
+            "-sha256",
+            "-subj",
+            f"/CN={stem}",
+            "-keyout",
+            str(key_path),
+            "-out",
+            str(request_path),
+        ]
+    )
+    _run_command(
+        [
+            "openssl",
+            "x509",
+            "-req",
+            "-sha256",
+            "-days",
+            "1",
+            "-in",
+            str(request_path),
+            "-CA",
+            str(ca_certificate),
+            "-CAkey",
+            str(ca_key),
+            "-set_serial",
+            str(serial),
+            "-extfile",
+            str(extension_path),
+            "-out",
+            str(certificate_path),
+        ]
+    )
+    return key_path, certificate_path
+
+
+def _install_server_certificate(
+    container: str,
+    *,
+    key_path: Path,
+    certificate_path: Path,
+) -> None:
+    """Install a test-only server identity with PostgreSQL-required key ownership."""
+    _run_command(
+        ["docker", "exec", "--user", "0", container, "mkdir", "-p", _TLS_DIRECTORY]
+    )
+    _run_command(
+        ["docker", "cp", str(key_path), f"{container}:{_TLS_DIRECTORY}/server.key"]
+    )
+    _run_command(
+        [
+            "docker",
+            "cp",
+            str(certificate_path),
+            f"{container}:{_TLS_DIRECTORY}/server.crt",
+        ]
+    )
+    _run_command(
+        [
+            "docker",
+            "exec",
+            "--user",
+            "0",
+            container,
+            "chown",
+            "postgres:postgres",
+            f"{_TLS_DIRECTORY}/server.key",
+            f"{_TLS_DIRECTORY}/server.crt",
+        ]
+    )
+    _run_command(
+        [
+            "docker",
+            "exec",
+            "--user",
+            "0",
+            container,
+            "chmod",
+            "600",
+            f"{_TLS_DIRECTORY}/server.key",
+        ]
+    )
+    _run_command(
+        [
+            "docker",
+            "exec",
+            "--user",
+            "0",
+            container,
+            "chmod",
+            "644",
+            f"{_TLS_DIRECTORY}/server.crt",
+        ]
+    )
+
+
+def _alter_system(container: str, setting: str, value: str) -> None:
+    """Set one bounded PostgreSQL server parameter through the CI superuser."""
+    if setting not in {"ssl", "ssl_cert_file", "ssl_key_file"}:
+        raise AssertionError("remote TLS acceptance setting is not admitted")
+    literal = value.replace("'", "''")
+    _run_command(
+        [
+            "docker",
+            "exec",
+            container,
+            "psql",
+            "-U",
+            _EXPECTED_USER,
+            "-d",
+            _EXPECTED_DATABASE,
+            "-v",
+            "ON_ERROR_STOP=1",
+            "-c",
+            f"ALTER SYSTEM SET {setting} = '{literal}'",
+        ]
+    )
+
+
+def _restart_candidate_postgres(container: str) -> None:
+    """Restart the disposable CI PostgreSQL and wait for its real readiness probe."""
+    _run_command(["docker", "restart", container], timeout_seconds=60)
+    deadline = time.monotonic() + 45
+    while time.monotonic() < deadline:
+        completed = subprocess.run(
+            [
+                "docker",
+                "exec",
+                container,
+                "pg_isready",
+                "-U",
+                _EXPECTED_USER,
+                "-d",
+                _EXPECTED_DATABASE,
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        if completed.returncode == 0:
+            return
+        time.sleep(0.5)
+    raise AssertionError("candidate PostgreSQL did not become ready after TLS restart")
+
+
+def _configure_server_tls(container: str, *, enabled: bool) -> None:
+    """Enable or disable TLS on the disposable PostgreSQL test boundary."""
+    if enabled:
+        _alter_system(container, "ssl_cert_file", f"{_TLS_DIRECTORY}/server.crt")
+        _alter_system(container, "ssl_key_file", f"{_TLS_DIRECTORY}/server.key")
+    _alter_system(container, "ssl", "on" if enabled else "off")
+    _restart_candidate_postgres(container)
+
+
+@contextmanager
+def _trusted_ca(certificate_path: Path) -> Iterator[None]:
+    """Temporarily bind Python's default trust loading to one CI-only CA."""
+    previous = os.environ.get("SSL_CERT_FILE")
+    os.environ["SSL_CERT_FILE"] = str(certificate_path)
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("SSL_CERT_FILE", None)
+        else:
+            os.environ["SSL_CERT_FILE"] = previous
+
+
+def _remote_tls_driver(address: str, password: str) -> Pg8000DriverAdapter:
+    """Construct the production adapter with a credential-free service selector."""
+    def resolve_service(service_name: str) -> dict[str, str]:
+        if service_name != "tls-acceptance":
+            raise AssertionError("unexpected TLS acceptance service selector")
+        return {
+            "host": address,
+            "port": "5432",
+            "dbname": _EXPECTED_DATABASE,
+            "user": _EXPECTED_USER,
+            "password": password,
+        }
+
+    return Pg8000DriverAdapter(dbapi, service_resolver=resolve_service)
+
+
+def _assert_remote_tls_failure(driver: Pg8000DriverAdapter, password: str) -> None:
+    """Require fail-closed connection behavior without credential disclosure."""
+    try:
+        connection = driver.connect(
+            "service=tls-acceptance",
+            connect_timeout_seconds=5,
+        )
+    except Exception as error:
+        rendered = f"{error!s}\n{error!r}"
+        if password in rendered:
+            raise AssertionError("TLS failure disclosed credential material") from None
+        return
+    connection.close()
+    raise AssertionError("remote PostgreSQL TLS failure was accepted")
+
+
+def _assert_production_remote_tls_contract() -> None:
+    """Exercise authenticated TLS, peer identity, and no-downgrade on real PostgreSQL."""
+    container = _candidate_container()
+    address = _candidate_container_ip(container)
+    password = _candidate_password()
+    restored_plaintext = False
+
+    with TemporaryDirectory(prefix="pg-llm-batch-tls-") as temporary_directory:
+        directory = Path(temporary_directory)
+        ca_key, ca_certificate = _generate_ca(directory, "pg-llm-batch-ci-ca")
+        _, untrusted_ca_certificate = _generate_ca(
+            directory,
+            "pg-llm-batch-ci-untrusted-ca",
+        )
+        matching_key, matching_certificate = _generate_server_certificate(
+            directory,
+            stem="matching-server",
+            ca_key=ca_key,
+            ca_certificate=ca_certificate,
+            identity_ip=address,
+            serial=1001,
+        )
+        mismatch_key, mismatch_certificate = _generate_server_certificate(
+            directory,
+            stem="mismatch-server",
+            ca_key=ca_key,
+            ca_certificate=ca_certificate,
+            identity_ip="192.0.2.1",
+            serial=1002,
+        )
+
+        try:
+            _install_server_certificate(
+                container,
+                key_path=matching_key,
+                certificate_path=matching_certificate,
+            )
+            _configure_server_tls(container, enabled=True)
+            driver = _remote_tls_driver(address, password)
+
+            with _trusted_ca(ca_certificate):
+                connection = driver.connect(
+                    "service=tls-acceptance",
+                    connect_timeout_seconds=5,
+                )
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT ssl FROM pg_catalog.pg_stat_ssl "
+                            "WHERE pid = pg_backend_pid()"
+                        )
+                        if cursor.fetchone() != (True,):
+                            raise AssertionError("remote PostgreSQL connection is not TLS")
+                finally:
+                    connection.close()
+
+            with _trusted_ca(untrusted_ca_certificate):
+                _assert_remote_tls_failure(driver, password)
+
+            _install_server_certificate(
+                container,
+                key_path=mismatch_key,
+                certificate_path=mismatch_certificate,
+            )
+            _restart_candidate_postgres(container)
+            with _trusted_ca(ca_certificate):
+                _assert_remote_tls_failure(driver, password)
+
+            _configure_server_tls(container, enabled=False)
+            restored_plaintext = True
+            with _trusted_ca(ca_certificate):
+                _assert_remote_tls_failure(driver, password)
+        finally:
+            if not restored_plaintext:
+                try:
+                    _configure_server_tls(container, enabled=False)
+                except AssertionError:
+                    pass
 
 
 def _assert_keyword_and_service_selector_connections() -> None:
@@ -422,6 +803,7 @@ def main() -> None:
         _assert_typed_rls_read(evidence_uuid, evidence_time)
     finally:
         _cleanup()
+    _assert_production_remote_tls_contract()
 
 
 if __name__ == "__main__":
