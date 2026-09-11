@@ -20,12 +20,17 @@ class _RawConnection:
     """Stand in for a raw pg8000 connection without performing network I/O."""
 
 
+class _Pg8000InterfaceError(Exception):
+    """Model the admitted pg8000 DB-API interface-error boundary."""
+
+
 def _dbapi_module(calls: list[dict[str, object]]) -> ModuleType:
     """Return the exact DB-API metadata shape plus a recording connect factory."""
     module = ModuleType("pg8000.dbapi")
     module.apilevel = "2.0"  # type: ignore[attr-defined]
     module.paramstyle = "format"  # type: ignore[attr-defined]
     module.threadsafety = 1  # type: ignore[attr-defined]
+    module.InterfaceError = _Pg8000InterfaceError  # type: ignore[attr-defined]
 
     def connect(**kwargs: object) -> _RawConnection:
         calls.append(dict(kwargs))
@@ -173,4 +178,47 @@ def test_remote_tls_handshake_failure_is_content_free() -> None:
 
     assert str(failure.value) == "PostgreSQL TLS policy is unavailable"
     assert failure.value.__cause__ is None
+    assert len(calls) == 1
+
+
+def test_remote_server_ssl_refusal_is_content_free() -> None:
+    """Normalize pg8000's pinned server-refuses-SSL InterfaceError shape."""
+    calls: list[dict[str, object]] = []
+    module = _dbapi_module(calls)
+
+    def fail_connect(**kwargs: object) -> _RawConnection:
+        calls.append(dict(kwargs))
+        raise _Pg8000InterfaceError("Server refuses SSL")
+
+    module.connect = fail_connect  # type: ignore[attr-defined]
+    adapter = Pg8000DriverAdapter(module)
+
+    with pytest.raises(
+        Pg8000DriverTlsPolicyError,
+        match="^PostgreSQL TLS policy is unavailable$",
+    ) as failure:
+        adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
+
+    assert str(failure.value) == "PostgreSQL TLS policy is unavailable"
+    assert failure.value.__cause__ is None
+    assert len(calls) == 1
+
+
+def test_unrelated_pg8000_interface_error_remains_native() -> None:
+    """Do not collapse unrelated DB-API interface failures into TLS policy."""
+    calls: list[dict[str, object]] = []
+    module = _dbapi_module(calls)
+    native_failure = _Pg8000InterfaceError("connection setup failed")
+
+    def fail_connect(**kwargs: object) -> _RawConnection:
+        calls.append(dict(kwargs))
+        raise native_failure
+
+    module.connect = fail_connect  # type: ignore[attr-defined]
+    adapter = Pg8000DriverAdapter(module)
+
+    with pytest.raises(_Pg8000InterfaceError) as failure:
+        adapter.connect("user=pgllm host=db.example.invalid dbname=pgllm")
+
+    assert failure.value is native_failure
     assert len(calls) == 1
