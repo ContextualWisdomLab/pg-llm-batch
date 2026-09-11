@@ -21,6 +21,7 @@ from ssl import (
     CERT_REQUIRED,
     PROTOCOL_TLS_CLIENT,
     SSLContext,
+    SSLError,
     VERIFY_X509_PARTIAL_CHAIN,
     VERIFY_X509_STRICT,
 )
@@ -48,7 +49,7 @@ class Pg8000DriverUnavailableError(RuntimeError):
 
 
 class Pg8000DriverTlsPolicyError(RuntimeError):
-    """Report that the package cannot construct its verified remote TLS policy.
+    """Report that the package cannot construct or complete verified remote TLS.
 
     The diagnostic is deliberately fixed and content-free. It does not expose
     certificate-store paths, selectors, hosts, credentials, or platform details.
@@ -100,10 +101,11 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
     copying those contracts. Production construction adds one policy boundary:
     non-loopback TCP targets always receive a host-trust ``SSLContext`` with
     certificate and hostname verification and without ambient TLS key logging.
-    Explicit localhost/loopback selectors retain the documented development
-    exception. Embedding hosts that need a different connection policy retain
-    the existing injected ``PostgresDriverPort`` seam instead of mutating
-    package connection grammar.
+    TLS handshake failures from that package-owned context are normalized at the
+    same content-free boundary. Explicit localhost/loopback selectors retain the
+    documented development exception. Embedding hosts that need a different
+    connection policy retain the existing injected ``PostgresDriverPort`` seam
+    instead of mutating package connection grammar.
     """
 
     def __init__(
@@ -117,11 +119,17 @@ class Pg8000DriverAdapter(Pg8000CandidateDriverAdapter):
         raw_connect = self._connect
 
         def secure_connect(**kwargs: Any) -> object:
-            """Inject verified TLS for remote hosts before raw pg8000 access."""
+            """Inject verified TLS and redact its remote handshake diagnostics."""
             host = kwargs["host"]
-            if not _is_explicit_loopback_host(host):
-                kwargs["ssl_context"] = _verified_remote_ssl_context()
-            return raw_connect(**kwargs)
+            if _is_explicit_loopback_host(host):
+                return raw_connect(**kwargs)
+            kwargs["ssl_context"] = _verified_remote_ssl_context()
+            try:
+                return raw_connect(**kwargs)
+            except SSLError:
+                raise Pg8000DriverTlsPolicyError(
+                    "PostgreSQL TLS policy is unavailable"
+                ) from None
 
         self._connect = secure_connect
 
