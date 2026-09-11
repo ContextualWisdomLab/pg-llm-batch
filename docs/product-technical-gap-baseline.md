@@ -48,4 +48,4 @@ The architecture requires bounded provider response processing, exact tenant val
 
 ## Evidence status
 
-Protected `main` and every open stack head remain separately authoritative. This baseline records the branch-local Result Application truth and explicitly marks unintegrated sibling/security, performance, approval, central-workflow and release work as gaps. It does not transfer predecessor checks, claim an unmerged sibling's runtime guarantees, or treat a green development head as a published release.
+Open stack heads are authoritative only for their own branch-local evidence. Protected `main` is authoritative for integrated behavior, and immutable releases are authoritative for released-contract identity. This baseline records the branch-local Result Application truth and explicitly marks unintegrated sibling/security, performance, approval, central-workflow and release work as gaps. It does not transfer predecessor checks, claim an unmerged sibling's runtime guarantees, or treat a green development head as a published release.
