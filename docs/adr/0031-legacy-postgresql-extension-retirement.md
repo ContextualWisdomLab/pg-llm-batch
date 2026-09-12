@@ -1,4 +1,4 @@
-# ADR: Fail-closed retirement of legacy PostgreSQL provider extensions
+# ADR 0031: Fail-closed retirement of legacy PostgreSQL provider extensions
 
 - **Status:** Proposed
 - **Decision owner:** pg-llm-batch maintainers

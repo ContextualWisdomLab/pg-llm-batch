@@ -8,7 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OPERABILITY = ROOT / "docs" / "OPERABILITY.md"
-ADR = ROOT / "docs" / "adr" / "legacy-postgresql-extension-retirement.md"
+ADR = ROOT / "docs" / "adr" / "0031-legacy-postgresql-extension-retirement.md"
 DOCTORING = ROOT / "docs" / "doctoring" / "legacy-postgresql-extension-retirement.md"
 MIGRATION = ROOT / "docker" / "postgres" / "migrations" / "retire_legacy_provider_extensions.sql"
 
@@ -48,8 +48,11 @@ def test_adr_and_doctoring_preserve_the_authority_boundary() -> None:
     adr = _text(ADR)
     doctoring = _text(DOCTORING)
 
+    assert adr.startswith(
+        "# ADR 0031: Fail-closed retirement of legacy PostgreSQL provider extensions\n"
+    )
     assert "Status:** Proposed" in adr
-    assert "database-side provider networking" in adr
+    assert "direct provider-network" in adr
     assert "shared_preload_libraries" in adr
     assert "deptype = 'x'" in adr
     assert "deptype = 'e'" in adr
