@@ -36,7 +36,7 @@ def test_operator_docs_tell_the_next_safe_action() -> None:
         "https://api.github.com",
         "exact decoder",
         "nist sp 800-218",
-        "slsa v1.0",
+        "https://slsa.dev/spec/v1.0/",
         "torres-arias",
         "rfc 3339",
         "klyne",

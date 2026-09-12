@@ -29,7 +29,9 @@ _REPOSITORY_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 _PROTECTED_REF_RE = re.compile(r"^[A-Za-z0-9._/-]+$")
 _API_PATH_RE = re.compile(r"^/(?!/)[^\r\n]*$")
-_CAPTURED_AT_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+_CAPTURED_AT_RE = re.compile(
+    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T(?:[01][0-9]|2[0-3]):[0-9]{2}:[0-9]{2}Z$"
+)
 _WORKFLOW_PREFIX = ".github/workflows/"
 _DYNAMIC_WORKFLOW_PREFIX = "dynamic/"
 _WORKFLOW_STATES = frozenset(
