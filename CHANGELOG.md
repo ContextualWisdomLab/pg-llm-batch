@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded `restore_postgres_logical_backup()` executor that runs one
+  shell-free `pg_restore --single-transaction --exit-on-error` against a
+  caller-owned private archive descriptor. Callers must pass exact-boolean
+  `source_superusers_trusted=True`; the service name is not an authorization
+  boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be
+  inherited.
+
+### Fixed
+
+- Logical restore no longer treats a mid-archive descriptor offset as failure.
+  Custom-format `pg_restore` seeks to the table of contents and data blocks, so
+  a successful restore is not required to leave the descriptor at end-of-file.
+  A post-restore metadata mismatch remains fail-closed and must be treated as
+  unsafe because the SQL transaction may already have committed.
+
+### Added
+
 - Read-only exact-head release acceptance that builds wheel and source distribution artifacts twice from clean Git archives, proves byte-identical SHA-256 identity, records bounded canonical evidence, and keeps publication and attestation authority separate.
 - Optional bounded provider output/error-file lifetime controls for batch creation, with exact local validation before credential resolution and backward-compatible omission for provider-neutral callers.
 - Trusted tenant-scoped durable lifecycle identities for shared-table MSA deployments, including `TenantDurableBatchAPIClient`, tenant-qualified persistence and read helpers, transaction-local PostgreSQL context, forced default-deny row-level security, and explicit standalone compatibility.
@@ -38,7 +55,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Added fail-closed legacy PostgreSQL extension retirement for existing volumes: the operator migration blocks on package or operator cron authority, retired helper signatures, explicit `DEPENDS ON EXTENSION` dependencies, and unexpected table-like extension members before using one bounded transaction with `DROP EXTENSION ... RESTRICT`; it preserves `gateway_retrieval_logs`, forbids `CASCADE`, documents dependency recovery and rollback, and proves both auto-drop refusal cases plus idempotent replay in a live container.
 - Bound release-artifact traversal, hashing, identity validation, and manifest publication to descriptor-relative no-follow operations with bounded enumeration, atomic replacement, and file plus parent-directory synchronization so symlink or same-name replacement cannot convert a verified artifact set into different release evidence; this closes the documented time-of-check/time-of-use boundary while version `0.1.0` remains unchanged.
 - Rejected non-callable standalone and tenant lifecycle recorders or observation reservers during client construction, before any provider operation can succeed without a usable persistence path.
 - Made the tenant lifecycle migration atomic across owner-enforcement relaxation, legacy-row backfill, constraint replacement, and forced-RLS restoration so psql autocommit cannot commit an intermediate owner-bypass state.

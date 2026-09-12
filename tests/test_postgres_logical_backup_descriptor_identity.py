@@ -1,0 +1,155 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Regression tests for logical-backup output-descriptor identity."""
+
+from __future__ import annotations
+
+import os
+import subprocess
+
+import pytest
+
+import pg_llm_batch.postgres_logical_backup as logical_backup
+from pg_llm_batch.postgres_logical_backup import (
+    PostgresLogicalBackupError,
+    PostgresLogicalBackupResult,
+    create_postgres_logical_backup,
+)
+
+
+def test_logical_backup_rejects_output_descriptor_substitution(
+    tmp_path, monkeypatch
+):
+    """Reject same-number descriptor replacement without destroying replacement data."""
+    original_path = tmp_path / "original.dump"
+    replacement_path = tmp_path / "replacement.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    replacement_descriptor = os.open(
+        replacement_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600
+    )
+
+    def substitute_output(argv, **kwargs):
+        os.dup2(replacement_descriptor, kwargs["stdout"])
+        os.write(kwargs["stdout"], b"PGDMP-replacement")
+        return subprocess.CompletedProcess(argv, 0)
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", substitute_output)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match=r"^PostgreSQL logical backup output changed during execution$",
+        ):
+            create_postgres_logical_backup(
+                "safe_service",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        assert os.read(descriptor, 1024) == b"PGDMP-replacement"
+    finally:
+        os.close(replacement_descriptor)
+        os.close(descriptor)
+
+
+def test_logical_backup_failure_does_not_invalidate_substituted_descriptor(
+    tmp_path, monkeypatch
+):
+    """Preserve an unrelated replacement file when pg_dump fails after substitution."""
+    original_path = tmp_path / "original-failure.dump"
+    replacement_path = tmp_path / "replacement-failure.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    replacement_descriptor = os.open(
+        replacement_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600
+    )
+
+    def substitute_then_fail(argv, **kwargs):
+        os.dup2(replacement_descriptor, kwargs["stdout"])
+        os.write(kwargs["stdout"], b"operator-owned-replacement")
+        return subprocess.CompletedProcess(argv, 1)
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", substitute_then_fail)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match=r"^PostgreSQL logical backup command failed$",
+        ):
+            create_postgres_logical_backup(
+                "safe_service",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        assert os.read(descriptor, 1024) == b"operator-owned-replacement"
+    finally:
+        os.close(replacement_descriptor)
+        os.close(descriptor)
+
+
+def test_logical_backup_normalizes_cleanup_descriptor_dup_failure(
+    tmp_path, monkeypatch
+):
+    """Fail with bounded evidence if the original descriptor cannot be retained."""
+    original_path = tmp_path / "dup-failure.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    subprocess_called = False
+
+    def fail_dup(_descriptor):
+        raise OSError("secret duplicate failure")
+
+    def forbidden_run(*_args, **_kwargs):
+        nonlocal subprocess_called
+        subprocess_called = True
+        raise AssertionError("subprocess must not run")
+
+    monkeypatch.setattr(logical_backup.os, "dup", fail_dup)
+    monkeypatch.setattr(logical_backup.subprocess, "run", forbidden_run)
+    try:
+        with pytest.raises(
+            PostgresLogicalBackupError,
+            match=r"^PostgreSQL logical backup output could not be retained$",
+        ) as caught:
+            create_postgres_logical_backup(
+                "safe_service",
+                descriptor,
+                pg_dump_executable="/usr/bin/pg_dump",
+            )
+        assert "secret" not in str(caught.value)
+        assert subprocess_called is False
+    finally:
+        os.close(descriptor)
+
+
+def test_logical_backup_cleanup_close_failure_preserves_success(
+    tmp_path, monkeypatch
+):
+    """Do not replace valid backup evidence with a duplicate-close diagnostic."""
+    original_path = tmp_path / "close-failure.dump"
+    descriptor = os.open(original_path, os.O_CREAT | os.O_EXCL | os.O_RDWR, 0o600)
+    real_close = os.close
+    leaked_cleanup_descriptors: list[int] = []
+
+    def write_successfully(argv, **kwargs):
+        os.write(kwargs["stdout"], b"PGDMP-safe")
+        return subprocess.CompletedProcess(argv, 0)
+
+    def fail_cleanup_close(target_descriptor):
+        if target_descriptor == descriptor:
+            return real_close(target_descriptor)
+        leaked_cleanup_descriptors.append(target_descriptor)
+        raise OSError("secret cleanup close failure")
+
+    monkeypatch.setattr(logical_backup.subprocess, "run", write_successfully)
+    monkeypatch.setattr(logical_backup.os, "close", fail_cleanup_close)
+    try:
+        assert create_postgres_logical_backup(
+            "safe_service",
+            descriptor,
+            pg_dump_executable="/usr/bin/pg_dump",
+        ) == PostgresLogicalBackupResult(size_bytes=10)
+        assert len(leaked_cleanup_descriptors) == 1
+    finally:
+        monkeypatch.setattr(logical_backup.os, "close", real_close)
+        for cleanup_descriptor in leaked_cleanup_descriptors:
+            real_close(cleanup_descriptor)
+        real_close(descriptor)

@@ -55,39 +55,20 @@ Rollback to the former two-column key is unsafe until an operator proves that no
 The packaged schema and Docker initialization schema are maintained as exact
 mirrors and must be reapplied successfully more than once.
 
-## Legacy provider-extension retirement
+## Logical restore execution
 
-Fresh installations do not create `http`, `pg_cron`, or database-side provider networking,
-or an independent provider polling schedule. Existing volumes may still contain
-those extension surfaces. Their retirement is an explicit operator migration
-after the Python provider boundary and historical cleanup script are
-authoritative.
+`restore_postgres_logical_backup()` is a bounded direct-SQL restore seam. The
+caller must pass exact-boolean `source_superusers_trusted=True` and select an
+isolated libpq service; the service name is not an authorization or
+proof-of-isolation boundary. Only `PGPASSWORD`, `PGPASSFILE`, and
+`PGSERVICEFILE` may be inherited. The child runs
+`pg_restore --single-transaction --exit-on-error --dbname=service=...`.
 
-`docker/postgres/migrations/retire_legacy_provider_extensions.sql` owns only the
-database extension-removal step. It checks for every cron schedule and each
-retired helper signature, then inspects `pg_depend` before applying a
-transaction-local five-second lock timeout and dropping `http` and `pg_cron`
-with `RESTRICT` in one transaction. The dependency preflight rejects unexpected
-table-like extension members and every explicit auto-extension dependency
-created by `DEPENDS ON EXTENSION`, because PostgreSQL would remove those objects
-with the extension even under `RESTRICT`. It never uses `CASCADE`, never drops
-an application table or schema, and preserves `gateway_retrieval_logs` when
-that evidence table exists.
-
-The preflight intentionally treats a modified same-signature helper, an
-unrelated cron job, an application/operator table accidentally enrolled as an
-extension member, and an explicit extension-dependent object as operator-owned
-authority. Any such condition blocks the migration until an operator resolves
-it. Normal `pg_cron` relations inside the `cron` schema are part of the expected
-extension-owned boundary and are not reclassified as application state. An
-interrupted or failed attempt rolls back; a successful attempt can be replayed
-idempotently.
-
-This database migration does not remove operating-system packages and does not
-edit `shared_preload_libraries`. Those host/image changes occur only after all
-supported existing volumes have completed and verified the migration. See
-[`docs/OPERABILITY.md`](docs/OPERABILITY.md) and the
-[retirement ADR](docs/adr/legacy-postgresql-extension-retirement.md).
+Custom-format `pg_restore` seeks to the table of contents and data blocks, so a
+successful restore is not required to leave the descriptor at end-of-file.
+Post-restore metadata mismatch is fail-closed and must be treated as unsafe
+because the SQL transaction may already have committed. This seam does not
+complete isolated schema/RLS/PITR acceptance.
 
 ## Modular interoperability
 
@@ -108,11 +89,3 @@ and prove that identical provider identifiers in different tenants remain
 independently addressable and mutually invisible when access occurs through the
 trusted package boundary. They do not claim isolation after arbitrary SQL is
 granted.
-
-The extension-retirement gate additionally executes the real migration in the
-bundled PostgreSQL image against historical package objects, substituted and
-marker-preserving modified helpers, independent cron authority, an application
-table temporarily enrolled as an extension member, an explicit `DEPENDS ON
-EXTENSION` routine, and a preserved application evidence table. Static
-contracts require the `pg_depend` guards and forbid `CASCADE`, table drops, and
-schema drops; the live smoke executes the successful migration twice.
