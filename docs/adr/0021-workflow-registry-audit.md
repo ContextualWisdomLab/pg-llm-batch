@@ -1,7 +1,8 @@
 # ADR 0021: Read-only exact-SHA workflow registry audit
 
-- **Status:** Accepted for the read-only detector slice
+- **Status:** Proposed
 - **Date:** 2026-08-16
+- **Reconciled:** 2026-09-12
 
 ## Context
 
@@ -17,11 +18,13 @@ registry read can splice two registry generations even when `total_count` is
 unchanged. JSON subclasses can lie about equality if identity members are
 compared before an exact-type check.
 
-Protected `main` currently ends at ADR 0015. Concurrent recovery branches
-already claim 0016 (logical restore seek), 0017 (recovery evidence binding),
-0018 (restore catalog acceptance), 0019 (physical PITR profile), and 0020
-(recovery receipt verification). This decision therefore uses 0021 so a later
-merge cannot silently file two different records under one numeric prefix.
+The original proposal reserved ADR 0021 while recovery decisions 0016-0020
+were still on contributor branches. Protected `main` now contains those
+recovery decisions and ADR 0022 explicitly records 0021 as the workflow-audit
+decision reserved by #222. There is still no protected `0021-*` file. This
+current-base reconciliation therefore keeps 0021 instead of renumbering the
+decision or creating a duplicate prefix. The status remains Proposed until the
+bounded detector is normally integrated through protected governance.
 
 NIST SP 800-218 (SSDF) and SLSA v1.0 treat build-system integrity as a
 provenance control: verify the source that is supposed to produce automation
@@ -33,8 +36,8 @@ otherwise successful evidence.
 
 ## Decision
 
-`pg_llm_batch.workflow_registry_audit` is a packaged, installable, read-only
-auditor.
+`pg_llm_batch.workflow_registry_audit` is proposed as a packaged, installable,
+read-only auditor.
 
 1. Transport is GET-only to `https://api.github.com`, path-only, no redirects,
    finite timeout, default TLS verification, no automatic retry.
@@ -55,22 +58,26 @@ auditor.
 
 ## Consequences
 
-Operators can install `pg-llm-batch` and run
-`pg-llm-batch-workflow-audit` without a special PYTHONPATH. Coverage,
-docstring, and compile gates now see the production module because it lives
-under `pg_llm_batch`. A buyer can distinguish a moving branch, a truncated
-tree, a rate-limit, and a true orphan candidate.
+After normal protected integration and package publication, operators can run
+`pg-llm-batch-workflow-audit` without a special `PYTHONPATH`. Until then, the
+command and this ADR are contributor-branch evidence only and must not be
+presented as released product behavior.
 
 The detector does not replace branch protection, required reviews, or a human
 decision to disable a workflow. False confidence from a stale PR body or from
 comparing a tree SHA to a commit SHA is rejected.
 
+Canonical root README, architecture and changelog text are owned by their live
+documentation lanes. This source lane carries only the bounded ADR/doctoring
+contract needed to review the detector; public-document convergence follows
+through those owners after source ancestry is stable.
+
 ## Rollback
 
-Rollback is code-only: remove the package module, console script, checkout
-shim, ADR, doctoring, changelog, and regression files. No database migration
-or Actions mutation is required. Adding mutation to this tool requires a
-separate reviewed control-plane contract.
+Rollback is code-only: remove the package module, console-script entry,
+checkout shim, ADR, doctoring record, and focused regressions. No database
+migration or Actions mutation is required. Adding mutation to this tool
+requires a separate reviewed control-plane contract.
 
 ## References
 

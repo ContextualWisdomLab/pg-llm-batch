@@ -2,14 +2,16 @@
 
 ## Purpose
 
-This record tells an operator how to detect GitHub Actions identities that are
-active in a repository registry but absent from an exact protected source tree,
-without disabling, editing, rerunning, or recreating any workflow.
+This record describes the proposed read-only detector for GitHub Actions
+identities that are active in a repository registry but absent from an exact
+protected source tree, without disabling, editing, rerunning, or recreating any
+workflow.
 
-Use the installed command after `pip install pg-llm-batch` or an editable
-checkout. Do not treat a missing checkout-root module as the supported
-interface. The detector follows NIST SP 800-218 and SLSA v1.0 by binding the
-receipt to an exact source commit before any operator reviews a candidate.
+The detector is contributor-branch capability until it reaches protected main
+through normal governance and is included in an accepted package/release.
+After that integration, operators can use the installed command instead of a
+checkout-root shim. Do not describe the command as released merely because the
+branch tests or package build succeed.
 
 ```bash
 export GITHUB_TOKEN="$(gh auth token)"   # contents:read + actions:read is enough
@@ -76,12 +78,21 @@ This tool does not select tenant scope, touch PostgreSQL, or mutate Actions
 state. It is a read-only control-plane detector for this repository and for
 hosts that embed `pg-llm-batch` as a module.
 
+## Documentation ownership
+
+ADR 0021 and this doctoring record are the bounded source-lane contract.
+Canonical root README, architecture, changelog, PRD/TRD and product-gap text
+have separate active writers and are deliberately not rewritten by the current
+reconciliation. Once the source lane is stable, those owners must converge any
+buyer-facing documentation before protected integration or release claims.
+
 ## Recovery and rollback
 
 No schema, secret, or workflow mutation is performed. Recovery is to rerun the
 same read after correcting the failed input or GitHub condition. Rollback is
-removing the console script, package module, ADR, and this record. Reintroducing
-workflow disable/enable from this tool is not a routine rollback step.
+removing the console-script entry, package module, checkout shim, ADR, this
+record, and focused regressions. Reintroducing workflow disable/enable from
+this tool is not a routine rollback step.
 
 ## Verification
 
@@ -96,9 +107,9 @@ Permanent regression coverage requires that:
 - multi-page registries are accepted only after a second identical pass;
 - truncated trees, moving protected refs, and oversize responses fail closed;
 - the console script `pg-llm-batch-workflow-audit` is declared in package
-  metadata; and
-- README, architecture, ADR 0021, changelog, and this doctoring record all tell
-  the operator to review candidates instead of disabling workflows; and
+  metadata;
+- ADR 0021 and this doctoring record tell the operator to review candidates
+  instead of disabling workflows; and
 - caller-supplied receipt timestamps are rejected unless they are finite
   canonical UTC RFC 3339 values.
 

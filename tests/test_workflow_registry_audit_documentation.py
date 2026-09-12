@@ -7,9 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DOCTORING = ROOT / "docs/doctoring/workflow-registry-audit.md"
 ADR = ROOT / "docs/adr/0021-workflow-registry-audit.md"
-CHANGELOG = ROOT / "CHANGELOG.md"
-README = ROOT / "README.md"
-ARCHITECTURE = ROOT / "ARCHITECTURE.md"
+PYPROJECT = ROOT / "pyproject.toml"
 
 
 def _normalized(path: Path) -> str:
@@ -18,13 +16,10 @@ def _normalized(path: Path) -> str:
 
 
 def test_operator_docs_tell_the_next_safe_action() -> None:
-    """A buyer must see the installable command, exit codes, and no-mutation rule."""
+    """The bounded owner docs must describe install, evidence, and no mutation."""
     documents = {
         "doctoring": _normalized(DOCTORING),
         "adr": _normalized(ADR),
-        "changelog": _normalized(CHANGELOG),
-        "readme": _normalized(README),
-        "architecture": _normalized(ARCHITECTURE),
     }
 
     for name, document in documents.items():
@@ -46,14 +41,24 @@ def test_operator_docs_tell_the_next_safe_action() -> None:
         "rfc 3339",
         "klyne",
         "adr 0021",
+        "documentation ownership",
     ):
         assert token in doctoring, token
 
+    pyproject = PYPROJECT.read_text(encoding="utf-8")
+    assert (
+        'pg-llm-batch-workflow-audit = "pg_llm_batch.workflow_registry_audit:main"'
+        in pyproject
+    )
 
-def test_workflow_registry_audit_adr_avoids_open_recovery_number_collision() -> None:
-    """Keep this decision off 0016-0020, which open recovery PRs already claim."""
+
+def test_workflow_registry_audit_adr_stays_proposed_and_collision_free() -> None:
+    """Keep reserved ADR 0021 distinct until the detector reaches protected main."""
     adr_dir = ROOT / "docs/adr"
     assert ADR.is_file()
-    assert not (adr_dir / "0016-workflow-registry-audit.md").exists()
     heading = ADR.read_text(encoding="utf-8").splitlines()[0]
     assert heading == "# ADR 0021: Read-only exact-SHA workflow registry audit"
+    adr = _normalized(ADR)
+    assert "**status:** proposed" in adr
+    assert "adr 0022" in adr
+    assert not (adr_dir / "0021-postgres-restore-target-isolation.md").exists()

@@ -57,7 +57,6 @@ than a second database-side network authority.
 | DDL subset | `pg_llm_batch/schema.sql` |
 | Readiness (`/healthz`) | `pg_llm_batch/health.py` |
 | CLI | `pg_llm_batch/cli.py` |
-| Read-only workflow registry audit | `pg_llm_batch/workflow_registry_audit.py` |
 
 ## Requirements
 
@@ -155,28 +154,6 @@ python -m pg_llm_batch health   # prints the report, exit 0 ready / 1 not ready
 The Docker `HEALTHCHECK` and the compose `postgres` service both gate on the
 same `pg_llm_batch_health_check()` SQL function.
 
-### Workflow registry audit
-
-Detect active GitHub Actions identities that are missing from an exact
-protected source tree. The command is read-only: it never disables, edits, or
-reruns workflows. Review `active_absent_workflows` yourself. GitHub-managed
-`dynamic/` identities are listed but are not orphan candidates.
-
-```bash
-export GITHUB_TOKEN="$(gh auth token)"   # contents:read + actions:read
-pg-llm-batch-workflow-audit \
-  --repository ContextualWisdomLab/pg-llm-batch \
-  --protected-ref main \
-  --protected-sha "$(git rev-parse origin/main)"
-```
-
-Exit `0` means the protected ref stayed on the supplied SHA and no
-repository-backed orphan candidates were found. Exit `2` prints a JSON receipt
-with candidates for a separate review. Exit `1` is a fail-closed audit error.
-See [`docs/doctoring/workflow-registry-audit.md`](docs/doctoring/workflow-registry-audit.md)
-and [ADR 0021](docs/adr/0021-workflow-registry-audit.md) for token scope,
-rate-limit evidence, and recovery.
-
 ---
 
 ## Durable lifecycle modes
@@ -230,6 +207,17 @@ authorized tenant scope see no lifecycle rows after RLS is enabled.
 
 See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
 migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
+
+For a caller-owned logical archive, use `restore_postgres_logical_backup()` only
+against an isolated libpq service after you can assert
+`source_superusers_trusted=True`. The service name is not an authorization
+boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited.
+The executor runs `pg_restore --single-transaction --exit-on-error`.
+Custom-format restore seeks through the archive, so success is not required to
+leave the descriptor at end-of-file. If metadata changes after `pg_restore`
+exits zero, treat the target as unsafe and do not retry into the same service.
+See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md)
+for the operator steps.
 
 ## Embed as a git submodule
 

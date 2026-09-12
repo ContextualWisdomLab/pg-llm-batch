@@ -55,6 +55,21 @@ Rollback to the former two-column key is unsafe until an operator proves that no
 The packaged schema and Docker initialization schema are maintained as exact
 mirrors and must be reapplied successfully more than once.
 
+## Logical restore execution
+
+`restore_postgres_logical_backup()` is a bounded direct-SQL restore seam. The
+caller must pass exact-boolean `source_superusers_trusted=True` and select an
+isolated libpq service; the service name is not an authorization or
+proof-of-isolation boundary. Only `PGPASSWORD`, `PGPASSFILE`, and
+`PGSERVICEFILE` may be inherited. The child runs
+`pg_restore --single-transaction --exit-on-error --dbname=service=...`.
+
+Custom-format `pg_restore` seeks to the table of contents and data blocks, so a
+successful restore is not required to leave the descriptor at end-of-file.
+Post-restore metadata mismatch is fail-closed and must be treated as unsafe
+because the SQL transaction may already have committed. This seam does not
+complete isolated schema/RLS/PITR acceptance.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
@@ -62,20 +77,6 @@ only after their own authentication and authorization boundary. The package
 does not require either host and retains standalone operation. When embedded,
 tenant scope is a local control-plane identity and not model- or
 provider-returned data.
-
-## Workflow registry audit
-
-`pg-llm-batch-workflow-audit` is a packaged read-only control-plane detector
-(ADR 0021).
-It compares the GitHub Actions registry to one exact protected commit and
-reports active repository-backed identities that are absent from that tree as
-`active_absent_workflows` candidates. Platform-managed `dynamic/` identities
-are receipted and never treated as deleted YAML. The tool does not mutate
-workflow state, select tenant scope, or perform provider I/O.
-
-Operators install the package and run the console script. A moving protected
-ref, truncated tree, pagination drift, rate limit, or hostile identity-member
-type fails closed. Candidate review remains a human control-plane decision.
 
 ## Verification boundary
 
