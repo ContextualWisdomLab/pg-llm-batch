@@ -100,6 +100,29 @@ def test_empty_dsn_rejection_is_content_free_and_precedes_config_lookup(
     assert config.calls == 0
 
 
+def test_whitespace_only_dsn_is_rejected_before_config_lookup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject whitespace-only authority without normalizing accepted DSNs."""
+    monkeypatch.setattr(token_counter_module, "psycopg", None)
+    supplied = _BehaviorBearingDsn(" \t\n ")
+    config = _ConfigProbe()
+
+    with pytest.raises(ValidationError) as captured:
+        TokenCounter(supplied, config=config)
+
+    assert captured.value.details == {
+        "field": "postgres_dsn",
+        "value": "<invalid>",
+        "reason": "must be a non-empty string",
+    }
+    assert "dsn-content-sentinel" not in str(captured.value)
+    assert supplied.bool_calls == 0
+    assert supplied.str_calls == 0
+    assert supplied.repr_calls == 0
+    assert config.calls == 0
+
+
 def test_non_string_dsn_is_rejected_without_executing_caller_protocols(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
