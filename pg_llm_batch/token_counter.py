@@ -59,13 +59,20 @@ class TokenCounter:
         buffer_percentage: Optional[int] = None,
     ) -> None:
         """Initialize PostgreSQL token counting and configured batch limits."""
-        if not postgres_dsn:
+        if not isinstance(postgres_dsn, str):
             raise ValidationError(
                 field="postgres_dsn",
-                value=postgres_dsn,
-                reason="A Postgres DSN is required (no os.getenv fallback)",
+                value="<invalid>",
+                reason="must be a non-empty string",
             )
-        self.postgres_dsn = postgres_dsn
+        postgres_dsn_snapshot = str.__str__(postgres_dsn)
+        if not postgres_dsn_snapshot.strip():
+            raise ValidationError(
+                field="postgres_dsn",
+                value="<invalid>",
+                reason="must be a non-empty string",
+            )
+        self.postgres_dsn = postgres_dsn_snapshot
         self.config = config
         self._pg_conn: Optional["psycopg.Connection"] = None
         self._pg_available: bool = False
