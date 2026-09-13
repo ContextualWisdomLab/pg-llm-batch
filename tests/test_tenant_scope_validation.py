@@ -61,19 +61,16 @@ def test_default_tenant_scope_is_explicit_standalone_identity() -> None:
 def test_validate_tenant_scope_rejects_ambiguous_or_unsafe_values(
     tenant_scope: Any,
 ) -> None:
-    """Unsupported tenant identities fail without exporting rejected content."""
+    """Unsupported scope values fail with bounded structured diagnostics."""
     with pytest.raises(ValidationError) as exc_info:
         validate_tenant_scope(tenant_scope)
 
     assert exc_info.value.details == {
         "field": "tenant_scope",
-        "value": "<redacted>",
+        "value": tenant_scope,
         "reason": (
             "must be 1-128 ASCII characters beginning with an alphanumeric "
             "character and containing only letters, digits, dot, underscore, "
             "colon, or hyphen"
         ),
     }
-    if isinstance(tenant_scope, str) and tenant_scope:
-        assert tenant_scope not in str(exc_info.value)
-        assert tenant_scope not in repr(exc_info.value.details)

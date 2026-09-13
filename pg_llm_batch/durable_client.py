@@ -364,7 +364,6 @@ class TenantDurableBatchAPIClient(DurableBatchAPIClient):
                 field="lifecycle_recorder",
                 value="<provided>",
                 reason="tenant clients require tenant_lifecycle_recorder",
-                safe_value="<provided>",
             )
         _validate_callable_seam(
             "tenant_lifecycle_recorder",

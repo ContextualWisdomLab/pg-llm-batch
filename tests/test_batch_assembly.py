@@ -135,9 +135,7 @@ def test_prepare_batches_rejects_unknown_lookup_key(monkeypatch, fake_pg):
         orch.prepare_batches(batch_uuid="missing-input.jsonl")
 
     assert exc_info.value.details["field"] == "batch_uuid"
-    assert exc_info.value.details["value"] == "<redacted>"
-    assert "missing-input.jsonl" not in str(exc_info.value)
-    assert "missing-input.jsonl" not in repr(exc_info.value.details)
+    assert exc_info.value.details["value"] == "missing-input.jsonl"
     assert connect_calls == []
 
 

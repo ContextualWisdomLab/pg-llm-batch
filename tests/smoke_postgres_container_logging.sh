@@ -67,3 +67,8 @@ fi
 # migration, tenant isolation, and rollback acceptance without adding a second
 # heavyweight container build/start path to CI.
 bash tests/smoke_checkpoint_postgres_acceptance.sh "${container}"
+
+# After checkpoint acceptance, prove restore-catalog index authentication against
+# same-name decoys on the live packaged catalog. Keep this on the same container
+# so CI does not start a second PostgreSQL image.
+bash tests/smoke_restore_catalog_index_semantics.sh "${container}"
