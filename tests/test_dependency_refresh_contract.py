@@ -15,7 +15,7 @@ def _assert_action_uses_immutable_commits(workflow: str, action: str) -> None:
 
 
 def test_ci_uses_reviewed_action_commits_and_explicit_cache_pruning() -> None:
-    """CI uses immutable action revisions and preserves the cache-cost policy."""
+    """Every setup-uv use is immutable and explicitly preserves the cache-cost policy."""
     workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     for action in (
         "step-security/harden-runner",
@@ -24,7 +24,9 @@ def test_ci_uses_reviewed_action_commits_and_explicit_cache_pruning() -> None:
         "astral-sh/setup-uv",
     ):
         _assert_action_uses_immutable_commits(workflow, action)
-    assert workflow.count("prune-cache: true") == 2
+    setup_uv_references = re.findall(r"astral-sh/setup-uv@[^\s]+", workflow)
+    assert setup_uv_references
+    assert workflow.count("prune-cache: true") == len(setup_uv_references)
 
 
 def test_container_build_inputs_use_reviewed_immutable_digests() -> None:

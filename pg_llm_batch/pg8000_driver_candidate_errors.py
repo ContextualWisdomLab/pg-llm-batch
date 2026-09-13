@@ -1,0 +1,78 @@
+"""pg8000 PostgreSQL error classification shared by admission and runtime use.
+
+The exact pg8000 1.31.5 production adapter now reuses this narrow classifier
+that was originally proved in the candidate lane. Callers inject the admitted
+DB-API module; classification relies on exact exception type plus SQLSTATE and
+never on message text. Keeping the already reviewed classifier avoids a second
+runtime error-authority implementation while protected integration and release
+evidence remain pending.
+"""
+
+from __future__ import annotations
+
+from types import ModuleType
+
+
+_UNDEFINED_FUNCTION_SQLSTATE = "42883"
+
+
+class Pg8000CandidateErrorEvidenceError(RuntimeError):
+    """Reject malformed candidate exception authority before classification.
+
+    Candidate metadata participates in a commercial dependency decision. An
+    invalid module or exception-class authority therefore fails closed instead
+    of being interpreted as a PostgreSQL server error or a successful parity
+    result.
+    """
+
+
+def _database_error_type(dbapi_module: object) -> type[BaseException]:
+    """Return the exact DB-API DatabaseError class from an admitted module.
+
+    pg8000 1.31.5 reports PostgreSQL server responses, including SQLSTATE 42883,
+    as ``DatabaseError`` rather than ``ProgrammingError``. ``ModuleType`` identity
+    is required so shaped objects cannot execute custom attribute access while
+    supplying security-relevant error metadata. The exported class must be an
+    actual ``BaseException`` subtype before any candidate exception is inspected.
+    """
+    if type(dbapi_module) is not ModuleType:
+        raise Pg8000CandidateErrorEvidenceError(
+            "PostgreSQL candidate DB-API module authority is invalid"
+        )
+    database_error = vars(dbapi_module).get("DatabaseError")
+    if type(database_error) is not type or not issubclass(database_error, BaseException):
+        raise Pg8000CandidateErrorEvidenceError(
+            "PostgreSQL candidate DatabaseError authority is invalid"
+        )
+    return database_error
+
+
+def is_pg8000_candidate_undefined_function(
+    error: BaseException,
+    *,
+    dbapi_module: object,
+) -> bool:
+    """Recognize only PostgreSQL SQLSTATE 42883 from the exact candidate class.
+
+    pg8000 server errors carry a PostgreSQL response mapping as the sole
+    ``DatabaseError`` argument. Classification requires the exact injected
+    DB-API exception type, an exact built-in ``dict`` payload, and an exact
+    string SQLSTATE. Severity and message text are intentionally ignored, so
+    translated or attacker-controlled diagnostics cannot manufacture the
+    undefined-function fallback signal used by token-counting code.
+
+    Raises:
+        Pg8000CandidateErrorEvidenceError: If the injected DB-API module does not
+            expose a trustworthy ``DatabaseError`` class authority.
+    """
+    database_error = _database_error_type(dbapi_module)
+    if type(error) is not database_error:
+        return False
+    arguments = error.args
+    if type(arguments) is not tuple or len(arguments) != 1:
+        return False
+    payload = arguments[0]
+    if type(payload) is not dict:
+        return False
+    sqlstate = payload.get("C")
+    return type(sqlstate) is str and sqlstate == _UNDEFINED_FUNCTION_SQLSTATE

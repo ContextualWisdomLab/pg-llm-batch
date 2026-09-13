@@ -37,12 +37,14 @@ def test_fernet_request_fails_before_database_access_when_crypto_is_unavailable(
 ) -> None:
     """Never downgrade an explicit encryption request to Base64 persistence."""
     fake_psycopg = _Psycopg()
-    monkeypatch.setattr(config_mod, "psycopg", fake_psycopg)
     monkeypatch.setattr(config_mod, "Fernet", None)
-    monkeypatch.setattr(config_mod.SecretStore, "_ensure_table", lambda _self: None)
 
     with pytest.raises(ConfigError, match="Fernet"):
-        config_mod.SecretStore("postgresql://database", fernet_key="explicit-key")
+        config_mod.SecretStore(
+            "postgresql://database",
+            fernet_key="explicit-key",
+            postgres_driver=fake_psycopg,
+        )
 
     assert fake_psycopg.connect_calls == 0
     assert fake_psycopg.connection.close_calls == 0

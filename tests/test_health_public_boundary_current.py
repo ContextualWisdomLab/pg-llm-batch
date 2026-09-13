@@ -42,7 +42,11 @@ def test_healthz_exposes_only_public_readiness_projection(monkeypatch) -> None:
             observed["body"] = handler.wfile.getvalue()
 
     monkeypatch.setattr("http.server.HTTPServer", FakeHTTPServer)
-    monkeypatch.setattr(health, "check_health", lambda _dsn: internal_report)
+    monkeypatch.setattr(
+        health,
+        "check_health",
+        lambda _dsn, *, postgres_driver=None: internal_report,
+    )
 
     health.serve_healthz("postgresql://example", host="127.0.0.1", port=8090)
 
