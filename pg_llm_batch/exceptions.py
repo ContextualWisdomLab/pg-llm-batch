@@ -45,17 +45,15 @@ class TokenLimitExceededError(PgLlmBatchError):
         limit_tokens: int,
         batch_id: Optional[str] = None,
     ) -> None:
-        """Describe an observed token count that exceeded its limit."""
+        """Describe exceeded token counts without exporting batch identity."""
+        del batch_id
         message = f"Token limit exceeded: {current_tokens:,} > {limit_tokens:,}"
-        if batch_id:
-            message += f" (batch_id={batch_id})"
         super().__init__(
             message=message,
             error_code="TOKEN_LIMIT_EXCEEDED",
             details={
                 "current_tokens": current_tokens,
                 "limit_tokens": limit_tokens,
-                "batch_id": batch_id,
                 "excess_tokens": current_tokens - limit_tokens,
             },
         )

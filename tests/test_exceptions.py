@@ -66,12 +66,57 @@ def test_gateway_error_preserves_absent_response_data():
     assert gateway.details == {"status_code": None, "response_data": None}
 
 
-def test_token_limit_error_preserves_counts_and_optional_batch():
-    error = TokenLimitExceededError(1200, 1000, batch_id="batch-1")
+def test_token_limit_error_preserves_counts_without_batch_identity():
+    batch_id = "tenant-a/customer-17/private-batch-20260913"
+    error = TokenLimitExceededError(1200, 1000, batch_id=batch_id)
+
     assert "1,200 > 1,000" in str(error)
-    assert "batch_id=batch-1" in str(error)
-    assert error.details["excess_tokens"] == 200
-    assert "batch_id=" not in str(TokenLimitExceededError(2, 1))
+    assert error.details == {
+        "current_tokens": 1200,
+        "limit_tokens": 1000,
+        "excess_tokens": 200,
+    }
+    for diagnostic_surface in (
+        str(error),
+        repr(error),
+        repr(error.args),
+        repr(error.details),
+    ):
+        assert batch_id not in diagnostic_surface
+
+    without_batch_id = TokenLimitExceededError(2, 1)
+    assert str(without_batch_id) == (
+        "[TOKEN_LIMIT_EXCEEDED] Token limit exceeded: 2 > 1"
+    )
+    assert without_batch_id.details == {
+        "current_tokens": 2,
+        "limit_tokens": 1,
+        "excess_tokens": 1,
+    }
+
+
+def test_token_limit_error_does_not_execute_batch_identity_behavior():
+    class HostileBatchIdentity:
+        def __bool__(self):
+            raise AssertionError("batch identity truthiness must not execute")
+
+        def __str__(self):
+            raise AssertionError("batch identity rendering must not execute")
+
+        def __repr__(self):
+            raise AssertionError("batch identity repr must not execute")
+
+        def __format__(self, format_spec):
+            raise AssertionError("batch identity formatting must not execute")
+
+    error = TokenLimitExceededError(5, 3, batch_id=HostileBatchIdentity())  # type: ignore[arg-type]
+
+    assert str(error) == "[TOKEN_LIMIT_EXCEEDED] Token limit exceeded: 5 > 3"
+    assert error.details == {
+        "current_tokens": 5,
+        "limit_tokens": 3,
+        "excess_tokens": 2,
+    }
 
 
 def test_validation_gateway_and_config_errors_are_structured():
