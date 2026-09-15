@@ -56,6 +56,18 @@ class _HostileInteger(int):
         raise AssertionError("caller-controlled checkpoint integer behavior executed")
 
 
+class _HostilePersistenceKey(str):
+    """Expose behavior if a persistence-key string subtype is trusted."""
+
+    def strip(self, *_args: object, **_kwargs: object) -> str:
+        """Fail if persistence invokes caller-controlled normalization behavior."""
+        raise AssertionError("caller-controlled persistence-key behavior executed")
+
+    def __eq__(self, _other: object) -> bool:
+        """Fail if persistence compares caller-controlled key behavior."""
+        raise AssertionError("caller-controlled persistence-key behavior executed")
+
+
 def _checkpoint() -> BatchResultCheckpoint:
     """Build one ordinary package checkpoint for authority-boundary tests."""
     return BatchResultCheckpoint(
@@ -127,3 +139,50 @@ def test_validated_checkpoint_is_a_package_owned_snapshot() -> None:
     assert validated == candidate
     assert validated is not candidate
     assert type(validated) is BatchResultCheckpoint
+
+
+def test_consumer_name_subclass_is_rejected_before_persistence() -> None:
+    """Checkpoint consumer identity must not retain caller string-subtype authority."""
+    candidate = _HostilePersistenceKey("consumer-1")
+
+    with pytest.raises(ValidationError) as raised:
+        checkpoint_store.validate_checkpoint_consumer_name(candidate)
+
+    assert raised.value.details["field"] == "consumer_name"
+    assert raised.value.details["value"] == "<redacted>"
+
+
+def test_batch_id_subclass_is_rejected_before_persistence() -> None:
+    """Remote batch identity must not retain caller string-subtype authority."""
+    candidate = _HostilePersistenceKey("batch-1")
+
+    with pytest.raises(ValidationError) as raised:
+        checkpoint_store._validated_batch_id(candidate)
+
+    assert raised.value.details["field"] == "batch_id"
+    assert raised.value.details["value"] == "<redacted>"
+
+
+def test_endpoint_alias_subclass_is_rejected_before_normalization() -> None:
+    """Endpoint identity must reject a subtype before caller-controlled strip()."""
+    candidate = _HostilePersistenceKey("default")
+
+    with pytest.raises(ValidationError) as raised:
+        checkpoint_store._validated_exact_endpoint_alias(candidate)
+
+    assert raised.value.details["field"] == "endpoint_alias"
+    assert raised.value.details["value"] == "<redacted>"
+
+
+def test_tenant_scope_subclass_is_rejected_during_store_construction() -> None:
+    """Tenant authority must be exact package-owned text before store retention."""
+    candidate = _HostilePersistenceKey("tenant-1")
+
+    with pytest.raises(ValidationError) as raised:
+        checkpoint_store.PostgresBatchResultCheckpointStore(
+            "postgresql://localhost/postgres",
+            tenant_scope=candidate,
+        )
+
+    assert raised.value.details["field"] == "tenant_scope"
+    assert raised.value.details["value"] == "<redacted>"
