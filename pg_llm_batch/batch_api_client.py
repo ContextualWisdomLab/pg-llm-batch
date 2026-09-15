@@ -122,10 +122,10 @@ CredentialsProvider = Callable[[str], GatewayCredentials]
 
 def _validate_resource_id(value: Any, field: str) -> str:
     """Validate one provider resource identifier used in a URL path segment."""
-    if not isinstance(value, str) or REMOTE_RESOURCE_ID_PATTERN.fullmatch(value) is None:
+    if type(value) is not str or REMOTE_RESOURCE_ID_PATTERN.fullmatch(value) is None:
         raise ValidationError(
             field=field,
-            value=value,
+            value="<redacted>",
             reason=(
                 "must be 1-256 ASCII characters beginning with an alphanumeric "
                 "character and containing only letters, digits, dot, underscore, "
