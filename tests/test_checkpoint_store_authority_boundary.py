@@ -71,6 +71,15 @@ def _checkpoint() -> BatchResultCheckpoint:
     )
 
 
+def _hostile_checkpoint() -> _HostileCheckpoint:
+    """Build a hostile subtype without running its inherited validation hooks."""
+    ordinary = _checkpoint()
+    candidate = object.__new__(_HostileCheckpoint)
+    for field_name, field_value in vars(ordinary).items():
+        object.__setattr__(candidate, field_name, field_value)
+    return candidate
+
+
 def test_dsn_subclass_is_rejected_without_executing_caller_behavior() -> None:
     """Database-target validation must not invoke a caller-controlled str subtype."""
     with pytest.raises(ConfigError, match="Postgres DSN"):
@@ -79,17 +88,7 @@ def test_dsn_subclass_is_rejected_without_executing_caller_behavior() -> None:
 
 def test_checkpoint_subclass_is_rejected_before_field_access() -> None:
     """Checkpoint persistence must reject behavior-bearing subtypes before reads."""
-    candidate = _HostileCheckpoint(
-        schema_version=1,
-        batch_id="batch-1",
-        endpoint_alias="default",
-        file_kind="result",
-        file_id="file-1",
-        file_line_number=2,
-        batch_line_count=2,
-        record_count=1,
-        prefix_sha256="a" * 64,
-    )
+    candidate = _hostile_checkpoint()
 
     with pytest.raises(ValidationError, match="BatchResultCheckpoint"):
         checkpoint_store._validated_checkpoint(candidate, "checkpoint")
