@@ -33,15 +33,15 @@ class _Psycopg:
         return self.connection
 
 
-def test_encryption_required_without_key_fails_before_database_access(monkeypatch) -> None:
+def test_encryption_required_without_key_fails_before_database_access() -> None:
     """An encryption-required deployment cannot silently select Base64 storage."""
     fake_psycopg = _Psycopg()
-    monkeypatch.setattr(config_mod, "psycopg", fake_psycopg)
 
     with pytest.raises(ConfigError, match="encryption"):
         config_mod.SecretStore(
             "postgresql://database",
             require_encryption=True,
+            postgres_driver=fake_psycopg,
         )
 
     assert fake_psycopg.connect_calls == 0

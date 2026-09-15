@@ -3,8 +3,6 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from pg_llm_batch import orchestrator as orch_mod
@@ -81,13 +79,77 @@ class Connection:
         self.commits += 1
 
 
+class _CursorPort:
+    """Expose failure-mode row-count evidence through the driver cursor contract."""
+
+    def __init__(self, cursor: Cursor) -> None:
+        self._cursor = cursor
+
+    def __enter__(self):
+        self._cursor.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._cursor.__exit__(*exc)
+
+    def execute(self, sql, params=None):
+        self._cursor.execute(sql, params)
+        return self
+
+    def executemany(self, sql, params):
+        self._cursor.executemany(sql, params)
+        return self
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    def row_count(self):
+        return self._cursor.rowcount
+
+
+class _ConnectionPort:
+    """Preserve one failure-mode transaction while satisfying the driver port."""
+
+    def __init__(self, connection: Connection) -> None:
+        self._connection = connection
+
+    def __enter__(self):
+        self._connection.__enter__()
+        return self
+
+    def __exit__(self, *exc):
+        return self._connection.__exit__(*exc)
+
+    def cursor(self):
+        return _CursorPort(self._connection.cursor())
+
+    def set_autocommit(self, enabled):
+        self._connection.autocommit = enabled
+
+    def commit(self):
+        self._connection.commit()
+
+
+class _Driver:
+    """Return one deterministic failure connection through the driver boundary."""
+
+    def __init__(self, connection: Connection) -> None:
+        self.connection = connection
+
+    def connect(self, _dsn, **_kwargs):
+        return _ConnectionPort(self.connection)
+
+    def jsonb(self, value):
+        return value
+
+
 def _orchestrator(monkeypatch, mode: str):
     connection = Connection(mode)
-    monkeypatch.setattr(
-        orch_mod,
-        "psycopg",
-        SimpleNamespace(connect=lambda _dsn: connection),
-    )
+    driver = _Driver(connection)
+    monkeypatch.setattr(orch_mod, "retained_postgres_driver", lambda: driver)
     return PostgresBatchOrchestrator("postgresql://x"), connection
 
 
