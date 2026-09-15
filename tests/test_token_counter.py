@@ -123,7 +123,7 @@ def test_batch_accumulator_rejects_oversized_first_record(fake_pg):
         acc.add_entry("request-bytes", "{}", tokens=1, byte_size=11)
     assert byte_error.value.details == {
         "field": "byte_size",
-        "value": 11,
+        "value": "<redacted>",
         "reason": "single JSONL record exceeds max_bytes=10",
     }
     assert acc.entries == []
@@ -167,7 +167,6 @@ def test_config_resolution_buffer_validation_and_encoder_cache(fake_pg, monkeypa
     assert counter._resolve_config_value("x", "y", 7) == 7
     counter.config = Config(error=True)
     assert counter._resolve_config_value("x", "y", 8) == 8
-
     for invalid in (-1, 51):
         with pytest.raises(ValidationError, match="between 0 and 50"):
             TokenCounter("postgresql://x", buffer_percentage=invalid)
