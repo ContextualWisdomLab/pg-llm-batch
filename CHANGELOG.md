@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded read-only PostgreSQL PITR target-configuration observation on a caller-owned already-connected isolated recovery target. The observer reads exactly eight recovery-target settings plus `pg_is_in_recovery()`, uses bounded result materialization, fails closed on malformed, duplicate, oversized, pending-restart, inactive-recovery, or mismatched evidence, and returns content-free live observation provenance. It does not write recovery configuration, create `recovery.signal`, supply `restore_command`, prove WAL/archive/timeline completeness or target attainment, promote recovery, prove application readiness, or establish achieved RPO/RTO or DR capability.
 - Bounded `restore_postgres_logical_backup()` executor that runs one
   shell-free `pg_restore --single-transaction --exit-on-error` against a
   caller-owned private archive descriptor. Callers must pass exact-boolean
