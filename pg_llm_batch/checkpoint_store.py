@@ -32,6 +32,19 @@ _CHECKPOINT_COLUMNS = (
     "schema_version, remote_batch_id, endpoint_alias, file_kind, file_id, "
     "file_line_number, batch_line_count, record_count, prefix_sha256"
 )
+_CHECKPOINT_STRING_FIELDS = (
+    "batch_id",
+    "endpoint_alias",
+    "file_kind",
+    "file_id",
+    "prefix_sha256",
+)
+_CHECKPOINT_INTEGER_FIELDS = (
+    "schema_version",
+    "file_line_number",
+    "batch_line_count",
+    "record_count",
+)
 _POSTGRES_BIGINT_CHECKPOINT_FIELDS = (
     "file_line_number",
     "batch_line_count",
@@ -77,12 +90,17 @@ def validate_checkpoint_consumer_name(value: Any) -> str:
 
 
 def _validated_postgres_dsn(value: Any) -> str:
-    """Require an explicit nonblank database target without normalizing it."""
-    if not isinstance(value, str) or not value.strip():
+    """Require exact built-in database-target authority without normalizing it."""
+    if type(value) is not str:
         raise ConfigError(
             "A Postgres DSN must be provided explicitly for checkpoint persistence"
         )
-    return value
+    postgres_dsn = value
+    if not postgres_dsn.strip():
+        raise ConfigError(
+            "A Postgres DSN must be provided explicitly for checkpoint persistence"
+        )
+    return postgres_dsn
 
 
 def _connect_postgres(
@@ -101,16 +119,41 @@ def _connect_postgres(
 
 
 def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
-    """Require one immutable checkpoint whose counters fit PostgreSQL storage."""
-    if not isinstance(value, BatchResultCheckpoint):
+    """Detach one exact checkpoint into validated package-owned primitive authority."""
+    if type(value) is not BatchResultCheckpoint:
         raise ValidationError(
             field=field,
-            value=value,
+            value="<redacted>",
             reason="must be a BatchResultCheckpoint",
         )
+
+    checkpoint_values = {
+        "schema_version": value.schema_version,
+        "batch_id": value.batch_id,
+        "endpoint_alias": value.endpoint_alias,
+        "file_kind": value.file_kind,
+        "file_id": value.file_id,
+        "file_line_number": value.file_line_number,
+        "batch_line_count": value.batch_line_count,
+        "record_count": value.record_count,
+        "prefix_sha256": value.prefix_sha256,
+    }
+    for checkpoint_field in _CHECKPOINT_STRING_FIELDS:
+        if type(checkpoint_values[checkpoint_field]) is not str:
+            raise ValidationError(
+                field=f"{field}.{checkpoint_field}",
+                value="<redacted>",
+                reason="must use an exact built-in primitive type",
+            )
+    for checkpoint_field in _CHECKPOINT_INTEGER_FIELDS:
+        if type(checkpoint_values[checkpoint_field]) is not int:
+            raise ValidationError(
+                field=f"{field}.{checkpoint_field}",
+                value="<redacted>",
+                reason="must use an exact built-in primitive type",
+            )
     for checkpoint_field in _POSTGRES_BIGINT_CHECKPOINT_FIELDS:
-        count = getattr(value, checkpoint_field)
-        if count > POSTGRES_BIGINT_MAX:
+        if checkpoint_values[checkpoint_field] > POSTGRES_BIGINT_MAX:
             raise ValidationError(
                 field=f"{field}.{checkpoint_field}",
                 value="<redacted>",
@@ -119,7 +162,8 @@ def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
                     f"{POSTGRES_BIGINT_MAX}"
                 ),
             )
-    return value
+
+    return BatchResultCheckpoint(**checkpoint_values)
 
 
 def _validated_exact_endpoint_alias(value: Any) -> str:
