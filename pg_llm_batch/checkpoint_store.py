@@ -71,12 +71,21 @@ class CheckpointConflictError(PgLlmBatchError):
         self.reason = reason
 
 
+def _validated_exact_text_authority(value: Any, field: str) -> str:
+    """Reject behavior-bearing text subtypes before they become persistence authority."""
+    if type(value) is not str:
+        raise ValidationError(
+            field=field,
+            value="<redacted>",
+            reason="must use an exact built-in primitive type",
+        )
+    return value
+
+
 def validate_checkpoint_consumer_name(value: Any) -> str:
     """Validate one host-selected checkpoint consumer name without coercion."""
-    if (
-        not isinstance(value, str)
-        or CHECKPOINT_CONSUMER_PATTERN.fullmatch(value) is None
-    ):
+    consumer_name = _validated_exact_text_authority(value, "consumer_name")
+    if CHECKPOINT_CONSUMER_PATTERN.fullmatch(consumer_name) is None:
         raise ValidationError(
             field="consumer_name",
             value=value,
@@ -86,7 +95,7 @@ def validate_checkpoint_consumer_name(value: Any) -> str:
                 "colon, or hyphen"
             ),
         )
-    return value
+    return consumer_name
 
 
 def _validated_postgres_dsn(value: Any) -> str:
@@ -168,15 +177,16 @@ def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
 
 def _validated_exact_endpoint_alias(value: Any) -> str:
     """Require one endpoint alias that is already in canonical form."""
+    candidate = _validated_exact_text_authority(value, "endpoint_alias")
     try:
-        normalized = validate_endpoint_alias(value)
+        normalized = validate_endpoint_alias(candidate)
     except ValidationError as exc:
         raise ValidationError(
             field="endpoint_alias",
             value=value,
             reason="must be a supported endpoint alias",
         ) from exc
-    if normalized != value:
+    if normalized != candidate:
         raise ValidationError(
             field="endpoint_alias",
             value=value,
@@ -187,8 +197,9 @@ def _validated_exact_endpoint_alias(value: Any) -> str:
 
 def _validated_batch_id(value: Any) -> str:
     """Require one supported provider batch identifier."""
+    candidate = _validated_exact_text_authority(value, "batch_id")
     try:
-        return validate_remote_resource_id(value, "batch_id")
+        return validate_remote_resource_id(candidate, "batch_id")
     except ValidationError as exc:
         raise ValidationError(
             field="batch_id",
@@ -256,8 +267,9 @@ class PostgresBatchResultCheckpointStore:
         """Bind one explicit database, tenant scope, and optional driver port."""
         self.postgres_dsn = _validated_postgres_dsn(postgres_dsn)
         self._postgres_driver = postgres_driver
+        tenant = _validated_exact_text_authority(tenant_scope, "tenant_scope")
         try:
-            self.tenant_scope = validate_tenant_scope(tenant_scope)
+            self.tenant_scope = validate_tenant_scope(tenant)
         except ValidationError as exc:
             raise ValidationError(
                 field="tenant_scope",
