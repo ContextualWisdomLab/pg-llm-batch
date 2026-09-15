@@ -32,6 +32,30 @@ class _HostileCheckpoint(BatchResultCheckpoint):
         return super().__getattribute__(name)
 
 
+class _HostileText(str):
+    """Expose behavior if a mutated checkpoint string subtype is trusted."""
+
+    def strip(self, *_args: object, **_kwargs: object) -> str:
+        """Fail if persistence invokes caller-controlled string behavior."""
+        raise AssertionError("caller-controlled checkpoint text behavior executed")
+
+    def __eq__(self, _other: object) -> bool:
+        """Fail if persistence compares caller-controlled string behavior."""
+        raise AssertionError("caller-controlled checkpoint text behavior executed")
+
+
+class _HostileInteger(int):
+    """Expose behavior if a mutated checkpoint integer subtype is trusted."""
+
+    def __gt__(self, _other: object) -> bool:
+        """Fail if persistence compares caller-controlled integer behavior."""
+        raise AssertionError("caller-controlled checkpoint integer behavior executed")
+
+    def __le__(self, _other: object) -> bool:
+        """Fail if persistence compares caller-controlled integer behavior."""
+        raise AssertionError("caller-controlled checkpoint integer behavior executed")
+
+
 def _checkpoint() -> BatchResultCheckpoint:
     """Build one ordinary package checkpoint for authority-boundary tests."""
     return BatchResultCheckpoint(
@@ -69,6 +93,30 @@ def test_checkpoint_subclass_is_rejected_before_field_access() -> None:
 
     with pytest.raises(ValidationError, match="BatchResultCheckpoint"):
         checkpoint_store._validated_checkpoint(candidate, "checkpoint")
+
+
+def test_mutated_checkpoint_string_subclass_is_rejected_before_behavior() -> None:
+    """Persistence must reject a behavior-bearing string field before validation."""
+    candidate = _checkpoint()
+    object.__setattr__(candidate, "batch_id", _HostileText("batch-1"))
+
+    with pytest.raises(ValidationError, match="exact built-in primitive") as raised:
+        checkpoint_store._validated_checkpoint(candidate, "checkpoint")
+
+    assert raised.value.details["field"] == "checkpoint.batch_id"
+    assert raised.value.details["value"] == "<redacted>"
+
+
+def test_mutated_checkpoint_integer_subclass_is_rejected_before_behavior() -> None:
+    """Persistence must reject a behavior-bearing integer field before comparison."""
+    candidate = _checkpoint()
+    object.__setattr__(candidate, "record_count", _HostileInteger(1))
+
+    with pytest.raises(ValidationError, match="exact built-in primitive") as raised:
+        checkpoint_store._validated_checkpoint(candidate, "checkpoint")
+
+    assert raised.value.details["field"] == "checkpoint.record_count"
+    assert raised.value.details["value"] == "<redacted>"
 
 
 def test_validated_checkpoint_is_a_package_owned_snapshot() -> None:
