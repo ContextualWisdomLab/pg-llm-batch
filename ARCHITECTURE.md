@@ -70,6 +70,26 @@ Post-restore metadata mismatch is fail-closed and must be treated as unsafe
 because the SQL transaction may already have committed. This seam does not
 complete isolated schema/RLS/PITR acceptance.
 
+## Result application boundary
+
+Checkpointed result application is a package-owned domain service. Internally,
+its ubiquitous language is `transaction_cursor`, `checkpointed_record`,
+`record_effect`, `record_applied`, and `result_checkpoint`. The released
+`apply_checkpointed_result_in_transaction(cursor, checkpoint_store,
+consumer_name, item, apply_record)` keyword signature and the public
+`ResultApplicationOutcome(applied, checkpoint)` dataclass field/introspection
+shape remain compatibility adapters because renaming them would be a released
+source/serialization break. The adapter immediately translates to/from a
+private semantic outcome model. Additive `.record_applied` and
+`.result_checkpoint` properties expose the semantic vocabulary without changing
+historical `dataclasses.fields` or `dataclasses.asdict` output.
+
+The service preserves the same transaction and replay invariants: the local
+record effect and checkpoint save occur under the caller-owned transaction,
+exact replay skips the effect, checkpoint regression fails closed, and the
+scoped cursor is revoked when synchronous effect execution ends. This naming
+boundary changes no provider protocol or database schema.
+
 ## Modular interoperability
 
 CWL hosts such as `contextual-orchestrator` and `naruon` supply tenant context
