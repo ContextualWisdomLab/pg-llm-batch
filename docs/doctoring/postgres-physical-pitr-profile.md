@@ -53,6 +53,12 @@ reads only these effective `pg_settings` values:
 - `recovery_target_timeline`;
 - `recovery_target_xid`.
 
+PostgreSQL 18 defaults `recovery_target_inclusive` to `on`. When the reviewed
+target omits an inclusion edge (`name` or `immediate`), accept the observation
+only if the effective setting is still `on`; the observer intentionally does not
+treat an empty value as equivalent. Time, XID, and LSN targets retain their
+explicit reviewed inclusion edge.
+
 The same fixed query also calls `pg_is_in_recovery()`. PostgreSQL documents that
 function as true while recovery remains in progress. The query requests one row
 beyond the eight-setting budget so an unexpected result set fails closed rather
@@ -114,6 +120,8 @@ Confirm on the exact current head that:
 - parse rejects duplicate keys, unknown keys, and a true capability claim;
 - both operator documents name all eight observed recovery-target settings and
   `pg_is_in_recovery()`;
+- both documents preserve PostgreSQL's `recovery_target_inclusive=on` default
+  when the reviewed target has no inclusion edge;
 - both documents preserve the read-only, bounded, fail-closed and content-free
   observation boundary; and
 - production statement and branch coverage and public docstrings remain 100%.
@@ -136,6 +144,9 @@ PostgreSQL 18 documentation. https://www.postgresql.org/docs/18/backup.html
 The PostgreSQL Global Development Group. (2026). *Continuous archiving and
 point-in-time recovery (PITR)*. PostgreSQL 18 documentation.
 https://www.postgresql.org/docs/18/continuous-archiving.html
+
+The PostgreSQL Global Development Group. (2026). *Write ahead log*. PostgreSQL
+18 documentation. https://www.postgresql.org/docs/18/runtime-config-wal.html
 
 The PostgreSQL Global Development Group. (2026). *pg_basebackup*. PostgreSQL 18
 documentation. https://www.postgresql.org/docs/18/app-pgbasebackup.html
