@@ -53,6 +53,12 @@ Key references:
 - [Count-tokens stdin privacy](doctoring/count-tokens-stdin-privacy.md)
 - [OpenTelemetry operations](doctoring/opentelemetry-operations.md)
 
+## Recovery evidence boundary
+
+The Draft recovery-target observer remains module-scoped under `pg_llm_batch.postgres_recovery_target_configuration`. It reads the eight reviewed PostgreSQL recovery-target settings plus `pg_is_in_recovery()` in one fixed catalog-qualified query on an already-connected isolated recovery target and emits bounded evidence for whether those effective settings match the reviewed target contract while recovery is active.
+
+That observation is deliberately narrower than recovery completion. It does not mutate PostgreSQL configuration, create `recovery.signal`, supply `restore_command`, validate or replay WAL bytes, prove archive completeness or timeline ancestry, prove target attainment or replay completion, pause/resume/promote recovery, prove application readiness, or establish achieved RPO/RTO, HA/DR, CSAP, SOC 2, or certification. Connection and timeout policy remain caller-owned, and evidence/diagnostics must not expose DSNs, credentials, provider payloads, or dynamic database exception text.
+
 ## Releases and verification
 
 Use protected-branch history, GitHub Releases, current checks, and exact-source repository evidence to determine what is shipped. A documentation source commit is not evidence that GitHub Pages is published, and a green Draft is not evidence that a dependency migration is commercially released.
