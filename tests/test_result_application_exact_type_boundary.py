@@ -180,16 +180,14 @@ def test_hostile_item_identity_text_is_rejected_before_comparison(
 
 def test_hostile_checkpoint_identity_text_is_rejected_before_comparison() -> None:
     """Checkpoint identity fields must be exact strings before equality can execute."""
-    checkpoint = BatchResultCheckpoint(
-        schema_version=1,
-        batch_id=_HostileIdentityText("batch-123"),
-        endpoint_alias="openrouter",
-        file_kind="result",
-        file_id="file-123",
-        file_line_number=1,
-        batch_line_count=1,
-        record_count=1,
-        prefix_sha256="a" * 64,
+    checkpoint = _checkpoint()
+    # The checkpoint constructor now rejects behavior-bearing IDs itself. Forge only
+    # this in-memory fixture so the independent result-application boundary remains
+    # exercised without weakening constructor validation.
+    object.__setattr__(
+        checkpoint,
+        "batch_id",
+        _HostileIdentityText("batch-123"),
     )
     item = CheckpointedBatchResultRecord(
         batch_id="batch-123",
