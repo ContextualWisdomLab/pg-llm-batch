@@ -69,6 +69,12 @@ to these eight `pg_settings` names plus `pg_is_in_recovery()`:
 - `recovery_target_timeline`;
 - `recovery_target_xid`.
 
+PostgreSQL 18 defaults `recovery_target_inclusive` to `on`. When the reviewed
+target does not carry an inclusion edge (`name` or `immediate`), the observer
+therefore expects the effective setting to remain `on`; it does not interpret an
+empty value as equivalent. For time, XID, and LSN targets, the reviewed target's
+explicit inclusion edge remains authoritative.
+
 The observer requests at most one row beyond the eight-setting budget so that
 unexpected result growth fails closed instead of being materialized without a
 bound. It rejects malformed rows, duplicate or unknown setting names, oversized
@@ -121,6 +127,9 @@ https://doi.org/10.6028/NIST.SP.800-34r1
 The PostgreSQL Global Development Group. (2026). *Continuous archiving and
 point-in-time recovery (PITR)*. PostgreSQL 18 documentation.
 https://www.postgresql.org/docs/18/continuous-archiving.html
+
+The PostgreSQL Global Development Group. (2026). *Write ahead log*. PostgreSQL
+18 documentation. https://www.postgresql.org/docs/18/runtime-config-wal.html
 
 The PostgreSQL Global Development Group. (2026). *pg_basebackup*. PostgreSQL 18
 documentation. https://www.postgresql.org/docs/18/app-pgbasebackup.html
