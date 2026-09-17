@@ -41,8 +41,13 @@ branch-local operator contract rather than protected or released authority.
 After the recovery target has been configured and PostgreSQL is already running
 in recovery on an isolated target, call
 `observe_postgres_recovery_target_configuration()` with the caller-owned open
-connection and the exact reviewed `PostgresPitrRecoveryTarget`. The observer
-reads only these effective `pg_settings` values:
+connection and the exact reviewed `PostgresPitrRecoveryTarget`. Before database
+I/O, the observer snapshots that authority through the canonical target
+constructor. A wrong-type target, or a mutated target that no longer satisfies
+the canonical reviewed-target contract, fails before cursor acquisition or the
+inspection query.
+
+The observer reads only these effective `pg_settings` values:
 
 - `recovery_target`;
 - `recovery_target_action`;
@@ -122,6 +127,8 @@ Confirm on the exact current head that:
   `pg_is_in_recovery()`;
 - both documents preserve PostgreSQL's `recovery_target_inclusive=on` default
   when the reviewed target has no inclusion edge;
+- both documents state that non-canonical wrong-type or mutated target authority
+  fails before database I/O;
 - both documents preserve the read-only, bounded, fail-closed and content-free
   observation boundary; and
 - production statement and branch coverage and public docstrings remain 100%.
