@@ -57,8 +57,13 @@ PR to protected or released authority before normal review and integration.
 
 `observe_postgres_recovery_target_configuration()` snapshots one exact reviewed
 `PostgresPitrRecoveryTarget`, executes one fixed catalog-qualified read, and
-compares the effective server state against that target. The query is bounded
-to these eight `pg_settings` names plus `pg_is_in_recovery()`:
+compares the effective server state against that target. A wrong-type target or
+a mutated target that no longer satisfies the canonical reviewed-target
+contract is rejected before database I/O; invalid caller authority therefore
+does not reach cursor acquisition or the fixed inspection query.
+
+The query is bounded to these eight `pg_settings` names plus
+`pg_is_in_recovery()`:
 
 - `recovery_target`;
 - `recovery_target_action`;
