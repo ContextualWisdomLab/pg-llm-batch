@@ -57,6 +57,8 @@ def test_physical_pitr_docs_bind_recovery_target_observer_handoff() -> None:
         assert "pending_restart" in document
         assert "content-free" in document
         assert "defaults `recovery_target_inclusive` to `on`" in document
+        assert "mutated" in document
+        assert "before database i/o" in document
         assert "recovery.signal" in document
         assert "restore_command" in document
         assert "target" in document and (
