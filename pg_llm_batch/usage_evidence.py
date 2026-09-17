@@ -18,12 +18,21 @@ class UsageEvidenceError(ValueError):
 
 
 class UsageAuthority(str, Enum):
-    """Identify the authority class for one usage-evidence record."""
+    """Identify the provenance authority for one usage-evidence record."""
 
     LOCAL_MEASURED = "LOCAL_MEASURED"
     PROVIDER_REPORTED = "PROVIDER_REPORTED"
     HOST_RATE_ESTIMATE = "HOST_RATE_ESTIMATE"
     RECONCILED = "RECONCILED"
+
+
+class UsageCompleteness(str, Enum):
+    """Identify how completely one token dimension covers the represented usage."""
+
+    COMPLETE = "COMPLETE"
+    PARTIAL = "PARTIAL"
+    UNAVAILABLE = "UNAVAILABLE"
+    MIXED = "MIXED"
 
 
 def _require_identifier(value: object) -> str:
@@ -58,6 +67,22 @@ def _optional_count(value: object | None) -> int | None:
     return _require_count(value)
 
 
+def _count_with_completeness(
+    value: object | None,
+    completeness: object,
+) -> tuple[int | None, UsageCompleteness]:
+    """Validate one token count and its explicit measurement-completeness state."""
+    if type(completeness) is not UsageCompleteness:
+        raise UsageEvidenceError("invalid usage evidence completeness")
+    count = _optional_count(value)
+    if completeness is UsageCompleteness.UNAVAILABLE:
+        if count is not None:
+            raise UsageEvidenceError("inconsistent usage evidence completeness")
+    elif count is None:
+        raise UsageEvidenceError("inconsistent usage evidence completeness")
+    return count, completeness
+
+
 def build_usage_evidence(
     *,
     authority: UsageAuthority,
@@ -65,7 +90,9 @@ def build_usage_evidence(
     source_id: str,
     request_count: int,
     input_token_count: int | None = None,
+    input_token_completeness: UsageCompleteness,
     output_token_count: int | None = None,
+    output_token_completeness: UsageCompleteness,
     provider_alias: str | None = None,
     endpoint_alias: str | None = None,
     remote_batch_id: str | None = None,
@@ -74,11 +101,21 @@ def build_usage_evidence(
     if type(authority) is not UsageAuthority:
         raise UsageEvidenceError("invalid usage evidence authority")
 
+    validated_input_count, validated_input_completeness = _count_with_completeness(
+        input_token_count,
+        input_token_completeness,
+    )
+    validated_output_count, validated_output_completeness = _count_with_completeness(
+        output_token_count,
+        output_token_completeness,
+    )
     payload = {
         "authority": authority.value,
         "endpoint_alias": _optional_identifier(endpoint_alias),
-        "input_token_count": _optional_count(input_token_count),
-        "output_token_count": _optional_count(output_token_count),
+        "input_token_completeness": validated_input_completeness.value,
+        "input_token_count": validated_input_count,
+        "output_token_completeness": validated_output_completeness.value,
+        "output_token_count": validated_output_count,
         "provider_alias": _optional_identifier(provider_alias),
         "remote_batch_id": _optional_identifier(remote_batch_id),
         "request_count": _require_count(request_count),
