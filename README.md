@@ -98,7 +98,7 @@ python -m pg_llm_batch health
 unset PG_LLM_BATCH_DSN
 ```
 
-Explicit CLI `--dsn` values have a different confidentiality boundary: password, `passfile`, TLS private-key, TLS key-password, and OAuth-client-secret material is rejected before connection work so credentials are not normalized into an argv transport. See [`docs/doctoring/bootstrap-dsn-precedence.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/bootstrap-dsn-precedence.md).
+Explicit CLI `--dsn` values have a different confidentiality boundary: password, `passfile`, TLS private-key, TLS key-password, and OAuth-client-secret material is rejected before connection work so credentials are not normalized into an argv transport.
 
 ### Configure the provider boundary
 
@@ -202,7 +202,7 @@ The repository contains bounded backup, restore, catalog, replay, and recovery-e
 
 The Draft recovery-target observer in `pg_llm_batch.postgres_recovery_target_configuration` remains module-scoped. `observe_postgres_recovery_target_configuration(...)` performs one fixed catalog-qualified read over the eight reviewed PostgreSQL recovery-target settings plus `pg_is_in_recovery()` on an already-connected isolated recovery target; `postgres_recovery_target_configuration_was_observed(...)` checks the resulting bounded evidence. This proves only that the effective settings visible to that connection match the reviewed target contract while recovery is active. It does not write PostgreSQL configuration, create `recovery.signal`, supply `restore_command`, validate or replay WAL bytes, prove archive completeness or timeline ancestry, prove target attainment or replay completion, pause/resume/promote recovery, prove application readiness, or establish achieved RPO/RTO, HA/DR, CSAP, SOC 2, or certification. The caller owns connection and timeout policy, and the observer's diagnostics/evidence remain content-minimal.
 
-For a caller-owned logical archive, use `restore_postgres_logical_backup()` only against an isolated libpq service after you can assert `source_superusers_trusted=True`. The service name is not an authorization boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited. The executor runs `pg_restore --single-transaction --exit-on-error`. Custom-format restore seeks through the archive, so success is not required to leave the descriptor at end-of-file. If metadata changes after `pg_restore` exits zero, treat the target as unsafe and do not retry into the same service. This subprocess contract is distinct from package-created pg8000 connections. See [`docs/doctoring/postgres-logical-restore.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/postgres-logical-restore.md).
+For a caller-owned logical archive, use `restore_postgres_logical_backup()` only against an isolated libpq service after you can assert `source_superusers_trusted=True`. The service name is not an authorization boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited. The executor runs `pg_restore --single-transaction --exit-on-error`. Custom-format restore seeks through the archive, so success is not required to leave the descriptor at end-of-file. If metadata changes after `pg_restore` exits zero, treat the target as unsafe and do not retry into the same service. This subprocess contract is distinct from package-created pg8000 connections.
 
 ## Embedding boundary
 
@@ -241,7 +241,7 @@ Idempotent provider `GET` operations use up to three total attempts by default f
 
 ## Observability
 
-Hosts that already operate OpenTelemetry may opt into `OpenTelemetryBatchAPIClient`. Emitted spans and metrics use bounded operation/outcome vocabularies and exclude endpoint aliases, provider URLs, resource identifiers, credentials, metadata, prompts, and provider bodies. See [`docs/doctoring/opentelemetry-operations.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/opentelemetry-operations.md).
+Hosts that already operate OpenTelemetry may opt into `OpenTelemetryBatchAPIClient`. Emitted spans and metrics use bounded operation/outcome vocabularies and exclude endpoint aliases, provider URLs, resource identifiers, credentials, metadata, prompts, and provider bodies.
 
 ## Tests
 
@@ -262,12 +262,6 @@ Repository CI additionally verifies supported Python versions, exact owned produ
 ## Docs
 
 - [`docs/remote-batch-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/remote-batch-lifecycle.md) — durable lifecycle, tenant identity, RLS, migration, rollback, pooling, and recovery.
-- [`docs/doctoring/tenant-scoped-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/tenant-scoped-lifecycle.md) — tenant/RLS authority and references.
-- [`docs/doctoring/bootstrap-dsn-precedence.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/bootstrap-dsn-precedence.md) — bootstrap source precedence, argv confidentiality, and concrete-driver boundary.
-- [`docs/doctoring/cli-secret-input.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/cli-secret-input.md) — no-echo and bounded stdin secret input.
-- [`docs/doctoring/count-tokens-stdin-privacy.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/count-tokens-stdin-privacy.md) — bounded UTF-8 prompt ingestion without argv exposure.
-- [`docs/doctoring/legacy-pgsql-http-retrieval.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/legacy-pgsql-http-retrieval.md) — retirement of direct SQL provider networking.
-- [`docs/doctoring/opentelemetry-operations.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/opentelemetry-operations.md) — telemetry ownership, privacy, cardinality, verification, and references.
 - [`docs/papers/`](https://github.com/ContextualWisdomLab/pg-llm-batch/tree/main/docs/papers/) — reference papers used by repository doctoring.
 
 ## License and release authority
