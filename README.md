@@ -205,7 +205,7 @@ a generic SQL surface, and still require normal authentication, authorization,
 and SQL-injection controls. Direct SQL consumers that do not establish an
 authorized tenant scope see no lifecycle rows after RLS is enabled.
 
-See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for the
+See [`docs/remote-batch-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/remote-batch-lifecycle.md) for the
 migration, rollback, pooling, recovery, custom-recorder, and assurance contract.
 
 For a caller-owned logical archive, use `restore_postgres_logical_backup()` only
@@ -216,9 +216,6 @@ The executor runs `pg_restore --single-transaction --exit-on-error`.
 Custom-format restore seeks through the archive, so success is not required to
 leave the descriptor at end-of-file. If metadata changes after `pg_restore`
 exits zero, treat the target as unsafe and do not retry into the same service.
-See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md)
-for the operator steps.
-
 ## Embed as a git submodule
 
 ```bash
@@ -298,9 +295,7 @@ client = OpenTelemetryBatchAPIClient.from_global_provider(
 
 The emitted spans and metrics use bounded operation and outcome vocabularies and
 never include endpoint aliases, provider URLs, resource IDs, credentials,
-metadata, prompts, or provider response bodies. See the
-[OpenTelemetry operation contract](docs/doctoring/opentelemetry-operations.md)
-for signals, ownership boundaries, privacy rules, and APA 7 references.
+metadata, prompts, or provider response bodies.
 
 ---
 
@@ -317,26 +312,12 @@ PG_LLM_BATCH_TEST_DSN=postgresql://pgllm:pgllm@localhost:5432/pgllm \
 
 ## Docs
 
-- [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md)
+- [`docs/remote-batch-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/remote-batch-lifecycle.md)
   — standalone and tenant-scoped durable lifecycle operation, RLS trust boundary,
   migration, rollback, pooling, and recovery.
-- [`docs/doctoring/tenant-scoped-lifecycle.md`](docs/doctoring/tenant-scoped-lifecycle.md)
-  — tenant identity, RLS authority, compatibility, and APA 7 references.
-- [`docs/doctoring/cli-secret-input.md`](docs/doctoring/cli-secret-input.md)
-  — no-echo interactive secret entry, bounded stdin automation, fail-closed
-  validation, verification, and security references.
-- [`docs/doctoring/count-tokens-stdin-privacy.md`](docs/doctoring/count-tokens-stdin-privacy.md)
-  — bounded UTF-8 prompt ingestion without argv exposure, exact text semantics,
-  failure ordering, verification, and APA 7 references.
-- [`docs/doctoring/legacy-pgsql-http-retrieval.md`](docs/doctoring/legacy-pgsql-http-retrieval.md)
-  — retirement of direct SQL provider networking, existing-volume remediation,
-  rollback, and the validated Python provider boundary.
-- [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md)
-  — opt-in operation traces/metrics, host ownership, privacy and cardinality
-  boundaries, verification, and APA 7 references.
-- [`docs/papers/`](docs/papers/) — CC BY 4.0 reference papers on LLM batching
+- [`docs/papers/`](https://github.com/ContextualWisdomLab/pg-llm-batch/tree/main/docs/papers/) — CC BY 4.0 reference papers on LLM batching
   (PagedAttention/vLLM, DeepSpeed-FastGen) with citations.
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
+Apache-2.0. See [`LICENSE`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/LICENSE) and [`NOTICE`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/NOTICE).
