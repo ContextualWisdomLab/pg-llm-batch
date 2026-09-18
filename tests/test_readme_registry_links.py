@@ -1,3 +1,5 @@
+"""Regression contract for registry-safe public README links."""
+
 from pathlib import Path
 import re
 
