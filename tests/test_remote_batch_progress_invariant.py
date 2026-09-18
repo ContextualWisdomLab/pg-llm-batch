@@ -56,7 +56,7 @@ class _Connection:
 
 
 class _Psycopg:
-    """Minimal deterministic psycopg replacement for boundary tests."""
+    """Minimal deterministic driver port for boundary tests."""
 
     def __init__(self, *, upsert_rowcount: int = 1, stored_row: Any = None) -> None:
         self.executions: list[tuple[str, Any]] = []
@@ -71,12 +71,9 @@ class _Psycopg:
         return _Connection(self)
 
 
-def test_persistence_rejects_impossible_same_observation_before_database(
-    monkeypatch: Any,
-) -> None:
+def test_persistence_rejects_impossible_same_observation_before_database() -> None:
     """Completed plus failed requests cannot exceed one explicitly known total."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     with pytest.raises(ValueError, match="request_counts progress is inconsistent"):
         db.persist_remote_batch_state(
@@ -88,6 +85,7 @@ def test_persistence_rejects_impossible_same_observation_before_database(
                 "request_counts": {"total": 1, "completed": 1, "failed": 1},
             },
             observation_order=1,
+            postgres_driver=driver,
         )
 
     assert driver.connections == []
@@ -104,13 +102,11 @@ def test_persistence_rejects_impossible_same_observation_before_database(
     ],
 )
 def test_persistence_distinguishes_unknown_total_from_explicit_zero(
-    monkeypatch: Any,
     request_counts: dict[str, object],
     expected_total_known: bool,
 ) -> None:
     """Persist knownness internally without widening the public snapshot shape."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     snapshot = db.persist_remote_batch_state(
         "postgresql://example",
@@ -121,6 +117,7 @@ def test_persistence_distinguishes_unknown_total_from_explicit_zero(
             "request_counts": request_counts,
         },
         observation_order=1,
+        postgres_driver=driver,
     )
 
     assert snapshot["total_requests"] == 0
@@ -133,7 +130,7 @@ def test_persistence_distinguishes_unknown_total_from_explicit_zero(
     assert persistence_params[13] is expected_total_known
 
 
-def test_skipped_progress_upsert_returns_the_persisted_snapshot(monkeypatch: Any) -> None:
+def test_skipped_progress_upsert_returns_the_persisted_snapshot() -> None:
     """A rejected monotonic merge must not be reported as successfully persisted."""
     stored_row = (
         "standalone",
@@ -155,7 +152,6 @@ def test_skipped_progress_upsert_returns_the_persisted_snapshot(monkeypatch: Any
         None,
     )
     driver = _Psycopg(upsert_rowcount=0, stored_row=stored_row)
-    monkeypatch.setattr(db, "psycopg", driver)
 
     result = db.persist_remote_batch_state(
         "postgresql://example",
@@ -166,6 +162,7 @@ def test_skipped_progress_upsert_returns_the_persisted_snapshot(monkeypatch: Any
             "request_counts": {"total": 10, "completed": 0, "failed": 2},
         },
         observation_order=2,
+        postgres_driver=driver,
     )
 
     assert result["observation_order"] == 1
@@ -178,12 +175,9 @@ def test_skipped_progress_upsert_returns_the_persisted_snapshot(monkeypatch: Any
     )
 
 
-def test_skipped_progress_upsert_without_stored_row_fails_closed(
-    monkeypatch: Any,
-) -> None:
+def test_skipped_progress_upsert_without_stored_row_fails_closed() -> None:
     """A rejected update without a rereadable durable row is an integrity error."""
     driver = _Psycopg(upsert_rowcount=0, stored_row=None)
-    monkeypatch.setattr(db, "psycopg", driver)
 
     with pytest.raises(
         RuntimeError,
@@ -198,6 +192,7 @@ def test_skipped_progress_upsert_without_stored_row_fails_closed(
                 "request_counts": {"total": 1, "completed": 1, "failed": 0},
             },
             observation_order=2,
+            postgres_driver=driver,
         )
 
     assert driver.commits == 0

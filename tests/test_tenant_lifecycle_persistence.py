@@ -36,6 +36,10 @@ class _Cursor:
             return None
         return self.driver.fetchone_rows.pop(0)
 
+    def row_count(self) -> int:
+        """Report one affected row for successful lifecycle writes."""
+        return 1
+
 
 class _Connection:
     """Expose a cursor and commit counter for the fake driver."""
@@ -61,7 +65,7 @@ class _Connection:
 
 
 class _Psycopg:
-    """Minimal psycopg replacement for deterministic database contracts."""
+    """Minimal driver port for deterministic database contracts."""
 
     def __init__(self, fetchone_rows: list[Any] | None = None) -> None:
         self.executions: list[tuple[str, Any]] = []
@@ -87,12 +91,9 @@ def _provider_batch(status: str = "in_progress") -> dict[str, Any]:
     }
 
 
-def test_standalone_persistence_sets_transaction_scope_before_upsert(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_standalone_persistence_sets_transaction_scope_before_upsert() -> None:
     """Legacy persistence uses explicit standalone scope under the RLS policy."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
     observed = datetime(2026, 8, 5, 9, 0, tzinfo=timezone.utc)
 
     snapshot = db.persist_remote_batch_state(
@@ -101,6 +102,7 @@ def test_standalone_persistence_sets_transaction_scope_before_upsert(
         _provider_batch(),
         11,
         observed_at=observed,
+        postgres_driver=driver,
     )
 
     assert "tenant_scope" not in snapshot
@@ -119,12 +121,9 @@ def test_standalone_persistence_sets_transaction_scope_before_upsert(
     assert driver.commits == 1
 
 
-def test_explicit_tenants_do_not_share_the_business_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_explicit_tenants_do_not_share_the_business_identity() -> None:
     """Identical provider identifiers are independently bound to trusted tenants."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     first = db.persist_tenant_remote_batch_state(
         "postgresql://tenant-test",
@@ -132,6 +131,7 @@ def test_explicit_tenants_do_not_share_the_business_identity(
         "primary",
         _provider_batch("in_progress"),
         21,
+        postgres_driver=driver,
     )
     second = db.persist_tenant_remote_batch_state(
         "postgresql://tenant-test",
@@ -139,6 +139,7 @@ def test_explicit_tenants_do_not_share_the_business_identity(
         "primary",
         _provider_batch("completed"),
         22,
+        postgres_driver=driver,
     )
 
     assert first["tenant_scope"] == "tenant-a"
@@ -160,12 +161,9 @@ def test_explicit_tenants_do_not_share_the_business_identity(
     assert driver.commits == 2
 
 
-def test_invalid_tenant_scope_fails_before_database_access(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_invalid_tenant_scope_fails_before_database_access() -> None:
     """A malformed tenant scope cannot reach a database connection or SQL sink."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     with pytest.raises(ValidationError) as exc_info:
         db.persist_tenant_remote_batch_state(
@@ -174,6 +172,7 @@ def test_invalid_tenant_scope_fails_before_database_access(
             "primary",
             _provider_batch(),
             31,
+            postgres_driver=driver,
         )
 
     assert exc_info.value.details["field"] == "tenant_scope"
@@ -181,9 +180,7 @@ def test_invalid_tenant_scope_fails_before_database_access(
     assert driver.executions == []
 
 
-def test_tenant_scoped_read_sets_context_and_binds_complete_identity(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tenant_scoped_read_sets_context_and_binds_complete_identity() -> None:
     """Lifecycle reads establish tenant context before selecting one exact row."""
     first_seen = datetime(2026, 8, 5, 9, 0, tzinfo=timezone.utc)
     last_seen = datetime(2026, 8, 5, 9, 5, tzinfo=timezone.utc)
@@ -210,13 +207,13 @@ def test_tenant_scoped_read_sets_context_and_binds_complete_identity(
             )
         ]
     )
-    monkeypatch.setattr(db, "psycopg", driver)
 
     state = db.get_tenant_remote_batch_state(
         "postgresql://tenant-test",
         "tenant-a",
         "primary",
         "batch-shared",
+        postgres_driver=driver,
     )
 
     assert driver.executions[0][1] == ("tenant-a",)
@@ -248,12 +245,9 @@ def test_tenant_scoped_read_sets_context_and_binds_complete_identity(
     assert driver.commits == 0
 
 
-def test_tenant_scoped_read_returns_none_only_for_a_missing_row(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tenant_scoped_read_returns_none_only_for_a_missing_row() -> None:
     """A valid scoped query may report absence without weakening validation."""
     driver = _Psycopg()
-    monkeypatch.setattr(db, "psycopg", driver)
 
     assert (
         db.get_tenant_remote_batch_state(
@@ -261,18 +255,16 @@ def test_tenant_scoped_read_returns_none_only_for_a_missing_row(
             "tenant-a",
             "primary",
             "batch-missing",
+            postgres_driver=driver,
         )
         is None
     )
     assert len(driver.executions) == 2
 
 
-def test_tenant_scoped_read_rejects_malformed_database_rows(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_tenant_scoped_read_rejects_malformed_database_rows() -> None:
     """A partial row cannot become an ambiguous lifecycle projection."""
     driver = _Psycopg(fetchone_rows=[("tenant-a", "primary")])
-    monkeypatch.setattr(db, "psycopg", driver)
 
     with pytest.raises(RuntimeError, match="invalid row"):
         db.get_tenant_remote_batch_state(
@@ -280,6 +272,7 @@ def test_tenant_scoped_read_rejects_malformed_database_rows(
             "tenant-a",
             "primary",
             "batch-shared",
+            postgres_driver=driver,
         )
 
 
@@ -287,10 +280,13 @@ def test_standalone_read_delegates_to_explicit_default_scope(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Single-tenant callers use the same RLS-safe read path as tenant clients."""
-    captured: list[tuple[Any, ...]] = []
+    captured: list[tuple[tuple[Any, ...], object | None]] = []
 
-    def fake_get(*args: Any) -> None:
-        captured.append(args)
+    def fake_get(
+        *args: Any,
+        postgres_driver: object | None = None,
+    ) -> None:
+        captured.append((args, postgres_driver))
         return None
 
     monkeypatch.setattr(db, "get_tenant_remote_batch_state", fake_get)
@@ -305,9 +301,12 @@ def test_standalone_read_delegates_to_explicit_default_scope(
     )
     assert captured == [
         (
-            "postgresql://tenant-test",
-            "standalone",
-            "primary",
-            "batch-shared",
+            (
+                "postgresql://tenant-test",
+                "standalone",
+                "primary",
+                "batch-shared",
+            ),
+            None,
         )
     ]
