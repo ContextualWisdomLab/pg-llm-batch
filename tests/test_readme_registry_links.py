@@ -30,3 +30,14 @@ def test_packaged_readme_keeps_repository_links_registry_safe_and_discoverable()
     assert _REPOSITORY_RELATIVE_TARGET.search(readme) is None
     for url in _REQUIRED_PUBLIC_LINKS:
         assert url in readme
+
+
+def test_packaged_readme_does_not_overstate_secret_storage_encryption() -> None:
+    """Keep public SecretStore claims aligned with the optional Fernet boundary."""
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+
+    assert "KV config + encrypted-secret store" not in readme
+    assert "| KV config + secret store | `pg_llm_batch/config.py` |" in readme
+    assert "SecretStore` encrypts values only when a Fernet key is supplied" in readme
+    assert "base64-obfuscates values unless the store is configured with `require_encryption=True`" in readme
