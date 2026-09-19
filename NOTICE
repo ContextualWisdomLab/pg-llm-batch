@@ -11,13 +11,14 @@ ContextualWisdomLab project "xtrmLLMBatchPython" and relicensed to Apache-2.0.
 ContextualWisdomLab owns the source; the extracted subset depends only on
 permissively-licensed components and is redistributable under Apache-2.0.
 
-Third-party components used at runtime (not vendored here):
+Third-party components (not vendored here):
   - pg_tiktoken           Apache-2.0
   - tiktoken-rs           MIT
   - pgrx                  MIT / Apache-2.0
   - pg_cron               PostgreSQL License
   - pgvector              PostgreSQL License
   - pgsql-http            MIT
-  - psycopg (v3)          LGPL-3.0 (dynamically linked; not modified)
+  - pg8000 1.31.5         BSD-3-Clause (default Python PostgreSQL runtime)
+  - psycopg 3.3.4         LGPL-3.0 (optional test/development legacy adapter)
   - aiohttp               Apache-2.0
   - cryptography          Apache-2.0 / BSD (optional, for secret encryption)
