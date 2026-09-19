@@ -10,14 +10,14 @@ from typing import Any, Optional
 
 from .db import (
     DEFAULT_TENANT_SCOPE,
-    _require_psycopg,
     _set_transaction_tenant_scope,
-    psycopg,
     validate_endpoint_alias,
     validate_remote_resource_id,
     validate_tenant_scope,
 )
 from .exceptions import ConfigError, PgLlmBatchError, ValidationError
+from .postgres_driver_port import PostgresDriverPort
+from .postgres_driver_runtime import retained_postgres_driver
 from .result_streaming import BatchResultCheckpoint
 
 MIGRATION_PATH = (
@@ -31,6 +31,19 @@ CHECKPOINT_CONSUMER_PATTERN = re.compile(
 _CHECKPOINT_COLUMNS = (
     "schema_version, remote_batch_id, endpoint_alias, file_kind, file_id, "
     "file_line_number, batch_line_count, record_count, prefix_sha256"
+)
+_CHECKPOINT_STRING_FIELDS = (
+    "batch_id",
+    "endpoint_alias",
+    "file_kind",
+    "file_id",
+    "prefix_sha256",
+)
+_CHECKPOINT_INTEGER_FIELDS = (
+    "schema_version",
+    "file_line_number",
+    "batch_line_count",
+    "record_count",
 )
 _POSTGRES_BIGINT_CHECKPOINT_FIELDS = (
     "file_line_number",
@@ -58,12 +71,21 @@ class CheckpointConflictError(PgLlmBatchError):
         self.reason = reason
 
 
+def _validated_exact_text_authority(value: Any, field: str) -> str:
+    """Reject behavior-bearing text subtypes before they become persistence authority."""
+    if type(value) is not str:
+        raise ValidationError(
+            field=field,
+            value="<redacted>",
+            reason="must use an exact built-in primitive type",
+        )
+    return value
+
+
 def validate_checkpoint_consumer_name(value: Any) -> str:
     """Validate one host-selected checkpoint consumer name without coercion."""
-    if (
-        not isinstance(value, str)
-        or CHECKPOINT_CONSUMER_PATTERN.fullmatch(value) is None
-    ):
+    consumer_name = _validated_exact_text_authority(value, "consumer_name")
+    if CHECKPOINT_CONSUMER_PATTERN.fullmatch(consumer_name) is None:
         raise ValidationError(
             field="consumer_name",
             value=value,
@@ -73,29 +95,74 @@ def validate_checkpoint_consumer_name(value: Any) -> str:
                 "colon, or hyphen"
             ),
         )
-    return value
+    return consumer_name
 
 
 def _validated_postgres_dsn(value: Any) -> str:
-    """Require an explicit nonblank database target without normalizing it."""
-    if not isinstance(value, str) or not value.strip():
+    """Require exact built-in database-target authority without normalizing it."""
+    if type(value) is not str:
         raise ConfigError(
             "A Postgres DSN must be provided explicitly for checkpoint persistence"
         )
-    return value
+    postgres_dsn = value
+    if not postgres_dsn.strip():
+        raise ConfigError(
+            "A Postgres DSN must be provided explicitly for checkpoint persistence"
+        )
+    return postgres_dsn
+
+
+def _connect_postgres(
+    postgres_dsn: str,
+    postgres_driver: PostgresDriverPort | None,
+) -> Any:
+    """Connect through the selected PostgreSQL driver boundary.
+
+    Explicitly injected migration drivers remain available for parity and
+    degraded-mode tests. Without an injection, the centralized runtime selector
+    supplies the retained implementation so checkpoint persistence no longer
+    imports or constructs Psycopg directly.
+    """
+    selected_driver = postgres_driver or retained_postgres_driver()
+    return selected_driver.connect(postgres_dsn)
 
 
 def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
-    """Require one immutable checkpoint whose counters fit PostgreSQL storage."""
-    if not isinstance(value, BatchResultCheckpoint):
+    """Detach one exact checkpoint into validated package-owned primitive authority."""
+    if type(value) is not BatchResultCheckpoint:
         raise ValidationError(
             field=field,
-            value=value,
+            value="<redacted>",
             reason="must be a BatchResultCheckpoint",
         )
+
+    checkpoint_values = {
+        "schema_version": value.schema_version,
+        "batch_id": value.batch_id,
+        "endpoint_alias": value.endpoint_alias,
+        "file_kind": value.file_kind,
+        "file_id": value.file_id,
+        "file_line_number": value.file_line_number,
+        "batch_line_count": value.batch_line_count,
+        "record_count": value.record_count,
+        "prefix_sha256": value.prefix_sha256,
+    }
+    for checkpoint_field in _CHECKPOINT_STRING_FIELDS:
+        if type(checkpoint_values[checkpoint_field]) is not str:
+            raise ValidationError(
+                field=f"{field}.{checkpoint_field}",
+                value="<redacted>",
+                reason="must use an exact built-in primitive type",
+            )
+    for checkpoint_field in _CHECKPOINT_INTEGER_FIELDS:
+        if type(checkpoint_values[checkpoint_field]) is not int:
+            raise ValidationError(
+                field=f"{field}.{checkpoint_field}",
+                value="<redacted>",
+                reason="must use an exact built-in primitive type",
+            )
     for checkpoint_field in _POSTGRES_BIGINT_CHECKPOINT_FIELDS:
-        count = getattr(value, checkpoint_field)
-        if count > POSTGRES_BIGINT_MAX:
+        if checkpoint_values[checkpoint_field] > POSTGRES_BIGINT_MAX:
             raise ValidationError(
                 field=f"{field}.{checkpoint_field}",
                 value="<redacted>",
@@ -104,20 +171,22 @@ def _validated_checkpoint(value: Any, field: str) -> BatchResultCheckpoint:
                     f"{POSTGRES_BIGINT_MAX}"
                 ),
             )
-    return value
+
+    return BatchResultCheckpoint(**checkpoint_values)
 
 
 def _validated_exact_endpoint_alias(value: Any) -> str:
     """Require one endpoint alias that is already in canonical form."""
+    candidate = _validated_exact_text_authority(value, "endpoint_alias")
     try:
-        normalized = validate_endpoint_alias(value)
+        normalized = validate_endpoint_alias(candidate)
     except ValidationError as exc:
         raise ValidationError(
             field="endpoint_alias",
             value=value,
             reason="must be a supported endpoint alias",
         ) from exc
-    if normalized != value:
+    if normalized != candidate:
         raise ValidationError(
             field="endpoint_alias",
             value=value,
@@ -128,8 +197,9 @@ def _validated_exact_endpoint_alias(value: Any) -> str:
 
 def _validated_batch_id(value: Any) -> str:
     """Require one supported provider batch identifier."""
+    candidate = _validated_exact_text_authority(value, "batch_id")
     try:
-        return validate_remote_resource_id(value, "batch_id")
+        return validate_remote_resource_id(candidate, "batch_id")
     except ValidationError as exc:
         raise ValidationError(
             field="batch_id",
@@ -171,13 +241,14 @@ def _checkpoint_values(checkpoint: BatchResultCheckpoint) -> tuple[Any, ...]:
 def apply_result_checkpoint_schema(
     postgres_dsn: str,
     migration_path: Optional[str] = None,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
 ) -> None:
     """Apply the idempotent durable result-checkpoint migration."""
     dsn = _validated_postgres_dsn(postgres_dsn)
-    _require_psycopg()
     path = Path(migration_path) if migration_path else MIGRATION_PATH
     sql = path.read_text(encoding="utf-8")
-    with psycopg.connect(dsn) as conn:
+    with _connect_postgres(dsn, postgres_driver) as conn:
         with conn.cursor() as cur:
             cur.execute(sql)
         conn.commit()
@@ -191,11 +262,14 @@ class PostgresBatchResultCheckpointStore:
         postgres_dsn: str,
         *,
         tenant_scope: str = DEFAULT_TENANT_SCOPE,
+        postgres_driver: PostgresDriverPort | None = None,
     ) -> None:
-        """Bind one explicit database and trusted local tenant scope to the store."""
+        """Bind one explicit database, tenant scope, and optional driver port."""
         self.postgres_dsn = _validated_postgres_dsn(postgres_dsn)
+        self._postgres_driver = postgres_driver
+        tenant = _validated_exact_text_authority(tenant_scope, "tenant_scope")
         try:
-            self.tenant_scope = validate_tenant_scope(tenant_scope)
+            self.tenant_scope = validate_tenant_scope(tenant)
         except ValidationError as exc:
             raise ValidationError(
                 field="tenant_scope",
@@ -210,8 +284,7 @@ class PostgresBatchResultCheckpointStore:
         endpoint_alias: str,
     ) -> Optional[BatchResultCheckpoint]:
         """Load the current checkpoint in one package-owned transaction."""
-        _require_psycopg()
-        with psycopg.connect(self.postgres_dsn) as conn:
+        with _connect_postgres(self.postgres_dsn, self._postgres_driver) as conn:
             with conn.cursor() as cur:
                 return self.load_in_transaction(
                     cur,
@@ -257,8 +330,7 @@ class PostgresBatchResultCheckpointStore:
         expected_previous: Optional[BatchResultCheckpoint] = None,
     ) -> BatchResultCheckpoint:
         """Create or advance a checkpoint in one package-owned transaction."""
-        _require_psycopg()
-        with psycopg.connect(self.postgres_dsn) as conn:
+        with _connect_postgres(self.postgres_dsn, self._postgres_driver) as conn:
             with conn.cursor() as cur:
                 saved = self.save_in_transaction(
                     cur,

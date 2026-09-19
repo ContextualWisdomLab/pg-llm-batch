@@ -151,6 +151,131 @@ def test_ci_workflow_enforces_supported_versions_and_quality_gates() -> None:
     _assert_external_actions_are_pinned(workflow)
 
 
+def test_ci_pg8000_candidate_parity_is_immutable_and_queue_conservative() -> None:
+    """Keep replacement-driver proof exact without creating another runner lane."""
+    workflow = _read(".github/workflows/ci.yml")
+    project = _read("pyproject.toml")
+    current_setup_uv = (
+        "astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d"
+    )
+    stale_setup_uv = (
+        "astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9"
+    )
+
+    assert "pg8000-candidate-python314:" not in workflow
+    assert "pg8000==1.31.5" in workflow
+    assert (
+        "0af2c1926b153307639868d2ee5cef6cd3a7d07448e12736989b10e1d491e201"
+        in workflow
+    )
+    assert "tests/smoke_pg8000_candidate_postgres.py" in workflow
+    assert workflow.count(current_setup_uv) == 3
+    assert stale_setup_uv not in workflow
+    assert "pg8000-candidate-ci-password" not in workflow
+    assert "secrets.token_urlsafe(32)" in workflow
+    assert "::add-mask::$candidate_password" in workflow
+    assert "PG_LLM_BATCH_POSTGRES_PASSWORD=$candidate_password" not in workflow
+    assert "PG8000_CANDIDATE_PASSWORD_FILE" in workflow
+    assert "Tear down candidate PostgreSQL runtime" in workflow
+    project_section = re.search(
+        r"(?ms)^\[project\]\n(?P<body>.*?)(?=^\[|\Z)",
+        project,
+    )
+    assert project_section is not None
+    production_dependencies = project_section.group("body").casefold()
+    assert '"pg8000==1.31.5"' in production_dependencies
+    assert '"psycopg' not in production_dependencies
+
+
+def test_ci_pg8000_candidate_keeps_0600_secrets_for_both_runtime_identities() -> None:
+    """Give host smoke and DB runtime separate private copies of one credential."""
+    workflow = _read(".github/workflows/ci.yml")
+    dockerfile = _read("docker/postgres/Dockerfile")
+
+    assert "USER postgres" in dockerfile
+    assert 'host_password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-host-password.XXXXXX")"' in workflow
+    assert 'container_password_file="$(mktemp "${RUNNER_TEMP:?}/pg8000-container-password.XXXXXX")"' in workflow
+    assert 'chmod 600 "$host_password_file" "$container_password_file"' in workflow
+    assert 'runner_uid="$(id -u)"' in workflow
+    assert (
+        'postgres_runtime_uid="$(docker run --rm --entrypoint id '
+        'pg-llm-batch-postgres:ci -u)"'
+    ) in workflow
+    assert 'sudo chown "$postgres_runtime_uid" "$container_password_file"' in workflow
+    assert 'test "$(stat -c \'%u\' "$host_password_file")" = "$runner_uid"' in workflow
+    assert (
+        'test "$(stat -c \'%u\' "$container_password_file")" '
+        '= "$postgres_runtime_uid"'
+    ) in workflow
+    assert 'PG8000_CANDIDATE_PASSWORD_FILE=$host_password_file' in workflow
+    assert 'source=$container_password_file,target=/run/secrets/postgres_password' in workflow
+    assert "POSTGRES_HOST_AUTH_METHOD=trust" not in workflow
+    assert "chmod 644" not in workflow
+
+
+def test_ci_pg8000_candidate_health_matches_selected_runtime_capabilities() -> None:
+    """Candidate parity must not wait for an extension disabled by its image."""
+    workflow = _read(".github/workflows/ci.yml")
+    dockerfile = _read("docker/postgres/Dockerfile")
+    candidate_health_step = next(
+        step
+        for steps in _workflow_job_steps(workflow)
+        for step in steps
+        if _step_top_level_field(step, "name")
+        == "Wait for candidate PostgreSQL health contract"
+    )
+
+    assert "docker build --tag pg-llm-batch-postgres:ci docker/postgres" in workflow
+    assert "FROM postgres-base AS runtime" in dockerfile
+    assert "ENV ENABLE_TIKTOKEN=0" in dockerfile
+    assert "component IN ('database','com_config')" in candidate_health_step
+    assert "pg_tiktoken" not in candidate_health_step
+
+
+def test_ci_pg8000_candidate_pins_and_hashes_full_dependency_closure() -> None:
+    """Candidate proof must not resolve mutable transitive wheels at install time."""
+    workflow = _read(".github/workflows/ci.yml")
+
+    exact_artifacts = {
+        "pg8000==1.31.5": (
+            "0af2c1926b153307639868d2ee5cef6cd3a7d07448e12736989b10e1d491e201"
+        ),
+        "python-dateutil==2.9.0.post0": (
+            "a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427"
+        ),
+        "scramp==1.4.17": (
+            "a4e3fd2e8169461a28a13777a166d3da94274454f0714a7d3023fee124474ac8"
+        ),
+        "asn1crypto==1.5.1": (
+            "db4e40728b728508912cbb3d44f19ce188f218e9eba635821bb4b68564f8fd67"
+        ),
+        "six==1.17.0": (
+            "4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274"
+        ),
+    }
+    for requirement, digest in exact_artifacts.items():
+        assert requirement in workflow
+        assert digest in workflow
+
+    expected_interpreters = (
+        "/tmp/pg8000-candidate-py310/bin/python",
+        "/tmp/pg8000-candidate-py312/bin/python",
+        "/tmp/pg8000-candidate-py314/bin/python",
+    )
+    assert "pip download --no-deps --only-binary=:all:" in workflow
+    assert 'uv pip install --python "$interpreter" --no-deps' in workflow
+    for interpreter in expected_interpreters:
+        assert interpreter in workflow
+    assert "/tmp/pg8000-candidate/pg8000-1.31.5-py3-none-any.whl" in workflow
+    assert (
+        "/tmp/pg8000-candidate/python_dateutil-2.9.0.post0-py2.py3-none-any.whl"
+        in workflow
+    )
+    assert "/tmp/pg8000-candidate/scramp-1.4.17-py3-none-any.whl" in workflow
+    assert "/tmp/pg8000-candidate/asn1crypto-1.5.1-py2.py3-none-any.whl" in workflow
+    assert "/tmp/pg8000-candidate/six-1.17.0-py2.py3-none-any.whl" in workflow
+
+
 def test_workflow_step_field_matching_ignores_comments_and_unrelated_values() -> None:
     """Comment or nested text must not masquerade as workflow step fields."""
     decoy = """      - name: Decoy

@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from pg_llm_batch import config as cfg_mod
@@ -11,10 +13,45 @@ from pg_llm_batch.exceptions import ConfigError
 from tests.conftest import FakePsycopg
 
 
+class _FakeDriverConnection:
+    """Adapt the legacy unit-test connection to the driver-neutral store surface."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+
+    @property
+    def closed(self) -> bool:
+        """Expose the underlying deterministic closed state for cleanup assertions."""
+        return self._connection.closed
+
+    def cursor(self):
+        """Return the exact cursor backed by the shared fake KV state."""
+        return self._connection.cursor()
+
+    def set_autocommit(self, enabled: bool) -> None:
+        """Apply the store's explicit autocommit policy to the legacy fake."""
+        self._connection.autocommit = enabled
+
+    def close(self) -> None:
+        """Close the underlying fake connection."""
+        self._connection.close()
+
+
+class _FakeDriver:
+    """Provide the shared FakePsycopg state through the runtime driver contract."""
+
+    def __init__(self, client: FakePsycopg) -> None:
+        self.client = client
+
+    def connect(self, *args: Any, **kwargs: Any) -> _FakeDriverConnection:
+        """Return one driver-neutral wrapper around the existing deterministic fake."""
+        return _FakeDriverConnection(self.client.connect(*args, **kwargs))
+
+
 @pytest.fixture()
 def fake_pg(monkeypatch):
     fake = FakePsycopg()
-    monkeypatch.setattr(cfg_mod, "psycopg", fake)
+    monkeypatch.setattr(cfg_mod, "retained_postgres_driver", lambda: _FakeDriver(fake))
     return fake
 
 
@@ -25,16 +62,13 @@ def test_config_requires_dsn(fake_pg):
 
 def test_config_defaults_seeded_and_typed(fake_pg):
     store = PostgresConfigStore("postgresql://x")
-    # int coercion from stored string
     assert store.get("token_limits", "per_batch") == 5_000_000_000
-    # bool coercion
     assert store.get("optimization", "smart_batching") is True
 
 
 def test_config_set_get_roundtrip(fake_pg):
     store = PostgresConfigStore("postgresql://x")
     store.set("gateway", "base_url", "https://gw.example/v1")
-    # bypass cache to prove it persisted to the backing table
     store.cache.clear()
     assert store.get("gateway", "base_url") == "https://gw.example/v1"
 
@@ -42,7 +76,6 @@ def test_config_set_get_roundtrip(fake_pg):
 def test_secret_store_base64_without_key(fake_pg, caplog):
     store = SecretStore("postgresql://x", fernet_key=None)
     store.set_secret("gateway_api_key.default", "sk-secret-123")
-    # stored obfuscated, not plaintext
     stored_value = fake_pg.store.secrets["gateway_api_key.default"][0]
     assert stored_value != "sk-secret-123"
     assert store.get_secret("gateway_api_key.default") == "sk-secret-123"
@@ -57,11 +90,9 @@ def test_secret_store_fernet_encrypts_at_rest(fake_pg):
     value, is_encrypted = fake_pg.store.secrets["gateway_api_key.default"]
     assert is_encrypted is True
     assert value != "sk-abc"
-    # a wrong key cannot decrypt
     other = SecretStore("postgresql://x", fernet_key=Fernet.generate_key().decode())
     with pytest.raises(Exception):
         other.get_secret("gateway_api_key.default")
-    # the right key can
     assert store.get_secret("gateway_api_key.default") == "sk-abc"
 
 
@@ -121,13 +152,22 @@ def test_config_missing_lookup_show_and_factory(fake_pg):
 
 
 def test_store_constructor_requires_dependency_and_dsn(monkeypatch, fake_pg):
-    monkeypatch.setattr(cfg_mod, "psycopg", None)
+    def unavailable_driver():
+        raise cfg_mod.PostgresDriverUnavailableError(
+            "Retained PostgreSQL driver is unavailable"
+        )
+
+    monkeypatch.setattr(cfg_mod, "retained_postgres_driver", unavailable_driver)
     with pytest.raises(ConfigError, match="psycopg is required"):
         PostgresConfigStore("postgresql://x")
     with pytest.raises(ConfigError, match="psycopg is required"):
         SecretStore("postgresql://x")
 
-    monkeypatch.setattr(cfg_mod, "psycopg", fake_pg)
+    monkeypatch.setattr(
+        cfg_mod,
+        "retained_postgres_driver",
+        lambda: _FakeDriver(fake_pg),
+    )
     with pytest.raises(ConfigError, match="DSN"):
         PostgresConfigStore("")
     with pytest.raises(ConfigError, match="DSN"):
