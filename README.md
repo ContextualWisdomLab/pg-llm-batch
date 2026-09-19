@@ -44,7 +44,7 @@ retired; automatic reconciliation is a separate product capability rather than a
 | Tenant-qualified lifecycle persistence and reads | `pg_llm_batch/db.py` |
 | PostgreSQL driver abstraction | `pg_llm_batch/postgres_driver_port.py` |
 | Admitted runtime driver selection | `pg_llm_batch/postgres_driver_runtime.py` |
-| KV config + encrypted-secret store | `pg_llm_batch/config.py` |
+| KV config + secret store | `pg_llm_batch/config.py` |
 | Optional OpenTelemetry operations | `pg_llm_batch/observability.py` |
 | DDL subset | `pg_llm_batch/schema.sql` |
 | Readiness (`/healthz`) | `pg_llm_batch/health.py` |
@@ -108,6 +108,8 @@ python -m pg_llm_batch config set-secret gateway_api_key.default
 ```
 
 `config set-secret` does not accept secret plaintext in process arguments. Interactive entry is no-echo; automation may provide one bounded logical line on standard input from an already-owned credential source.
+
+Package-managed secret storage is not automatically encrypted. `SecretStore` encrypts values only when a Fernet key is supplied; without one, the compatibility path base64-obfuscates values unless the store is configured with `require_encryption=True`. Mandatory encryption migration, key rotation/recovery, and external key custody remain tracked under [issue #121](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/121).
 
 Production gateway destinations require HTTPS. Plain HTTP is accepted only for explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`). User information, query parameters, fragments, whitespace, and invalid ports are rejected before provider credentials are acquired.
 
