@@ -52,3 +52,14 @@ def test_packaged_readme_distinguishes_public_healthz_from_operator_cli_diagnost
     assert "operator-facing diagnostic surface" in readme
     assert "untrusted logs" in readme
     assert "https://github.com/ContextualWisdomLab/pg-llm-batch/issues/203" in readme
+
+
+def test_packaged_readme_distinguishes_fresh_init_from_existing_volume_extension_retirement() -> None:
+    """Do not promote fresh-install cron/http retirement into upgraded-volume truth."""
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+
+    assert "Fresh initialization no longer creates the former `pg_cron` + `http` provider retriever" in readme
+    assert "Existing volumes can still contain those extensions" in readme
+    assert "preservation-first retirement migration" in readme
+    assert "https://github.com/ContextualWisdomLab/pg-llm-batch/issues/103" in readme
