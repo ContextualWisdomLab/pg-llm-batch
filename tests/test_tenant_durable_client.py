@@ -56,7 +56,7 @@ def test_tenant_client_rejects_the_unscoped_recorder_seam() -> None:
 
     assert exc_info.value.details == {
         "field": "lifecycle_recorder",
-        "value": "<provided>",
+        "value": "<redacted>",
         "reason": "tenant clients require tenant_lifecycle_recorder",
     }
 
