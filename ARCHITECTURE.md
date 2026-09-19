@@ -3,10 +3,19 @@
 ## Deployment boundary
 
 `pg-llm-batch` remains independently deployable and embeddable. PostgreSQL owns
-configuration, encrypted secrets, token counting, JSONL payloads, and durable
+configuration, secret storage, token counting, JSONL payloads, and durable
 provider lifecycle state. Provider HTTP behavior remains behind
 `BatchAPIClient`, while host services may inject credential, observation-order,
 and lifecycle-persistence seams without changing provider semantics.
+
+Protected `SecretStore` does **not** make encryption-at-rest mandatory. A supplied
+Fernet key encrypts stored values; without one, the current compatibility path
+base64-obfuscates values unless the caller explicitly sets
+`require_encryption=True`. Mandatory Fernet policy, migration of historical
+unencrypted rows, key rotation/recovery, and external key-custody evidence remain
+the buyer/security gap tracked by #121 and the active config/secret source owner.
+Do not describe the protected product as encryption-required until that contract
+is normally integrated and released.
 
 ## Durable lifecycle tenancy
 
@@ -55,6 +64,56 @@ Rollback to the former two-column key is unsafe until an operator proves that no
 The packaged schema and Docker initialization schema are maintained as exact
 mirrors and must be reapplied successfully more than once.
 
+## Reconciliation orchestration boundary
+
+Protected `main` contains bounded reconciliation primitives, not a package-owned
+automatic worker. `reconcile_batch_candidates()` executes one finite
+scheduler-independent provider pass. Its protected contract explicitly leaves
+candidate discovery, scheduling, tenant authorization, and any cross-process
+lease to the host. Durable candidate discovery, PostgreSQL advisory single-flight,
+and caller-owned result/checkpoint application are separate primitives; their
+presence must not be described as an autonomous reconciliation service.
+
+Issue #102 remains the buyer/operability gap for composing those primitives into
+a bounded automatic loop with crash/restart recovery, durable terminal-work
+retirement, content-free operator evidence, and realistic high-cardinality
+acceptance. A future loop must preserve minimal PostgreSQL transactions: reserve
+or read the minimum durable state, commit or roll back before provider/model
+network work or retry backoff, and open a new bounded transaction only for the
+next durable transition. Session-advisory coordination remains transient and
+must not be represented as a durable lease or as distributed exactly-once
+delivery.
+
+The active reconciliation source slices remain separately owned by their
+canonical PRs/issues, including candidate validation, bounded database result
+materialization, sweep evidence, and Result Application. This documentation
+records the protected capability boundary only; it does not transfer their
+runtime/test authority into #324 or authorize a competing scheduler branch.
+
+## Diagnostic disclosure boundary
+
+`check_health()` is an operator-facing diagnostic report, not a public-safe
+serialization contract. Protected `main` currently preserves backend `detail`
+values and maps a database failure to `detail=str(exc)`, so that internal report
+can contain lower-layer PostgreSQL diagnostics. The HTTP `/healthz` path does
+not expose that report directly: `serve_healthz()` passes it through
+`public_health_report()`, which emits only the fixed required component names and
+boolean readiness states.
+
+The standalone `health` CLI currently prints the unprojected `check_health()`
+report. Its output must therefore be treated as operator-only and must not be
+represented as safe for untrusted logs, tenant-visible telemetry, public HTTP,
+or other user-facing surfaces. Issue #203 owns the remaining runtime hardening:
+the CLI needs a bounded content-free projection or equally strict coded
+diagnostic contract while preserving readiness exit semantics and useful
+operator failure classification. DSNs, credentials, certificate/private-key
+material, SQL text, provider content, arbitrary exception strings, and backend
+connection diagnostics must not become public diagnostic evidence.
+
+This section records the protected capability boundary only. It does not move
+`health.py` or CLI runtime/test authority into #324; source work for #203 still
+requires the invocation-scoped writer/path census before mutation.
+
 ## Logical restore execution
 
 `restore_postgres_logical_backup()` is a bounded direct-SQL restore seam. The
@@ -69,6 +128,26 @@ successful restore is not required to leave the descriptor at end-of-file.
 Post-restore metadata mismatch is fail-closed and must be treated as unsafe
 because the SQL transaction may already have committed. This seam does not
 complete isolated schema/RLS/PITR acceptance.
+
+## Result application boundary
+
+Checkpointed result application is a package-owned domain service. Internally,
+its ubiquitous language is `transaction_cursor`, `checkpointed_record`,
+`record_effect`, `record_applied`, and `result_checkpoint`. The released
+`apply_checkpointed_result_in_transaction(cursor, checkpoint_store,
+consumer_name, item, apply_record)` keyword signature and the public
+`ResultApplicationOutcome(applied, checkpoint)` dataclass field/introspection
+shape remain compatibility adapters because renaming them would be a released
+source/serialization break. The adapter immediately translates to/from a
+private semantic outcome model. Additive `.record_applied` and
+`.result_checkpoint` properties expose the semantic vocabulary without changing
+historical `dataclasses.fields` or `dataclasses.asdict` output.
+
+The service preserves the same transaction and replay invariants: the local
+record effect and checkpoint save occur under the caller-owned transaction,
+exact replay skips the effect, checkpoint regression fails closed, and the
+scoped cursor is revoked when synchronous effect execution ends. This naming
+boundary changes no provider protocol or database schema.
 
 ## Modular interoperability
 
