@@ -52,6 +52,14 @@ def test_retirement_preflights_auto_dropped_extension_dependencies() -> None:
     assert "Refusing to retire provider extensions while explicit extension dependencies remain" in sql
 
 
+def test_retirement_rejects_unexpected_schema_members() -> None:
+    """Preserve schemas accidentally enrolled as extension-owned members."""
+    sql = _migration()
+
+    assert "dep.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass" in sql
+    assert "Refusing to retire provider extensions while unexpected schema members remain" in sql
+
+
 def test_retirement_uses_restrict_and_preserves_application_data() -> None:
     """Extension cleanup must never cascade through application-owned state."""
     sql = _migration()
