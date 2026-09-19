@@ -1,5 +1,7 @@
 # pg-llm-batch
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ContextualWisdomLab/pg-llm-batch)
+
 Standalone **and** embeddable Postgres LLM batch engine. It counts tokens
 **inside** PostgreSQL with [`pg_tiktoken`](https://github.com/postgresml/pg_tiktoken),
 assembles OpenAI-compatible JSONL batches under token/byte/record limits, and
