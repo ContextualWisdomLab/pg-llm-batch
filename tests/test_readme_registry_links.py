@@ -41,3 +41,14 @@ def test_packaged_readme_does_not_overstate_secret_storage_encryption() -> None:
     assert "| KV config + secret store | `pg_llm_batch/config.py` |" in readme
     assert "SecretStore` encrypts values only when a Fernet key is supplied" in readme
     assert "base64-obfuscates values unless the store is configured with `require_encryption=True`" in readme
+
+
+def test_packaged_readme_distinguishes_public_healthz_from_operator_cli_diagnostics() -> None:
+    """Keep the README explicit about the unresolved CLI health disclosure boundary."""
+
+    readme = (Path(__file__).parents[1] / "README.md").read_text(encoding="utf-8")
+
+    assert "fixed required component names and boolean readiness" in readme
+    assert "operator-facing diagnostic surface" in readme
+    assert "untrusted logs" in readme
+    assert "https://github.com/ContextualWisdomLab/pg-llm-batch/issues/203" in readme
