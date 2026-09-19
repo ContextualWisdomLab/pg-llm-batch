@@ -48,6 +48,61 @@ flowchart TD
     F --> G[Operator runs pg_basebackup / restore_command outside this package]
 ```
 
+## Proposed recovery-target configuration observation handoff
+
+PR #299 adds a separate read-only observation seam after the deployer has
+configured recovery and connected to an isolated recovery target. This section
+records that branch-local integration contract; it does not promote the active
+PR to protected or released authority before normal review and integration.
+
+`observe_postgres_recovery_target_configuration()` snapshots one exact reviewed
+`PostgresPitrRecoveryTarget`, executes one fixed catalog-qualified read, and
+compares the effective server state against that target. A wrong-type target or
+a mutated target that no longer satisfies the canonical reviewed-target
+contract is rejected before database I/O; invalid caller authority therefore
+does not reach cursor acquisition or the fixed inspection query.
+
+The query is bounded to these eight `pg_settings` names plus
+`pg_is_in_recovery()`:
+
+- `recovery_target`;
+- `recovery_target_action`;
+- `recovery_target_inclusive`;
+- `recovery_target_lsn`;
+- `recovery_target_name`;
+- `recovery_target_time`;
+- `recovery_target_timeline`;
+- `recovery_target_xid`.
+
+PostgreSQL 18 defaults `recovery_target_inclusive` to `on`. When the reviewed
+target does not carry an inclusion edge (`name` or `immediate`), the observer
+therefore expects the effective setting to remain `on`; it does not interpret an
+empty value as equivalent. For time, XID, and LSN targets, the reviewed target's
+explicit inclusion edge remains authoritative.
+
+The observer requests at most one row beyond the eight-setting budget so that
+unexpected result growth fails closed instead of being materialized without a
+bound. It rejects malformed rows, duplicate or unknown setting names, oversized
+setting text, `pending_restart=true`, a target that is no longer in recovery,
+and any mismatch with the reviewed target authority. PostgreSQL documents
+`pg_settings.pending_restart` as the indicator that a configuration-file
+change still requires restart, while `pg_is_in_recovery()` reports whether
+recovery remains in progress.
+
+The caller owns the already-connected database connection and its timeout
+policy. The seam does not issue configuration writes or silently change session
+state. Successful evidence is content-free live-object provenance: it does not
+contain DSNs, credentials, recovery-target values, restore-point names,
+filesystem paths, or dynamic database exception text.
+
+This observation is deliberately narrower than recovery completion. It does
+not create `recovery.signal`, supply `restore_command`, replay or validate WAL,
+prove archive completeness or timeline ancestry, prove target attainment,
+pause or promote recovery, prove application readiness, or establish achieved
+RPO/RTO, HA/DR, CSAP, SOC 2, or certification claims. The profile binder owns
+the deployer-selected recovery intent; the observer only verifies the bounded
+effective configuration of an already-running recovery target.
+
 ## Consequences
 
 Hosts can persist a reviewed physical/PITR contract next to #205 receipts
@@ -55,10 +110,17 @@ without claiming that this package completed backup, restore, CSAP, or SOC 2.
 Logical restore (#208/#212) remains a separate executor. Live WAL replay and
 base-backup execution remain later #204 slices.
 
+The proposed #299 handoff gives operators a fail-closed configuration check
+between intent binding and later replay/readiness evidence without combining
+those aggregates or extending the transaction boundary around network or
+recovery work.
+
 ## Rollback
 
 Delete the profile module, tests, and this decision record. No schema
-migration is required.
+migration is required. If the #299 observation handoff is not integrated,
+remove only the proposed handoff section and its focused documentation
+contract; do not rewrite the accepted physical/PITR profile decision.
 
 ## References
 
@@ -71,5 +133,16 @@ The PostgreSQL Global Development Group. (2026). *Continuous archiving and
 point-in-time recovery (PITR)*. PostgreSQL 18 documentation.
 https://www.postgresql.org/docs/18/continuous-archiving.html
 
+The PostgreSQL Global Development Group. (2026). *Write ahead log*. PostgreSQL
+18 documentation. https://www.postgresql.org/docs/18/runtime-config-wal.html
+
 The PostgreSQL Global Development Group. (2026). *pg_basebackup*. PostgreSQL 18
 documentation. https://www.postgresql.org/docs/18/app-pgbasebackup.html
+
+The PostgreSQL Global Development Group. (2026). *pg_settings*. PostgreSQL 18
+documentation.
+https://www.postgresql.org/docs/18/view-pg-settings.html
+
+The PostgreSQL Global Development Group. (2026). *System administration
+functions*. PostgreSQL 18 documentation.
+https://www.postgresql.org/docs/18/functions-admin.html
