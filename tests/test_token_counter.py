@@ -112,10 +112,12 @@ def test_batch_accumulator_rejects_oversized_first_record(fake_pg):
     counter.effective_limit = 5
     acc = BatchAccumulator(counter, "gpt-4o", max_bytes=10)
 
-    with pytest.raises(TokenLimitExceededError, match="request-token") as token_error:
+    with pytest.raises(TokenLimitExceededError) as token_error:
         acc.add_entry("request-token", "{}", tokens=6, byte_size=3)
     assert token_error.value.details["current_tokens"] == 6
     assert token_error.value.details["limit_tokens"] == 5
+    assert "request-token" not in str(token_error.value)
+    assert "request-token" not in repr(token_error.value.details)
     assert acc.entries == []
     assert acc.record_count == 0
 
@@ -144,8 +146,10 @@ def test_empty_batches_and_oversized_single_request(fake_pg):
     }
     assert counter.split_oversized_batch([]) == []
     counter.effective_limit = 1
-    with pytest.raises(TokenLimitExceededError, match="oversized_request"):
+    with pytest.raises(TokenLimitExceededError) as exc_info:
         counter.split_oversized_batch([BatchRequest(user_prompt="two tokens", model="m")])
+    assert "oversized_request" not in str(exc_info.value)
+    assert "oversized_request" not in repr(exc_info.value.details)
 
 
 def test_config_resolution_buffer_validation_and_encoder_cache(fake_pg, monkeypatch):
