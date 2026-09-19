@@ -32,8 +32,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
        durable lifecycle + tenant/RLS + reconciliation evidence
 ```
 
-Provider-facing polling and retrieval stay outside PostgreSQL. The former bundled `pg_cron` + `pgsql-http` provider retriever is
-retired; automatic reconciliation is a separate product capability rather than a second database-side network authority.
+Provider-facing polling and retrieval stay outside PostgreSQL. Fresh initialization no longer creates the former `pg_cron` + `http` provider retriever. Existing volumes can still contain those extensions, schedules, or extension-owned objects until the preservation-first retirement migration reaches protected `main`; the compatibility image therefore still retains the legacy packages and preload needed for that transition. [Issue #103](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/103) owns existing-volume retirement and the later package/preload removal stage. Automatic reconciliation is a separate product capability rather than a second database-side network authority.
 
 | Piece | Module |
 | --- | --- |
