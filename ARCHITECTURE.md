@@ -64,6 +64,32 @@ Rollback to the former two-column key is unsafe until an operator proves that no
 The packaged schema and Docker initialization schema are maintained as exact
 mirrors and must be reapplied successfully more than once.
 
+## Reconciliation orchestration boundary
+
+Protected `main` contains bounded reconciliation primitives, not a package-owned
+automatic worker. `reconcile_batch_candidates()` executes one finite
+scheduler-independent provider pass. Its protected contract explicitly leaves
+candidate discovery, scheduling, tenant authorization, and any cross-process
+lease to the host. Durable candidate discovery, PostgreSQL advisory single-flight,
+and caller-owned result/checkpoint application are separate primitives; their
+presence must not be described as an autonomous reconciliation service.
+
+Issue #102 remains the buyer/operability gap for composing those primitives into
+a bounded automatic loop with crash/restart recovery, durable terminal-work
+retirement, content-free operator evidence, and realistic high-cardinality
+acceptance. A future loop must preserve minimal PostgreSQL transactions: reserve
+or read the minimum durable state, commit or roll back before provider/model
+network work or retry backoff, and open a new bounded transaction only for the
+next durable transition. Session-advisory coordination remains transient and
+must not be represented as a durable lease or as distributed exactly-once
+delivery.
+
+The active reconciliation source slices remain separately owned by their
+canonical PRs/issues, including candidate validation, bounded database result
+materialization, sweep evidence, and Result Application. This documentation
+records the protected capability boundary only; it does not transfer their
+runtime/test authority into #324 or authorize a competing scheduler branch.
+
 ## Logical restore execution
 
 `restore_postgres_logical_backup()` is a bounded direct-SQL restore seam. The
