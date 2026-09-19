@@ -3,10 +3,19 @@
 ## Deployment boundary
 
 `pg-llm-batch` remains independently deployable and embeddable. PostgreSQL owns
-configuration, encrypted secrets, token counting, JSONL payloads, and durable
+configuration, secret storage, token counting, JSONL payloads, and durable
 provider lifecycle state. Provider HTTP behavior remains behind
 `BatchAPIClient`, while host services may inject credential, observation-order,
 and lifecycle-persistence seams without changing provider semantics.
+
+Protected `SecretStore` does **not** make encryption-at-rest mandatory. A supplied
+Fernet key encrypts stored values; without one, the current compatibility path
+base64-obfuscates values unless the caller explicitly sets
+`require_encryption=True`. Mandatory Fernet policy, migration of historical
+unencrypted rows, key rotation/recovery, and external key-custody evidence remain
+the buyer/security gap tracked by #121 and the active config/secret source owner.
+Do not describe the protected product as encryption-required until that contract
+is normally integrated and released.
 
 ## Durable lifecycle tenancy
 
