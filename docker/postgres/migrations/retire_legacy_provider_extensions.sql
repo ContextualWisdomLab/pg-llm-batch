@@ -2,9 +2,10 @@
 -- Existing-volume preflight for retiring the legacy provider-network extensions.
 -- Run 03_cron_batch_retrieval.sql first. This migration refuses extension
 -- removal while the retired job, any independent cron job, any retired helper,
--- an unexpected table-like extension member, or an explicit DEPENDS ON EXTENSION
--- dependency still exists. DROP EXTENSION ... RESTRICT remains the final
--- PostgreSQL-owned dependency boundary after these stricter preservation checks.
+-- an unexpected table-like extension member, an unexpected schema member, or
+-- an explicit DEPENDS ON EXTENSION dependency still exists. DROP EXTENSION ...
+-- RESTRICT remains the final PostgreSQL-owned dependency boundary after these
+-- stricter preservation checks.
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
@@ -76,6 +77,30 @@ BEGIN
         RAISE EXCEPTION 'Refusing to retire provider extensions while unexpected relation members remain'
             USING ERRCODE = '55000',
                   HINT = 'Detach or migrate application-owned extension members before retrying.';
+    END IF;
+
+    -- Schemas can themselves be extension members. DROP EXTENSION removes member
+    -- objects even under RESTRICT, so an accidentally enrolled application schema
+    -- must be detached or migrated before retirement. pg_cron legitimately owns
+    -- its fixed cron schema; http is not allowed to own an application schema.
+    IF EXISTS (
+        SELECT 1
+        FROM pg_catalog.pg_depend AS dep
+        JOIN pg_catalog.pg_extension AS ext
+          ON dep.refclassid = 'pg_catalog.pg_extension'::pg_catalog.regclass
+         AND dep.refobjid = ext.oid
+        JOIN pg_catalog.pg_namespace AS namespace
+          ON dep.classid = 'pg_catalog.pg_namespace'::pg_catalog.regclass
+         AND dep.objid = namespace.oid
+        WHERE ext.extname IN ('http', 'pg_cron')
+          AND dep.deptype = 'e'
+          AND dep.objsubid = 0
+          AND dep.refobjsubid = 0
+          AND NOT (ext.extname = 'pg_cron' AND namespace.nspname = 'cron')
+    ) THEN
+        RAISE EXCEPTION 'Refusing to retire provider extensions while unexpected schema members remain'
+            USING ERRCODE = '55000',
+                  HINT = 'Detach or migrate application-owned extension schemas before retrying.';
     END IF;
 
     -- Objects marked DEPENDS ON EXTENSION use an auto-extension dependency and
