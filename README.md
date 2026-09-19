@@ -148,11 +148,13 @@ for payload in result["ready"]:
 
 ## Health / readiness
 
-`GET /healthz` returns `200` only when the package's database-side readiness contract is satisfied; otherwise it returns `503`.
+`GET /healthz` is the content-minimal public readiness surface. It returns only fixed required component names and boolean readiness, with `200` when the package's database-side readiness contract is satisfied and `503` otherwise.
 
 ```bash
 python -m pg_llm_batch health
 ```
+
+The current CLI `health` command is an operator-facing diagnostic surface, not the public `/healthz` projection. Its raw report can still include lower-layer/database detail, so do not route it into untrusted logs, tenant-visible telemetry, support bundles, or public/user-facing responses. [Issue #203](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/203) owns the runtime contract that will bound the default CLI output without losing operator actionability; this README statement does not claim that repair is already implemented.
 
 The Docker `HEALTHCHECK` and Compose PostgreSQL service use the package-owned health function rather than treating mere TCP acceptance as product readiness.
 
