@@ -336,6 +336,29 @@ test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
 docker exec "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 -c \
   "ALTER EXTENSION http DROP TABLE gateway_retrieval_logs;"
 
+# Schemas are extension members too. Preserve an accidentally enrolled operator
+# schema instead of allowing DROP EXTENSION ... RESTRICT to remove member state.
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+CREATE SCHEMA operator_extension_schema;
+ALTER EXTENSION http ADD SCHEMA operator_extension_schema;
+SQL
+
+if docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 \
+    < docker/postgres/migrations/retire_legacy_provider_extensions.sql; then
+  echo "retirement unexpectedly accepted an application schema extension member" >&2
+  exit 1
+fi
+
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_namespace WHERE nspname = 'operator_extension_schema'")" = "1"
+test "$(docker exec "${container}" psql -U postgres -d postgres -Atqc \
+  "SELECT count(*) FROM pg_extension WHERE extname IN ('pg_cron', 'http')")" = "2"
+
+docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+ALTER EXTENSION http DROP SCHEMA operator_extension_schema;
+DROP SCHEMA operator_extension_schema;
+SQL
+
 # DEPENDS ON EXTENSION creates an auto-extension dependency that is also dropped
 # under RESTRICT. Preserve such operator-owned routines for explicit disposition.
 docker exec -i "${container}" psql -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
