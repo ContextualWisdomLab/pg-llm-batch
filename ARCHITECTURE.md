@@ -90,6 +90,30 @@ materialization, sweep evidence, and Result Application. This documentation
 records the protected capability boundary only; it does not transfer their
 runtime/test authority into #324 or authorize a competing scheduler branch.
 
+## Diagnostic disclosure boundary
+
+`check_health()` is an operator-facing diagnostic report, not a public-safe
+serialization contract. Protected `main` currently preserves backend `detail`
+values and maps a database failure to `detail=str(exc)`, so that internal report
+can contain lower-layer PostgreSQL diagnostics. The HTTP `/healthz` path does
+not expose that report directly: `serve_healthz()` passes it through
+`public_health_report()`, which emits only the fixed required component names and
+boolean readiness states.
+
+The standalone `health` CLI currently prints the unprojected `check_health()`
+report. Its output must therefore be treated as operator-only and must not be
+represented as safe for untrusted logs, tenant-visible telemetry, public HTTP,
+or other user-facing surfaces. Issue #203 owns the remaining runtime hardening:
+the CLI needs a bounded content-free projection or equally strict coded
+diagnostic contract while preserving readiness exit semantics and useful
+operator failure classification. DSNs, credentials, certificate/private-key
+material, SQL text, provider content, arbitrary exception strings, and backend
+connection diagnostics must not become public diagnostic evidence.
+
+This section records the protected capability boundary only. It does not move
+`health.py` or CLI runtime/test authority into #324; source work for #203 still
+requires the invocation-scoped writer/path census before mutation.
+
 ## Logical restore execution
 
 `restore_postgres_logical_backup()` is a bounded direct-SQL restore seam. The
