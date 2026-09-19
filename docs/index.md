@@ -44,6 +44,12 @@ PostgreSQL owns authoritative token accounting and package-owned durable lifecyc
 
 The current Draft runtime selects exact pg8000 behind `PostgresDriverPort`. Psycopg remains only optional legacy-adapter test evidence. Unsupported libpq connection semantics fail closed at the pg8000 anti-corruption boundary rather than being silently approximated.
 
+### Secret-storage and diagnostic boundaries
+
+`SecretStore` is not an encryption-at-rest guarantee by default. With a Fernet key it encrypts package-managed secret values; without one it retains the compatibility path that base64-obfuscates values unless the caller explicitly sets `require_encryption=True`. [Issue #121](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/121) remains the owner for mandatory encryption, migration of existing unencrypted rows, key rotation/recovery, and external key custody.
+
+`/healthz` publishes only fixed required-component names and boolean readiness. Operator-facing health internals are a separate boundary and must not be treated as tenant-visible or public telemetry merely because the HTTP readiness projection is content-minimal. [Issue #203](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/203) remains the authority for CLI diagnostic-disclosure hardening.
+
 Key references:
 
 - [Remote batch lifecycle](remote-batch-lifecycle.md)
