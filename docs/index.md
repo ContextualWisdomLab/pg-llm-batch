@@ -1,3 +1,8 @@
+---
+title: pg-llm-batch
+description: PostgreSQL-backed token accounting, bounded batch assembly, and durable provider-neutral batch lifecycle.
+---
+
 # pg-llm-batch
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/ContextualWisdomLab/pg-llm-batch)
