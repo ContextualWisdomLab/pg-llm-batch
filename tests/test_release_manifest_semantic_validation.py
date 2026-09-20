@@ -58,8 +58,16 @@ def _assert_rejected_without_filesystem_mutation(
         lambda manifest: manifest.update({"distribution": "../package"}),
         lambda manifest: manifest.update({"version": "1.0/../../bad"}),
         lambda manifest: manifest.update({"source_commit": "A" * 40}),
+        lambda manifest: manifest.update({"source_commit": "g" * 40}),
         lambda manifest: manifest.update({"source_date_epoch": True}),
+        lambda manifest: manifest.update({"source_date_epoch": -1}),
+        lambda manifest: manifest.update(
+            {"source_date_epoch": float(SOURCE_DATE_EPOCH)}
+        ),
         lambda manifest: manifest.update({"artifacts": []}),
+        lambda manifest: manifest["artifacts"].append(
+            dict(manifest["artifacts"][0])
+        ),
     ],
 )
 def test_write_release_manifest_rejects_noncanonical_top_level_data_before_io(
@@ -84,8 +92,10 @@ def test_write_release_manifest_rejects_noncanonical_top_level_data_before_io(
         lambda artifact: artifact.update({"unexpected": "field"}),
         lambda artifact: artifact.update({"filename": "other-0.1.0.tar.gz"}),
         lambda artifact: artifact.update({"sha256": "B" * 64}),
+        lambda artifact: artifact.update({"sha256": "g" * 64}),
         lambda artifact: artifact.update({"sha256": "b" * 63}),
         lambda artifact: artifact.update({"size": True}),
+        lambda artifact: artifact.update({"size": 5.0}),
         lambda artifact: artifact.update({"size": -1}),
     ],
 )
@@ -171,12 +181,20 @@ def test_write_release_manifest_requires_exact_builtin_container_types(tmp_path:
     artifact_list["artifacts"] = _ListSubclass(artifact_list["artifacts"])
     _assert_rejected_without_filesystem_mutation(artifact_list, output)
 
+    artifact_tuple = _canonical_manifest()
+    artifact_tuple["artifacts"] = tuple(artifact_tuple["artifacts"])
+    _assert_rejected_without_filesystem_mutation(artifact_tuple, output)
+
     for artifact_index in range(2):
         artifact_record = _canonical_manifest()
         artifact_record["artifacts"][artifact_index] = _DictSubclass(
             artifact_record["artifacts"][artifact_index]
         )
         _assert_rejected_without_filesystem_mutation(artifact_record, output)
+
+        artifact_mapping = _canonical_manifest()
+        artifact_mapping["artifacts"][artifact_index] = _ExplosiveMapping()
+        _assert_rejected_without_filesystem_mutation(artifact_mapping, output)
 
 
 @pytest.mark.parametrize(
@@ -231,17 +249,45 @@ def test_write_release_manifest_requires_exact_builtin_artifact_primitive_types(
     )
 
 
-def test_write_release_manifest_requires_exact_builtin_key_types(tmp_path: Path) -> None:
-    """Reject str-subclass keys even when they compare equal to canonical field names."""
-    output = tmp_path / "evidence" / "release-manifest.json"
+@pytest.mark.parametrize(
+    "field",
+    [
+        "schema_version",
+        "distribution",
+        "version",
+        "source_commit",
+        "source_date_epoch",
+        "artifacts",
+    ],
+)
+def test_write_release_manifest_requires_exact_builtin_top_level_key_types(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    """Reject every str-subclass top-level key before persistence."""
+    manifest = _canonical_manifest()
+    value = manifest.pop(field)
+    manifest[_StringSubclass(field)] = value
 
-    top_level_key = _canonical_manifest()
-    version = top_level_key.pop("version")
-    top_level_key[_StringSubclass("version")] = version
-    _assert_rejected_without_filesystem_mutation(top_level_key, output)
+    _assert_rejected_without_filesystem_mutation(
+        manifest,
+        tmp_path / "evidence" / "release-manifest.json",
+    )
 
-    for artifact_index in range(2):
-        artifact_key = _canonical_manifest()
-        size = artifact_key["artifacts"][artifact_index].pop("size")
-        artifact_key["artifacts"][artifact_index][_StringSubclass("size")] = size
-        _assert_rejected_without_filesystem_mutation(artifact_key, output)
+
+@pytest.mark.parametrize("artifact_index", [0, 1])
+@pytest.mark.parametrize("field", ["filename", "sha256", "size"])
+def test_write_release_manifest_requires_exact_builtin_artifact_key_types(
+    tmp_path: Path,
+    artifact_index: int,
+    field: str,
+) -> None:
+    """Reject every str-subclass key in both artifact records before persistence."""
+    manifest = _canonical_manifest()
+    value = manifest["artifacts"][artifact_index].pop(field)
+    manifest["artifacts"][artifact_index][_StringSubclass(field)] = value
+
+    _assert_rejected_without_filesystem_mutation(
+        manifest,
+        tmp_path / "evidence" / "release-manifest.json",
+    )
