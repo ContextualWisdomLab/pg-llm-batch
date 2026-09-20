@@ -45,6 +45,21 @@ def _verify(first: Path, second: Path, **overrides: object) -> dict[str, object]
     )
 
 
+def _valid_manifest() -> dict[str, object]:
+    """Return canonical manifest data so filesystem tests reach their trust boundary."""
+    return {
+        "schema_version": 1,
+        "distribution": DISTRIBUTION,
+        "version": VERSION,
+        "source_commit": COMMIT,
+        "source_date_epoch": SOURCE_DATE_EPOCH,
+        "artifacts": [
+            {"filename": SDIST, "sha256": "b" * 64, "size": 5},
+            {"filename": WHEEL, "sha256": "c" * 64, "size": 5},
+        ],
+    }
+
+
 def test_verify_reproducible_release_returns_bounded_deterministic_manifest(
     tmp_path: Path,
 ) -> None:
@@ -312,7 +327,7 @@ def test_write_release_manifest_refuses_symlink_destination(tmp_path: Path) -> N
     destination.symlink_to(target)
 
     with pytest.raises(ReleaseEvidenceError, match="symlink"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert target.read_text(encoding="utf-8") == "trusted"
 
@@ -331,7 +346,7 @@ def test_write_release_manifest_refuses_symlinked_parent_component(
     destination = parent / "release-manifest.json"
 
     with pytest.raises(ReleaseEvidenceError, match="parent.*symlink"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     escaped_destination = (
         target / "nested" / "release-manifest.json"
@@ -347,7 +362,7 @@ def test_write_release_manifest_refuses_existing_temporary_file(tmp_path: Path) 
     temporary.write_text("untrusted", encoding="utf-8")
 
     with pytest.raises(ReleaseEvidenceError, match="temporary path"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert temporary.read_text(encoding="utf-8") == "untrusted"
 
@@ -360,4 +375,4 @@ def test_write_release_manifest_refuses_dangling_temporary_symlink(
     temporary.symlink_to(tmp_path / "missing-target")
 
     with pytest.raises(ReleaseEvidenceError, match="temporary path"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
