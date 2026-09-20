@@ -20,7 +20,8 @@ SDIST = "pg_llm_batch-0.1.0.tar.gz"
 WHEEL = "pg_llm_batch-0.1.0-py3-none-any.whl"
 SDIST_SHA256 = "b" * 64
 WHEEL_SHA256 = "c" * 64
-MAX_SIGNED_64 = (1 << 63) - 1
+# RFC 8259 §6 defines this as the integer range with exact interoperable value agreement.
+MAX_INTEROPERABLE_JSON_INTEGER = (1 << 53) - 1
 
 
 def _canonical_manifest() -> dict[str, Any]:
@@ -65,7 +66,9 @@ def _assert_rejected_without_filesystem_mutation(
         lambda manifest: manifest.update(
             {"source_date_epoch": float(SOURCE_DATE_EPOCH)}
         ),
-        lambda manifest: manifest.update({"source_date_epoch": MAX_SIGNED_64 + 1}),
+        lambda manifest: manifest.update(
+            {"source_date_epoch": MAX_INTEROPERABLE_JSON_INTEGER + 1}
+        ),
         lambda manifest: manifest.update({"artifacts": []}),
         lambda manifest: manifest["artifacts"].append(
             dict(manifest["artifacts"][0])
@@ -99,7 +102,9 @@ def test_write_release_manifest_rejects_noncanonical_top_level_data_before_io(
         lambda artifact: artifact.update({"size": True}),
         lambda artifact: artifact.update({"size": 5.0}),
         lambda artifact: artifact.update({"size": -1}),
-        lambda artifact: artifact.update({"size": MAX_SIGNED_64 + 1}),
+        lambda artifact: artifact.update(
+            {"size": MAX_INTEROPERABLE_JSON_INTEGER + 1}
+        ),
     ],
 )
 def test_write_release_manifest_rejects_noncanonical_artifact_records_before_io(
