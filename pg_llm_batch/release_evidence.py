@@ -313,8 +313,6 @@ def _validated_release_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
             }
         )
 
-    if artifact_snapshots[0]["filename"] == artifact_snapshots[1]["filename"]:
-        raise _invalid_release_manifest()
     return {
         "schema_version": schema_version,
         "distribution": distribution_name,
