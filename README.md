@@ -2,7 +2,7 @@
 
 Standalone **and** embeddable PostgreSQL-backed LLM batch engine. It counts tokens inside PostgreSQL with [`pg_tiktoken`](https://github.com/postgresml/pg_tiktoken), assembles JSONL batches under explicit token/byte/record limits, and owns durable standalone or tenant-scoped lifecycle state behind a provider-neutral batch boundary.
 
-Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and relicensed to **Apache-2.0**; see [`NOTICE`](NOTICE) for provenance.
+Extracted from ContextualWisdomLab's `xtrmLLMBatchPython` batch core and relicensed to **Apache-2.0**; see [`NOTICE`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/NOTICE) for provenance.
 
 > **Commercial dependency status:** on this Draft stack, the default runtime manifest pins `pg8000==1.31.5`; Psycopg is retained only in optional test/development dependencies for legacy-adapter parity. That is materially different from protected `main`, but it is not released commercial authority. [Issue #322](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/322) remains open until the driver change is normally integrated and the exact protected release head has clean package/license/vulnerability/SBOM/provenance/reproducibility evidence. A green Draft does not make the dependency transition shipped.
 >
@@ -32,8 +32,7 @@ llm_requests ──▶ PostgresBatchOrchestrator.prepare_batches()
        durable lifecycle + tenant/RLS + reconciliation evidence
 ```
 
-Provider-facing polling and retrieval stay outside PostgreSQL. The former bundled `pg_cron` + `pgsql-http` provider retriever is
-retired; automatic reconciliation is a separate product capability rather than a second database-side network authority.
+Provider-facing polling and retrieval stay outside PostgreSQL. Fresh initialization no longer creates the former `pg_cron` + `http` provider retriever. Existing volumes can still contain those extensions, schedules, or extension-owned objects until the preservation-first retirement migration reaches protected `main`; the compatibility image therefore still retains the legacy packages and preload needed for that transition. [Issue #103](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/103) owns existing-volume retirement and the later package/preload removal stage. Automatic reconciliation is a separate product capability rather than a second database-side network authority.
 
 | Piece | Module |
 | --- | --- |
@@ -44,7 +43,7 @@ retired; automatic reconciliation is a separate product capability rather than a
 | Tenant-qualified lifecycle persistence and reads | `pg_llm_batch/db.py` |
 | PostgreSQL driver abstraction | `pg_llm_batch/postgres_driver_port.py` |
 | Admitted runtime driver selection | `pg_llm_batch/postgres_driver_runtime.py` |
-| KV config + encrypted-secret store | `pg_llm_batch/config.py` |
+| KV config + secret store | `pg_llm_batch/config.py` |
 | Optional OpenTelemetry operations | `pg_llm_batch/observability.py` |
 | DDL subset | `pg_llm_batch/schema.sql` |
 | Readiness (`/healthz`) | `pg_llm_batch/health.py` |
@@ -98,7 +97,7 @@ python -m pg_llm_batch health
 unset PG_LLM_BATCH_DSN
 ```
 
-Explicit CLI `--dsn` values have a different confidentiality boundary: password, `passfile`, TLS private-key, TLS key-password, and OAuth-client-secret material is rejected before connection work so credentials are not normalized into an argv transport. See [`docs/doctoring/bootstrap-dsn-precedence.md`](docs/doctoring/bootstrap-dsn-precedence.md).
+Explicit CLI `--dsn` values have a different confidentiality boundary: password, `passfile`, TLS private-key, TLS key-password, and OAuth-client-secret material is rejected before connection work so credentials are not normalized into an argv transport. See [`docs/doctoring/bootstrap-dsn-precedence.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/bootstrap-dsn-precedence.md).
 
 ### Configure the provider boundary
 
@@ -108,6 +107,8 @@ python -m pg_llm_batch config set-secret gateway_api_key.default
 ```
 
 `config set-secret` does not accept secret plaintext in process arguments. Interactive entry is no-echo; automation may provide one bounded logical line on standard input from an already-owned credential source.
+
+Package-managed secret storage is not automatically encrypted. `SecretStore` encrypts values only when a Fernet key is supplied; without one, the compatibility path base64-obfuscates values unless the store is configured with `require_encryption=True`. Mandatory encryption migration, key rotation/recovery, and external key custody remain tracked under [issue #121](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/121).
 
 Production gateway destinations require HTTPS. Plain HTTP is accepted only for explicit loopback development endpoints (`localhost`, `127.0.0.0/8`, or `::1`). User information, query parameters, fragments, whitespace, and invalid ports are rejected before provider credentials are acquired.
 
@@ -146,11 +147,13 @@ for payload in result["ready"]:
 
 ## Health / readiness
 
-`GET /healthz` returns `200` only when the package's database-side readiness contract is satisfied; otherwise it returns `503`.
+`GET /healthz` is the content-minimal public readiness surface. It returns only fixed required component names and boolean readiness, with `200` when the package's database-side readiness contract is satisfied and `503` otherwise.
 
 ```bash
 python -m pg_llm_batch health
 ```
+
+The current CLI `health` command is an operator-facing diagnostic surface, not the public `/healthz` projection. Its raw report can still include lower-layer/database detail, so do not route it into untrusted logs, tenant-visible telemetry, support bundles, or public/user-facing responses. [Issue #203](https://github.com/ContextualWisdomLab/pg-llm-batch/issues/203) owns the runtime contract that will bound the default CLI output without losing operator actionability; this README statement does not claim that repair is already implemented.
 
 The Docker `HEALTHCHECK` and Compose PostgreSQL service use the package-owned health function rather than treating mere TCP acceptance as product readiness.
 
@@ -194,7 +197,7 @@ The durable identity is `(tenant_scope, endpoint_alias, remote_batch_id)`. Packa
 
 The PostgreSQL custom setting is not a tenant credential. Roles that can execute arbitrary SQL can set arbitrary session state, so production still requires normal authentication, authorization, SQL-injection controls, and an application role that cannot bypass RLS.
 
-See [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) for migration, rollback, pooling, recovery, custom-recorder, and assurance boundaries.
+See [`docs/remote-batch-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/remote-batch-lifecycle.md) for migration, rollback, pooling, recovery, custom-recorder, and assurance boundaries.
 
 ## Recovery boundary
 
@@ -202,7 +205,7 @@ The repository contains bounded backup, restore, catalog, replay, and recovery-e
 
 The Draft recovery-target observer in `pg_llm_batch.postgres_recovery_target_configuration` remains module-scoped. `observe_postgres_recovery_target_configuration(...)` performs one fixed catalog-qualified read over the eight reviewed PostgreSQL recovery-target settings plus `pg_is_in_recovery()` on an already-connected isolated recovery target; `postgres_recovery_target_configuration_was_observed(...)` checks the resulting bounded evidence. This proves only that the effective settings visible to that connection match the reviewed target contract while recovery is active. It does not write PostgreSQL configuration, create `recovery.signal`, supply `restore_command`, validate or replay WAL bytes, prove archive completeness or timeline ancestry, prove target attainment or replay completion, pause/resume/promote recovery, prove application readiness, or establish achieved RPO/RTO, HA/DR, CSAP, SOC 2, or certification. The caller owns connection and timeout policy, and the observer's diagnostics/evidence remain content-minimal.
 
-For a caller-owned logical archive, use `restore_postgres_logical_backup()` only against an isolated libpq service after you can assert `source_superusers_trusted=True`. The service name is not an authorization boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited. The executor runs `pg_restore --single-transaction --exit-on-error`. Custom-format restore seeks through the archive, so success is not required to leave the descriptor at end-of-file. If metadata changes after `pg_restore` exits zero, treat the target as unsafe and do not retry into the same service. This subprocess contract is distinct from package-created pg8000 connections. See [`docs/doctoring/postgres-logical-restore.md`](docs/doctoring/postgres-logical-restore.md).
+For a caller-owned logical archive, use `restore_postgres_logical_backup()` only against an isolated libpq service after you can assert `source_superusers_trusted=True`. The service name is not an authorization boundary. Only `PGPASSWORD`, `PGPASSFILE`, and `PGSERVICEFILE` may be inherited. The executor runs `pg_restore --single-transaction --exit-on-error`. Custom-format restore seeks through the archive, so success is not required to leave the descriptor at end-of-file. If metadata changes after `pg_restore` exits zero, treat the target as unsafe and do not retry into the same service. This subprocess contract is distinct from package-created pg8000 connections. See [`docs/doctoring/postgres-logical-restore.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/postgres-logical-restore.md).
 
 ## Embedding boundary
 
@@ -241,7 +244,7 @@ Idempotent provider `GET` operations use up to three total attempts by default f
 
 ## Observability
 
-Hosts that already operate OpenTelemetry may opt into `OpenTelemetryBatchAPIClient`. Emitted spans and metrics use bounded operation/outcome vocabularies and exclude endpoint aliases, provider URLs, resource identifiers, credentials, metadata, prompts, and provider bodies. See [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md).
+Hosts that already operate OpenTelemetry may opt into `OpenTelemetryBatchAPIClient`. Emitted spans and metrics use bounded operation/outcome vocabularies and exclude endpoint aliases, provider URLs, resource identifiers, credentials, metadata, prompts, and provider bodies. See [`docs/doctoring/opentelemetry-operations.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/opentelemetry-operations.md).
 
 ## Tests
 
@@ -261,18 +264,18 @@ Repository CI additionally verifies supported Python versions, exact owned produ
 
 ## Docs
 
-- [`docs/remote-batch-lifecycle.md`](docs/remote-batch-lifecycle.md) — durable lifecycle, tenant identity, RLS, migration, rollback, pooling, and recovery.
-- [`docs/doctoring/tenant-scoped-lifecycle.md`](docs/doctoring/tenant-scoped-lifecycle.md) — tenant/RLS authority and references.
-- [`docs/doctoring/bootstrap-dsn-precedence.md`](docs/doctoring/bootstrap-dsn-precedence.md) — bootstrap source precedence, argv confidentiality, and concrete-driver boundary.
-- [`docs/doctoring/cli-secret-input.md`](docs/doctoring/cli-secret-input.md) — no-echo and bounded stdin secret input.
-- [`docs/doctoring/count-tokens-stdin-privacy.md`](docs/doctoring/count-tokens-stdin-privacy.md) — bounded UTF-8 prompt ingestion without argv exposure.
-- [`docs/doctoring/legacy-pgsql-http-retrieval.md`](docs/doctoring/legacy-pgsql-http-retrieval.md) — retirement of direct SQL provider networking.
-- [`docs/doctoring/opentelemetry-operations.md`](docs/doctoring/opentelemetry-operations.md) — telemetry ownership, privacy, cardinality, verification, and references.
-- [`docs/papers/`](docs/papers/) — reference papers used by repository doctoring.
+- [`docs/remote-batch-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/remote-batch-lifecycle.md) — durable lifecycle, tenant identity, RLS, migration, rollback, pooling, and recovery.
+- [`docs/doctoring/tenant-scoped-lifecycle.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/tenant-scoped-lifecycle.md) — tenant/RLS authority and references.
+- [`docs/doctoring/bootstrap-dsn-precedence.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/bootstrap-dsn-precedence.md) — bootstrap source precedence, argv confidentiality, and concrete-driver boundary.
+- [`docs/doctoring/cli-secret-input.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/cli-secret-input.md) — no-echo and bounded stdin secret input.
+- [`docs/doctoring/count-tokens-stdin-privacy.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/count-tokens-stdin-privacy.md) — bounded UTF-8 prompt ingestion without argv exposure.
+- [`docs/doctoring/legacy-pgsql-http-retrieval.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/legacy-pgsql-http-retrieval.md) — retirement of direct SQL provider networking.
+- [`docs/doctoring/opentelemetry-operations.md`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/docs/doctoring/opentelemetry-operations.md) — telemetry ownership, privacy, cardinality, verification, and references.
+- [`docs/papers/`](https://github.com/ContextualWisdomLab/pg-llm-batch/tree/main/docs/papers/) — reference papers used by repository doctoring.
 
 ## License and release authority
 
-The pg-llm-batch repository's original source is Apache-2.0; see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Third-party dependencies retain their own licenses.
+The pg-llm-batch repository's original source is Apache-2.0; see [`LICENSE`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/LICENSE) and [`NOTICE`](https://github.com/ContextualWisdomLab/pg-llm-batch/blob/main/NOTICE). Third-party dependencies retain their own licenses.
 
 On this Draft stack, the default runtime manifest pins `pg8000==1.31.5`; Psycopg is optional test/development-only legacy-adapter evidence. Issue #322 remains open because commercial acceptance is not a branch-local dependency declaration: the change must reach protected main through normal governance and the immutable release must re-prove the final package, dependency-license inventory, vulnerability state, SBOM, provenance, reproducibility, and rollback evidence.
 
