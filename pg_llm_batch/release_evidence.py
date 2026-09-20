@@ -17,10 +17,22 @@ from typing import Any
 _DISTRIBUTION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}\Z")
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 _HASH_CHUNK_BYTES = 1024 * 1024
 _RELEASE_ARTIFACT_COUNT = 2
 _RELEASE_DIRECTORY_SCAN_LIMIT = _RELEASE_ARTIFACT_COUNT + 1
+_RELEASE_MANIFEST_KEYS = frozenset(
+    {
+        "schema_version",
+        "distribution",
+        "version",
+        "source_commit",
+        "source_date_epoch",
+        "artifacts",
+    }
+)
+_RELEASE_MANIFEST_ARTIFACT_KEYS = frozenset({"filename", "sha256", "size"})
 _SECURE_ARTIFACT_DIR_FD_FUNCTIONS = frozenset((os.open,))
 _SECURE_ARTIFACT_FD_FUNCTIONS = frozenset((os.scandir,))
 _SECURE_ARTIFACT_FLAGS_AVAILABLE = all(
@@ -216,6 +228,101 @@ def _validate_artifact_filename(
         raise ReleaseEvidenceError(
             "release artifact filename must match the expected distribution and version"
         )
+
+
+def _invalid_release_manifest() -> ReleaseEvidenceError:
+    """Return the stable public error for untrusted persisted manifest values."""
+    return ReleaseEvidenceError("invalid release manifest")
+
+
+def _validated_release_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and snapshot one canonical manifest without invoking caller hooks."""
+    if type(manifest) is not dict:
+        raise _invalid_release_manifest()
+    if not all(type(key) is str for key in manifest):
+        raise _invalid_release_manifest()
+    if frozenset(manifest) != _RELEASE_MANIFEST_KEYS:
+        raise _invalid_release_manifest()
+
+    schema_version = manifest["schema_version"]
+    distribution_name = manifest["distribution"]
+    version = manifest["version"]
+    source_commit = manifest["source_commit"]
+    source_date_epoch = manifest["source_date_epoch"]
+    artifacts = manifest["artifacts"]
+    if (
+        type(schema_version) is not int
+        or schema_version != 1
+        or type(distribution_name) is not str
+        or type(version) is not str
+        or type(source_commit) is not str
+        or type(source_date_epoch) is not int
+        or source_date_epoch < 0
+        or type(artifacts) is not list
+        or len(artifacts) != _RELEASE_ARTIFACT_COUNT
+    ):
+        raise _invalid_release_manifest()
+
+    try:
+        _validate_metadata(
+            distribution_name,
+            version,
+            source_commit,
+            source_date_epoch,
+        )
+    except ReleaseEvidenceError:
+        raise _invalid_release_manifest() from None
+
+    artifact_snapshots: list[dict[str, Any]] = []
+    for index, artifact in enumerate(artifacts):
+        if type(artifact) is not dict:
+            raise _invalid_release_manifest()
+        if not all(type(key) is str for key in artifact):
+            raise _invalid_release_manifest()
+        if frozenset(artifact) != _RELEASE_MANIFEST_ARTIFACT_KEYS:
+            raise _invalid_release_manifest()
+
+        filename = artifact["filename"]
+        digest = artifact["sha256"]
+        size = artifact["size"]
+        if (
+            type(filename) is not str
+            or type(digest) is not str
+            or _SHA256_RE.fullmatch(digest) is None
+            or type(size) is not int
+            or size < 0
+        ):
+            raise _invalid_release_manifest()
+        if (index == 0 and not filename.endswith(".tar.gz")) or (
+            index == 1 and not filename.endswith(".whl")
+        ):
+            raise _invalid_release_manifest()
+        try:
+            _validate_artifact_filename(
+                filename,
+                distribution_name=distribution_name,
+                version=version,
+            )
+        except ReleaseEvidenceError:
+            raise _invalid_release_manifest() from None
+        artifact_snapshots.append(
+            {
+                "filename": filename,
+                "sha256": digest,
+                "size": size,
+            }
+        )
+
+    if artifact_snapshots[0]["filename"] == artifact_snapshots[1]["filename"]:
+        raise _invalid_release_manifest()
+    return {
+        "schema_version": schema_version,
+        "distribution": distribution_name,
+        "version": version,
+        "source_commit": source_commit,
+        "source_date_epoch": source_date_epoch,
+        "artifacts": artifact_snapshots,
+    }
 
 
 def _artifact_record(
@@ -530,13 +637,16 @@ def write_release_manifest(
     manifest: Mapping[str, Any],
     output_path: str | Path,
 ) -> None:
-    """Write canonical JSON atomically through a pinned parent descriptor.
+    """Validate and write canonical JSON through a pinned parent descriptor.
 
-    The writer fails closed unless descriptor-relative operations and no-follow
-    flags are available. Every parent component, the temporary file, and the
-    atomic replacement are resolved relative to held directory descriptors.
+    The writer admits only the package-owned manifest schema and exact built-in
+    containers and primitive values before serialization. It then fails closed unless
+    descriptor-relative operations and no-follow flags are available. Every parent
+    component, the temporary file, and the atomic replacement are resolved relative
+    to held directory descriptors.
     """
-    payload = json.dumps(dict(manifest), indent=2, sort_keys=True) + "\n"
+    validated_manifest = _validated_release_manifest(manifest)
+    payload = json.dumps(validated_manifest, indent=2, sort_keys=True) + "\n"
     if not _secure_manifest_writes_supported():
         raise ReleaseEvidenceError(
             "secure release manifest writes require descriptor-relative "
