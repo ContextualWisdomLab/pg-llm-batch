@@ -43,7 +43,7 @@ from .batch_api_client import BatchAPIClient, config_credentials_provider
 from .bootstrap import resolve_dsn, resolve_secret_key
 from .config import PostgresConfigStore, SecretStore
 from .exceptions import ConfigError, PgLlmBatchError
-from .health import check_health, serve_healthz
+from .health import check_health, public_health_report, serve_healthz
 from .postgres_driver_port import PostgresDriverPort
 from .token_counter import TokenCounter
 
@@ -482,7 +482,7 @@ def _dispatch(argv: Optional[List[str]]) -> int:
 
     if args.command == "health":
         report = check_health(dsn)
-        print(json.dumps(report, indent=2))
+        print(json.dumps(public_health_report(report), indent=2))
         return 0 if report["ready"] else 1
 
     if args.command == "serve-healthz":
