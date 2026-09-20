@@ -76,6 +76,7 @@ def test_write_release_manifest_rejects_noncanonical_top_level_data_before_io(
     )
 
 
+@pytest.mark.parametrize("artifact_index", [0, 1])
 @pytest.mark.parametrize(
     "artifact_mutator",
     [
@@ -90,11 +91,12 @@ def test_write_release_manifest_rejects_noncanonical_top_level_data_before_io(
 )
 def test_write_release_manifest_rejects_noncanonical_artifact_records_before_io(
     tmp_path: Path,
+    artifact_index: int,
     artifact_mutator: Any,
 ) -> None:
-    """Reject malformed artifact identity, digest, and size claims before I/O."""
+    """Reject malformed sdist and wheel identity, digest, and size claims before I/O."""
     manifest = _canonical_manifest()
-    artifact_mutator(manifest["artifacts"][0])
+    artifact_mutator(manifest["artifacts"][artifact_index])
 
     _assert_rejected_without_filesystem_mutation(
         manifest,
@@ -169,9 +171,12 @@ def test_write_release_manifest_requires_exact_builtin_container_types(tmp_path:
     artifact_list["artifacts"] = _ListSubclass(artifact_list["artifacts"])
     _assert_rejected_without_filesystem_mutation(artifact_list, output)
 
-    artifact_record = _canonical_manifest()
-    artifact_record["artifacts"][0] = _DictSubclass(artifact_record["artifacts"][0])
-    _assert_rejected_without_filesystem_mutation(artifact_record, output)
+    for artifact_index in range(2):
+        artifact_record = _canonical_manifest()
+        artifact_record["artifacts"][artifact_index] = _DictSubclass(
+            artifact_record["artifacts"][artifact_index]
+        )
+        _assert_rejected_without_filesystem_mutation(artifact_record, output)
 
 
 @pytest.mark.parametrize(
@@ -200,21 +205,25 @@ def test_write_release_manifest_requires_exact_builtin_top_level_primitive_types
 
 
 @pytest.mark.parametrize(
-    ("field", "value"),
+    ("artifact_index", "field", "value"),
     [
-        ("filename", _StringSubclass(SDIST)),
-        ("sha256", _StringSubclass(SDIST_SHA256)),
-        ("size", _IntSubclass(5)),
+        (0, "filename", _StringSubclass(SDIST)),
+        (0, "sha256", _StringSubclass(SDIST_SHA256)),
+        (0, "size", _IntSubclass(5)),
+        (1, "filename", _StringSubclass(WHEEL)),
+        (1, "sha256", _StringSubclass(WHEEL_SHA256)),
+        (1, "size", _IntSubclass(5)),
     ],
 )
 def test_write_release_manifest_requires_exact_builtin_artifact_primitive_types(
     tmp_path: Path,
+    artifact_index: int,
     field: str,
     value: Any,
 ) -> None:
-    """Reject artifact primitive subclasses before persistence or path creation."""
+    """Reject primitive subclasses in both artifact records before persistence."""
     manifest = _canonical_manifest()
-    manifest["artifacts"][0][field] = value
+    manifest["artifacts"][artifact_index][field] = value
 
     _assert_rejected_without_filesystem_mutation(
         manifest,
@@ -231,7 +240,8 @@ def test_write_release_manifest_requires_exact_builtin_key_types(tmp_path: Path)
     top_level_key[_StringSubclass("version")] = version
     _assert_rejected_without_filesystem_mutation(top_level_key, output)
 
-    artifact_key = _canonical_manifest()
-    size = artifact_key["artifacts"][0].pop("size")
-    artifact_key["artifacts"][0][_StringSubclass("size")] = size
-    _assert_rejected_without_filesystem_mutation(artifact_key, output)
+    for artifact_index in range(2):
+        artifact_key = _canonical_manifest()
+        size = artifact_key["artifacts"][artifact_index].pop("size")
+        artifact_key["artifacts"][artifact_index][_StringSubclass("size")] = size
+        _assert_rejected_without_filesystem_mutation(artifact_key, output)
