@@ -53,6 +53,7 @@ def _assert_rejected_without_filesystem_mutation(
         lambda manifest: manifest.pop("version"),
         lambda manifest: manifest.update({"unexpected": "field"}),
         lambda manifest: manifest.update({"schema_version": 2}),
+        lambda manifest: manifest.update({"schema_version": True}),
         lambda manifest: manifest.update({"distribution": "../package"}),
         lambda manifest: manifest.update({"version": "1.0/../../bad"}),
         lambda manifest: manifest.update({"source_commit": "A" * 40}),
@@ -148,6 +149,10 @@ class _ListSubclass(list[dict[str, Any]]):
     """Represent caller behavior hidden behind a list-compatible subclass."""
 
 
+class _StringSubclass(str):
+    """Represent caller behavior hidden behind a str-compatible subclass."""
+
+
 def test_write_release_manifest_requires_exact_builtin_container_types(tmp_path: Path) -> None:
     """Accept only built-in dict/list containers at the persistence trust boundary."""
     output = tmp_path / "evidence" / "release-manifest.json"
@@ -162,3 +167,63 @@ def test_write_release_manifest_requires_exact_builtin_container_types(tmp_path:
     artifact_record = _canonical_manifest()
     artifact_record["artifacts"][0] = _DictSubclass(artifact_record["artifacts"][0])
     _assert_rejected_without_filesystem_mutation(artifact_record, output)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("distribution", _StringSubclass(DISTRIBUTION)),
+        ("version", _StringSubclass(VERSION)),
+        ("source_commit", _StringSubclass(COMMIT)),
+    ],
+)
+def test_write_release_manifest_requires_exact_builtin_top_level_primitive_types(
+    tmp_path: Path,
+    field: str,
+    value: Any,
+) -> None:
+    """Reject string subclasses even when their text equals canonical metadata."""
+    manifest = _canonical_manifest()
+    manifest[field] = value
+
+    _assert_rejected_without_filesystem_mutation(
+        manifest,
+        tmp_path / "evidence" / "release-manifest.json",
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("filename", _StringSubclass(SDIST)),
+        ("sha256", _StringSubclass(SDIST_SHA256)),
+    ],
+)
+def test_write_release_manifest_requires_exact_builtin_artifact_primitive_types(
+    tmp_path: Path,
+    field: str,
+    value: Any,
+) -> None:
+    """Reject artifact string subclasses before persistence or path creation."""
+    manifest = _canonical_manifest()
+    manifest["artifacts"][0][field] = value
+
+    _assert_rejected_without_filesystem_mutation(
+        manifest,
+        tmp_path / "evidence" / "release-manifest.json",
+    )
+
+
+def test_write_release_manifest_requires_exact_builtin_key_types(tmp_path: Path) -> None:
+    """Reject str-subclass keys even when they compare equal to canonical field names."""
+    output = tmp_path / "evidence" / "release-manifest.json"
+
+    top_level_key = _canonical_manifest()
+    version = top_level_key.pop("version")
+    top_level_key[_StringSubclass("version")] = version
+    _assert_rejected_without_filesystem_mutation(top_level_key, output)
+
+    artifact_key = _canonical_manifest()
+    size = artifact_key["artifacts"][0].pop("size")
+    artifact_key["artifacts"][0][_StringSubclass("size")] = size
+    _assert_rejected_without_filesystem_mutation(artifact_key, output)
