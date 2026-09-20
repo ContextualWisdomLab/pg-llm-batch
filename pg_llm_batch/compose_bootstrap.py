@@ -5,8 +5,8 @@
 The Compose profile keeps the database password out of committed configuration,
 process arguments, and the credential-free bootstrap DSN. This module reads the
 single explicitly mounted secret, combines it with the bootstrap target only in
-process memory using psycopg's conninfo quoting, and hands the result directly to
-the existing health server.
+process memory through the selected PostgreSQL driver boundary, and hands the
+result directly to the existing health server.
 """
 
 from __future__ import annotations
@@ -15,14 +15,25 @@ import argparse
 from pathlib import Path
 from typing import Sequence
 
-from psycopg.conninfo import make_conninfo
-
+from . import postgres_driver_runtime
 from .bootstrap import resolve_dsn
 from .exceptions import ConfigError
 from .health import serve_healthz
+from .postgres_driver_port import PostgresDriverPort
 
 _DEFAULT_PASSWORD_FILE = Path("/run/secrets/postgres_password")
 _MAX_PASSWORD_BYTES = 65_536
+
+
+def _default_postgres_driver() -> PostgresDriverPort:
+    """Delegate retained-driver construction to the canonical runtime selector.
+
+    Compose owns secret-file handling and private DSN assembly, not concrete
+    database-client selection. Routing the default through one runtime owner
+    keeps a future commercially admitted replacement atomic across package
+    surfaces instead of leaving a hidden Psycopg construction path here.
+    """
+    return postgres_driver_runtime.retained_postgres_driver()
 
 
 def _load_database_password(password_file: Path) -> str:
@@ -50,20 +61,58 @@ def _load_database_password(password_file: Path) -> str:
     return password
 
 
-def _build_private_dsn(base_dsn: str, password: str) -> str:
-    """Add the password to a validated DSN using psycopg's conninfo quoting."""
+def _build_private_dsn(
+    base_dsn: str,
+    password: str,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> str:
+    """Add the mounted password through the selected reviewed conninfo renderer.
+
+    The selected driver parses the credential-free selector and renders a fresh
+    parameter snapshot containing the mounted password. The retained concrete
+    implementation is selected only by ``postgres_driver_runtime`` while the
+    commercial migration is incomplete, so this module has no independent
+    concrete-driver conninfo authority. Parser or renderer diagnostics are
+    normalized so secret material never escapes this bootstrap boundary.
+    """
+    driver = (
+        postgres_driver
+        if postgres_driver is not None
+        else _default_postgres_driver()
+    )
     try:
-        return make_conninfo(base_dsn, password=password)
+        parameters = dict(driver.parse_conninfo(base_dsn))
+        parameters["password"] = password
+        return driver.make_conninfo(parameters)
+    except ConfigError:
+        raise
     except Exception:
         raise ConfigError("The PostgreSQL bootstrap target is invalid.") from None
 
 
-def run_compose_health(password_file: Path = _DEFAULT_PASSWORD_FILE) -> None:
-    """Serve health checks using the credential-free DSN plus mounted secret."""
+def run_compose_health(
+    password_file: Path = _DEFAULT_PASSWORD_FILE,
+    *,
+    postgres_driver: PostgresDriverPort | None = None,
+) -> None:
+    """Serve readiness with one driver owning private DSN assembly and database I/O."""
     base_dsn = resolve_dsn(None)
     password = _load_database_password(password_file)
-    private_dsn = _build_private_dsn(base_dsn, password)
-    serve_healthz(private_dsn, host="0.0.0.0", port=8080)
+    private_dsn = _build_private_dsn(
+        base_dsn,
+        password,
+        postgres_driver=postgres_driver,
+    )
+    if postgres_driver is None:
+        serve_healthz(private_dsn, host="0.0.0.0", port=8080)
+        return
+    serve_healthz(
+        private_dsn,
+        host="0.0.0.0",
+        port=8080,
+        postgres_driver=postgres_driver,
+    )
 
 
 def _password_file_from_args(argv: Sequence[str] | None) -> Path:

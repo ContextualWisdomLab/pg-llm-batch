@@ -33,8 +33,13 @@ def test_doctoring_matches_cli_byte_limit_and_privacy_authority() -> None:
 
 
 def test_readme_does_not_claim_retired_sql_provider_authority() -> None:
-    """The root architecture must not advertise the retired SQL retriever."""
+    """The root architecture must separate fresh-init retirement from legacy cleanup."""
     text = README.read_text(encoding="utf-8")
 
     assert "(or) pg_cron job" not in text
-    assert "former bundled `pg_cron` + `pgsql-http` provider retriever is\nretired" in text
+    assert (
+        "Fresh initialization no longer creates the former `pg_cron` + `http` "
+        "provider retriever"
+    ) in text
+    assert "Existing volumes can still contain those extensions" in text
+    assert "preservation-first retirement migration" in text
