@@ -35,6 +35,20 @@ class _BehaviorBearingDsn(str):
         return "postgresql://attacker.invalid/redirected"
 
 
+class _ClassSpoofingDsn:
+    """Expose a caller-controlled ``__class__`` hook that impersonates ``str``."""
+
+    def __init__(self, events: list[str]) -> None:
+        """Retain the hook ledger without becoming an actual string subtype."""
+        self._events = events
+
+    @property
+    def __class__(self) -> type[str]:
+        """Record class probing and impersonate ``str`` to unsafe ``isinstance`` checks."""
+        self._events.append("__class__")
+        return str
+
+
 def _credentials(_alias: str) -> GatewayCredentials:
     """Return deterministic credentials if a test unexpectedly reaches provider setup."""
     return GatewayCredentials(url="https://gateway.example/v1", api_key="secret")
@@ -103,3 +117,14 @@ def test_batch_client_rejects_non_string_dsn_before_retaining_authority(
     """Truthy non-string DSNs fail during construction instead of becoming authority."""
     with pytest.raises(RuntimeError, match="A Postgres DSN is required"):
         DurableBatchAPIClient(invalid_dsn, _credentials)
+
+
+def test_batch_client_rejects_class_spoof_without_executing_caller_hook() -> None:
+    """Admission uses the real runtime type instead of caller-controlled ``__class__``."""
+    events: list[str] = []
+    invalid_dsn = _ClassSpoofingDsn(events)
+
+    with pytest.raises(RuntimeError, match="A Postgres DSN is required"):
+        DurableBatchAPIClient(invalid_dsn, _credentials)
+
+    assert events == []
