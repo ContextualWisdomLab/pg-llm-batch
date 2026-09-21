@@ -8,7 +8,7 @@ import json
 import re
 from enum import Enum
 
-_MAX_COUNT = 2**63 - 1
+_MAX_COUNT = 2**53 - 1
 _MAX_IDENTIFIER_LENGTH = 128
 _IDENTIFIER_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/+\-]{0,127}\Z")
 

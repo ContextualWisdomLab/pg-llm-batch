@@ -270,13 +270,13 @@ def test_counts_reject_invalid_or_unbounded_values(field_name: str, value: objec
         build_usage_evidence(**arguments)
 
 
-def test_count_boundary_accepts_zero_and_signed_bigint_maximum() -> None:
+def test_count_boundary_accepts_zero_and_json_interoperability_maximum() -> None:
     canonical_json, _digest = build_usage_evidence(
         authority=UsageAuthority.HOST_RATE_ESTIMATE,
         tenant_scope_id="tenant-7f3a",
         source_id="rate-card-2026-08-27",
         request_count=0,
-        input_token_count=2**63 - 1,
+        input_token_count=2**53 - 1,
         input_token_completeness=UsageCompleteness.COMPLETE,
         output_token_count=0,
         output_token_completeness=UsageCompleteness.COMPLETE,
@@ -284,7 +284,7 @@ def test_count_boundary_accepts_zero_and_signed_bigint_maximum() -> None:
 
     evidence = json.loads(canonical_json)
     assert evidence["request_count"] == 0
-    assert evidence["input_token_count"] == 2**63 - 1
+    assert evidence["input_token_count"] == 2**53 - 1
     assert evidence["input_token_completeness"] == "COMPLETE"
     assert evidence["output_token_count"] == 0
     assert evidence["output_token_completeness"] == "COMPLETE"
