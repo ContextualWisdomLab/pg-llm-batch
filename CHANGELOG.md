@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Bounded read-only PostgreSQL PITR target-configuration observation on a caller-owned already-connected isolated recovery target. The observer first snapshots the exact reviewed `PostgresPitrRecoveryTarget`; wrong-type authority or a target mutated out of that reviewed contract fails before cursor acquisition or database I/O. It reads exactly eight recovery-target settings plus `pg_is_in_recovery()`, uses bounded result materialization, and fails closed on malformed, duplicate, oversized, pending-restart, inactive-recovery, or mismatched evidence. When a reviewed `name` or `immediate` target intentionally has no inclusion edge, the effective `recovery_target_inclusive` setting must remain PostgreSQL 18's default `on`; time/XID/LSN targets retain their explicit reviewed inclusion edge. Returned provenance is content-free. The observer does not write recovery configuration, create `recovery.signal`, supply `restore_command`, prove WAL/archive/timeline completeness or target attainment, promote recovery, prove application readiness, or establish achieved RPO/RTO or DR capability.
+- Caller-owned physical/WAL/PITR recovery profile binder
+  (`bind_postgres_physical_recovery_profile()` /
+  `parse_postgres_physical_recovery_profile()`). The seam records method,
+  recovery-target kind, continuous-WAL necessity, isolated-target readiness,
+  and optional RPO/RTO objectives without executing backup or restore.
+  `wal_archive_required=False` means no continuous archive, not the absence of
+  backup-internal WAL. `pitr` plus `immediate` is a consistent-state stop, not
+  replay-to-end-of-archive. Lone-surrogate profile text fails as
+  `PostgresPhysicalRecoveryError`.
 - Bounded `restore_postgres_logical_backup()` executor that runs one
   shell-free `pg_restore --single-transaction --exit-on-error` against a
   caller-owned private archive descriptor. Callers must pass exact-boolean
@@ -135,6 +145,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Replaced generic package-owned Result Application implementation names with
+  `application_phase`, `record_applied`, `result_checkpoint`,
+  `transaction_cursor`, `checkpointed_record`, and `record_effect`. The released
+  `apply_checkpointed_result_in_transaction(cursor, ..., item, apply_record)`
+  keyword signature and public `ResultApplicationOutcome(applied, checkpoint)`
+  dataclass field/introspection/`asdict` shape remain unchanged at an explicit
+  compatibility boundary; additive `.record_applied` and `.result_checkpoint`
+  reads expose semantic vocabulary while provider wire contracts and PostgreSQL
+  persistence remain unchanged.
 - Bound repository CI checkouts to the exact pull-request source head and verify
   the checked-out commit before tests, coverage, packaging, or container gates.
 - Migrated package licensing to PEP 639 with an SPDX `Apache-2.0` expression,
