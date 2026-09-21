@@ -93,6 +93,7 @@ def _validate_metadata(
         and _COMMIT_RE.fullmatch(source_commit) is not None
         and type(source_date_epoch) is int
         and source_date_epoch >= 0
+        and source_date_epoch <= _MAX_INTEROPERABLE_JSON_INTEGER
     )
     if not valid:
         raise ReleaseEvidenceError("invalid release evidence metadata")
