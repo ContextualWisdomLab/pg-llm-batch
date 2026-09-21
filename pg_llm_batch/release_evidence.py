@@ -22,6 +22,8 @@ _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 _HASH_CHUNK_BYTES = 1024 * 1024
 _RELEASE_ARTIFACT_COUNT = 2
 _RELEASE_DIRECTORY_SCAN_LIMIT = _RELEASE_ARTIFACT_COUNT + 1
+# RFC 8259 §6 exact interoperable integer range for common JSON implementations.
+_MAX_INTEROPERABLE_JSON_INTEGER = (1 << 53) - 1
 _RELEASE_MANIFEST_KEYS = frozenset(
     {
         "schema_version",
@@ -258,6 +260,7 @@ def _validated_release_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
         or type(source_commit) is not str
         or type(source_date_epoch) is not int
         or source_date_epoch < 0
+        or source_date_epoch > _MAX_INTEROPERABLE_JSON_INTEGER
         or type(artifacts) is not list
         or len(artifacts) != _RELEASE_ARTIFACT_COUNT
     ):
@@ -291,6 +294,7 @@ def _validated_release_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
             or _SHA256_RE.fullmatch(digest) is None
             or type(size) is not int
             or size < 0
+            or size > _MAX_INTEROPERABLE_JSON_INTEGER
         ):
             raise _invalid_release_manifest()
         if (index == 0 and not filename.endswith(".tar.gz")) or (
