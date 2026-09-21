@@ -277,7 +277,10 @@ class BatchAPIClient:
         retry_max_delay_seconds: float = DEFAULT_RETRY_MAX_DELAY_SECONDS,
     ) -> None:
         """Initialize the client with bounded HTTP, download, and retry resources."""
-        if not postgres_dsn:
+        if not issubclass(type(postgres_dsn), str):
+            raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
+        postgres_dsn_snapshot = str.__str__(postgres_dsn)
+        if not postgres_dsn_snapshot:
             raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
         try:
             normalized_timeout = float(request_timeout_seconds)
@@ -339,7 +342,7 @@ class BatchAPIClient:
                 value=retry_base_delay_seconds,
                 reason="must not exceed retry_max_delay_seconds",
             )
-        self.postgres_dsn = postgres_dsn
+        self.postgres_dsn = postgres_dsn_snapshot
 
         def _validated_credentials(endpoint_alias: str) -> GatewayCredentials:
             """Validate alias authority and custom destinations before authenticated I/O."""
