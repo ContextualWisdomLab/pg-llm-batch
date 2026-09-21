@@ -50,6 +50,14 @@ def test_pre_one_breaking_minor_is_classified() -> None:
         )
         is CompatibilityChangeKind.INTENTIONAL_BREAKING
     )
+    assert (
+        classify_release_change(
+            "0.9.0",
+            "1.0.0",
+            breaks_public_contract=True,
+        )
+        is CompatibilityChangeKind.INTENTIONAL_BREAKING
+    )
 
 
 def test_deprecation_requires_later_removal_version() -> None:
@@ -60,6 +68,13 @@ def test_deprecation_requires_later_removal_version() -> None:
             "0.1.1",
             deprecates_public_contract=True,
             earliest_removal_version="0.1.1",
+        )
+
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change(
+            "0.1.0",
+            "0.1.1",
+            deprecates_public_contract=True,
         )
 
     assert (
@@ -93,3 +108,38 @@ def test_invalid_version_authority_is_rejected_without_rendering() -> None:
 
     with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
         classify_release_change("0.1", "0.1.1")
+
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change("1" * 65, "0.1.1")
+
+
+def test_release_order_and_orphan_removal_metadata_fail_closed() -> None:
+    """Release order and removal metadata must remain internally consistent."""
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change("0.1.0", "0.1.0")
+
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change(
+            "0.1.0",
+            "0.1.1",
+            earliest_removal_version="0.2.0",
+        )
+
+
+def test_stable_breaking_change_requires_major_release() -> None:
+    """After 1.0 an intentional breaking change requires a later major version."""
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change(
+            "1.2.0",
+            "1.3.0",
+            breaks_public_contract=True,
+        )
+
+    assert (
+        classify_release_change(
+            "1.2.0",
+            "2.0.0",
+            breaks_public_contract=True,
+        )
+        is CompatibilityChangeKind.INTENTIONAL_BREAKING
+    )
