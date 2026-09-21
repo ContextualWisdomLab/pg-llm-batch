@@ -126,7 +126,10 @@ def test_count_health_and_server_commands(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "check_health", lambda _dsn: {"ready": False})
     assert cli._dispatch(["health", "--dsn", "postgresql://x"]) == 1
-    assert json.loads(capsys.readouterr().out) == {"ready": False}
+    assert json.loads(capsys.readouterr().out) == {
+        "ready": False,
+        "components": [],
+    }
 
     served = []
     monkeypatch.setattr(
