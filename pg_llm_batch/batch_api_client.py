@@ -277,7 +277,7 @@ class BatchAPIClient:
         retry_max_delay_seconds: float = DEFAULT_RETRY_MAX_DELAY_SECONDS,
     ) -> None:
         """Initialize the client with bounded HTTP, download, and retry resources."""
-        if not isinstance(postgres_dsn, str):
+        if not issubclass(type(postgres_dsn), str):
             raise RuntimeError("A Postgres DSN is required (memory-only JSONL)")
         postgres_dsn_snapshot = str.__str__(postgres_dsn)
         if not postgres_dsn_snapshot:
