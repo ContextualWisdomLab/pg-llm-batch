@@ -6,7 +6,7 @@ from __future__ import annotations
 import io
 import json
 
-from pg_llm_batch import health
+from pg_llm_batch import cli, health
 
 
 def test_healthz_exposes_only_public_readiness_projection(monkeypatch) -> None:
@@ -65,3 +65,33 @@ def test_healthz_exposes_only_public_readiness_projection(monkeypatch) -> None:
             {"component": "com_config", "is_ready": True},
         ],
     }
+
+
+def test_cli_health_exposes_only_public_readiness_projection(
+    monkeypatch, capsys
+) -> None:
+    """Keep backend diagnostics out of default CLI machine-readable output."""
+    secret = "postgresql://operator:secret@example.internal/db"
+    internal_report = {
+        "ready": False,
+        "components": [
+            {"component": "database", "is_ready": False, "detail": secret},
+            {"component": "pg_tiktoken", "is_ready": True, "detail": "installed"},
+            {"component": "com_config", "is_ready": True, "detail": "ready"},
+            {
+                "component": "provider_internal_probe",
+                "is_ready": False,
+                "detail": "private topology detail",
+            },
+        ],
+    }
+
+    monkeypatch.setattr(cli, "check_health", lambda _dsn: internal_report)
+
+    assert cli._dispatch(["health", "--dsn", "postgresql://example"]) == 1
+
+    output = capsys.readouterr().out
+    assert secret not in output
+    assert '"detail"' not in output
+    assert "provider_internal_probe" not in output
+    assert json.loads(output) == health.public_health_report(internal_report)
