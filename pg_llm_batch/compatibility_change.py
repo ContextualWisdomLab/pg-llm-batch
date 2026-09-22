@@ -53,6 +53,8 @@ def classify_release_change(
         raise CompatibilityPolicyError(_INVALID_CHANGE)
 
     if security_correction:
+        if deprecates_public_contract or earliest_removal_version is not None:
+            raise CompatibilityPolicyError(_INVALID_CHANGE)
         return CompatibilityChangeKind.SECURITY_CORRECTION
 
     if deprecates_public_contract:
