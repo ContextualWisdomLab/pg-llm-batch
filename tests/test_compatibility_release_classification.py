@@ -101,6 +101,25 @@ def test_security_correction_can_override_patch_compatibility() -> None:
     )
 
 
+def test_security_correction_rejects_deprecation_metadata() -> None:
+    """Security classification must not bypass malformed deprecation metadata."""
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change(
+            "0.1.0",
+            "0.1.1",
+            deprecates_public_contract=True,
+            security_correction=True,
+        )
+
+    with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+        classify_release_change(
+            "0.1.0",
+            "0.1.1",
+            earliest_removal_version="0.2.0",
+            security_correction=True,
+        )
+
+
 def test_invalid_version_authority_is_rejected_without_rendering() -> None:
     """Version metadata must be exact bounded package authority, not behavior-bearing text."""
     with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
