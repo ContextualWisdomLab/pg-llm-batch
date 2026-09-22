@@ -221,6 +221,9 @@ def _validate_artifact_filename(
         valid_shape = name.endswith(expected_version_suffix)
         artifact_distribution = name[: -len(expected_version_suffix)] if valid_shape else ""
         artifact_version = version if valid_shape else ""
+        valid_shape = valid_shape and artifact_distribution == (
+            _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
+        )
 
     if (
         not valid_shape
