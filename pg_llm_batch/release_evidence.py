@@ -356,6 +356,8 @@ def _artifact_record(
             )
         if _artifact_identity(initial_status) != expected_identity:
             raise ReleaseEvidenceError("release artifact changed during verification")
+        if initial_status.st_size > _MAX_INTEROPERABLE_JSON_INTEGER:
+            raise ReleaseEvidenceError("release artifact exceeds canonical JSON size limit")
 
         digest = hashlib.sha256()
         bytes_read = 0
