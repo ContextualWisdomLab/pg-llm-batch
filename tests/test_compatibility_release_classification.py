@@ -22,6 +22,19 @@ class _HostileVersion(str):
         raise AssertionError("caller-controlled __repr__ executed")
 
 
+class _HostileFlag:
+    """Boolean-shaped caller authority that must not execute custom protocols."""
+
+    def __bool__(self) -> bool:
+        raise AssertionError("caller-controlled __bool__ executed")
+
+    def __str__(self) -> str:
+        raise AssertionError("caller-controlled __str__ executed")
+
+    def __repr__(self) -> str:
+        raise AssertionError("caller-controlled __repr__ executed")
+
+
 def test_backward_compatible_patch_is_classified() -> None:
     """A pre-1.0 patch without a breaking marker remains backward compatible."""
     assert (
@@ -118,6 +131,27 @@ def test_security_correction_rejects_deprecation_metadata() -> None:
             earliest_removal_version="0.2.0",
             security_correction=True,
         )
+
+
+def test_change_flags_require_exact_boolean_authority() -> None:
+    """Classification flags must be exact booleans rather than truthy caller authority."""
+    invalid_cases = (
+        {"breaks_public_contract": 1},
+        {
+            "deprecates_public_contract": 1,
+            "earliest_removal_version": "0.2.0",
+        },
+        {"security_correction": 1},
+        {"breaks_public_contract": _HostileFlag()},
+        {
+            "deprecates_public_contract": _HostileFlag(),
+            "earliest_removal_version": "0.2.0",
+        },
+        {"security_correction": _HostileFlag()},
+    )
+    for metadata in invalid_cases:
+        with pytest.raises(CompatibilityPolicyError, match="invalid compatibility change"):
+            classify_release_change("0.1.0", "0.2.0", **metadata)
 
 
 def test_invalid_version_authority_is_rejected_without_rendering() -> None:
