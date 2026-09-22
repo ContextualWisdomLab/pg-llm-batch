@@ -27,6 +27,7 @@ class CompatibilityPolicyError(ValueError):
 
 
 def _parse_version(value: object) -> tuple[int, int, int]:
+    """Parse one exact bounded canonical semantic-version authority."""
     if type(value) is not str or len(value) > _MAX_VERSION_TEXT_LENGTH:
         raise CompatibilityPolicyError(_INVALID_CHANGE)
     match = _VERSION_PATTERN.fullmatch(value)
