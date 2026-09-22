@@ -216,6 +216,9 @@ def _validate_artifact_filename(
         valid_shape = len(parts) >= 5
         artifact_distribution = parts[0] if valid_shape else ""
         artifact_version = parts[1] if valid_shape else ""
+        valid_shape = valid_shape and artifact_distribution == (
+            _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
+        )
     else:
         expected_version_suffix = f"-{version}.tar.gz"
         valid_shape = name.endswith(expected_version_suffix)
