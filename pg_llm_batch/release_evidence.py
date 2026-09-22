@@ -85,11 +85,11 @@ def _validate_metadata(
 ) -> None:
     """Reject untrusted release metadata before touching artifact paths."""
     valid = (
-        isinstance(distribution_name, str)
+        type(distribution_name) is str
         and _DISTRIBUTION_RE.fullmatch(distribution_name) is not None
-        and isinstance(version, str)
+        and type(version) is str
         and _VERSION_RE.fullmatch(version) is not None
-        and isinstance(source_commit, str)
+        and type(source_commit) is str
         and _COMMIT_RE.fullmatch(source_commit) is not None
         and type(source_date_epoch) is int
         and source_date_epoch >= 0
