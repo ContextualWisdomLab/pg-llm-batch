@@ -47,6 +47,13 @@ def classify_release_change(
     security_correction: bool = False,
 ) -> CompatibilityChangeKind:
     """Classify one reviewed public-contract change for a candidate release."""
+    if (
+        type(breaks_public_contract) is not bool
+        or type(deprecates_public_contract) is not bool
+        or type(security_correction) is not bool
+    ):
+        raise CompatibilityPolicyError(_INVALID_CHANGE)
+
     previous = _parse_version(previous_version)
     release = _parse_version(release_version)
     if release <= previous:
