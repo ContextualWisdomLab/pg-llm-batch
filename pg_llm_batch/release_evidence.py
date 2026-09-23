@@ -229,6 +229,7 @@ def _validate_artifact_filename(
         compatibility_tags = parts[-3:] if valid_shape else ("", "", "")
         valid_shape = (
             valid_shape
+            and (len(parts) == 5 or parts[2][:1] in "0123456789")
             and all(compatibility_tags)
             and artifact_distribution
             == _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
