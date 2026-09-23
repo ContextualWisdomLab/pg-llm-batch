@@ -16,6 +16,15 @@ from typing import Any
 
 _DISTRIBUTION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}\Z")
+_CANONICAL_VERSION_RE = re.compile(
+    r"(?:[1-9][0-9]*!)?"
+    r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))*"
+    r"(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?"
+    r"(?:\.post(?:0|[1-9][0-9]*))?"
+    r"(?:\.dev(?:0|[1-9][0-9]*))?"
+    r"(?:\+(?:0|[1-9][0-9]*|(?=[a-z0-9]*[a-z])[a-z0-9]+)"
+    r"(?:\.(?:0|[1-9][0-9]*|(?=[a-z0-9]*[a-z])[a-z0-9]+))*)?\Z"
+)
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
@@ -89,6 +98,7 @@ def _validate_metadata(
         and _DISTRIBUTION_RE.fullmatch(distribution_name) is not None
         and type(version) is str
         and _VERSION_RE.fullmatch(version) is not None
+        and _CANONICAL_VERSION_RE.fullmatch(version) is not None
         and type(source_commit) is str
         and _COMMIT_RE.fullmatch(source_commit) is not None
         and type(source_date_epoch) is int
