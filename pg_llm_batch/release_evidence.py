@@ -234,6 +234,10 @@ def _validate_artifact_filename(
                 tag and all(member for member in tag.split("."))
                 for tag in compatibility_tags
             )
+            and all(
+                member[0] in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                for member in compatibility_tags[0].split(".")
+            )
             and artifact_distribution
             == _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
         )
