@@ -235,6 +235,10 @@ def _validate_artifact_filename(
                 for tag in compatibility_tags
             )
             and all(
+                tag_members == sorted(set(tag_members))
+                for tag_members in (tag.split(".") for tag in compatibility_tags)
+            )
+            and all(
                 member[0] in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
                 for member in compatibility_tags[0].split(".")
             )
