@@ -96,6 +96,7 @@ def _validate_metadata(
     valid = (
         type(distribution_name) is str
         and _DISTRIBUTION_RE.fullmatch(distribution_name) is not None
+        and distribution_name == _canonical_distribution_name(distribution_name)
         and type(version) is str
         and _VERSION_RE.fullmatch(version) is not None
         and _CANONICAL_VERSION_RE.fullmatch(version) is not None
