@@ -223,11 +223,15 @@ def _validate_artifact_filename(
     """Require an artifact filename to identify the expected project and version."""
     if name.endswith(".whl"):
         parts = name[:-4].split("-")
-        valid_shape = len(parts) >= 5
+        valid_shape = len(parts) in {5, 6}
         artifact_distribution = parts[0] if valid_shape else ""
         artifact_version = parts[1] if valid_shape else ""
-        valid_shape = valid_shape and artifact_distribution == (
-            _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
+        compatibility_tags = parts[-3:] if valid_shape else ("", "", "")
+        valid_shape = (
+            valid_shape
+            and all(compatibility_tags)
+            and artifact_distribution
+            == _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
         )
     else:
         expected_version_suffix = f"-{version}.tar.gz"
