@@ -1,0 +1,115 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Regression contract for UTF-8 Core Metadata release authority."""
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import io
+import stat
+import tarfile
+import zipfile
+from pathlib import Path
+
+import pytest
+
+from pg_llm_batch.release_evidence import ReleaseEvidenceError, verify_reproducible_release
+
+
+DISTRIBUTION = "pg-llm-batch"
+VERSION = "0.1.0"
+WHEEL = "pg_llm_batch-0.1.0-py3-none-any.whl"
+SDIST = "pg_llm_batch-0.1.0.tar.gz"
+TOP_LEVEL = "pg_llm_batch-0.1.0"
+DIST_INFO = "pg_llm_batch-0.1.0.dist-info"
+PACKAGE_MEMBER = "pg_llm_batch/__init__.py"
+INVALID_CORE_METADATA = (
+    b"Metadata-Version: 2.4\n"
+    b"Name: pg-llm-batch\n"
+    b"Version: 0.1.0\n"
+    b"Summary: release evidence\xff\xfe\n\n"
+)
+
+
+def _add_regular_member(archive: tarfile.TarFile, name: str, payload: bytes) -> None:
+    member = tarfile.TarInfo(name)
+    member.size = len(payload)
+    member.mode = 0o644
+    member.mtime = 0
+    archive.addfile(member, io.BytesIO(payload))
+
+
+def _sdist_with_non_utf8_metadata() -> bytes:
+    """Return a structurally bounded sdist whose PKG-INFO is not UTF-8."""
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
+        _add_regular_member(archive, f"{TOP_LEVEL}/PKG-INFO", INVALID_CORE_METADATA)
+        _add_regular_member(
+            archive,
+            f"{TOP_LEVEL}/pyproject.toml",
+            b"[build-system]\nrequires = []\n",
+        )
+    return output.getvalue()
+
+
+def _urlsafe_digest(payload: bytes) -> str:
+    digest = base64.urlsafe_b64encode(hashlib.sha256(payload).digest()).rstrip(b"=")
+    return digest.decode("ascii")
+
+
+def _wheel_with_non_utf8_metadata() -> bytes:
+    """Return a structurally bounded wheel carrying the same invalid metadata bytes."""
+    metadata_name = f"{DIST_INFO}/METADATA"
+    wheel_name = f"{DIST_INFO}/WHEEL"
+    record_name = f"{DIST_INFO}/RECORD"
+    wheel_metadata = (
+        b"Wheel-Version: 1.0\n"
+        b"Generator: pg-llm-batch-test\n"
+        b"Root-Is-Purelib: true\n"
+        b"Tag: py3-none-any\n\n"
+    )
+    payloads = (
+        (PACKAGE_MEMBER, b"__version__ = '0.1.0'\n"),
+        (metadata_name, INVALID_CORE_METADATA),
+        (wheel_name, wheel_metadata),
+    )
+    rows = [
+        f"{path},sha256={_urlsafe_digest(payload)},{len(payload)}"
+        for path, payload in payloads
+    ]
+    rows.append(f"{record_name},,")
+    record = ("\n".join(rows) + "\n").encode("utf-8")
+
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, mode="w", compression=zipfile.ZIP_STORED) as archive:
+        for path, payload in (*payloads, (record_name, record)):
+            entry = zipfile.ZipInfo(path, date_time=(1980, 1, 1, 0, 0, 0))
+            entry.compress_type = zipfile.ZIP_STORED
+            entry.create_system = 3
+            entry.external_attr = (stat.S_IFREG | 0o644) << 16
+            archive.writestr(entry, payload)
+    return output.getvalue()
+
+
+def test_release_verifier_rejects_non_utf8_core_metadata(tmp_path: Path) -> None:
+    """Reject reproducible artifacts whose Core Metadata is not UTF-8 serialized."""
+    sdist_bytes = _sdist_with_non_utf8_metadata()
+    wheel_bytes = _wheel_with_non_utf8_metadata()
+    for directory_name in ("first", "second"):
+        directory = tmp_path / directory_name
+        directory.mkdir()
+        (directory / SDIST).write_bytes(sdist_bytes)
+        (directory / WHEEL).write_bytes(wheel_bytes)
+
+    with pytest.raises(
+        ReleaseEvidenceError,
+        match="release artifact metadata does not match release authority",
+    ):
+        verify_reproducible_release(
+            tmp_path / "first",
+            tmp_path / "second",
+            distribution_name=DISTRIBUTION,
+            version=VERSION,
+            source_commit="a" * 40,
+            source_date_epoch=1,
+        )
