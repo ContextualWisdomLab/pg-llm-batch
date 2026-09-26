@@ -8,10 +8,12 @@ import json
 import os
 import re
 import stat
+import tarfile
 from collections.abc import Mapping, Sequence
+from email.parser import BytesParser
 from itertools import islice
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, cast
 
 
 _DISTRIBUTION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
@@ -29,6 +31,8 @@ _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 _HASH_CHUNK_BYTES = 1024 * 1024
+_SDIST_CORE_METADATA_READ_LIMIT = 1024 * 1024
+_SDIST_MEMBER_SCAN_LIMIT = 1024
 _RELEASE_ARTIFACT_COUNT = 2
 _RELEASE_DIRECTORY_SCAN_LIMIT = _RELEASE_ARTIFACT_COUNT + 1
 # RFC 8259 §6 exact interoperable integer range for common JSON implementations.
@@ -361,10 +365,68 @@ def _validated_release_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _release_artifact_metadata_mismatch() -> ReleaseEvidenceError:
+    """Return the stable public error for archive-internal authority mismatch."""
+    return ReleaseEvidenceError("release artifact metadata does not match release authority")
+
+
+def _validate_sdist_core_metadata_identity(
+    artifact_descriptor: int,
+    *,
+    distribution_name: str,
+    version: str,
+) -> None:
+    """Bind parseable sdist PKG-INFO identity to the requested release authority."""
+    expected_root = (
+        f"{_DISTRIBUTION_SEPARATOR_RE.sub('_', distribution_name).lower()}-{version}"
+    )
+    expected_member = f"{expected_root}/PKG-INFO"
+
+    try:
+        duplicate_descriptor = os.dup(artifact_descriptor)
+        with os.fdopen(duplicate_descriptor, "rb") as artifact_file:
+            try:
+                with tarfile.open(fileobj=artifact_file, mode="r|gz") as archive:
+                    member = next(
+                        (
+                            candidate
+                            for candidate in islice(archive, _SDIST_MEMBER_SCAN_LIMIT)
+                            if candidate.name == expected_member
+                        ),
+                        None,
+                    )
+                    if member is None:
+                        raise _release_artifact_metadata_mismatch()
+                    if (
+                        not member.isfile()
+                        or member.size > _SDIST_CORE_METADATA_READ_LIMIT
+                    ):
+                        raise _release_artifact_metadata_mismatch()
+                    metadata_file = cast(BinaryIO, archive.extractfile(member))
+                    payload = metadata_file.read(_SDIST_CORE_METADATA_READ_LIMIT + 1)
+            except tarfile.TarError:
+                # Archive-shape admission remains a separately serialized contract.
+                return
+    finally:
+        os.lseek(artifact_descriptor, 0, os.SEEK_SET)
+
+    metadata = BytesParser().parsebytes(payload, headersonly=True)
+    canonical_names = tuple(
+        _canonical_distribution_name(value)
+        for value in metadata.get_all("Name", [])
+    )
+    versions = tuple(metadata.get_all("Version", []))
+    if canonical_names != (distribution_name,) or versions != (version,):
+        raise _release_artifact_metadata_mismatch()
+
+
 def _artifact_record(
     directory_descriptor: int,
     name: str,
     expected_identity: _ArtifactIdentity,
+    *,
+    distribution_name: str,
+    version: str,
 ) -> dict[str, Any]:
     """Read the exact regular artifact observed during the pinned directory scan."""
     try:
@@ -391,6 +453,13 @@ def _artifact_record(
             raise ReleaseEvidenceError("release artifact changed during verification")
         if initial_status.st_size > _MAX_INTEROPERABLE_JSON_INTEGER:
             raise ReleaseEvidenceError("release artifact exceeds canonical JSON size limit")
+
+        if name.endswith(".tar.gz"):
+            _validate_sdist_core_metadata_identity(
+                artifact_descriptor,
+                distribution_name=distribution_name,
+                version=version,
+            )
 
         digest = hashlib.sha256()
         bytes_read = 0
@@ -441,6 +510,8 @@ def _artifact_records(
                     directory_descriptor,
                     name,
                     expected_identities[name],
+                    distribution_name=distribution_name,
+                    version=version,
                 )
             )
         if _scan_release_entries(directory_descriptor) != initial_entries:
