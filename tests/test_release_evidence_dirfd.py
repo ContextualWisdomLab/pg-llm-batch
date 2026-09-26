@@ -18,6 +18,29 @@ from pg_llm_batch.release_evidence import ReleaseEvidenceError, write_release_ma
 _MANIFEST_NAME = "release-manifest.json"
 
 
+def _valid_manifest() -> dict[str, Any]:
+    """Return canonical manifest data so dirfd tests reach filesystem behavior."""
+    return {
+        "schema_version": 1,
+        "distribution": "pg-llm-batch",
+        "version": "0.1.0",
+        "source_commit": "a" * 40,
+        "source_date_epoch": 1_786_000_000,
+        "artifacts": [
+            {
+                "filename": "pg_llm_batch-0.1.0.tar.gz",
+                "sha256": "b" * 64,
+                "size": 5,
+            },
+            {
+                "filename": "pg_llm_batch-0.1.0-py3-none-any.whl",
+                "sha256": "c" * 64,
+                "size": 5,
+            },
+        ],
+    }
+
+
 def test_write_release_manifest_pins_parent_during_symlink_swap(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -50,13 +73,13 @@ def test_write_release_manifest_pins_parent_during_symlink_swap(
 
     monkeypatch.setattr(release_evidence.os, "open", swapping_open)
 
-    write_release_manifest({"schema_version": 1}, destination)
+    write_release_manifest(_valid_manifest(), destination)
 
     assert swapped
     assert not (outside / _MANIFEST_NAME).exists()
     assert json.loads(
         (held_evidence / _MANIFEST_NAME).read_text(encoding="utf-8")
-    ) == {"schema_version": 1}
+    ) == _valid_manifest()
 
 
 @pytest.mark.parametrize("unsupported_capability", ["dir_fd", "follow", "flags"])
@@ -75,7 +98,7 @@ def test_write_release_manifest_fails_without_secure_dir_fd_support(
         monkeypatch.setattr(release_evidence, "_SECURE_MANIFEST_FLAGS_AVAILABLE", False)
 
     with pytest.raises(ReleaseEvidenceError, match="descriptor-relative no-follow"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not destination.parent.exists()
 
@@ -88,7 +111,7 @@ def test_write_release_manifest_rejects_invalid_destination_name(
     monkeypatch.chdir(tmp_path)
 
     with pytest.raises(ReleaseEvidenceError, match="destination name is invalid"):
-        write_release_manifest({"schema_version": 1}, Path("."))
+        write_release_manifest(_valid_manifest(), Path("."))
 
 
 def test_write_release_manifest_rejects_parent_traversal(
@@ -103,7 +126,7 @@ def test_write_release_manifest_rejects_parent_traversal(
 
     with pytest.raises(ReleaseEvidenceError, match="parent traversal"):
         write_release_manifest(
-            {"schema_version": 1},
+            _valid_manifest(),
             Path("..") / _MANIFEST_NAME,
         )
 
@@ -118,9 +141,9 @@ def test_write_release_manifest_supports_descriptor_bound_relative_paths(
     monkeypatch.chdir(tmp_path)
     destination = Path("evidence") / _MANIFEST_NAME
 
-    write_release_manifest({"schema_version": 1}, destination)
+    write_release_manifest(_valid_manifest(), destination)
 
-    assert json.loads(destination.read_text(encoding="utf-8")) == {"schema_version": 1}
+    assert json.loads(destination.read_text(encoding="utf-8")) == _valid_manifest()
 
 
 def test_write_release_manifest_bounds_parent_root_open_failure(
@@ -145,7 +168,7 @@ def test_write_release_manifest_bounds_parent_root_open_failure(
     monkeypatch.setattr(release_evidence.os, "open", failing_open)
 
     with pytest.raises(ReleaseEvidenceError, match="parent root could not be opened"):
-        write_release_manifest({"schema_version": 1}, Path("evidence") / _MANIFEST_NAME)
+        write_release_manifest(_valid_manifest(), Path("evidence") / _MANIFEST_NAME)
 
     assert not (tmp_path / "evidence").exists()
 
@@ -171,7 +194,7 @@ def test_write_release_manifest_bounds_parent_creation_failure(
     destination = tmp_path / "blocked-evidence" / _MANIFEST_NAME
 
     with pytest.raises(ReleaseEvidenceError, match="parent directory could not be created"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not destination.parent.exists()
 
@@ -197,7 +220,7 @@ def test_write_release_manifest_bounds_destination_inspection_failure(
     monkeypatch.setattr(release_evidence.os, "stat", failing_stat)
 
     with pytest.raises(ReleaseEvidenceError, match="destination could not be inspected"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not destination.exists()
 
@@ -208,7 +231,7 @@ def test_write_release_manifest_rejects_nonregular_destination(tmp_path: Path) -
     destination.mkdir(parents=True)
 
     with pytest.raises(ReleaseEvidenceError, match="absent or a regular file"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert destination.is_dir()
 
@@ -235,7 +258,7 @@ def test_write_release_manifest_bounds_temporary_creation_failure(
     monkeypatch.setattr(release_evidence.os, "open", failing_open)
 
     with pytest.raises(ReleaseEvidenceError, match="temporary file could not be created"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not destination.exists()
 
@@ -264,7 +287,7 @@ def test_write_release_manifest_closes_temporary_descriptor_after_fdopen_failure
     monkeypatch.setattr(release_evidence.os, "close", recording_close)
 
     with pytest.raises(ReleaseEvidenceError, match="manifest write failed"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not temporary.exists()
     assert captured_descriptors[0] in closed_descriptors
@@ -287,7 +310,7 @@ def test_write_release_manifest_cleans_temporary_after_file_sync_failure(
     monkeypatch.setattr(release_evidence.os, "fsync", failing_file_fsync)
 
     with pytest.raises(ReleaseEvidenceError, match="manifest write failed"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not destination.exists()
     assert not temporary.exists()
@@ -310,7 +333,7 @@ def test_write_release_manifest_cleans_owned_temporary_after_rename_failure(
     monkeypatch.setattr(release_evidence.os, "rename", fail_rename)
 
     with pytest.raises(ReleaseEvidenceError, match="atomic replacement failed"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert destination.read_text(encoding="utf-8") == "trusted predecessor"
     assert not temporary.exists()
@@ -337,7 +360,7 @@ def test_write_release_manifest_tolerates_missing_owned_temporary_during_cleanup
     monkeypatch.setattr(release_evidence.os, "rename", remove_then_fail)
 
     with pytest.raises(ReleaseEvidenceError, match="atomic replacement failed"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert not destination.exists()
 
@@ -362,7 +385,7 @@ def test_write_release_manifest_reports_owned_temporary_cleanup_failure(
     monkeypatch.setattr(release_evidence.os, "unlink", fail_unlink)
 
     with pytest.raises(ReleaseEvidenceError, match="temporary cleanup failed"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
     assert temporary.exists()
 
@@ -384,9 +407,9 @@ def test_write_release_manifest_reports_parent_directory_sync_failure(
     monkeypatch.setattr(release_evidence.os, "fsync", failing_directory_fsync)
 
     with pytest.raises(ReleaseEvidenceError, match="directory synchronization failed"):
-        write_release_manifest({"schema_version": 1}, destination)
+        write_release_manifest(_valid_manifest(), destination)
 
-    assert json.loads(destination.read_text(encoding="utf-8")) == {"schema_version": 1}
+    assert json.loads(destination.read_text(encoding="utf-8")) == _valid_manifest()
     assert not temporary.exists()
 
 
@@ -405,7 +428,7 @@ def test_write_release_manifest_synchronizes_file_and_parent_directory(
 
     monkeypatch.setattr(release_evidence.os, "fsync", recording_fsync)
 
-    write_release_manifest({"schema_version": 1}, destination)
+    write_release_manifest(_valid_manifest(), destination)
 
     assert len(synchronized_modes) == 2
     assert stat.S_ISREG(synchronized_modes[0])

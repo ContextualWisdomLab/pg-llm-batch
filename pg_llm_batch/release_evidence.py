@@ -8,19 +8,46 @@ import json
 import os
 import re
 import stat
+import tarfile
 from collections.abc import Mapping, Sequence
+from email.parser import BytesParser
 from itertools import islice
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO, cast
 
 
 _DISTRIBUTION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 _VERSION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}\Z")
+_CANONICAL_VERSION_RE = re.compile(
+    r"(?:[1-9][0-9]*!)?"
+    r"(?:0|[1-9][0-9]*)(?:\.(?:0|[1-9][0-9]*))*"
+    r"(?:(?:a|b|rc)(?:0|[1-9][0-9]*))?"
+    r"(?:\.post(?:0|[1-9][0-9]*))?"
+    r"(?:\.dev(?:0|[1-9][0-9]*))?"
+    r"(?:\+(?:0|[1-9][0-9]*|(?=[a-z0-9]*[a-z])[a-z0-9]+)"
+    r"(?:\.(?:0|[1-9][0-9]*|(?=[a-z0-9]*[a-z])[a-z0-9]+))*)?\Z"
+)
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}\Z")
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
 _DISTRIBUTION_SEPARATOR_RE = re.compile(r"[-_.]+")
 _HASH_CHUNK_BYTES = 1024 * 1024
+_SDIST_CORE_METADATA_READ_LIMIT = 1024 * 1024
+_SDIST_MEMBER_SCAN_LIMIT = 1024
 _RELEASE_ARTIFACT_COUNT = 2
 _RELEASE_DIRECTORY_SCAN_LIMIT = _RELEASE_ARTIFACT_COUNT + 1
+# RFC 8259 §6 exact interoperable integer range for common JSON implementations.
+_MAX_INTEROPERABLE_JSON_INTEGER = (1 << 53) - 1
+_RELEASE_MANIFEST_KEYS = frozenset(
+    {
+        "schema_version",
+        "distribution",
+        "version",
+        "source_commit",
+        "source_date_epoch",
+        "artifacts",
+    }
+)
+_RELEASE_MANIFEST_ARTIFACT_KEYS = frozenset({"filename", "sha256", "size"})
 _SECURE_ARTIFACT_DIR_FD_FUNCTIONS = frozenset((os.open,))
 _SECURE_ARTIFACT_FD_FUNCTIONS = frozenset((os.scandir,))
 _SECURE_ARTIFACT_FLAGS_AVAILABLE = all(
@@ -71,14 +98,17 @@ def _validate_metadata(
 ) -> None:
     """Reject untrusted release metadata before touching artifact paths."""
     valid = (
-        isinstance(distribution_name, str)
+        type(distribution_name) is str
         and _DISTRIBUTION_RE.fullmatch(distribution_name) is not None
-        and isinstance(version, str)
+        and distribution_name == _canonical_distribution_name(distribution_name)
+        and type(version) is str
         and _VERSION_RE.fullmatch(version) is not None
-        and isinstance(source_commit, str)
+        and _CANONICAL_VERSION_RE.fullmatch(version) is not None
+        and type(source_commit) is str
         and _COMMIT_RE.fullmatch(source_commit) is not None
         and type(source_date_epoch) is int
         and source_date_epoch >= 0
+        and source_date_epoch <= _MAX_INTEROPERABLE_JSON_INTEGER
     )
     if not valid:
         raise ReleaseEvidenceError("invalid release evidence metadata")
@@ -198,14 +228,36 @@ def _validate_artifact_filename(
     """Require an artifact filename to identify the expected project and version."""
     if name.endswith(".whl"):
         parts = name[:-4].split("-")
-        valid_shape = len(parts) >= 5
+        valid_shape = len(parts) in {5, 6}
         artifact_distribution = parts[0] if valid_shape else ""
         artifact_version = parts[1] if valid_shape else ""
+        compatibility_tags = parts[-3:] if valid_shape else ("", "", "")
+        valid_shape = (
+            valid_shape
+            and (len(parts) == 5 or parts[2][:1] in "0123456789")
+            and all(
+                tag and all(member for member in tag.split("."))
+                for tag in compatibility_tags
+            )
+            and all(
+                tag_members == sorted(set(tag_members))
+                for tag_members in (tag.split(".") for tag in compatibility_tags)
+            )
+            and all(
+                member[0] in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+                for member in compatibility_tags[0].split(".")
+            )
+            and artifact_distribution
+            == _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
+        )
     else:
         expected_version_suffix = f"-{version}.tar.gz"
         valid_shape = name.endswith(expected_version_suffix)
         artifact_distribution = name[: -len(expected_version_suffix)] if valid_shape else ""
         artifact_version = version if valid_shape else ""
+        valid_shape = valid_shape and artifact_distribution == (
+            _DISTRIBUTION_SEPARATOR_RE.sub("_", distribution_name).lower()
+        )
 
     if (
         not valid_shape
@@ -218,10 +270,163 @@ def _validate_artifact_filename(
         )
 
 
+def _invalid_release_manifest() -> ReleaseEvidenceError:
+    """Return the stable public error for untrusted persisted manifest values."""
+    return ReleaseEvidenceError("invalid release manifest")
+
+
+def _validated_release_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate and snapshot one canonical manifest without invoking caller hooks."""
+    if type(manifest) is not dict:
+        raise _invalid_release_manifest()
+    if not all(type(key) is str for key in manifest):
+        raise _invalid_release_manifest()
+    if frozenset(manifest) != _RELEASE_MANIFEST_KEYS:
+        raise _invalid_release_manifest()
+
+    schema_version = manifest["schema_version"]
+    distribution_name = manifest["distribution"]
+    version = manifest["version"]
+    source_commit = manifest["source_commit"]
+    source_date_epoch = manifest["source_date_epoch"]
+    artifacts = manifest["artifacts"]
+    if (
+        type(schema_version) is not int
+        or schema_version != 1
+        or type(distribution_name) is not str
+        or type(version) is not str
+        or type(source_commit) is not str
+        or type(source_date_epoch) is not int
+        or source_date_epoch < 0
+        or source_date_epoch > _MAX_INTEROPERABLE_JSON_INTEGER
+        or type(artifacts) is not list
+        or len(artifacts) != _RELEASE_ARTIFACT_COUNT
+    ):
+        raise _invalid_release_manifest()
+
+    try:
+        _validate_metadata(
+            distribution_name,
+            version,
+            source_commit,
+            source_date_epoch,
+        )
+    except ReleaseEvidenceError:
+        raise _invalid_release_manifest() from None
+
+    artifact_snapshots: list[dict[str, Any]] = []
+    for index, artifact in enumerate(artifacts):
+        if type(artifact) is not dict:
+            raise _invalid_release_manifest()
+        if not all(type(key) is str for key in artifact):
+            raise _invalid_release_manifest()
+        if frozenset(artifact) != _RELEASE_MANIFEST_ARTIFACT_KEYS:
+            raise _invalid_release_manifest()
+
+        filename = artifact["filename"]
+        digest = artifact["sha256"]
+        size = artifact["size"]
+        if (
+            type(filename) is not str
+            or type(digest) is not str
+            or _SHA256_RE.fullmatch(digest) is None
+            or type(size) is not int
+            or size < 0
+            or size > _MAX_INTEROPERABLE_JSON_INTEGER
+        ):
+            raise _invalid_release_manifest()
+        if (index == 0 and not filename.endswith(".tar.gz")) or (
+            index == 1 and not filename.endswith(".whl")
+        ):
+            raise _invalid_release_manifest()
+        try:
+            _validate_artifact_filename(
+                filename,
+                distribution_name=distribution_name,
+                version=version,
+            )
+        except ReleaseEvidenceError:
+            raise _invalid_release_manifest() from None
+        artifact_snapshots.append(
+            {
+                "filename": filename,
+                "sha256": digest,
+                "size": size,
+            }
+        )
+
+    return {
+        "schema_version": schema_version,
+        "distribution": distribution_name,
+        "version": version,
+        "source_commit": source_commit,
+        "source_date_epoch": source_date_epoch,
+        "artifacts": artifact_snapshots,
+    }
+
+
+def _release_artifact_metadata_mismatch() -> ReleaseEvidenceError:
+    """Return the stable public error for archive-internal authority mismatch."""
+    return ReleaseEvidenceError("release artifact metadata does not match release authority")
+
+
+def _validate_sdist_core_metadata_identity(
+    artifact_descriptor: int,
+    *,
+    distribution_name: str,
+    version: str,
+) -> None:
+    """Bind parseable sdist PKG-INFO identity to the requested release authority."""
+    expected_root = (
+        f"{_DISTRIBUTION_SEPARATOR_RE.sub('_', distribution_name).lower()}-{version}"
+    )
+    expected_member = f"{expected_root}/PKG-INFO"
+
+    try:
+        duplicate_descriptor = os.dup(artifact_descriptor)
+        with os.fdopen(duplicate_descriptor, "rb") as artifact_file:
+            try:
+                with tarfile.open(fileobj=artifact_file, mode="r|gz") as archive:
+                    member = next(
+                        (
+                            candidate
+                            for candidate in islice(archive, _SDIST_MEMBER_SCAN_LIMIT)
+                            if candidate.name == expected_member
+                        ),
+                        None,
+                    )
+                    if member is None:
+                        raise _release_artifact_metadata_mismatch()
+                    if (
+                        not member.isfile()
+                        or member.size > _SDIST_CORE_METADATA_READ_LIMIT
+                    ):
+                        raise _release_artifact_metadata_mismatch()
+                    metadata_file = cast(BinaryIO, archive.extractfile(member))
+                    payload = metadata_file.read(_SDIST_CORE_METADATA_READ_LIMIT + 1)
+            except tarfile.TarError:
+                # Archive-shape admission remains a separately serialized contract.
+                return
+    finally:
+        os.lseek(artifact_descriptor, 0, os.SEEK_SET)
+
+    metadata = BytesParser().parsebytes(payload, headersonly=True)
+    canonical_names = tuple(
+        _canonical_distribution_name(value)
+        for value in metadata.get_all("Name", [])
+    )
+    versions = tuple(metadata.get_all("Version", []))
+    if canonical_names != (distribution_name,) or versions != (version,):
+        raise _release_artifact_metadata_mismatch()
+
+
 def _artifact_record(
     directory_descriptor: int,
     name: str,
     expected_identity: _ArtifactIdentity,
+    *,
+    distribution_name: str,
+    version: str,
 ) -> dict[str, Any]:
     """Read the exact regular artifact observed during the pinned directory scan."""
     try:
@@ -246,6 +451,15 @@ def _artifact_record(
             )
         if _artifact_identity(initial_status) != expected_identity:
             raise ReleaseEvidenceError("release artifact changed during verification")
+        if initial_status.st_size > _MAX_INTEROPERABLE_JSON_INTEGER:
+            raise ReleaseEvidenceError("release artifact exceeds canonical JSON size limit")
+
+        if name.endswith(".tar.gz"):
+            _validate_sdist_core_metadata_identity(
+                artifact_descriptor,
+                distribution_name=distribution_name,
+                version=version,
+            )
 
         digest = hashlib.sha256()
         bytes_read = 0
@@ -296,6 +510,8 @@ def _artifact_records(
                     directory_descriptor,
                     name,
                     expected_identities[name],
+                    distribution_name=distribution_name,
+                    version=version,
                 )
             )
         if _scan_release_entries(directory_descriptor) != initial_entries:
@@ -530,13 +746,16 @@ def write_release_manifest(
     manifest: Mapping[str, Any],
     output_path: str | Path,
 ) -> None:
-    """Write canonical JSON atomically through a pinned parent descriptor.
+    """Validate and write canonical JSON through a pinned parent descriptor.
 
-    The writer fails closed unless descriptor-relative operations and no-follow
-    flags are available. Every parent component, the temporary file, and the
-    atomic replacement are resolved relative to held directory descriptors.
+    The writer admits only the package-owned manifest schema and exact built-in
+    containers and primitive values before serialization. It then fails closed unless
+    descriptor-relative operations and no-follow flags are available. Every parent
+    component, the temporary file, and the atomic replacement are resolved relative
+    to held directory descriptors.
     """
-    payload = json.dumps(dict(manifest), indent=2, sort_keys=True) + "\n"
+    validated_manifest = _validated_release_manifest(manifest)
+    payload = json.dumps(validated_manifest, indent=2, sort_keys=True) + "\n"
     if not _secure_manifest_writes_supported():
         raise ReleaseEvidenceError(
             "secure release manifest writes require descriptor-relative "
