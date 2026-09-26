@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -22,6 +24,44 @@ COMMIT = "a" * 40
 SOURCE_DATE_EPOCH = 1_786_000_000
 WHEEL = "pg_llm_batch-0.1.0-py3-none-any.whl"
 SDIST = "pg_llm_batch-0.1.0.tar.gz"
+SDIST_ROOT = "pg_llm_batch-0.1.0"
+
+
+def _sdist_with_core_metadata(
+    *,
+    core_name: str = DISTRIBUTION,
+    core_version: str = VERSION,
+    include_pkg_info: bool = True,
+    pkg_info_regular: bool = True,
+    oversized_pkg_info: bool = False,
+) -> bytes:
+    """Return a bounded sdist fixture for archive-internal authority tests."""
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
+        if include_pkg_info:
+            payload = (
+                f"Metadata-Version: 2.4\nName: {core_name}\nVersion: {core_version}\n\n"
+            ).encode("utf-8")
+            if oversized_pkg_info:
+                payload += b"x" * (1024 * 1024)
+            member = tarfile.TarInfo(f"{SDIST_ROOT}/PKG-INFO")
+            member.mtime = 0
+            if pkg_info_regular:
+                member.size = len(payload)
+                member.mode = 0o644
+                archive.addfile(member, io.BytesIO(payload))
+            else:
+                member.type = tarfile.DIRTYPE
+                member.mode = 0o755
+                archive.addfile(member)
+
+        pyproject = b"[build-system]\nrequires = []\n"
+        member = tarfile.TarInfo(f"{SDIST_ROOT}/pyproject.toml")
+        member.size = len(pyproject)
+        member.mode = 0o644
+        member.mtime = 0
+        archive.addfile(member, io.BytesIO(pyproject))
+    return output.getvalue()
 
 
 def _write_release(directory: Path, wheel: bytes = b"wheel", sdist: bytes = b"sdist") -> None:
@@ -89,6 +129,73 @@ def test_verify_reproducible_release_returns_bounded_deterministic_manifest(
             },
         ],
     }
+
+
+def test_verify_reproducible_release_accepts_matching_sdist_core_metadata(
+    tmp_path: Path,
+) -> None:
+    """Accept canonical PKG-INFO identity when a parseable sdist supplies it."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    sdist = _sdist_with_core_metadata()
+    _write_release(first, sdist=sdist)
+    _write_release(second, sdist=sdist)
+
+    manifest = _verify(first, second)
+
+    assert manifest["artifacts"][0]["sha256"] == hashlib.sha256(sdist).hexdigest()  # type: ignore[index]
+
+
+@pytest.mark.parametrize(
+    ("core_name", "core_version"),
+    [("other-project", VERSION), (DISTRIBUTION, "9.9.9")],
+)
+def test_verify_reproducible_release_rejects_sdist_core_metadata_mismatch(
+    tmp_path: Path,
+    core_name: str,
+    core_version: str,
+) -> None:
+    """Reject parseable PKG-INFO identity that contradicts release authority."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    sdist = _sdist_with_core_metadata(
+        core_name=core_name,
+        core_version=core_version,
+    )
+    _write_release(first, sdist=sdist)
+    _write_release(second, sdist=sdist)
+
+    with pytest.raises(
+        ReleaseEvidenceError,
+        match="release artifact metadata does not match release authority",
+    ):
+        _verify(first, second)
+
+
+@pytest.mark.parametrize(
+    "sdist",
+    [
+        _sdist_with_core_metadata(include_pkg_info=False),
+        _sdist_with_core_metadata(pkg_info_regular=False),
+        _sdist_with_core_metadata(oversized_pkg_info=True),
+    ],
+    ids=["missing-pkg-info", "non-regular-pkg-info", "oversized-pkg-info"],
+)
+def test_verify_reproducible_release_rejects_unusable_sdist_core_metadata(
+    tmp_path: Path,
+    sdist: bytes,
+) -> None:
+    """Reject missing, non-regular, or unbounded canonical PKG-INFO authority."""
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    _write_release(first, sdist=sdist)
+    _write_release(second, sdist=sdist)
+
+    with pytest.raises(
+        ReleaseEvidenceError,
+        match="release artifact metadata does not match release authority",
+    ):
+        _verify(first, second)
 
 
 def test_verify_reproducible_release_rejects_byte_mismatch(tmp_path: Path) -> None:
