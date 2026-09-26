@@ -25,7 +25,7 @@ def test_release_verifier_rejects_json_unsafe_source_date_epoch(tmp_path: Path) 
         verify_reproducible_release(
             first,
             second,
-            distribution_name="pg_llm_batch",
+            distribution_name="pg-llm-batch",
             version="0.1.0",
             source_commit="a" * 40,
             source_date_epoch=1 << 53,
@@ -53,7 +53,7 @@ def test_release_verifier_rejects_json_unsafe_artifact_size_before_hashing(
         verify_reproducible_release(
             first,
             second,
-            distribution_name="pg_llm_batch",
+            distribution_name="pg-llm-batch",
             version="0.1.0",
             source_commit="a" * 40,
             source_date_epoch=1,
