@@ -32,6 +32,7 @@ def test_release_verifier_rejects_nondigit_wheel_build_tag_before_hashing(
         _directory_descriptor: int,
         name: str,
         _expected_identity: object,
+        **_release_authority: str,
     ) -> dict[str, object]:
         if name.endswith(".whl"):
             raise AssertionError("wheel with invalid build tag reached artifact hashing")
