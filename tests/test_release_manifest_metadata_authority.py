@@ -16,7 +16,7 @@ class _StringSubclass(str):
 @pytest.mark.parametrize(
     ("field_name", "untrusted_value"),
     (
-        ("distribution_name", _StringSubclass("pg_llm_batch")),
+        ("distribution_name", _StringSubclass("pg-llm-batch")),
         ("version", _StringSubclass("0.1.0")),
         ("source_commit", _StringSubclass("a" * 40)),
     ),
@@ -35,7 +35,7 @@ def test_release_verifier_rejects_string_subclass_metadata_before_artifact_io(
     monkeypatch.setattr(release_evidence, "_artifact_records", unexpected_artifact_read)
 
     metadata: dict[str, object] = {
-        "distribution_name": "pg_llm_batch",
+        "distribution_name": "pg-llm-batch",
         "version": "0.1.0",
         "source_commit": "a" * 40,
     }
