@@ -210,13 +210,11 @@ def test_repository_does_not_duplicate_central_pr_maintenance() -> None:
     assert not (ROOT / ".github/workflows/hourly-maintenance.yml").exists()
 
 
-def test_dependabot_tracks_the_new_github_actions_manifests() -> None:
-    configuration = _read(".github/dependabot.yml")
-
-    assert 'package-ecosystem: "github-actions"' in configuration
-    assert 'directory: "/"' in configuration
-    assert 'interval: "weekly"' in configuration
-    assert "dependency_file_not_found" not in configuration
+def test_repository_does_not_restore_dependabot_version_update_configs() -> None:
+    """Central policy owns version update shutdown; repo configs must stay absent."""
+    for relative in (".github/dependabot.yml", ".github/dependabot.yaml"):
+        candidate = ROOT / relative
+        assert not candidate.exists() and not candidate.is_symlink(), relative
 
 
 def test_pyproject_declares_hard_quality_thresholds() -> None:
